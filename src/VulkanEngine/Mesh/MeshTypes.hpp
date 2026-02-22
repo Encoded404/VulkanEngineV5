@@ -1,0 +1,4 @@
+namespace VulkanEngine
+{
+    
+} // namespace VulkanEngine

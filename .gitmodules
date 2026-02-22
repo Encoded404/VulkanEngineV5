@@ -2,3 +2,7 @@
 [submodule "external/cppLoggingInterface"]
 	path = external/cppLoggingInterface
 	url = https://github.com/Encoded404/cppLoggingInterface
+[submodule "external/VulkanRAIIWrapper"]
+	path = external/VulkanRAIIWrapper
+	url = https://github.com/Encoded404/VulkanRAIIWrapper
+	branch = NewEngineBranch

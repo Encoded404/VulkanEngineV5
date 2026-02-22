@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 
-set(PROJECT_NAME "cmake-app-template")
-set(LIBRARY_TARGET "cmake-app-internal-lib")
-set(APP_TARGET "cmake-app")
+set(PROJECT_NAME "VulkanEngineV5")
+set(LIBRARY_TARGET "VulkanEngine")
+set(APP_TARGET "VulkanApp")
 
 # if this is not set by the user cmake will decide
 set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")

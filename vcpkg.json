@@ -8,6 +8,17 @@
         {
             "name": "gtest",
             "version>=": "1.13.0"
-        }
+        },
+        "volk",
+        {
+            "name": "sdl3",
+            "default-features": false,
+            "features": [
+                "vulkan",
+                "wayland",
+                "x11"
+            ]
+        },
+        "nlohmann-json"
     ]
 }

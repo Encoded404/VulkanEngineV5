@@ -1,36 +1,17 @@
-# modern-cmake-template
+this is a engine designed around good PC performance
 
-Modern CMake starter that keeps the library as the main product, adds a thin CLI to exercise it, and wires in GoogleTest via vcpkg. Clang-Tidy can be enabled when available.
+## Notes
+this engine is primarely a PC focused engine, it uses stuff like vertex pulling and other newer vulkan features and extensions that are largly incompatable with mobile GPU's (those in phones specefically). while it will most likely still run and compile. it will likely have quite terrible peformance due to the differing nature of mobile GPU's, and the entire engine would require a major refit or extensive pragma compile blocks or a lot of differing code paths based on local enviroment. even more than already.
 
-## Layout
+TL;DR this engine does and will not focus on providing good performance on mobile GPU's.
 
-```
-modern-cmake-app-template/
-├── CMakeLists.txt
-├── CMakePresets.json
-├── cmake/
-│   └── ConfigureClangTidy.cmake
-├── src/
-│   ├── CMakeLists.txt
-│   ├── app/
-│   │   ├── CMakeLists.txt
-│   │   └── main.cpp
-│   ├── include/
-│   │   ├── lib1/lib_example.hpp              # Public headers
-│   │   └── logging/
-│   │       ├── logging.hpp                   # Optional logging interface
-│   │       └── ConsoleLogger.hpp             # example logger implimentation   
-│   └── lib1/
-│       ├── CMakeLists.txt
-│       ├── lib_example.cpp
-│       └── lib_privateCode.cpp/.hpp          # Internal-only code
-├── tests/
-│   ├── CMakeLists.txt
-│   ├── example_tests.cpp
-│   └── test_logging.hpp
-├── vcpkg.json
-└── vcpkg-configuration.json
-```
+### render branches
+different GPU's can have wildly differing performance with the same code. every gpu architechture is different with its own quirks and performance considerations. this engine allows toggling features that might not always increase performance. the following is the list of conditionals that the engine has:
+
+* pre-depth pass:
+
+    doing a early depth pass and cull geometry with a HI-Z system. this can reduce overdraw and fragment count considerably. but it doesnt always actually improve performance. many gpu's can already cull fragments very effectively using gpu black magic. test performance on different hardware to know if this helps.
+* something else:
 
 ## Prerequisites
 

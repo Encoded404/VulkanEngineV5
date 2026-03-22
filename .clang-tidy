@@ -3,7 +3,6 @@
 
 # you can customize the checks and options as needed.
 # to use this file, place it in the root directory of your project. and rename it to .clang-tidy. (remove the -example suffix)
----
 Checks: >-
   modernize-*,
   performance-*,
@@ -24,8 +23,6 @@ Checks: >-
 #  -modernize-avoid-c-arrays,
 
 WarningsAsErrors: ''
-
-HeaderFilterRegex: '.*'
 
 CheckOptions:
   - key:    readability-identifier-naming.VariableCase
@@ -70,5 +67,5 @@ CheckOptions:
     value:  CamelCase
   - key:    readability-identifier-naming.MacroDefinitionCase
     value:  aNy_CasE
-
----
+  - key: misc-include-cleaner.IgnoreHeaders # this makes the include cleaner not complain about non-directly included vulkan headers, since the volk headers reexport the vulkan headers.
+    value: '(^|.*/)(vulkan|volk)(/.*)?'

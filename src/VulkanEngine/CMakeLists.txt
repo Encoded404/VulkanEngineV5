@@ -1,7 +1,10 @@
 # Set the C++ standard and enable compiler features
 add_library(${LIBRARY_TARGET} STATIC)
 target_compile_features(${LIBRARY_TARGET} PUBLIC cxx_std_20)
-target_link_libraries(${LIBRARY_TARGET} PUBLIC logiface)
+target_link_libraries(${LIBRARY_TARGET} PUBLIC logiface::logiface)
+
+target_link_libraries(${LIBRARY_TARGET} PRIVATE VulkanRAIIWrapper)
+target_link_libraries(${LIBRARY_TARGET} PRIVATE FileLoader)
 
 # Compiler-specific warning options for the library target
 target_compile_options(${LIBRARY_TARGET} PRIVATE
@@ -27,6 +30,8 @@ PUBLIC
 
 # Source files
 target_sources(${LIBRARY_TARGET} PRIVATE
-    lib_example.cpp
-    lib_privateCode.cpp
+    Mesh/MeshAssembler.cpp
+    Utils/MemoryUtils.cpp
+    Utils/ImageUtils.cpp
+    Utils/PipelineUtils.cpp
 )

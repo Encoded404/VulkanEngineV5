@@ -1,5 +1,5 @@
 #include <volk.h>
-#include <VulkanEngine/Utils/MemoryUtils.hpp>
+import VulkanEngine.Utils.MemoryUtils;
 
 #include <algorithm>
 #include <cstdint>

@@ -1,21 +1,7 @@
 #ifndef VULKAN_ENGINE_UTILS_PIPELINE_UTILS_HPP
-#define VULKAN_ENGINE_UTILS_PIPELINE_UTILS_HPP
+#pragma once
 
-#include <volk.h>
-#include <cstdint>
-#include <vector>
-
-namespace VulkanEngine::Utils {
-
-class PipelineUtils {
-public:
-    static VkViewport CreateViewport(float width, float height,
-                                      float min_depth = 0.0f, float max_depth = 1.0f,
-                                      float x = 0.0f, float y = 0.0f);
-
-    static VkRect2D CreateScissor(uint32_t width, uint32_t height,
-                                  int32_t offset_x = 0, int32_t offset_y = 0);
-
+import VulkanEngine.Utils.PipelineUtils;
     static VkPipelineColorBlendAttachmentState CreateDefaultColorBlendAttachment();
     static VkPipelineColorBlendAttachmentState CreateAlphaBlendAttachment();
     static VkPipelineColorBlendAttachmentState CreateAdditiveBlendAttachment();

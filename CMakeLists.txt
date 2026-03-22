@@ -10,6 +10,15 @@ set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
 # Project name and version
 project(${PROJECT_NAME} VERSION 1.0 LANGUAGES CXX)
 
+# Require C++20
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Require compiler support for modules (will be applied per-target in src/)
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  message(FATAL_ERROR "C++ modules required but the compiler (${CMAKE_CXX_COMPILER_ID}) is not supported. Use Clang or GCC.")
+endif()
+
 # Enable CTest at the top level so `ctest` discovers tests
 include(CTest)
 

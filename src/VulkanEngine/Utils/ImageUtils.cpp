@@ -1,5 +1,5 @@
 #include <volk.h>
-#include <VulkanEngine/Utils/ImageUtils.hpp>
+import VulkanEngine.Utils.ImageUtils;
 
 #include <algorithm>
 #include <cmath>

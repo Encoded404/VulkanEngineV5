@@ -1,11 +1,10 @@
-#include "VulkanEngine/Mesh/MeshAssembler.hpp"
-#include "VulkanEngine/Mesh/MeshTypes.hpp"
-
+import VulkanEngine.Mesh.MeshAssembler;
+import VulkanEngine.Mesh.MeshTypes;
 #include <FileLoader/Types.hpp>
 
 #include <memory>
 #include <future>
-#include <exception> // for current_exception
+#include <exception>
 
 namespace VulkanEngine {
 

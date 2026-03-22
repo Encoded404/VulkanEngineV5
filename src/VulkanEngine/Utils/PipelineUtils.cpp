@@ -1,5 +1,5 @@
 #include <volk.h>
-#include <VulkanEngine/Utils/PipelineUtils.hpp>
+import VulkanEngine.Utils.PipelineUtils;
 #include <cstdint>
 #include <vector>
 

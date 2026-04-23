@@ -15,34 +15,35 @@ different GPU's can have wildly differing performance with the same code. every 
 
 ## Prerequisites
 
-- CMake ≥ 3.15
-- A C++20-capable compiler
-- vcpkg available and `VCPKG_ROOT` set (the default preset expects it).
+- CMake ≥ 3.28
+- a C++20-capable compiler with module support
+- vcpkg available and `VCPKG_ROOT` set for the default preset
 
 ## VCPKG installation
-you can follow the guide [here](https://github.com/microsoft/vcpkg) for installation
+you can follow the guide [here](https://github.com/microsoft/vcpkg) for installation.
 
 ## Clone
 
 ```bash
-git clone <repository-url>
-cd modern-cmake-app-template
+git clone <repo-url>
+cd VulkanEngineV5
 ```
 
 ## Configure
 
-Use the provided Ninja multi-config preset:
+Use the provided preset:
 
 ```bash
 cmake --preset default -S . -B build
 ```
 
-Options:
-- `-DBUILD_TESTING=OFF` to skip tests (default: ON via preset)
-- `-DENABLE_LOGGING=OFF` to compile out logging macros (default: ON)
-- `-DCLANG_TIDY_ENABLED=OFF` to skip clang-tidy configuration
+Useful options:
 
-If you prefer a manual invoke, or vcpkg lives elsewhere, specify the toolchain and cache toggles directly:
+- `-DBUILD_TESTING=OFF` to skip tests
+- `-DENABLE_LOGGING=OFF` to compile out logging macros
+- `-DCLANG_TIDY_ENABLED=OFF` to skip clang-tidy setup
+
+If you want a manual configure step instead of the preset:
 
 ```bash
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DBUILD_TESTING=ON
@@ -56,12 +57,10 @@ cmake --build build --config Debug   # or Release/RelWithDebInfo
 
 ## Tests
 
-Tests are controlled by `BUILD_TESTING` (default ON in the preset). Disable with `-DBUILD_TESTING=OFF` if you only want the app:
-
 ```bash
 ctest --test-dir build -C Debug
 ```
 
 ## Clang-Tidy
 
-Set `-DCLANG_TIDY_ENABLED=ON` (default) to enable static analysis when `clang-tidy` is found and a `.clang-tidy` file is present at the project root. Set it to `OFF` to skip configuring Clang-Tidy even if available.
+Set `-DCLANG_TIDY_ENABLED=ON` to enable static analysis when `clang-tidy` is available and a `.clang-tidy` file exists at the project root. Set it to `OFF` to skip clang-tidy configuration.

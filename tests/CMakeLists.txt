@@ -1,5 +1,8 @@
 # Add the test executable
-add_executable(example_tests example_tests.cpp)
+add_executable(example_tests
+    example_tests.cpp
+    component_system_tests.cpp
+)
 
 # Find GTest installed via vcpkg and link it along with the main library
 find_package(GTest CONFIG REQUIRED)
@@ -8,6 +11,10 @@ target_link_libraries(example_tests PRIVATE
     ${LIBRARY_TARGET}
     GTest::gtest
     GTest::gtest_main
+)
+
+target_compile_definitions(example_tests PRIVATE
+    LOGIFACE_ENABLE_LOGGING=1
 )
 
 # Set compiler options for the test executable

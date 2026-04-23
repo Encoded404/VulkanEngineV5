@@ -1,10 +1,15 @@
-import VulkanEngine.Mesh.MeshAssembler;
-import VulkanEngine.Mesh.MeshTypes;
-#include <FileLoader/Types.hpp>
+module;
 
 #include <memory>
 #include <future>
 #include <exception>
+
+#include <FileLoader/Types.hpp>
+
+module VulkanEngine.Mesh.MeshAssembler;
+
+import VulkanEngine.Mesh.MeshTypes;
+
 
 namespace VulkanEngine {
 
@@ -27,16 +32,16 @@ std::future<std::shared_ptr<Mesh>> MeshAssembler::AssembleFromFullBuffer(std::sh
 	return prom->get_future();
 }
 
-std::shared_ptr<skinnedMesh> SkinnedMeshAssembler::ParseFromBuffer(const FileLoader::ByteBuffer& buffer)
+std::shared_ptr<SkinnedMesh> SkinnedMeshAssembler::ParseFromBuffer(const FileLoader::ByteBuffer& buffer)
 {
-	auto mesh = std::make_shared<skinnedMesh>();
+	auto mesh = std::make_shared<SkinnedMesh>();
 	mesh->FromBuffer(buffer, 0);
 	return mesh;
 }
 
-std::future<std::shared_ptr<skinnedMesh>> SkinnedMeshAssembler::AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer> buffer)
+std::future<std::shared_ptr<SkinnedMesh>> SkinnedMeshAssembler::AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer> buffer)
 {
-	auto prom = std::make_shared<std::promise<std::shared_ptr<skinnedMesh>>>();
+	auto prom = std::make_shared<std::promise<std::shared_ptr<SkinnedMesh>>>();
 	try {
 		auto mesh = ParseFromBuffer(*buffer);
 		prom->set_value(mesh);

@@ -9,6 +9,7 @@
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_COMPILER": "clang++",
         "BUILD_TESTING": "ON"
       }
     },

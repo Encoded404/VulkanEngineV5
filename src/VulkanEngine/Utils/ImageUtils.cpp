@@ -1,10 +1,11 @@
-#include <volk.h>
-import VulkanEngine.Utils.ImageUtils;
+module;
 
+#include <volk.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 
+module VulkanEngine.Utils.ImageUtils;
 
 namespace VulkanEngine::Utils {
 

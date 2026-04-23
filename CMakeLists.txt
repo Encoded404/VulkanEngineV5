@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.28)
 
 set(PROJECT_NAME "VulkanEngineV5")
 set(LIBRARY_TARGET "VulkanEngine")
@@ -9,6 +9,8 @@ set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
 
 # Project name and version
 project(${PROJECT_NAME} VERSION 1.0 LANGUAGES CXX)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Require C++20
 set(CMAKE_CXX_STANDARD 20)
@@ -49,21 +51,6 @@ endif()
 # `LOGIFACE_PATH` in the cache (e.g. external/cppFileLoader). This ensures
 # they look up the same logging interface instead of expecting a nested copy.
 set(LOGIFACE_PATH "${LOGGING_INTERFACE_DIR}" CACHE PATH "Optional path to the cppLoggingInterface repo" FORCE)
-
-# -----------------
-# VulkanRAIIWrapper
-# -----------------
-message("finding Vulkan RAII Wrapper")
-
-option(ENABLE_LOGGING "Enable header-only logging interface" ON)
-
-set(VULKANRAIIWRAPPER_PATH "${CMAKE_SOURCE_DIR}/external/VulkanRAIIWrapper" CACHE PATH "Optional path to the VulkanRAIIWrapper repo")
-
-if(VULKANRAIIWRAPPER_PATH)
-	add_subdirectory("${VULKANRAIIWRAPPER_PATH}" VulkanRAIIWrapper)
-else()
-	message(FATAL_ERROR "Missing VulkanRAIIWrapper at ${VULKANRAIIWRAPPER_PATH}; provide the repo there or set VULKANRAIIWRAPPER_PATH to another directory.")
-endif()
 
 # ----------
 # FileLoader

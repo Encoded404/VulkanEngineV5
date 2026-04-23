@@ -45,3 +45,8 @@ target_compile_definitions(${APP_TARGET}
         $<$<NOT:$<BOOL:${ENABLE_LOGGING}>>:LOGIFACE_ENABLE_LOGGING=0>
         LOGIFACE_DEFAULT_TO_FUNCTION=1
 )
+
+# Optionally enable per-target clang-tidy if the helper function is available.
+if(COMMAND enable_target_clang_tidy)
+    enable_target_clang_tidy(${APP_TARGET})
+endif()

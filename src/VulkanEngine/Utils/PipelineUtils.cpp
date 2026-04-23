@@ -1,7 +1,10 @@
+module;
+
 #include <volk.h>
-import VulkanEngine.Utils.PipelineUtils;
 #include <cstdint>
 #include <vector>
+
+module VulkanEngine.Utils.PipelineUtils;
 
 namespace VulkanEngine::Utils {
 

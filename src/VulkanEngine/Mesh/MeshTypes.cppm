@@ -7,14 +7,14 @@ module;
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
-#include <FileLoader/FileLoader.hpp>
+#include <FileLoader/Types.hpp>
 
 export module VulkanEngine.Mesh.MeshTypes;
 
 // helpers (non-exported)
 namespace {
     template<typename T>
-    T readValue(const FileLoader::ByteBuffer& buffer, size_t& off)
+    T ReadValue(const FileLoader::ByteBuffer& buffer, size_t& off)
     {
         using Arr = std::array<std::byte, sizeof(T)>;
         if (off + sizeof(T) > buffer.size()) throw std::out_of_range("readValue: buffer too small");
@@ -24,10 +24,10 @@ namespace {
         return std::bit_cast<T>(a);
     }
 
-    inline float readFloat(const FileLoader::ByteBuffer& buffer, size_t& off) { return readValue<float>(buffer, off); }
-    inline uint32_t readU32(const FileLoader::ByteBuffer& buffer, size_t& off) { return readValue<uint32_t>(buffer, off); }
-    inline uint16_t readU16(const FileLoader::ByteBuffer& buffer, size_t& off) { return readValue<uint16_t>(buffer, off); }
-    inline uint8_t readU8(const FileLoader::ByteBuffer& buffer, size_t& off) { return readValue<uint8_t>(buffer, off); }
+    inline float ReadFloat(const FileLoader::ByteBuffer& buffer, size_t& off) { return ReadValue<float>(buffer, off); }
+    inline uint32_t ReadU32(const FileLoader::ByteBuffer& buffer, size_t& off) { return ReadValue<uint32_t>(buffer, off); }
+    inline uint16_t ReadU16(const FileLoader::ByteBuffer& buffer, size_t& off) { return ReadValue<uint16_t>(buffer, off); }
+    inline uint8_t ReadU8(const FileLoader::ByteBuffer& buffer, size_t& off) { return ReadValue<uint8_t>(buffer, off); }
 }
 
 export namespace VulkanEngine
@@ -35,55 +35,55 @@ export namespace VulkanEngine
     class Vector3
     {
     public:
-        float x, y, z;
+        float x, y, z; //NOLINT(misc-non-private-member-variables-in-classes)
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             size_t off = offset;
-            x = readFloat(buffer, off);
-            y = readFloat(buffer, off);
-            z = readFloat(buffer, off);
+            x = ReadFloat(buffer, off);
+            y = ReadFloat(buffer, off);
+            z = ReadFloat(buffer, off);
         }
     };
 
     class Vector2
     {
     public:
-        float u, v;
+        float u, v; //NOLINT(misc-non-private-member-variables-in-classes)
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             size_t off = offset;
-            u = readFloat(buffer, off);
-            v = readFloat(buffer, off);
+            u = ReadFloat(buffer, off);
+            v = ReadFloat(buffer, off);
         }
     };
 
     struct SubMesh
     {
-        uint32_t index_start{0};
-        uint32_t index_count{0};
-        uint16_t material_index{0};
+        uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        uint16_t material_index{0}; //NOLINT(misc-non-private-member-variables-in-classes)
 
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             size_t off = offset;
-            index_start = readU32(buffer, off);
-            index_count = readU32(buffer, off);
-            material_index = readU16(buffer, off);
+            index_start = ReadU32(buffer, off);
+            index_count = ReadU32(buffer, off);
+            material_index = ReadU16(buffer, off);
         }
     };
 
-    struct boneWeight
+    struct BoneWeight
     {
-        std::array<uint16_t, 4> bone_indices{};
-        std::array<uint8_t, 4> weights{};
+        std::array<uint16_t, 4> bone_indices{}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<uint8_t, 4> weights{}; //NOLINT(misc-non-private-member-variables-in-classes)
 
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             size_t off = offset;
             for (size_t i = 0; i < 4; ++i)
             {
-                bone_indices[i] = readU16(buffer, off);
-                weights[i] = readU8(buffer, off);
+                bone_indices[i] = ReadU16(buffer, off);
+                weights[i] = ReadU8(buffer, off);
             }
         }
     };
@@ -91,17 +91,17 @@ export namespace VulkanEngine
     class Mesh
     {
     public:
-        std::vector<Vector3> vertices;
-        std::vector<Vector3> normals;
-        std::vector<Vector2> uvs;
-        std::vector<uint32_t> indices;
-        std::vector<SubMesh> subMeshes;
+        std::vector<Vector3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<Vector3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<Vector2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<SubMesh> subMeshes; //NOLINT(misc-non-private-member-variables-in-classes)
 
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             size_t off = offset;
 
-            uint32_t vertexCount = readU32(buffer, off);
+            const uint32_t vertexCount = ReadU32(buffer, off);
             vertices.resize(vertexCount);
             for (uint32_t i = 0; i < vertexCount; ++i)
             {
@@ -120,14 +120,14 @@ export namespace VulkanEngine
                 uvs[i].FromBuffer(buffer, off);
             }
 
-            uint32_t indexCount = readU32(buffer, off);
+            const uint32_t indexCount = ReadU32(buffer, off);
             indices.resize(indexCount);
             for (uint32_t i = 0; i < indexCount; ++i)
             {
-                indices[i] = readU32(buffer, off);
+                indices[i] = ReadU32(buffer, off);
             }
 
-            uint32_t subMeshCount = readU32(buffer, off);
+            const uint32_t subMeshCount = ReadU32(buffer, off);
             subMeshes.resize(subMeshCount);
             for (uint32_t i = 0; i < subMeshCount; ++i)
             {
@@ -136,27 +136,27 @@ export namespace VulkanEngine
         }
     };
 
-    struct skinnedMesh : public Mesh
+    struct SkinnedMesh : public Mesh
     {
-        std::vector<boneWeight> bone_weights;
+        std::vector<BoneWeight> bone_weights; //NOLINT(misc-non-private-member-variables-in-classes)
 
         void FromBuffer(const FileLoader::ByteBuffer& buffer, size_t offset)
         {
             Mesh::FromBuffer(buffer, offset);
             size_t off = offset;
 
-            uint32_t vertexCount = readU32(buffer, off);
+            const uint32_t vertexCount = ReadU32(buffer, off);
             off += static_cast<size_t>(vertexCount) * (sizeof(float) * 3);
             off += static_cast<size_t>(vertexCount) * (sizeof(float) * 3);
             off += static_cast<size_t>(vertexCount) * (sizeof(float) * 2);
 
-            uint32_t indexCount = readU32(buffer, off);
+            const uint32_t indexCount = ReadU32(buffer, off);
             off += static_cast<size_t>(indexCount) * sizeof(uint32_t);
 
-            uint32_t subMeshCount = readU32(buffer, off);
+            const uint32_t subMeshCount = ReadU32(buffer, off);
             off += static_cast<size_t>(subMeshCount) * (4 + 4 + 2);
 
-            uint32_t boneWeightCount = readU32(buffer, off);
+            const uint32_t boneWeightCount = ReadU32(buffer, off);
             bone_weights.resize(boneWeightCount);
             for (uint32_t i = 0; i < boneWeightCount; ++i)
             {

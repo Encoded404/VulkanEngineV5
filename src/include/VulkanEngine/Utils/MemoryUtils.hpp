@@ -1,8 +1,0 @@
-#ifndef VULKAN_ENGINE_UTILS_MEMORY_UTILS_HPP
-#define VULKAN_ENGINE_UTILS_MEMORY_UTILS_HPP
-
-#if 1
-import VulkanEngine.Utils.MemoryUtils;
-#endif
-
-#endif // VULKAN_ENGINE_UTILS_MEMORY_UTILS_HPP

@@ -1,5 +1,3 @@
-#ifdef __has_cpp_attribute
-#endif
 module;
 
 #include <volk.h>

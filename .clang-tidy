@@ -1,8 +1,6 @@
 # this is a .clang-tidy example configuration file.
 # For more information, see https://clang.llvm.org/extra/clang-tidy/
 
-# you can customize the checks and options as needed.
-# to use this file, place it in the root directory of your project. and rename it to .clang-tidy. (remove the -example suffix)
 Checks: >-
   modernize-*,
   performance-*,
@@ -69,3 +67,7 @@ CheckOptions:
     value:  aNy_CasE
   - key: misc-include-cleaner.IgnoreHeaders # this makes the include cleaner not complain about non-directly included vulkan headers, since the volk headers reexport the vulkan headers.
     value: '(^|.*/)(vulkan|volk)(/.*)?'
+  - key: misc-include-cleaner.UnusedIncludes
+    value: true
+  - key: misc-include-cleaner.MissingIncludes
+    value: false

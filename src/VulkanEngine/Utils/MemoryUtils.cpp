@@ -1,12 +1,13 @@
-#include <volk.h>
-import VulkanEngine.Utils.MemoryUtils;
+module;
 
+#include <volk.h>
 #include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <vector>
 
+module VulkanEngine.Utils.MemoryUtils;
 
 namespace VulkanEngine::Utils {
 

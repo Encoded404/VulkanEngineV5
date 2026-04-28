@@ -9,6 +9,8 @@ add_executable(example_tests
     graph_execution_context_tests.cpp
     graph_execution_bridge_tests.cpp
     platform_shell_tests.cpp
+    event_system_tests.cpp
+    input_system_tests.cpp
     vulkan_bootstrap_tests.cpp
     backend_factory_tests.cpp
 )

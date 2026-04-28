@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <SDL3/SDL_video.h>
 
+import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
 
 namespace {
@@ -16,7 +18,7 @@ public:
     bool initialize_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
     bool create_window_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
     bool shutdown_called = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<PlatformEvent> queued_events{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanEngine::Backend::Event::EventList queued_events{}; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool Initialize() override {
         return initialize_result;
@@ -30,10 +32,8 @@ public:
         return create_window_result;
     }
 
-    [[nodiscard]] std::vector<PlatformEvent> PumpEvents() override {
-        auto copy = queued_events;
-        queued_events.clear();
-        return copy;
+    [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
+        return std::exchange(queued_events, {});
     }
 
     [[nodiscard]] SDL_Window* GetNativeWindowHandle() const override {
@@ -60,10 +60,10 @@ TEST(PlatformShellTest, PollEventsUpdatesResizeAndQuitState) {
 
     ASSERT_TRUE(shell.Initialize(PlatformConfig{}));
 
-    backend->queued_events.push_back(PlatformEvent{.type = PlatformEventType::WindowResized, .width = 1920, .height = 1080});
-    backend->queued_events.push_back(PlatformEvent{.type = PlatformEventType::Quit});
+    backend->queued_events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowResizedEvent>(1920u, 1080u));
+    backend->queued_events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
 
-    shell.PollEvents();
+    const auto events = shell.PollEvents();
 
     const auto& state = shell.GetState();
     EXPECT_TRUE(state.resized);
@@ -71,6 +71,9 @@ TEST(PlatformShellTest, PollEventsUpdatesResizeAndQuitState) {
     EXPECT_EQ(state.drawable_height, 1080u);
     EXPECT_TRUE(shell.ShouldQuit());
     EXPECT_EQ(state.status, PlatformStatus::QuitRequested);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_NE(dynamic_cast<VulkanEngine::Backend::Event::WindowResizedEvent*>(events[0].get()), nullptr);
+    EXPECT_NE(dynamic_cast<VulkanEngine::Backend::Event::QuitEvent*>(events[1].get()), nullptr);
 }
 
 TEST(PlatformShellTest, ReportsBackendInitializationFailure) {

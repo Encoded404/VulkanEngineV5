@@ -29,6 +29,7 @@ if(CMAKE_CONFIGURATION_TYPES)
 endif()
 
 target_sources(${BACKEND_TARGET} PRIVATE
+    Event/Event.cpp
     Platform/SdlPlatform.cpp
     Platform/SdlPlatformBackend.cpp
     RenderGraph/RenderGraph.cpp
@@ -49,6 +50,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
+            Event/Event.cppm
             Platform/SdlPlatform.cppm
             Platform/SdlPlatformBackend.cppm
             RenderGraph/RenderGraph.cppm

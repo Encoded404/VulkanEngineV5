@@ -9,6 +9,8 @@ module;
 
 module VulkanEngine.Platform.SdlPlatformBackend;
 
+import VulkanBackend.Event;
+
 namespace VulkanEngine::Platform {
 
 namespace {
@@ -59,27 +61,58 @@ public:
         return window_ != nullptr;
     }
 
-    [[nodiscard]] std::vector<PlatformEvent> PumpEvents() override {
-        std::vector<PlatformEvent> events{};
+    [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
+        VulkanEngine::Backend::Event::EventList events{};
 
         SDL_Event event{};
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
                 case SDL_EVENT_QUIT:
-                    events.push_back(PlatformEvent{.type = PlatformEventType::Quit});
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
                     break;
                 case SDL_EVENT_WINDOW_RESIZED:
-                    events.push_back(PlatformEvent{
-                        .type = PlatformEventType::WindowResized,
-                        .width = static_cast<uint32_t>(event.window.data1),
-                        .height = static_cast<uint32_t>(event.window.data2),
-                    });
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowResizedEvent>(
+                        static_cast<uint32_t>(event.window.data1),
+                        static_cast<uint32_t>(event.window.data2)));
                     break;
                 case SDL_EVENT_WINDOW_MINIMIZED:
-                    events.push_back(PlatformEvent{.type = PlatformEventType::WindowMinimized});
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowMinimizedEvent>());
                     break;
                 case SDL_EVENT_WINDOW_RESTORED:
-                    events.push_back(PlatformEvent{.type = PlatformEventType::WindowRestored});
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowRestoredEvent>());
+                    break;
+                case SDL_EVENT_KEY_DOWN:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyDownEvent>(
+                        static_cast<int32_t>(event.key.key),
+                        event.key.repeat != 0));
+                    break;
+                case SDL_EVENT_KEY_UP:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyUpEvent>(
+                        static_cast<int32_t>(event.key.key)));
+                    break;
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonDownEvent>(
+                        static_cast<int32_t>(event.button.button),
+                        static_cast<int32_t>(event.button.x),
+                        static_cast<int32_t>(event.button.y)));
+                    break;
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonUpEvent>(
+                        static_cast<int32_t>(event.button.button),
+                        static_cast<int32_t>(event.button.x),
+                        static_cast<int32_t>(event.button.y)));
+                    break;
+                case SDL_EVENT_MOUSE_MOTION:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseMotionEvent>(
+                        static_cast<float>(event.motion.x),
+                        static_cast<float>(event.motion.y),
+                        static_cast<float>(event.motion.xrel),
+                        static_cast<float>(event.motion.yrel)));
+                    break;
+                case SDL_EVENT_MOUSE_WHEEL:
+                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseWheelEvent>(
+                        static_cast<float>(event.wheel.x),
+                        static_cast<float>(event.wheel.y)));
                     break;
                 default:
                     break;

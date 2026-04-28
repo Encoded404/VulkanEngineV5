@@ -4,6 +4,7 @@ target_link_libraries(${ENGINE_TARGET} PUBLIC logiface::logiface)
 
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     FileLoader
+    ${BACKEND_TARGET}
 )
 
 find_package(Vulkan REQUIRED)
@@ -37,6 +38,7 @@ if(CMAKE_CONFIGURATION_TYPES)
 endif()
 
 target_sources(${ENGINE_TARGET} PRIVATE
+    Input/Input.cpp
     Mesh/MeshAssembler.cpp
     ResourceSystem/ResourceSystem.cpp
     ResourceSystem/TextureResource.cpp
@@ -48,6 +50,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
             Component/Component.cppm
+            Input/Input.cppm
             Mesh/MeshTypes.cppm
             Mesh/MeshAssembler.cppm
             ResourceSystem/ResourceSystem.cppm

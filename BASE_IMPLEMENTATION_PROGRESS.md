@@ -18,6 +18,8 @@ This document tracks milestone-level progress for the base runtime + render-grap
 - [x] Concrete SDL3 backend wiring behind `SdlPlatformShell` interface
 - [x] Concrete Vulkan backend wiring behind `VulkanBootstrap` interface
 - [x] App bootstrap loop wired to concrete backend factories
+- [x] Backend event module with polymorphic `IEvent` / `Event` base types
+- [x] Engine-side input module under `src/engine/Input/`
 - [x] Asset-copy CMake helper for `src/app/models` and `src/app/textures`
 - [x] Runnable spinning textured object demo loop in app
 - [x] Demo frame presentation routed through Vulkan backend swapchain path

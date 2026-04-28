@@ -130,7 +130,7 @@ Added concrete backend modules:
 
 Current behavior:
 
-- SDL backend: initializes SDL video, creates a Vulkan-capable resizable window, translates SDL events into `PlatformEvent`.
+- SDL backend: initializes SDL video, creates a Vulkan-capable resizable window, translates SDL events into backend `IEvent` / `Event` objects.
 - Vulkan backend: uses `volk` to initialize Vulkan, create instance, select a physical device, create logical device + graphics queue, and provide a skeleton swapchain-image-count stage.
 
 This keeps the architecture boundaries from prior steps while introducing real backend plumbing.
@@ -238,6 +238,8 @@ These remain planned but deferred until the compile-only graph core is stable.
 - Added backend factory tests to validate concrete backend creation paths.
 - Wired app bootstrap loop to the concrete backend factory modules.
 - Added app asset copy CMake helper and app-level textured spinning demo rendering path.
+- Added backend event module with polymorphic `IEvent` / `Event` base types plus window and input events.
+- Added engine-side input module under `src/engine/Input/` that consumes backend events and computes per-frame action state.
 - Validated with:
   - `cmake --build build --config Debug --target example_tests`
   - `ctest --test-dir build -C Debug --output-on-failure`

@@ -2,11 +2,12 @@ module;
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include <SDL3/SDL_video.h>
 
 export module VulkanBackend.Platform.SdlPlatform;
+
+import VulkanBackend.Event;
 
 export namespace VulkanEngine::Platform {
 
@@ -17,20 +18,6 @@ enum class PlatformStatus : uint8_t {
     WindowCreateFailed,
     QuitRequested,
     FatalError
-};
-
-enum class PlatformEventType : uint8_t {
-    None,
-    Quit,
-    WindowResized,
-    WindowMinimized,
-    WindowRestored
-};
-
-struct PlatformEvent {
-    PlatformEventType type = PlatformEventType::None; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct PlatformConfig {
@@ -57,7 +44,7 @@ public:
     [[nodiscard]] virtual bool Initialize() = 0;
     virtual void Shutdown() = 0;
     [[nodiscard]] virtual bool CreateMainWindow(const PlatformConfig& config) = 0;
-    [[nodiscard]] virtual std::vector<PlatformEvent> PumpEvents() = 0;
+    [[nodiscard]] virtual VulkanEngine::Backend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
 };
 
@@ -67,7 +54,7 @@ public:
 
     [[nodiscard]] bool Initialize(const PlatformConfig& config);
     void Shutdown();
-    void PollEvents();
+    [[nodiscard]] VulkanEngine::Backend::Event::EventList PollEvents();
 
     [[nodiscard]] const PlatformState& GetState() const;
     [[nodiscard]] bool IsInitialized() const;

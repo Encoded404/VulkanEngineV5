@@ -9,6 +9,7 @@
 #include <map>
 
 #include <SDL3/SDL_video.h>
+#include <SDL3/SDL_keycode.h>
 #include <boost/stacktrace.hpp>
 #include <CLI/CLI.hpp>
 
@@ -18,6 +19,7 @@
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanEngine.Platform.SdlPlatformBackend;
 import VulkanBackend.Runtime.FrameLoop;
+import VulkanEngine.Input;
 import VulkanEngine.Runtime.VulkanBootstrap;
 import VulkanEngine.Runtime.VulkanBootstrapBackend;
 import VulkanEngine.RenderGraph;
@@ -44,7 +46,7 @@ namespace {
     }
 } // anonymous namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
     CLI::App app{"VulkanEngineV5 Demo"};
 
     std::string log_level_str = "info";
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
     std::shared_ptr<VulkanEngine::Runtime::IVulkanBootstrapBackend> vk_backend{};
     std::unique_ptr<VulkanEngine::Runtime::VulkanBootstrap> bootstrap{};
     std::unique_ptr<VulkanEngine::Runtime::RuntimeShell> runtime{};
+    VulkanEngine::Input::InputSystem input_system{};
 
     try {
         InitializeLogger(ParseLogLevel(log_level_str));
@@ -184,12 +187,18 @@ int main(int argc, char** argv) {
         }
         runtime_initialized = true;
 
+        input_system.BindAction("quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+
         auto previous_time = std::chrono::steady_clock::now();
         float angle = 0.0f;
 
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
             LOGIFACE_LOG(trace, "new frame started");
-            platform->PollEvents();
+            const auto platform_events = platform->PollEvents();
+            input_system.ProcessEvents(platform_events);
+            if (input_system.WasActionStarted("quit")) {
+                runtime->RequestShutdown();
+            }
             const auto& platform_state = platform->GetState();
 
             if (platform_state.quit_requested) {

@@ -7,6 +7,8 @@ module;
 
 module VulkanBackend.Platform.SdlPlatform;
 
+import VulkanBackend.Event;
+
 namespace VulkanEngine::Platform {
 
 SdlPlatformShell::SdlPlatformShell(std::shared_ptr<IPlatformBackend> backend)
@@ -47,40 +49,45 @@ void SdlPlatformShell::Shutdown() {
     state_ = PlatformState{};
 }
 
-void SdlPlatformShell::PollEvents() {
+VulkanEngine::Backend::Event::EventList SdlPlatformShell::PollEvents() {
     if (!state_.initialized) {
         state_.status = PlatformStatus::NotInitialized;
-        return;
+        return {};
     }
 
     state_.resized = false;
 
-    for (const auto& event : backend_->PumpEvents()) {
-        switch (event.type) {
-            case PlatformEventType::Quit:
-                state_.quit_requested = true;
-                state_.status = PlatformStatus::QuitRequested;
-                break;
-            case PlatformEventType::WindowResized:
-                state_.resized = true;
-                state_.minimized = false;
-                state_.drawable_width = event.width;
-                state_.drawable_height = event.height;
-                state_.status = PlatformStatus::Ok;
-                break;
-            case PlatformEventType::WindowMinimized:
-                state_.minimized = true;
-                state_.status = PlatformStatus::Ok;
-                break;
-            case PlatformEventType::WindowRestored:
-                state_.minimized = false;
-                state_.status = PlatformStatus::Ok;
-                break;
-            case PlatformEventType::None:
-            default:
-                break;
+    auto events = backend_->PumpEvents();
+
+    for (const auto& event : events) {
+        if (dynamic_cast<const VulkanEngine::Backend::Event::QuitEvent*>(event.get()) != nullptr) {
+            state_.quit_requested = true;
+            state_.status = PlatformStatus::QuitRequested;
+            continue;
+        }
+
+        if (const auto* resized_event = dynamic_cast<const VulkanEngine::Backend::Event::WindowResizedEvent*>(event.get()); resized_event != nullptr) {
+            state_.resized = true;
+            state_.minimized = false;
+            state_.drawable_width = resized_event->width;
+            state_.drawable_height = resized_event->height;
+            state_.status = PlatformStatus::Ok;
+            continue;
+        }
+
+        if (dynamic_cast<const VulkanEngine::Backend::Event::WindowMinimizedEvent*>(event.get()) != nullptr) {
+            state_.minimized = true;
+            state_.status = PlatformStatus::Ok;
+            continue;
+        }
+
+        if (dynamic_cast<const VulkanEngine::Backend::Event::WindowRestoredEvent*>(event.get()) != nullptr) {
+            state_.minimized = false;
+            state_.status = PlatformStatus::Ok;
         }
     }
+
+    return events;
 }
 
 const PlatformState& SdlPlatformShell::GetState() const {

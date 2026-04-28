@@ -5,7 +5,7 @@
 
 #include <SDL3/SDL_video.h>
 
-import VulkanEngine.Platform.SdlPlatformShell;
+import VulkanBackend.Platform.SdlPlatform;
 
 namespace {
 

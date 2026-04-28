@@ -6,7 +6,7 @@ module;
 #include <memory>
 #include <vulkan/vulkan_raii.hpp>
 
-export module App.DemoScene;
+export module App.DemoSceneRenderer;
 
 import VulkanEngine.Runtime.VulkanBootstrap;
 import VulkanEngine.RenderGraph;
@@ -16,7 +16,7 @@ import VulkanEngine.ResourceSystem.TextureResource;
 import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 
-export namespace App::DemoScene {
+export namespace App::DemoSceneRenderer {
 
 enum class RenderMode : uint8_t {
     Normal,
@@ -91,4 +91,4 @@ private:
     static bool CreatePipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend, const uint32_t* vert_spv, size_t vert_size, const uint32_t* frag_spv, size_t frag_size, uint32_t vertex_stride);
 };
 
-} // namespace App::DemoScene
+} // namespace App::DemoSceneRenderer

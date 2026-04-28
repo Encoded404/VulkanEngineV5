@@ -15,16 +15,16 @@
 #include <logging/logging.hpp>
 #include <logging/ConsoleLogger.hpp>
 
-import VulkanEngine.Platform.SdlPlatformShell;
+import VulkanBackend.Platform.SdlPlatform;
 import VulkanEngine.Platform.SdlPlatformBackend;
-import VulkanEngine.Runtime.RuntimeShell;
+import VulkanBackend.Runtime.FrameLoop;
 import VulkanEngine.Runtime.VulkanBootstrap;
 import VulkanEngine.Runtime.VulkanBootstrapBackend;
 import VulkanEngine.RenderGraph;
 import VulkanEngine.RenderGraph.GraphExecutionBridge;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
-import App.DemoScene;
+import App.DemoSceneRenderer;
 
 namespace {
     void InitializeLogger(Logiface::Level level) {
@@ -51,12 +51,12 @@ int main(int argc, char** argv) {
     app.add_option("-l,--log-level", log_level_str, "Console output log level (trace, debug, info, warn, error, critical)")
        ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "critical"}));
 
-    App::DemoScene::RenderMode render_mode = App::DemoScene::RenderMode::Normal;
+    App::DemoSceneRenderer::RenderMode render_mode = App::DemoSceneRenderer::RenderMode::Normal;
     app.add_option("-m,--mode", render_mode, "Rendering mode")
-       ->transform(CLI::CheckedTransformer(std::map<std::string, App::DemoScene::RenderMode>{
-           {"normal", App::DemoScene::RenderMode::Normal},
-           {"normals", App::DemoScene::RenderMode::Normals},
-           {"no-textures", App::DemoScene::RenderMode::NoTextures}
+       ->transform(CLI::CheckedTransformer(std::map<std::string, App::DemoSceneRenderer::RenderMode>{
+           {"normal", App::DemoSceneRenderer::RenderMode::Normal},
+           {"normals", App::DemoSceneRenderer::RenderMode::Normals},
+           {"no-textures", App::DemoSceneRenderer::RenderMode::NoTextures}
        }, CLI::ignore_case));
 
     CLI11_PARSE(app, argc, argv);
@@ -100,27 +100,27 @@ int main(int argc, char** argv) {
         const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> fallback_handle("missing_texture", &resource_manager);
 
         const std::filesystem::path exe_dir = std::filesystem::absolute(std::filesystem::path(argv[0])).parent_path();
-        const auto mesh = App::DemoScene::DemoSceneManager::LoadMeshFromAssets(exe_dir / "models");
+        const auto mesh = App::DemoSceneRenderer::DemoSceneManager::LoadMeshFromAssets(exe_dir / "models");
 
-        auto texture_handle = App::DemoScene::DemoSceneManager::LoadTexture(resource_manager, exe_dir / "textures", fallback_handle);
+        auto texture_handle = App::DemoSceneRenderer::DemoSceneManager::LoadTexture(resource_manager, exe_dir / "textures", fallback_handle);
 
         // If the handle is the fallback, we need to make sure the resource exists in the manager or use the pointer.
         VulkanEngine::TextureResource* active_texture = texture_handle.IsValid() ? texture_handle.Get() : missing_texture.get();
 
-        const auto demo_vertices = App::DemoScene::DemoSceneManager::ConvertToDemoVertices(mesh);
+        const auto demo_vertices = App::DemoSceneRenderer::DemoSceneManager::ConvertToDemoVertices(mesh);
 
         const std::filesystem::path shader_dir = SHADER_DIR;
         std::string const vert_name = "textured.vert.spv";
         std::string frag_name = "textured.frag.spv";
 
-        if (render_mode == App::DemoScene::RenderMode::Normals) {
+        if (render_mode == App::DemoSceneRenderer::RenderMode::Normals) {
             frag_name = "normals.frag.spv";
-        } else if (render_mode == App::DemoScene::RenderMode::NoTextures) {
+        } else if (render_mode == App::DemoSceneRenderer::RenderMode::NoTextures) {
             frag_name = "solid.frag.spv";
         }
 
-        const auto vert_spv = App::DemoScene::DemoSceneManager::ReadSpirv(shader_dir / vert_name);
-        const auto frag_spv = App::DemoScene::DemoSceneManager::ReadSpirv(shader_dir / frag_name);
+        const auto vert_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / vert_name);
+        const auto frag_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / frag_name);
 
         vk_backend = VulkanEngine::Runtime::CreateVulkanBootstrapBackend();
         bootstrap = std::make_unique<VulkanEngine::Runtime::VulkanBootstrap>(vk_backend);
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
         }
         bootstrap_initialized = true;
 
-        if (!App::DemoScene::DemoSceneManager::UploadDemoScene(
+        if (!App::DemoSceneRenderer::DemoSceneManager::UploadDemoScene(
                 *bootstrap,
                 demo_vertices.data(),
                 static_cast<uint32_t>(demo_vertices.size()),
@@ -164,10 +164,10 @@ int main(int argc, char** argv) {
             VulkanEngine::RenderGraph::QueueType::Graphics,
             true,
             [](const void* user_data) {
-                const auto* frame = static_cast<const App::DemoScene::FrameRenderData*>(user_data);
+                const auto* frame = static_cast<const App::DemoSceneRenderer::FrameRenderData*>(user_data);
                 if (frame != nullptr && frame->bootstrap != nullptr) {
-                    auto* mutable_frame = const_cast<App::DemoScene::FrameRenderData*>(frame);
-                    mutable_frame->render_success = App::DemoScene::DemoSceneManager::RenderDemoFrame(*frame->bootstrap, mutable_frame->image_index, mutable_frame->angle_degrees);
+                    auto* mutable_frame = const_cast<App::DemoSceneRenderer::FrameRenderData*>(frame);
+                    mutable_frame->render_success = App::DemoSceneRenderer::DemoSceneManager::RenderDemoFrame(*frame->bootstrap, mutable_frame->image_index, mutable_frame->angle_degrees);
                 }
             });
 
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
                 runtime_frame,
                 VulkanEngine::RenderGraph::ImportedFrameResources{.backbuffer = backbuffer});
 
-            App::DemoScene::FrameRenderData frame_render_data{
+            App::DemoSceneRenderer::FrameRenderData frame_render_data{
                 .bootstrap = bootstrap.get(),
                 .graph_context = &graph_context,
                 .angle_degrees = angle,
@@ -258,7 +258,7 @@ int main(int argc, char** argv) {
         }
 
         if (scene_uploaded) {
-            App::DemoScene::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
+            App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
             scene_uploaded = false;
         }
         if (runtime_initialized) {
@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
         LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
         std::cerr << "\nStacktrace:\n" << trace << '\n';
         if (scene_uploaded && bootstrap_initialized && bootstrap) {
-            App::DemoScene::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
+            App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
             scene_uploaded = false;
         }
         if (runtime_initialized && runtime) {

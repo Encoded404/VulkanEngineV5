@@ -29,10 +29,10 @@ if(CMAKE_CONFIGURATION_TYPES)
 endif()
 
 target_sources(${BACKEND_TARGET} PRIVATE
-    Platform/SdlPlatformShell.cpp
+    Platform/SdlPlatform.cpp
     Platform/SdlPlatformBackend.cpp
     RenderGraph/RenderGraph.cpp
-    Runtime/RuntimeShell.cpp
+    Runtime/FrameLoop.cpp
     Runtime/VulkanBootstrap.cpp
     Runtime/VulkanDispatchLoader.cpp
     Runtime/VulkanBootstrapBackend.cpp
@@ -49,12 +49,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            Platform/SdlPlatformShell.cppm
+            Platform/SdlPlatform.cppm
             Platform/SdlPlatformBackend.cppm
             RenderGraph/RenderGraph.cppm
             RenderGraph/GraphExecutionContext.cppm
             RenderGraph/GraphExecutionBridge.cppm
-            Runtime/RuntimeShell.cppm
+            Runtime/FrameLoop.cppm
             Runtime/CommonTypes.cppm
             Runtime/VulkanBootstrap.cppm
             Runtime/VulkanBootstrapBackend.cppm

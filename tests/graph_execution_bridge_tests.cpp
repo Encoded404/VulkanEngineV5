@@ -2,7 +2,7 @@
 
 import VulkanEngine.RenderGraph;
 import VulkanEngine.RenderGraph.GraphExecutionBridge;
-import VulkanEngine.Runtime.RuntimeShell;
+import VulkanBackend.Runtime.FrameLoop;
 
 namespace {
 

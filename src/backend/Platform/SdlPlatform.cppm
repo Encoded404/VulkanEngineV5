@@ -6,7 +6,7 @@ module;
 
 #include <SDL3/SDL_video.h>
 
-export module VulkanEngine.Platform.SdlPlatformShell;
+export module VulkanBackend.Platform.SdlPlatform;
 
 export namespace VulkanEngine::Platform {
 

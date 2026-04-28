@@ -2,7 +2,7 @@ module;
 
 #include <algorithm>
 
-module VulkanEngine.Runtime.RuntimeShell;
+module VulkanBackend.Runtime.FrameLoop;
 
 namespace VulkanEngine::Runtime {
 

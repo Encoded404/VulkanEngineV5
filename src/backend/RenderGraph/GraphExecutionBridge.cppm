@@ -3,7 +3,7 @@ module;
 export module VulkanEngine.RenderGraph.GraphExecutionBridge;
 
 export import VulkanEngine.RenderGraph.GraphExecutionContext;
-import VulkanEngine.Runtime.RuntimeShell;
+import VulkanBackend.Runtime.FrameLoop;
 
 export namespace VulkanEngine::RenderGraph {
 

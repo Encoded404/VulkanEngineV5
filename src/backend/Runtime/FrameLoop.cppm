@@ -2,7 +2,7 @@ module;
 
 #include <cstdint>
 
-export module VulkanEngine.Runtime.RuntimeShell;
+export module VulkanBackend.Runtime.FrameLoop;
 
 export namespace VulkanEngine::Runtime {
 

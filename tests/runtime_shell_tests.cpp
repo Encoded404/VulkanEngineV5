@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-import VulkanEngine.Runtime.RuntimeShell;
+import VulkanBackend.Runtime.FrameLoop;
 
 namespace {
 

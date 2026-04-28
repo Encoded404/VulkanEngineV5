@@ -4,7 +4,7 @@ module;
 
 export module VulkanEngine.Platform.SdlPlatformBackend;
 
-import VulkanEngine.Platform.SdlPlatformShell;
+import VulkanBackend.Platform.SdlPlatform;
 
 export namespace VulkanEngine::Platform {
 

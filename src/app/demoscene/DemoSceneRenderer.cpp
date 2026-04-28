@@ -15,13 +15,13 @@ module;
 
 #include <logging/logging.hpp>
 
-module App.DemoScene;
+module App.DemoSceneRenderer;
 
 import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 import VulkanEngine.Mesh.MeshTypes;
 
-namespace App::DemoScene {
+namespace App::DemoSceneRenderer {
 
 struct DemoSceneManager::RawResources {
     std::unique_ptr<vk::raii::Buffer> vertex_buffer{};
@@ -526,4 +526,4 @@ bool DemoSceneManager::CreatePipeline(VulkanEngine::Runtime::IVulkanBootstrapBac
     return true;
 }
 
-} // namespace App::DemoScene
+} // namespace App::DemoSceneRenderer

@@ -1,7 +1,7 @@
 add_executable(${APP_TARGET})
 target_sources(${APP_TARGET} PRIVATE
     main.cpp
-    demoscene/DemoScene.cpp
+    demoscene/DemoSceneRenderer.cpp
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -9,7 +9,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            demoscene/DemoScene.cppm
+            demoscene/DemoSceneRenderer.cppm
     )
 endif()
 

@@ -21,6 +21,13 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   message(FATAL_ERROR "C++ modules required but the compiler (${CMAKE_CXX_COMPILER_ID}) is not supported. Use Clang or GCC.")
 endif()
 
+find_program(CCACHE_PROGRAM ccache)
+
+if(CCACHE_PROGRAM)
+	#set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM}) # we dont use the c compiler rn
+	set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
+endif()
+
 # Enable CTest at the top level so `ctest` discovers tests
 include(CTest)
 

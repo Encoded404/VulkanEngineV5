@@ -11,9 +11,9 @@ import VulkanEngine.Component;
 namespace {
 // Compile-time schema used to verify field metadata extraction in the tests.
 struct TransformSchema {
-    static constexpr auto fields = make_fields(
-        field<int>("position"),
-        field<float>("rotation")
+    static constexpr auto fields = VulkanEngine::make_fields(
+        VulkanEngine::field<int>("position"),
+        VulkanEngine::field<float>("rotation")
     );
 };
 }  // namespace
@@ -47,7 +47,7 @@ TEST(ComponentSystemTest, FieldHandleActsLikePointerBackedAccess) {
 
     // Start with a plain value and bind a handle to it.
     int position = 7;
-    FieldHandle<int> handle(position);
+    VulkanEngine::FieldHandle<int> handle(position);
 
     LOGIFACE_LOG(info, "Checking FieldHandle pointer-like access");
 
@@ -69,12 +69,12 @@ TEST(ComponentSystemTest, PackedFieldStorageSwapDeleteRebindsHandles) {
     TestLogging::InstallPerTestFileLogger();
 
     // Prepare storage and reserve room for two elements.
-    PackedFieldStorage<int> storage;
+    VulkanEngine::PackedFieldStorage<int> storage;
     storage.Reserve(2);
 
     // Keep handles to both stored values so we can verify rebinding later.
-    FieldHandle<int> first;
-    FieldHandle<int> second;
+    VulkanEngine::FieldHandle<int> first;
+    VulkanEngine::FieldHandle<int> second;
 
     LOGIFACE_LOG(info, "Emplacing values into PackedFieldStorage");
 
@@ -110,12 +110,10 @@ TEST(ComponentSystemTest, TypeIdSystemReturnsStableIdsPerType) {
     LOGIFACE_LOG(info, "Checking stable component type ids");
 
     // Repeated requests for the same type must return the same ID.
-    const auto id_a_1 = ComponentTypeIDSystem::GetTypeID<TypeA>();
-    const auto id_a_2 = ComponentTypeIDSystem::GetTypeID<TypeA>();
-    const auto id_b = ComponentTypeIDSystem::GetTypeID<TypeB>();
+    const auto id_a_1 = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeA>();
+    const auto id_a_2 = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeA>();
+    const auto id_b = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeB>();
 
     EXPECT_EQ(id_a_1, id_a_2);
     EXPECT_NE(id_a_1, id_b);
 }
-
-

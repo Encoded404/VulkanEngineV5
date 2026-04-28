@@ -12,10 +12,12 @@ module;
 
 export module VulkanEngine.Component;
 
-export class Entity;
+export namespace VulkanEngine {
+
+class Entity;
 
 // Component type ID system
-export class ComponentTypeIDSystem {
+class ComponentTypeIDSystem {
 private:
     inline static std::atomic_size_t next_type_id{0};
 
@@ -28,24 +30,24 @@ public:
 };
 
 // Compile-time field metadata for semi-ECS / SoA-backed component fields.
-export template<typename T>
+template<typename T>
 struct FieldDescriptor {
     using value_type = T;
 
-    std::string_view name{};
+    std::string_view name{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-export template<typename T>
+template<typename T>
 [[nodiscard]] constexpr FieldDescriptor<T> Field(std::string_view name) noexcept {
     return FieldDescriptor<T>{name};
 }
 
-export template<typename T>
+template<typename T>
 [[nodiscard]] constexpr FieldDescriptor<T> field(std::string_view name) noexcept { // NOLINT(readability-identifier-naming)
     return Field<T>(name);
 }
 
-export template<typename... Fields>
+template<typename... Fields>
 struct FieldList {
     using tuple_type = std::tuple<Fields...>;
 
@@ -78,19 +80,19 @@ private:
     tuple_type fields_{};
 };
 
-export template<typename... Fields>
+template<typename... Fields>
 [[nodiscard]] constexpr auto MakeFields(Fields... descriptors) noexcept {
     return FieldList<Fields...>{std::move(descriptors)...};
 }
 
-export template<typename... Fields>
+template<typename... Fields>
 [[nodiscard]] constexpr auto make_fields(Fields... descriptors) noexcept { // NOLINT(readability-identifier-naming)
     return MakeFields(std::move(descriptors)...);
 }
 
 // Lightweight direct-access handle to SoA storage.
 // This is intentionally pointer-like so `component.position = value;` stays cheap.
-export template<typename T>
+template<typename T>
 class FieldHandle {
 public:
     using value_type = T;
@@ -165,7 +167,7 @@ public:
 
 // Packed field storage for SoA-backed component fields.
 // Swap-delete keeps the data compact and updates the bound handles.
-export template<typename T>
+template<typename T>
 class PackedFieldStorage {
 public:
     using value_type = T;
@@ -256,7 +258,7 @@ private:
     std::vector<FieldHandle<value_type>*> bindings_;
 };
 
-export class Component {
+class Component {
 protected:
     Entity* owner_ = nullptr; //NOLINT(misc-non-private-member-variables-in-classes)
 
@@ -271,3 +273,4 @@ public:
     [[nodiscard]] Entity* GetOwner() const { return owner_; }
 };
 
+} // namespace VulkanEngine

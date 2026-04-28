@@ -1,20 +1,19 @@
 module;
 
-#include <volk.h>
-#include <cstdint>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 
 module VulkanEngine.Utils.PipelineUtils;
 
 namespace VulkanEngine::Utils {
 
-VkViewport PipelineUtils::CreateViewport(float width,
+vk::Viewport PipelineUtils::CreateViewport(float width,
                                          float height,
                                          float min_depth,
                                          float max_depth,
                                          float x,
                                          float y) {
-    VkViewport viewport{};
+    vk::Viewport viewport{};
     viewport.x = x;
     viewport.y = y;
     viewport.width = width;
@@ -24,58 +23,58 @@ VkViewport PipelineUtils::CreateViewport(float width,
     return viewport;
 }
 
-VkRect2D PipelineUtils::CreateScissor(uint32_t width, uint32_t height, int32_t offset_x, int32_t offset_y) {
-    VkRect2D scissor{};
-    scissor.offset = {offset_x, offset_y};
-    scissor.extent = {width, height};
+vk::Rect2D PipelineUtils::CreateScissor(uint32_t width, uint32_t height, int32_t offset_x, int32_t offset_y) {
+    vk::Rect2D scissor{};
+    scissor.offset = vk::Offset2D{offset_x, offset_y};
+    scissor.extent = vk::Extent2D{width, height};
     return scissor;
 }
 
-VkPipelineColorBlendAttachmentState PipelineUtils::CreateDefaultColorBlendAttachment() {
-    VkPipelineColorBlendAttachmentState attachment{};
-    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                VK_COLOR_COMPONENT_G_BIT |
-                                VK_COLOR_COMPONENT_B_BIT |
-                                VK_COLOR_COMPONENT_A_BIT;
+vk::PipelineColorBlendAttachmentState PipelineUtils::CreateDefaultColorBlendAttachment() {
+    vk::PipelineColorBlendAttachmentState attachment{};
+    attachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
+                                vk::ColorComponentFlagBits::eG |
+                                vk::ColorComponentFlagBits::eB |
+                                vk::ColorComponentFlagBits::eA;
     attachment.blendEnable = VK_FALSE;
     return attachment;
 }
 
-VkPipelineColorBlendAttachmentState PipelineUtils::CreateAlphaBlendAttachment() {
-    VkPipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
+vk::PipelineColorBlendAttachmentState PipelineUtils::CreateAlphaBlendAttachment() {
+    vk::PipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
     attachment.blendEnable = VK_TRUE;
-    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+    attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    attachment.colorBlendOp = vk::BlendOp::eAdd;
+    attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+    attachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    attachment.alphaBlendOp = vk::BlendOp::eAdd;
     return attachment;
 }
 
-VkPipelineColorBlendAttachmentState PipelineUtils::CreateAdditiveBlendAttachment() {
-    VkPipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
+vk::PipelineColorBlendAttachmentState PipelineUtils::CreateAdditiveBlendAttachment() {
+    vk::PipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
     attachment.blendEnable = VK_TRUE;
-    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+    attachment.dstColorBlendFactor = vk::BlendFactor::eOne;
+    attachment.colorBlendOp = vk::BlendOp::eAdd;
+    attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+    attachment.dstAlphaBlendFactor = vk::BlendFactor::eOne;
+    attachment.alphaBlendOp = vk::BlendOp::eAdd;
     return attachment;
 }
 
-VkPipelineColorBlendAttachmentState PipelineUtils::CreateNoBlendAttachment() {
-    VkPipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
-    attachment.colorWriteMask = 0;
+vk::PipelineColorBlendAttachmentState PipelineUtils::CreateNoBlendAttachment() {
+    vk::PipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
+    attachment.colorWriteMask = vk::ColorComponentFlags{};
     return attachment;
 }
 
-VkPipelineDepthStencilStateCreateInfo PipelineUtils::CreateDefaultDepthStencilState() {
-    VkPipelineDepthStencilStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateDefaultDepthStencilState() {
+    vk::PipelineDepthStencilStateCreateInfo info{};
     info.depthTestEnable = VK_TRUE;
     info.depthWriteEnable = VK_TRUE;
-    info.depthCompareOp = VK_COMPARE_OP_LESS;
+    info.depthCompareOp = vk::CompareOp::eLess;
     info.depthBoundsTestEnable = VK_FALSE;
     info.stencilTestEnable = VK_FALSE;
     info.minDepthBounds = 0.0f;
@@ -83,71 +82,71 @@ VkPipelineDepthStencilStateCreateInfo PipelineUtils::CreateDefaultDepthStencilSt
     return info;
 }
 
-VkPipelineDepthStencilStateCreateInfo PipelineUtils::CreateDepthTestOnlyState() {
-    VkPipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
+vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateDepthTestOnlyState() {
+    vk::PipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
     info.depthWriteEnable = VK_FALSE;
     return info;
 }
 
-VkPipelineDepthStencilStateCreateInfo PipelineUtils::CreateNoDepthTestState() {
-    VkPipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
+vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateNoDepthTestState() {
+    vk::PipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
     info.depthTestEnable = VK_FALSE;
     info.depthWriteEnable = VK_FALSE;
     return info;
 }
 
-VkPipelineRasterizationStateCreateInfo PipelineUtils::CreateDefaultRasterizationState() {
-    VkPipelineRasterizationStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+vk::PipelineRasterizationStateCreateInfo PipelineUtils::CreateDefaultRasterizationState() {
+    vk::PipelineRasterizationStateCreateInfo info{};
     info.depthClampEnable = VK_FALSE;
     info.rasterizerDiscardEnable = VK_FALSE;
-    info.polygonMode = VK_POLYGON_MODE_FILL;
-    info.cullMode = VK_CULL_MODE_BACK_BIT;
-    info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    info.polygonMode = vk::PolygonMode::eFill;
+    info.cullMode = vk::CullModeFlagBits::eBack;
+    info.frontFace = vk::FrontFace::eCounterClockwise;
     info.depthBiasEnable = VK_FALSE;
     info.lineWidth = 1.0f;
     return info;
 }
 
-VkPipelineRasterizationStateCreateInfo PipelineUtils::CreateWireframeRasterizationState() {
-    VkPipelineRasterizationStateCreateInfo info = CreateDefaultRasterizationState();
-    info.polygonMode = VK_POLYGON_MODE_LINE;
+vk::PipelineRasterizationStateCreateInfo PipelineUtils::CreateWireframeRasterizationState() {
+    vk::PipelineRasterizationStateCreateInfo info = CreateDefaultRasterizationState();
+    info.polygonMode = vk::PolygonMode::eLine;
     return info;
 }
 
-VkPipelineRasterizationStateCreateInfo PipelineUtils::CreateNoCullRasterizationState() {
-    VkPipelineRasterizationStateCreateInfo info = CreateDefaultRasterizationState();
-    info.cullMode = VK_CULL_MODE_NONE;
+vk::PipelineRasterizationStateCreateInfo PipelineUtils::CreateNoCullRasterizationState() {
+    vk::PipelineRasterizationStateCreateInfo info = CreateDefaultRasterizationState();
+    info.cullMode = vk::CullModeFlagBits::eNone;
     return info;
 }
 
-VkPipelineMultisampleStateCreateInfo PipelineUtils::CreateDefaultMultisampleState() {
-    VkPipelineMultisampleStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+vk::PipelineMultisampleStateCreateInfo PipelineUtils::CreateDefaultMultisampleState() {
+    vk::PipelineMultisampleStateCreateInfo info{};
+    info.rasterizationSamples = vk::SampleCountFlagBits::e1;
     info.sampleShadingEnable = VK_FALSE;
     return info;
 }
 
-VkPipelineMultisampleStateCreateInfo PipelineUtils::CreateMsaaMultisampleState(VkSampleCountFlagBits samples) {
-    VkPipelineMultisampleStateCreateInfo info = CreateDefaultMultisampleState();
+vk::PipelineMultisampleStateCreateInfo PipelineUtils::CreateMsaaMultisampleState(vk::SampleCountFlagBits samples) {
+    vk::PipelineMultisampleStateCreateInfo info = CreateDefaultMultisampleState();
     info.rasterizationSamples = samples;
     return info;
 }
 
-VkVertexInputBindingDescription PipelineUtils::CreateVertexInputBinding(uint32_t binding,
+vk::VertexInputBindingDescription PipelineUtils::CreateVertexInputBinding(uint32_t binding,
                                                                         uint32_t stride,
-                                                                        VkVertexInputRate input_rate) {
-    VkVertexInputBindingDescription desc{};
+                                                                        vk::VertexInputRate input_rate) {
+    vk::VertexInputBindingDescription desc{};
     desc.binding = binding;
     desc.stride = stride;
     desc.inputRate = input_rate;
     return desc;
 }
 
-VkVertexInputAttributeDescription PipelineUtils::CreateVertexInputAttribute(uint32_t location,
+vk::VertexInputAttributeDescription PipelineUtils::CreateVertexInputAttribute(uint32_t location,
                                                                             uint32_t binding,
-                                                                            VkFormat format,
+                                                                            vk::Format format,
                                                                             uint32_t offset) {
-    VkVertexInputAttributeDescription desc{};
+    vk::VertexInputAttributeDescription desc{};
     desc.location = location;
     desc.binding = binding;
     desc.format = format;
@@ -155,11 +154,11 @@ VkVertexInputAttributeDescription PipelineUtils::CreateVertexInputAttribute(uint
     return desc;
 }
 
-VkPipelineShaderStageCreateInfo PipelineUtils::CreateShaderStageCreateInfo(VkShaderStageFlagBits stage,
-                                                                           VkShaderModule module,
+vk::PipelineShaderStageCreateInfo PipelineUtils::CreateShaderStageCreateInfo(vk::ShaderStageFlagBits stage,
+                                                                           vk::ShaderModule module,
                                                                            const char* entry_point,
-                                                                           const VkSpecializationInfo* specialization_info) {
-    VkPipelineShaderStageCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+                                                                           const vk::SpecializationInfo* specialization_info) {
+    vk::PipelineShaderStageCreateInfo info{};
     info.stage = stage;
     info.module = module;
     info.pName = entry_point ? entry_point : "main";
@@ -167,23 +166,23 @@ VkPipelineShaderStageCreateInfo PipelineUtils::CreateShaderStageCreateInfo(VkSha
     return info;
 }
 
-VkPipelineInputAssemblyStateCreateInfo PipelineUtils::CreateInputAssemblyState(VkPrimitiveTopology topology,
-                                                                               VkBool32 primitive_restart_enable) {
-    VkPipelineInputAssemblyStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+vk::PipelineInputAssemblyStateCreateInfo PipelineUtils::CreateInputAssemblyState(vk::PrimitiveTopology topology,
+                                                                               vk::Bool32 primitive_restart_enable) {
+    vk::PipelineInputAssemblyStateCreateInfo info{};
     info.topology = topology;
     info.primitiveRestartEnable = primitive_restart_enable;
     return info;
 }
 
-VkPipelineTessellationStateCreateInfo PipelineUtils::CreateTessellationState(uint32_t patch_control_points) {
-    VkPipelineTessellationStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO};
+vk::PipelineTessellationStateCreateInfo PipelineUtils::CreateTessellationState(uint32_t patch_control_points) {
+    vk::PipelineTessellationStateCreateInfo info{};
     info.patchControlPoints = patch_control_points;
     return info;
 }
 
-VkPipelineViewportStateCreateInfo PipelineUtils::CreateViewportState(const std::vector<VkViewport>& viewports,
-                                                                     const std::vector<VkRect2D>& scissors) {
-    VkPipelineViewportStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+vk::PipelineViewportStateCreateInfo PipelineUtils::CreateViewportState(const std::vector<vk::Viewport>& viewports,
+                                                                 const std::vector<vk::Rect2D>& scissors) {
+    vk::PipelineViewportStateCreateInfo info{};
     info.viewportCount = static_cast<uint32_t>(viewports.size());
     info.pViewports = viewports.empty() ? nullptr : viewports.data();
     info.scissorCount = static_cast<uint32_t>(scissors.size());
@@ -191,9 +190,9 @@ VkPipelineViewportStateCreateInfo PipelineUtils::CreateViewportState(const std::
     return info;
 }
 
-VkPipelineViewportStateCreateInfo PipelineUtils::CreateDynamicViewportState(uint32_t viewport_count,
+vk::PipelineViewportStateCreateInfo PipelineUtils::CreateDynamicViewportState(uint32_t viewport_count,
                                                                             uint32_t scissor_count) {
-    VkPipelineViewportStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vk::PipelineViewportStateCreateInfo info{};
     info.viewportCount = viewport_count;
     info.pViewports = nullptr;
     info.scissorCount = scissor_count;
@@ -201,10 +200,10 @@ VkPipelineViewportStateCreateInfo PipelineUtils::CreateDynamicViewportState(uint
     return info;
 }
 
-VkPipelineColorBlendStateCreateInfo PipelineUtils::CreateColorBlendState(const std::vector<VkPipelineColorBlendAttachmentState>& attachments,
-                                                                         VkBool32 logic_op_enable,
-                                                                         VkLogicOp logic_op) {
-    VkPipelineColorBlendStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+vk::PipelineColorBlendStateCreateInfo PipelineUtils::CreateColorBlendState(const std::vector<vk::PipelineColorBlendAttachmentState>& attachments,
+                                                                         vk::Bool32 logic_op_enable,
+                                                                         vk::LogicOp logic_op) {
+    vk::PipelineColorBlendStateCreateInfo info{};
     info.logicOpEnable = logic_op_enable;
     info.logicOp = logic_op;
     info.attachmentCount = static_cast<uint32_t>(attachments.size());
@@ -212,23 +211,23 @@ VkPipelineColorBlendStateCreateInfo PipelineUtils::CreateColorBlendState(const s
     return info;
 }
 
-VkPipelineDynamicStateCreateInfo PipelineUtils::CreateDynamicState(const std::vector<VkDynamicState>& dynamic_states) {
-    VkPipelineDynamicStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+vk::PipelineDynamicStateCreateInfo PipelineUtils::CreateDynamicState(const std::vector<vk::DynamicState>& dynamic_states) {
+    vk::PipelineDynamicStateCreateInfo info{};
     info.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
     info.pDynamicStates = dynamic_states.empty() ? nullptr : dynamic_states.data();
     return info;
 }
 
-std::vector<VkDynamicState> PipelineUtils::GetBasicDynamicStates() {
-    return {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+std::vector<vk::DynamicState> PipelineUtils::GetBasicDynamicStates() {
+    return {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 }
 
-std::vector<VkDynamicState> PipelineUtils::GetExtendedDynamicStates() {
-    return {VK_DYNAMIC_STATE_VIEWPORT,
-            VK_DYNAMIC_STATE_SCISSOR,
-            VK_DYNAMIC_STATE_LINE_WIDTH,
-            VK_DYNAMIC_STATE_DEPTH_BIAS,
-            VK_DYNAMIC_STATE_BLEND_CONSTANTS};
+std::vector<vk::DynamicState> PipelineUtils::GetExtendedDynamicStates() {
+    return {vk::DynamicState::eViewport,
+            vk::DynamicState::eScissor,
+            vk::DynamicState::eLineWidth,
+            vk::DynamicState::eDepthBias,
+            vk::DynamicState::eBlendConstants};
 }
 
 } // namespace VulkanEngine::Utils

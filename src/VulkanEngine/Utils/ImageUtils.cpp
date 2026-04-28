@@ -1,9 +1,8 @@
 module;
 
-#include <volk.h>
+#include <vulkan/vulkan_raii.hpp>
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 
 module VulkanEngine.Utils.ImageUtils;
 
@@ -14,27 +13,27 @@ uint32_t ImageUtils::CalculateMipLevels(uint32_t width, uint32_t height, uint32_
     return static_cast<uint32_t>(std::floor(std::log2(std::max(1u, max_dim)))) + 1;
 }
 
-VkImageAspectFlags ImageUtils::GetImageAspectFlags(VkFormat format) {
+vk::ImageAspectFlags ImageUtils::GetImageAspectFlags(vk::Format format) {
     switch (format) {
-        case VK_FORMAT_D32_SFLOAT:
-        case VK_FORMAT_D16_UNORM:
-        case VK_FORMAT_X8_D24_UNORM_PACK32:
-            return VK_IMAGE_ASPECT_DEPTH_BIT;
-        case VK_FORMAT_D32_SFLOAT_S8_UINT:
-        case VK_FORMAT_D24_UNORM_S8_UINT:
-        case VK_FORMAT_D16_UNORM_S8_UINT:
-            return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        case vk::Format::eD32Sfloat:
+        case vk::Format::eD16Unorm:
+        case vk::Format::eX8D24UnormPack32:
+            return vk::ImageAspectFlagBits::eDepth;
+        case vk::Format::eD32SfloatS8Uint:
+        case vk::Format::eD24UnormS8Uint:
+        case vk::Format::eD16UnormS8Uint:
+            return vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
         default:
-            return VK_IMAGE_ASPECT_COLOR_BIT;
+            return vk::ImageAspectFlagBits::eColor;
     }
 }
 
-VkImageSubresourceRange ImageUtils::CreateSubresourceRange(VkImageAspectFlags aspect_flags,
+vk::ImageSubresourceRange ImageUtils::CreateSubresourceRange(vk::ImageAspectFlags aspect_flags,
                                                             uint32_t base_mip_level,
                                                             uint32_t level_count,
                                                             uint32_t base_array_layer,
                                                             uint32_t layer_count) {
-    VkImageSubresourceRange range{};
+    vk::ImageSubresourceRange range{};
     range.aspectMask = aspect_flags;
     range.baseMipLevel = base_mip_level;
     range.levelCount = level_count;
@@ -43,13 +42,13 @@ VkImageSubresourceRange ImageUtils::CreateSubresourceRange(VkImageAspectFlags as
     return range;
 }
 
-VkBufferImageCopy ImageUtils::CreateBufferImageCopy(uint32_t width,
+vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(uint32_t width,
                                                     uint32_t height,
-                                                    VkImageAspectFlags aspect_flags,
+                                                    vk::ImageAspectFlags aspect_flags,
                                                     uint32_t mip_level,
                                                     uint32_t array_layer,
-                                                    VkDeviceSize buffer_offset) {
-    VkBufferImageCopy copy{};
+                                                    vk::DeviceSize buffer_offset) {
+    vk::BufferImageCopy copy{};
     copy.bufferOffset = buffer_offset;
     copy.bufferRowLength = 0;
     copy.bufferImageHeight = 0;
@@ -57,17 +56,17 @@ VkBufferImageCopy ImageUtils::CreateBufferImageCopy(uint32_t width,
     copy.imageSubresource.mipLevel = mip_level;
     copy.imageSubresource.baseArrayLayer = array_layer;
     copy.imageSubresource.layerCount = 1;
-    copy.imageOffset = {0, 0, 0};
-    copy.imageExtent = {width, height, 1};
+    copy.imageOffset = vk::Offset3D{0, 0, 0};
+    copy.imageExtent = vk::Extent3D{width, height, 1};
     return copy;
 }
 
-VkImageCopy ImageUtils::CreateImageCopy(const VkImageSubresourceLayers& src_subresource,
-                                         const VkOffset3D& src_offset,
-                                         const VkImageSubresourceLayers& dst_subresource,
-                                         const VkOffset3D& dst_offset,
-                                         const VkExtent3D& extent) {
-    VkImageCopy copy{};
+vk::ImageCopy ImageUtils::CreateImageCopy(const vk::ImageSubresourceLayers& src_subresource,
+                                         const vk::Offset3D& src_offset,
+                                         const vk::ImageSubresourceLayers& dst_subresource,
+                                         const vk::Offset3D& dst_offset,
+                                         const vk::Extent3D& extent) {
+    vk::ImageCopy copy{};
     copy.srcSubresource = src_subresource;
     copy.srcOffset = src_offset;
     copy.dstSubresource = dst_subresource;
@@ -76,11 +75,11 @@ VkImageCopy ImageUtils::CreateImageCopy(const VkImageSubresourceLayers& src_subr
     return copy;
 }
 
-VkImageSubresourceLayers ImageUtils::CreateSubresourceLayers(VkImageAspectFlags aspect_flags,
+vk::ImageSubresourceLayers ImageUtils::CreateSubresourceLayers(vk::ImageAspectFlags aspect_flags,
                                                              uint32_t mip_level,
                                                              uint32_t base_array_layer,
                                                              uint32_t layer_count) {
-    VkImageSubresourceLayers layers{};
+    vk::ImageSubresourceLayers layers{};
     layers.aspectMask = aspect_flags;
     layers.mipLevel = mip_level;
     layers.baseArrayLayer = base_array_layer;
@@ -88,19 +87,19 @@ VkImageSubresourceLayers ImageUtils::CreateSubresourceLayers(VkImageAspectFlags 
     return layers;
 }
 
-VkDeviceSize ImageUtils::CalculateImageSize(uint32_t width,
+vk::DeviceSize ImageUtils::CalculateImageSize(uint32_t width,
                                             uint32_t height,
                                             uint32_t depth,
                                             uint32_t mip_levels,
                                             uint32_t array_layers,
-                                            VkFormat /*format*/) {
-    VkDeviceSize size = 0;
+                                            vk::Format /*format*/) {
+    vk::DeviceSize size = 0;
     for (uint32_t layer = 0; layer < array_layers; ++layer) {
         uint32_t mip_width = width;
         uint32_t mip_height = height;
         uint32_t mip_depth = depth;
         for (uint32_t level = 0; level < mip_levels; ++level) {
-            size += static_cast<VkDeviceSize>(std::max(1u, mip_width) * std::max(1u, mip_height) * std::max(1u, mip_depth));
+            size += static_cast<vk::DeviceSize>(std::max(1u, mip_width) * std::max(1u, mip_height) * std::max(1u, mip_depth));
             mip_width = std::max(mip_width / 2, 1u);
             mip_height = std::max(mip_height / 2, 1u);
             mip_depth = std::max(mip_depth / 2, 1u);
@@ -121,34 +120,34 @@ void ImageUtils::GetMipLevelDimensions(uint32_t base_mip_width,
     mip_depth = std::max(1u, base_mip_depth >> mip_level);
 }
 
-bool ImageUtils::RequiresOptimalTiling(VkImageUsageFlags usage) {
-    return (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                     VK_IMAGE_USAGE_STORAGE_BIT)) != 0;
+bool ImageUtils::RequiresOptimalTiling(vk::ImageUsageFlags usage) {
+    return (usage & (vk::ImageUsageFlagBits::eColorAttachment |
+                     vk::ImageUsageFlagBits::eDepthStencilAttachment |
+                     vk::ImageUsageFlagBits::eStorage)) != vk::ImageUsageFlags{};
 }
 
-VkImageViewType ImageUtils::GetCompatibleViewType(VkImageType image_type, uint32_t array_layers) {
+vk::ImageViewType ImageUtils::GetCompatibleViewType(vk::ImageType image_type, uint32_t array_layers) {
     switch (image_type) {
-        case VK_IMAGE_TYPE_1D:
-            return array_layers > 1 ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D;
-        case VK_IMAGE_TYPE_2D:
-            return array_layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-        case VK_IMAGE_TYPE_3D:
-            return VK_IMAGE_VIEW_TYPE_3D;
+        case vk::ImageType::e1D:
+            return array_layers > 1 ? vk::ImageViewType::e1DArray : vk::ImageViewType::e1D;
+        case vk::ImageType::e2D:
+            return array_layers > 1 ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
+        case vk::ImageType::e3D:
+            return vk::ImageViewType::e3D;
         default:
-            return VK_IMAGE_VIEW_TYPE_2D;
+            return vk::ImageViewType::e2D;
     }
 }
 
-VkImageViewCreateInfo ImageUtils::CreateImageViewCreateInfo(VkImage image,
-                                                            VkImageViewType view_type,
-                                                            VkFormat format,
-                                                            VkImageAspectFlags aspect_flags,
-                                                            uint32_t base_mip_level,
-                                                            uint32_t level_count,
-                                                            uint32_t base_array_layer,
-                                                            uint32_t layer_count) {
-    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+vk::ImageViewCreateInfo ImageUtils::CreateImageViewCreateInfo(vk::Image image,
+                                                            vk::ImageViewType view_type,
+                                                            vk::Format format,
+                                                            vk::ImageAspectFlags aspect_flags,
+                                                              uint32_t base_mip_level,
+                                                              uint32_t level_count,
+                                                              uint32_t base_array_layer,
+                                                              uint32_t layer_count) {
+    vk::ImageViewCreateInfo view_info{};
     view_info.image = image;
     view_info.viewType = view_type;
     view_info.format = format;
@@ -160,17 +159,17 @@ VkImageViewCreateInfo ImageUtils::CreateImageViewCreateInfo(VkImage image,
     return view_info;
 }
 
-VkImageMemoryBarrier ImageUtils::CreateImageMemoryBarrier(VkImage image,
-                                                          VkImageLayout old_layout,
-                                                          VkImageLayout new_layout,
-                                                          VkImageAspectFlags aspect_flags,
-                                                          uint32_t base_mip_level,
-                                                          uint32_t level_count,
-                                                          uint32_t base_array_layer,
-                                                          uint32_t layer_count,
-                                                          uint32_t src_queue_family_index,
-                                                          uint32_t dst_queue_family_index) {
-    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+vk::ImageMemoryBarrier ImageUtils::CreateImageMemoryBarrier(vk::Image image,
+                                                          vk::ImageLayout old_layout,
+                                                          vk::ImageLayout new_layout,
+                                                          vk::ImageAspectFlags aspect_flags,
+                                                            uint32_t base_mip_level,
+                                                            uint32_t level_count,
+                                                            uint32_t base_array_layer,
+                                                            uint32_t layer_count,
+                                                            uint32_t src_queue_family_index,
+                                                            uint32_t dst_queue_family_index) {
+    vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = old_layout;
     barrier.newLayout = new_layout;
     barrier.srcQueueFamilyIndex = src_queue_family_index;
@@ -184,51 +183,51 @@ VkImageMemoryBarrier ImageUtils::CreateImageMemoryBarrier(VkImage image,
     return barrier;
 }
 
-VkPipelineStageFlags ImageUtils::GetLayoutPipelineStageFlags(VkImageLayout layout, bool is_source) {
+vk::PipelineStageFlags ImageUtils::GetLayoutPipelineStageFlags(vk::ImageLayout layout, bool is_source) {
     switch (layout) {
-        case VK_IMAGE_LAYOUT_UNDEFINED:
-            return is_source ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
-        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-            return VK_PIPELINE_STAGE_TRANSFER_BIT;
-        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-            return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
-            return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-            return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        case vk::ImageLayout::eUndefined:
+            return is_source ? vk::PipelineStageFlagBits::eTopOfPipe : vk::PipelineStageFlagBits::eTransfer;
+        case vk::ImageLayout::eTransferDstOptimal:
+        case vk::ImageLayout::eTransferSrcOptimal:
+            return vk::PipelineStageFlagBits::eTransfer;
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        case vk::ImageLayout::eDepthStencilAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            return vk::PipelineStageFlagBits::eFragmentShader;
         default:
-            return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            return vk::PipelineStageFlagBits::eAllCommands;
     }
 }
 
-VkAccessFlags ImageUtils::GetLayoutAccessFlags(VkImageLayout layout) {
+vk::AccessFlags ImageUtils::GetLayoutAccessFlags(vk::ImageLayout layout) {
     switch (layout) {
-        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-            return VK_ACCESS_TRANSFER_WRITE_BIT;
-        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-            return VK_ACCESS_TRANSFER_READ_BIT;
-        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-            return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
-            return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-            return VK_ACCESS_SHADER_READ_BIT;
+        case vk::ImageLayout::eTransferDstOptimal:
+            return vk::AccessFlagBits::eTransferWrite;
+        case vk::ImageLayout::eTransferSrcOptimal:
+            return vk::AccessFlagBits::eTransferRead;
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            return vk::AccessFlagBits::eColorAttachmentWrite;
+        case vk::ImageLayout::eDepthStencilAttachmentOptimal:
+            return vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            return vk::AccessFlagBits::eShaderRead;
         default:
-            return 0;
+            return vk::AccessFlags{};
     }
 }
 
-void ImageUtils::CmdTransitionImageLayout(VkCommandBuffer cmd,
-                                             VkImage image,
-                                             VkImageLayout old_layout,
-                                             VkImageLayout new_layout,
-                                             VkImageAspectFlags aspect_flags,
+void ImageUtils::CmdTransitionImageLayout(vk::raii::CommandBuffer const& cmd,
+                                             vk::Image image,
+                                             vk::ImageLayout old_layout,
+                                             vk::ImageLayout new_layout,
+                                             vk::ImageAspectFlags aspect_flags,
                                              uint32_t base_mip_level,
                                              uint32_t level_count,
                                              uint32_t base_array_layer,
                                              uint32_t layer_count) {
-    VkImageMemoryBarrier barrier = CreateImageMemoryBarrier(image,
+    vk::ImageMemoryBarrier barrier = CreateImageMemoryBarrier(image,
                                                                old_layout,
                                                                new_layout,
                                                                aspect_flags,
@@ -238,28 +237,27 @@ void ImageUtils::CmdTransitionImageLayout(VkCommandBuffer cmd,
                                                                layer_count);
     barrier.srcAccessMask = GetLayoutAccessFlags(old_layout);
     barrier.dstAccessMask = GetLayoutAccessFlags(new_layout);
-    const VkPipelineStageFlags src_stage = GetLayoutPipelineStageFlags(old_layout, /*is_source*/true);
-    const VkPipelineStageFlags dst_stage = GetLayoutPipelineStageFlags(new_layout, /*is_source*/false);
-    vkCmdPipelineBarrier(cmd,
-                         src_stage, dst_stage,
-                         0,
-                         0, nullptr,
-                         0, nullptr,
-                         1, &barrier);
+    const vk::PipelineStageFlags src_stage = GetLayoutPipelineStageFlags(old_layout, /*is_source*/true);
+    const vk::PipelineStageFlags dst_stage = GetLayoutPipelineStageFlags(new_layout, /*is_source*/false);
+    cmd.pipelineBarrier(src_stage, dst_stage,
+                         vk::DependencyFlags{},
+                         nullptr,
+                         nullptr,
+                         barrier);
 }
 
-void ImageUtils::CmdCopyBufferToImage(VkCommandBuffer cmd,
-                                          VkBuffer src_buffer,
-                                          VkImage dst_image,
+void ImageUtils::CmdCopyBufferToImage(vk::raii::CommandBuffer const& cmd,
+                                          vk::Buffer src_buffer,
+                                          vk::Image dst_image,
                                           uint32_t width,
                                           uint32_t height,
-                                          VkImageLayout dst_layout,
-                                          VkImageAspectFlags aspect_flags,
+                                          vk::ImageLayout dst_layout,
+                                          vk::ImageAspectFlags aspect_flags,
                                           uint32_t mip_level,
                                           uint32_t array_layer,
-                                          VkDeviceSize buffer_offset) {
-    const VkBufferImageCopy region = CreateBufferImageCopy(width, height, aspect_flags, mip_level, array_layer, buffer_offset);
-    vkCmdCopyBufferToImage(cmd, src_buffer, dst_image, dst_layout, 1, &region);
+                                          vk::DeviceSize buffer_offset) {
+    const vk::BufferImageCopy region = CreateBufferImageCopy(width, height, aspect_flags, mip_level, array_layer, buffer_offset);
+    cmd.copyBufferToImage(src_buffer, dst_image, dst_layout, region);
 }
 
 } // namespace VulkanEngine::Utils

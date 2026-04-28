@@ -2,6 +2,15 @@
 add_executable(example_tests
     example_tests.cpp
     component_system_tests.cpp
+    resource_system_texture_tests.cpp
+    render_graph_tests.cpp
+    render_graph_diagnostics_tests.cpp
+    runtime_shell_tests.cpp
+    graph_execution_context_tests.cpp
+    graph_execution_bridge_tests.cpp
+    platform_shell_tests.cpp
+    vulkan_bootstrap_tests.cpp
+    backend_factory_tests.cpp
 )
 
 # Find GTest installed via vcpkg and link it along with the main library

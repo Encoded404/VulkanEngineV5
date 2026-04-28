@@ -1,7 +1,6 @@
 module;
 
-#include <volk.h>
-#include <cstdint>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 
 export module VulkanEngine.Utils.PipelineUtils;
@@ -10,63 +9,63 @@ export namespace VulkanEngine::Utils {
 
 class PipelineUtils {
 public:
-    static VkViewport CreateViewport(float width,
+    static vk::Viewport CreateViewport(float width,
                                      float height,
                                      float min_depth = 0.0f,
                                      float max_depth = 1.0f,
                                      float x = 0.0f,
                                      float y = 0.0f);
 
-    static VkRect2D CreateScissor(uint32_t width, uint32_t height, int32_t offset_x = 0, int32_t offset_y = 0);
+    static vk::Rect2D CreateScissor(uint32_t width, uint32_t height, int32_t offset_x = 0, int32_t offset_y = 0);
 
-    static VkPipelineColorBlendAttachmentState CreateDefaultColorBlendAttachment();
-    static VkPipelineColorBlendAttachmentState CreateAlphaBlendAttachment();
-    static VkPipelineColorBlendAttachmentState CreateAdditiveBlendAttachment();
-    static VkPipelineColorBlendAttachmentState CreateNoBlendAttachment();
+    static vk::PipelineColorBlendAttachmentState CreateDefaultColorBlendAttachment();
+    static vk::PipelineColorBlendAttachmentState CreateAlphaBlendAttachment();
+    static vk::PipelineColorBlendAttachmentState CreateAdditiveBlendAttachment();
+    static vk::PipelineColorBlendAttachmentState CreateNoBlendAttachment();
 
-    static VkPipelineDepthStencilStateCreateInfo CreateDefaultDepthStencilState();
-    static VkPipelineDepthStencilStateCreateInfo CreateDepthTestOnlyState();
-    static VkPipelineDepthStencilStateCreateInfo CreateNoDepthTestState();
+    static vk::PipelineDepthStencilStateCreateInfo CreateDefaultDepthStencilState();
+    static vk::PipelineDepthStencilStateCreateInfo CreateDepthTestOnlyState();
+    static vk::PipelineDepthStencilStateCreateInfo CreateNoDepthTestState();
 
-    static VkPipelineRasterizationStateCreateInfo CreateDefaultRasterizationState();
-    static VkPipelineRasterizationStateCreateInfo CreateWireframeRasterizationState();
-    static VkPipelineRasterizationStateCreateInfo CreateNoCullRasterizationState();
+    static vk::PipelineRasterizationStateCreateInfo CreateDefaultRasterizationState();
+    static vk::PipelineRasterizationStateCreateInfo CreateWireframeRasterizationState();
+    static vk::PipelineRasterizationStateCreateInfo CreateNoCullRasterizationState();
 
-    static VkPipelineMultisampleStateCreateInfo CreateDefaultMultisampleState();
-    static VkPipelineMultisampleStateCreateInfo CreateMsaaMultisampleState(VkSampleCountFlagBits samples);
+    static vk::PipelineMultisampleStateCreateInfo CreateDefaultMultisampleState();
+    static vk::PipelineMultisampleStateCreateInfo CreateMsaaMultisampleState(vk::SampleCountFlagBits samples);
 
-    static VkVertexInputBindingDescription CreateVertexInputBinding(uint32_t binding,
+    static vk::VertexInputBindingDescription CreateVertexInputBinding(uint32_t binding,
                                                                     uint32_t stride,
-                                                                    VkVertexInputRate input_rate);
+                                                                    vk::VertexInputRate input_rate);
 
-    static VkVertexInputAttributeDescription CreateVertexInputAttribute(uint32_t location,
+    static vk::VertexInputAttributeDescription CreateVertexInputAttribute(uint32_t location,
                                                                         uint32_t binding,
-                                                                        VkFormat format,
+                                                                        vk::Format format,
                                                                         uint32_t offset);
 
-    static VkPipelineShaderStageCreateInfo CreateShaderStageCreateInfo(VkShaderStageFlagBits stage,
-                                                                       VkShaderModule module,
+    static vk::PipelineShaderStageCreateInfo CreateShaderStageCreateInfo(vk::ShaderStageFlagBits stage,
+                                                                       vk::ShaderModule module,
                                                                        const char* entry_point = nullptr,
-                                                                       const VkSpecializationInfo* specialization_info = nullptr);
+                                                                       const vk::SpecializationInfo* specialization_info = nullptr);
 
-    static VkPipelineInputAssemblyStateCreateInfo CreateInputAssemblyState(VkPrimitiveTopology topology,
-                                                                           VkBool32 primitive_restart_enable = VK_FALSE);
+    static vk::PipelineInputAssemblyStateCreateInfo CreateInputAssemblyState(vk::PrimitiveTopology topology,
+                                                                           vk::Bool32 primitive_restart_enable = VK_FALSE);
 
-    static VkPipelineTessellationStateCreateInfo CreateTessellationState(uint32_t patch_control_points = 0);
+    static vk::PipelineTessellationStateCreateInfo CreateTessellationState(uint32_t patch_control_points = 0);
 
-    static VkPipelineViewportStateCreateInfo CreateViewportState(const std::vector<VkViewport>& viewports,
-                                                                 const std::vector<VkRect2D>& scissors);
+    static vk::PipelineViewportStateCreateInfo CreateViewportState(const std::vector<vk::Viewport>& viewports,
+                                                                 const std::vector<vk::Rect2D>& scissors);
 
-    static VkPipelineViewportStateCreateInfo CreateDynamicViewportState(uint32_t viewport_count, uint32_t scissor_count);
+    static vk::PipelineViewportStateCreateInfo CreateDynamicViewportState(uint32_t viewport_count, uint32_t scissor_count);
 
-    static VkPipelineColorBlendStateCreateInfo CreateColorBlendState(const std::vector<VkPipelineColorBlendAttachmentState>& attachments,
-                                                                     VkBool32 logic_op_enable = VK_FALSE,
-                                                                     VkLogicOp logic_op = VK_LOGIC_OP_CLEAR);
+    static vk::PipelineColorBlendStateCreateInfo CreateColorBlendState(const std::vector<vk::PipelineColorBlendAttachmentState>& attachments,
+                                                                     vk::Bool32 logic_op_enable = VK_FALSE,
+                                                                     vk::LogicOp logic_op = vk::LogicOp::eClear);
 
-    static VkPipelineDynamicStateCreateInfo CreateDynamicState(const std::vector<VkDynamicState>& dynamic_states);
+    static vk::PipelineDynamicStateCreateInfo CreateDynamicState(const std::vector<vk::DynamicState>& dynamic_states);
 
-    static std::vector<VkDynamicState> GetBasicDynamicStates();
-    static std::vector<VkDynamicState> GetExtendedDynamicStates();
+    static std::vector<vk::DynamicState> GetBasicDynamicStates();
+    static std::vector<vk::DynamicState> GetExtendedDynamicStates();
 };
 
 } // namespace VulkanEngine::Utils

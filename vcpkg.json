@@ -1,7 +1,6 @@
 {
-    "name": "simple-modern-cmake-template",
-    "description": "A simple modern CMake template project",
-    "homepage": "https://github.com/Encoded404/CMakeTemplate",
+    "name": "vulkan-engine-v5",
+    "description": "Vulkan Engine V5",
     "version": "1.0.0",
     "license": "MIT",
     "dependencies": [
@@ -9,7 +8,11 @@
             "name": "gtest",
             "version>=": "1.13.0"
         },
-        "volk",
+        "vulkan",
+        {
+            "name": "ktx",
+            "features": [ "vulkan" ]
+        },
         {
             "name": "sdl3",
             "default-features": false,
@@ -19,6 +22,10 @@
                 "x11"
             ]
         },
-        "nlohmann-json"
+        "nlohmann-json",
+        "glm",
+        "fastgltf",
+        "boost-stacktrace",
+        "cli11"
     ]
 }

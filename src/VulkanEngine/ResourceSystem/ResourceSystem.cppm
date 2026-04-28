@@ -21,9 +21,9 @@ export module VulkanEngine.ResourceSystem;
 
 export namespace VulkanEngine {
     class Resource {
-    private:
-        std::string resourceId_;
-        bool loaded_ = false;
+    protected: // Changed from private to protected
+        std::string resourceId_; //NOLINT(misc-non-private-member-variables-in-classes)
+        bool loaded_ = false; //NOLINT(misc-non-private-member-variables-in-classes)
 
     public:
         explicit Resource(std::string id);

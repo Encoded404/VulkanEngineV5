@@ -5,6 +5,21 @@ target_link_libraries(${LIBRARY_TARGET} PUBLIC logiface::logiface)
 
 target_link_libraries(${LIBRARY_TARGET} PRIVATE FileLoader)
 
+find_package(SDL3 CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
+find_package(Ktx CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+target_link_libraries(${LIBRARY_TARGET} PRIVATE
+    SDL3::SDL3
+    Vulkan::Vulkan
+    glm::glm
+)
+target_link_libraries(${LIBRARY_TARGET} PUBLIC KTX::ktx)
+
+target_include_directories(${LIBRARY_TARGET} PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
 # Compiler-specific warning options for the library target
 target_compile_options(${LIBRARY_TARGET} PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
@@ -29,6 +44,17 @@ target_sources(${LIBRARY_TARGET} PRIVATE
     Utils/ImageUtils.cpp
     Utils/PipelineUtils.cpp
     ResourceSystem/ResourceSystem.cpp
+    ResourceSystem/TextureResource.cpp
+    RenderGraph/RenderGraph.cpp
+    Platform/SdlPlatformShell.cpp
+    Platform/SdlPlatformBackend.cpp
+    Runtime/RuntimeShell.cpp
+    Runtime/VulkanBootstrap.cpp
+    Runtime/VulkanDispatchLoader.cpp
+    Runtime/VulkanBootstrapBackend.cpp
+    Runtime/VulkanInstance.cpp
+    Runtime/VulkanDevice.cpp
+    Runtime/VulkanSwapchain.cpp
 )
 
 # C++ module interface units: use CMake 3.28 FILE_SET to declare module
@@ -46,6 +72,19 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Mesh/MeshTypes.cppm
             Mesh/MeshAssembler.cppm
             ResourceSystem/ResourceSystem.cppm
+            ResourceSystem/TextureResource.cppm
+            RenderGraph/RenderGraph.cppm
+            RenderGraph/GraphExecutionContext.cppm
+            RenderGraph/GraphExecutionBridge.cppm
+            Platform/SdlPlatformShell.cppm
+            Platform/SdlPlatformBackend.cppm
+            Runtime/RuntimeShell.cppm
+            Runtime/CommonTypes.cppm
+            Runtime/VulkanBootstrap.cppm
+            Runtime/VulkanBootstrapBackend.cppm
+            Runtime/VulkanInstance.cppm
+            Runtime/VulkanDevice.cppm
+            Runtime/VulkanSwapchain.cppm
     )
 endif()
 

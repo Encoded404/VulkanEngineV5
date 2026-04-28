@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.28)
 
 set(PROJECT_NAME "VulkanEngineV5")
-set(LIBRARY_TARGET "VulkanEngine")
+set(BACKEND_TARGET "VulkanBackend")
+set(ENGINE_TARGET "VulkanEngine")
+set(LIBRARY_TARGET "${ENGINE_TARGET}")
 set(APP_TARGET "VulkanApp")
 
 # if this is not set by the user cmake will decide

@@ -17,7 +17,8 @@ add_executable(example_tests
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
 target_link_libraries(example_tests PRIVATE
-    ${LIBRARY_TARGET}
+    ${ENGINE_TARGET}
+    ${BACKEND_TARGET}
     GTest::gtest
     GTest::gtest_main
 )

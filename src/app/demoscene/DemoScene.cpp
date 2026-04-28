@@ -17,8 +17,8 @@ module;
 
 module App.DemoScene;
 
-import App.FileLoaders.Mesh.BinMeshAssembler;
-import App.FileLoaders.Mesh.GltfMeshAssembler;
+import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
+import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 import VulkanEngine.Mesh.MeshTypes;
 
 namespace App::DemoScene {

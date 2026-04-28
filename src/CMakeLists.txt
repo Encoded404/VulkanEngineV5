@@ -1,5 +1,4 @@
-# app library
-add_subdirectory(VulkanEngine)
-
-# Executable that links the static library
+# layered targets
+add_subdirectory(backend)
+add_subdirectory(engine)
 add_subdirectory(app)

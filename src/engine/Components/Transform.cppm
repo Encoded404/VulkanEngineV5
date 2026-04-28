@@ -4,7 +4,7 @@ module;
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 
-export module App.Components.Transform;
+export module VulkanEngine.Components.Transform;
 
 import VulkanEngine.Component;
 

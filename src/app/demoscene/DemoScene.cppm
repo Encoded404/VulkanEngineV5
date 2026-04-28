@@ -13,6 +13,8 @@ import VulkanEngine.RenderGraph;
 import VulkanEngine.RenderGraph.GraphExecutionContext;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
+import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
+import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 
 export namespace App::DemoScene {
 

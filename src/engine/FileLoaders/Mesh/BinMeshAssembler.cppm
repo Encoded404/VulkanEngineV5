@@ -13,7 +13,7 @@ module;
 #include <FileLoader/FileLoader.hpp>
 #include <FileLoader/Types.hpp>
 
-export module App.FileLoaders.Mesh.BinMeshAssembler;
+export module VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 
 import VulkanEngine.Mesh.MeshTypes;
 
@@ -146,7 +146,6 @@ public:
                 off += materialSize;
             }
 
-            const uint16_t meshCount = ReadU16(*buffer, off, "meshCount");
 
             auto mesh = std::make_shared<VulkanEngine::SkinnedMesh>();
 

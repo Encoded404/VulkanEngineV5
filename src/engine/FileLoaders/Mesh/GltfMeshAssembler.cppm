@@ -7,7 +7,7 @@ module;
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
 
-export module App.FileLoaders.Mesh.GltfMeshAssembler;
+export module VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 
 import VulkanEngine.Mesh.MeshTypes;
 

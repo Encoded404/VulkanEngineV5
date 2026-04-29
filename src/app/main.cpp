@@ -10,7 +10,8 @@
 
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_keycode.h>
-#include <boost/stacktrace.hpp>
+#include <SDL3/SDL_mouse.h>
+#include <boost/stacktrace.hpp> // NOLINT(misc-include-cleaner)
 #include <CLI/CLI.hpp>
 
 #include <logging/logging.hpp>
@@ -27,6 +28,7 @@ import VulkanEngine.RenderGraph.GraphExecutionBridge;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import App.DemoSceneRenderer;
+#include "Components/InputHandler.hpp"
 
 namespace {
     void InitializeLogger(Logiface::Level level) {
@@ -46,7 +48,7 @@ namespace {
     }
 } // anonymous namespace
 
-int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
+int main(int argc, char* const argv[]) {
     CLI::App app{"VulkanEngineV5 Demo"};
 
     std::string log_level_str = "info";
@@ -170,7 +172,12 @@ int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
                 const auto* frame = static_cast<const App::DemoSceneRenderer::FrameRenderData*>(user_data);
                 if (frame != nullptr && frame->bootstrap != nullptr) {
                     auto* mutable_frame = const_cast<App::DemoSceneRenderer::FrameRenderData*>(frame);
-                    mutable_frame->render_success = App::DemoSceneRenderer::DemoSceneManager::RenderDemoFrame(*frame->bootstrap, mutable_frame->image_index, mutable_frame->angle_degrees);
+                    mutable_frame->render_success = App::DemoSceneRenderer::DemoSceneManager::RenderDemoFrame(
+                        *frame->bootstrap,
+                        mutable_frame->image_index,
+                        mutable_frame->angle_degrees,
+                        mutable_frame->monkey_offset_x,
+                        mutable_frame->monkey_offset_y);
                 }
             });
 
@@ -187,10 +194,11 @@ int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
         }
         runtime_initialized = true;
 
-        input_system.BindAction("quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+        // Create an input handler component to own WASD / mouse input behavior.
+        auto input_handler = std::make_unique<App::Components::InputHandler>(&input_system);
+        input_handler->Initialize();
 
         auto previous_time = std::chrono::steady_clock::now();
-        float angle = 0.0f;
 
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
             LOGIFACE_LOG(trace, "new frame started");
@@ -237,10 +245,15 @@ int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::chrono::duration<float>(now - previous_time).count();
             previous_time = now;
-            angle += dt * 90.0f;
-            if (angle >= 360.0f) {
-                angle -= 360.0f;
+
+            // Let the input handler component update its internal state based on the processed input.
+            if (input_handler) {
+                input_handler->Update(dt);
             }
+
+            const float angle = input_handler ? input_handler->GetAngle() : 0.0f;
+            const float monkey_offset_x = input_handler ? input_handler->GetMonkeyOffsetX() : 0.0f;
+            const float monkey_offset_y = input_handler ? input_handler->GetMonkeyOffsetY() : 0.0f;
 
             const VulkanEngine::RenderGraph::GraphExecutionContext graph_context = VulkanEngine::RenderGraph::CreateGraphExecutionContext(
                 runtime_frame,
@@ -249,6 +262,8 @@ int main(int argc, char** argv) { // NOLINT(readability-non-const-parameter)
             App::DemoSceneRenderer::FrameRenderData frame_render_data{
                 .bootstrap = bootstrap.get(),
                 .graph_context = &graph_context,
+                .monkey_offset_x = monkey_offset_x,
+                .monkey_offset_y = monkey_offset_y,
                 .angle_degrees = angle,
                 .image_index = image_index,
                 .render_success = true,

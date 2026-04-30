@@ -3,7 +3,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <typeindex>
-#include <typeinfo>
+//#include <typeinfo>
 
 module VulkanBackend.Event;
 

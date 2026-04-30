@@ -1,16 +1,19 @@
-#pragma once
-
-import VulkanEngine.Component;
-import VulkanEngine.Input;
+module;
 
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 
-namespace App::Components {
+export module App.Components.DemoInputComponent;
 
-class InputHandler : public VulkanEngine::Component {
+import VulkanBackend.Component;
+import VulkanEngine.Input;
+import VulkanEngine.Components.Transform;
+
+export namespace App::Components {
+
+class DemoInputComponent : public VulkanEngine::Component {
 public:
-    explicit InputHandler(VulkanEngine::Input::InputSystem* input_system) noexcept
+    explicit DemoInputComponent(VulkanEngine::Input::InputSystem* input_system) noexcept
         : input_system_(input_system) {}
 
     void Initialize() override {
@@ -27,36 +30,38 @@ public:
     void Update(float delta_time) override {
         if (!input_system_) return;
 
+        auto* transform = GetOwner() != nullptr ? GetOwner()->GetComponent<App::Components::Transform>() : nullptr;
+        if (transform == nullptr) {
+            return;
+        }
+
         constexpr float move_speed = 1.5f;
         if (input_system_->IsActionActive("move_left")) {
-            monkey_offset_x_ -= move_speed * delta_time;
+            transform->position.x -= move_speed * delta_time;
         }
         if (input_system_->IsActionActive("move_right")) {
-            monkey_offset_x_ += move_speed * delta_time;
+            transform->position.x += move_speed * delta_time;
         }
         if (input_system_->IsActionActive("move_up")) {
-            monkey_offset_y_ += move_speed * delta_time;
+            transform->position.y += move_speed * delta_time;
         }
         if (input_system_->IsActionActive("move_down")) {
-            monkey_offset_y_ -= move_speed * delta_time;
+            transform->position.y -= move_speed * delta_time;
         }
 
         if (!input_system_->IsActionActive("pause_spin")) {
-            angle_ += delta_time * 90.0f;
-            if (angle_ >= 360.0f) angle_ -= 360.0f;
+            transform->rotation_degrees_y += delta_time * 90.0f;
+            if (transform->rotation_degrees_y >= 360.0f) {
+                transform->rotation_degrees_y -= 360.0f;
+            }
         }
     }
 
-    float GetAngle() const noexcept { return angle_; }
-    float GetMonkeyOffsetX() const noexcept { return monkey_offset_x_; }
-    float GetMonkeyOffsetY() const noexcept { return monkey_offset_y_; }
-
 private:
     VulkanEngine::Input::InputSystem* input_system_ = nullptr; // not owned
-    float angle_ = 0.0f;
-    float monkey_offset_x_ = 0.0f;
-    float monkey_offset_y_ = 0.0f;
 };
 
 } // namespace App::Components
+
+
 

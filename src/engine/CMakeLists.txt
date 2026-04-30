@@ -11,12 +11,17 @@ find_package(Vulkan REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     Vulkan::Vulkan
     KTX::ktx
     glm::glm
     fastgltf::fastgltf
+)
+
+target_include_directories(${ENGINE_TARGET} PUBLIC
+    ${Stb_INCLUDE_DIR}
 )
 
 target_include_directories(${ENGINE_TARGET} PUBLIC
@@ -39,6 +44,7 @@ endif()
 
 target_sources(${ENGINE_TARGET} PRIVATE
     Input/Input.cpp
+    FileLoaders/Textures/TextureLoaders.cpp
     Mesh/MeshAssembler.cpp
     ResourceSystem/ResourceSystem.cpp
     ResourceSystem/TextureResource.cpp
@@ -49,13 +55,15 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            Component/Component.cppm
             Input/Input.cppm
             Mesh/MeshTypes.cppm
             Mesh/MeshAssembler.cppm
             ResourceSystem/ResourceSystem.cppm
             ResourceSystem/TextureResource.cppm
+            Application/Application.cppm
+            Startup/Startup.cppm
             Components/Transform.cppm
+            Components/MeshRenderer.cppm
             FileLoaders/Mesh/BinMeshAssembler.cppm
             FileLoaders/Mesh/GltfMeshAssembler.cppm
     )

@@ -2,6 +2,9 @@
 
 #include <ktx.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 #include <vulkan/vulkan.hpp>
 
 #include <array>
@@ -14,23 +17,25 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 
 namespace {
 
-class TempKtx2File final {
+class TempTextureFile final {
 public:
-    TempKtx2File() {
+    explicit TempTextureFile(std::string_view extension) {
         const auto stamp = static_cast<std::uint64_t>(
             std::chrono::steady_clock::now().time_since_epoch().count());
         std::random_device rd;
         path_ = std::filesystem::temp_directory_path() /
-                ("ve5_texture_resource_" + std::to_string(stamp) + "_" + std::to_string(rd()) + ".ktx2");
+                ("ve5_texture_resource_" + std::to_string(stamp) + "_" + std::to_string(rd()) + std::string(extension));
     }
 
-    ~TempKtx2File() {
+    ~TempTextureFile() {
         std::error_code ec;
         std::filesystem::remove(path_, ec);
     }
@@ -50,8 +55,7 @@ private:
     };
 }
 
-void WriteTinyKtx2TextureToTempFile(const TempKtx2File& temp) {
-
+void WriteTinyKtx2TextureToTempFile(const TempTextureFile& temp) {
     ktxTextureCreateInfo info{};
     info.vkFormat = static_cast<ktx_uint32_t>(VK_FORMAT_R8G8B8A8_UNORM);
     info.baseWidth = 2;
@@ -100,12 +104,41 @@ void WriteTinyKtx2TextureToTempFile(const TempKtx2File& temp) {
     ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(texture));
 }
 
+void WriteTinyPngTextureToTempFile(const TempTextureFile& temp) {
+    const auto pixels = Make2x2RgbaPixels();
+    const int stride = 2 * 4;
+    if (stbi_write_png(temp.Path().string().c_str(), 2, 2, 4, pixels.data(), stride) != 1) {
+        throw std::runtime_error("stbi_write_png failed");
+    }
+}
+
+void WriteTinyJpegTextureToTempFile(const TempTextureFile& temp) {
+    const std::array<std::uint8_t, 16> pixels{
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+    };
+    if (stbi_write_jpg(temp.Path().string().c_str(), 2, 2, 4, pixels.data(), 100) != 1) {
+        throw std::runtime_error("stbi_write_jpg failed");
+    }
+}
+
+void ExpectPixelsNear(const std::vector<std::byte>& actual, const std::array<std::uint8_t, 16>& expected, std::uint8_t tolerance) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const auto value = static_cast<int>(actual[i]);
+        const auto exp = static_cast<int>(expected[i]);
+        EXPECT_LE(std::abs(value - exp), static_cast<int>(tolerance)) << "mismatch at byte " << i;
+    }
+}
+
 class TextureResourceTest : public ::testing::Test {};
 
 }  // namespace
 
 TEST_F(TextureResourceTest, LoadsTinyRgbaKtx2) {
-    const TempKtx2File temp;
+    const TempTextureFile temp(".ktx2");
     WriteTinyKtx2TextureToTempFile(temp);
 
     VulkanEngine::ResourceManager manager;
@@ -124,18 +157,69 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaKtx2) {
     EXPECT_EQ(texture->GetFaceCount(), 1u);
     EXPECT_EQ(texture->GetVkFormat(), vk::Format::eR8G8B8A8Unorm);
     EXPECT_TRUE(texture->HasPixels());
-    EXPECT_EQ(texture->GetPixels().size(), 16u);
 
     const auto expected = Make2x2RgbaPixels();
-    for (std::size_t i = 0; i < expected.size(); ++i) {
-        EXPECT_EQ(texture->GetPixels()[i], static_cast<std::byte>(expected[i])) << "mismatch at byte " << i;
-    }
+    ExpectPixelsNear(texture->GetPixels(), expected, 0);
+
+    manager.Release(handle.GetId());
+}
+
+TEST_F(TextureResourceTest, LoadsTinyRgbaPng) {
+    const TempTextureFile temp(".png");
+    WriteTinyPngTextureToTempFile(temp);
+
+    VulkanEngine::ResourceManager manager;
+    auto handle = manager.LoadFromFile<VulkanEngine::TextureResource>(
+        temp.Path(),
+        VulkanEngine::ResourceManager::LoadSpeed::Instant);
+
+    ASSERT_TRUE(handle.IsValid());
+    auto* texture = handle.Get();
+    ASSERT_NE(texture, nullptr);
+
+    EXPECT_EQ(texture->GetWidth(), 2u);
+    EXPECT_EQ(texture->GetHeight(), 2u);
+    EXPECT_EQ(texture->GetVkFormat(), vk::Format::eR8G8B8A8Unorm);
+    EXPECT_TRUE(texture->HasPixels());
+
+    const auto expected = Make2x2RgbaPixels();
+    ExpectPixelsNear(texture->GetPixels(), expected, 0);
+
+    manager.Release(handle.GetId());
+}
+
+TEST_F(TextureResourceTest, LoadsTinyRgbaJpeg) {
+    const TempTextureFile temp(".jpg");
+    WriteTinyJpegTextureToTempFile(temp);
+
+    VulkanEngine::ResourceManager manager;
+    auto handle = manager.LoadFromFile<VulkanEngine::TextureResource>(
+        temp.Path(),
+        VulkanEngine::ResourceManager::LoadSpeed::Instant);
+
+    ASSERT_TRUE(handle.IsValid());
+    auto* texture = handle.Get();
+    ASSERT_NE(texture, nullptr);
+
+    EXPECT_EQ(texture->GetWidth(), 2u);
+    EXPECT_EQ(texture->GetHeight(), 2u);
+    EXPECT_EQ(texture->GetVkFormat(), vk::Format::eR8G8B8A8Unorm);
+    EXPECT_TRUE(texture->HasPixels());
+    EXPECT_EQ(texture->GetPixels().size(), 16u);
+
+    const std::array<std::uint8_t, 16> expected{
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+        64, 128, 224, 255,
+    };
+    ExpectPixelsNear(texture->GetPixels(), expected, 20);
 
     manager.Release(handle.GetId());
 }
 
 TEST_F(TextureResourceTest, RejectsInvalidFile) {
-    const TempKtx2File temp;
+    const TempTextureFile temp(".png");
     {
         std::ofstream out(temp.Path(), std::ios::binary | std::ios::trunc);
         const std::array<std::uint8_t, 8> junk{1, 2, 3, 4, 5, 6, 7, 8};
@@ -148,7 +232,6 @@ TEST_F(TextureResourceTest, RejectsInvalidFile) {
         VulkanEngine::ResourceManager::LoadSpeed::Instant);
     EXPECT_FALSE(handle.IsValid());
 }
-
 
 
 

@@ -17,6 +17,8 @@ module;
 
 module App.DemoSceneRenderer;
 
+import VulkanEngine.Components.MeshRenderer;
+import VulkanEngine.Components.Transform;
 import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 import VulkanEngine.Mesh.MeshTypes;
@@ -120,7 +122,7 @@ namespace {
         return result;
     }
 
-    [[nodiscard]] Mat4 Translate(float x, float y, float z) {
+    [[nodiscard]] Mat4 Translate(float x, float y, float z) { // NOLINT
         Mat4 m = IdentityMatrix();
         m[12] = x;
         m[13] = y;
@@ -128,7 +130,15 @@ namespace {
         return m;
     }
 
-    [[nodiscard]] Mat4 RotateY(float radians) {
+    [[nodiscard]] Mat4 Scale(float x, float y, float z) { // NOLINT
+        Mat4 m = IdentityMatrix();
+        m[0] = x;
+        m[5] = y;
+        m[10] = z;
+        return m;
+    }
+
+    [[nodiscard]] Mat4 RotateY(float radians) { // NOLINT
         Mat4 m = IdentityMatrix();
         const float c = std::cos(radians);
         const float s = std::sin(radians);
@@ -139,7 +149,7 @@ namespace {
         return m;
     }
 
-    [[nodiscard]] Mat4 Perspective(float fov_y_radians, float aspect, float z_near, float z_far) {
+    [[nodiscard]] Mat4 Perspective(float fov_y_radians, float aspect, float z_near, float z_far) { // NOLINT
         Mat4 m{};
         const float f = 1.0f / std::tan(fov_y_radians * 0.5f);
         m[0] = f / aspect;
@@ -150,12 +160,14 @@ namespace {
         return m;
     }
 
-    [[nodiscard]] PushConstants BuildPushConstants(float angle_degrees, float aspect) {
+    [[nodiscard]] PushConstants BuildPushConstants(const App::Components::Transform& transform, float aspect) { // NOLINT
         constexpr float pi = std::numbers::pi_v<float>;
-        const float radians = angle_degrees * (pi / 180.0f);
+        const float radians = transform.rotation_degrees_y * (pi / 180.0f);
 
         PushConstants constants{};
-        const Mat4 model = RotateY(radians);
+        const Mat4 model = Multiply(
+            Translate(transform.position.x, transform.position.y, transform.position.z),
+            Multiply(RotateY(radians), Scale(transform.scale.x, transform.scale.y, transform.scale.z)));
         const Mat4 view = Translate(0.0f, 0.0f, -3.0f);
         const Mat4 proj = Perspective(60.0f * (pi / 180.0f), aspect, 0.1f, 100.0f);
         constants.mvp = Multiply(proj, Multiply(view, model));
@@ -198,7 +210,7 @@ VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
 DemoSceneManager::LoadTexture(VulkanEngine::ResourceManager& resource_manager,
                               const std::filesystem::path& textures_dir,
                               const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback) {
-    const auto texture_path = FindFirstFileWithExtension(textures_dir, {".ktx2"});
+    const auto texture_path = FindFirstFileWithExtension(textures_dir, {".ktx2", ".ktx", ".png", ".jpg", ".jpeg"});
     if (texture_path.empty()) return fallback;
     auto handle = resource_manager.LoadFromFile<VulkanEngine::TextureResource>(texture_path);
     return (handle.IsValid() && handle->IsLoaded()) ? handle : fallback;
@@ -253,8 +265,8 @@ bool DemoSceneManager::UploadDemoScene(VulkanEngine::Runtime::VulkanBootstrap& b
         return false;
     };
 
-    if (!CreateBuffer(backend, vertex_count * sizeof(DemoVertex), vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, s_resources->vertex_buffer, s_resources->vertex_memory)) return cleanup_and_fail();
-    if (!CreateBuffer(backend, index_count * sizeof(uint32_t), vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, s_resources->index_buffer, s_resources->index_memory)) return cleanup_and_fail();
+    if (!CreateBuffer(backend, vertex_count * sizeof(DemoVertex), vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, s_resources->vertex_buffer, s_resources->vertex_memory)) return cleanup_and_fail(); // NOLINT
+    if (!CreateBuffer(backend, index_count * sizeof(uint32_t), vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, s_resources->index_buffer, s_resources->index_memory)) return cleanup_and_fail(); // NOLINT
 
     void* data = s_resources->vertex_memory->mapMemory(0, vertex_count * sizeof(DemoVertex));
     std::memcpy(data, vertices, vertex_count * sizeof(DemoVertex));
@@ -279,7 +291,7 @@ void DemoSceneManager::DestroyDemoSceneResources(VulkanEngine::Runtime::VulkanBo
     DestroyRawResources(bootstrap.GetBackend());
 }
 
-bool DemoSceneManager::RenderDemoFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap, uint32_t image_index, float angle_degrees) {
+bool DemoSceneManager::RenderDemoFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap, uint32_t image_index) {
     if (!s_resources || !s_resources->pipeline) return false;
     auto& backend = bootstrap.GetBackend();
     uint32_t w = 0, h = 0;
@@ -339,19 +351,30 @@ bool DemoSceneManager::RenderDemoFrame(VulkanEngine::Runtime::VulkanBootstrap& b
     cmd.beginRendering(render_info);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *s_resources->pipeline);
-    cmd.setViewport(0, vk::Viewport(0, 0, (float)w, (float)h, 0, 1));
+    cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
     cmd.bindVertexBuffers(0, {*s_resources->vertex_buffer}, {0});
     cmd.bindIndexBuffer(*s_resources->index_buffer, 0, vk::IndexType::eUint32);
     if (!s_resources->descriptor_sets.empty()) cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *s_resources->pipeline_layout, 0, {*s_resources->descriptor_sets[0]}, {});
 
-    const auto push_constants = BuildPushConstants(angle_degrees, static_cast<float>(w) / static_cast<float>(h));
-    cmd.pushConstants(*s_resources->pipeline_layout,
-                      vk::ShaderStageFlagBits::eVertex,
-                      0,
-                      vk::ArrayProxy<const PushConstants>(push_constants));
+    auto& registry = backend.GetComponentRegistry();
+    registry.ForEach<App::Components::MeshRenderer>([&](App::Components::MeshRenderer& mesh_renderer) {
+        if (!mesh_renderer.visible) {
+            return;
+        }
 
-    cmd.drawIndexed(s_resources->index_count, 1, 0, 0, 0);
+        auto* transform = mesh_renderer.GetTransform();
+        if (transform == nullptr) {
+            return;
+        }
+
+        const auto push_constants = BuildPushConstants(*transform, static_cast<float>(w) / static_cast<float>(h));
+        cmd.pushConstants(*s_resources->pipeline_layout,
+                          vk::ShaderStageFlagBits::eVertex,
+                          0,
+                          vk::ArrayProxy<const PushConstants>(push_constants));
+        cmd.drawIndexed(s_resources->index_count, 1, 0, 0, 0);
+    });
     cmd.endRendering();
 
     barrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -392,7 +415,7 @@ bool DemoSceneManager::CreateTexture(VulkanEngine::Runtime::IVulkanBootstrapBack
 
     std::unique_ptr<vk::raii::Buffer> staging_buffer;
     std::unique_ptr<vk::raii::DeviceMemory> staging_memory;
-    if (!CreateBuffer(backend, size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory)) return false;
+    if (!CreateBuffer(backend, size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory)) return false; // NOLINT
 
     void* data = staging_memory->mapMemory(0, size);
     std::memcpy(data, pixels, size);
@@ -442,7 +465,7 @@ bool DemoSceneManager::CreateTexture(VulkanEngine::Runtime::IVulkanBootstrapBack
     return true;
 }
 
-bool DemoSceneManager::CreatePipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend, const uint32_t* vert_spv, size_t vert_size, const uint32_t* frag_spv, size_t frag_size, uint32_t vertex_stride) {
+bool DemoSceneManager::CreatePipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend, const uint32_t* vert_spv, size_t vert_size, const uint32_t* frag_spv, size_t frag_size, uint32_t vertex_stride) { // NOLINT
     LOGIFACE_LOG(trace, "entering CreatePipeline");
 
     if (!s_resources) return false;

@@ -49,7 +49,7 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
     return true;
 }
 
-bool VulkanDevice::CreateLogicalDeviceAndResources(const VulkanInstance& instance, uint32_t frames_in_flight) {
+bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flight) {
     if (device_) return true;
     if (!physical_device_) return false;
 

@@ -15,7 +15,7 @@ public:
     // New method for physical device selection
     [[nodiscard]] bool SelectPhysicalDevice(const VulkanInstance& instance);
     // Modified method for logical device creation and resource setup
-    [[nodiscard]] bool CreateLogicalDeviceAndResources(const VulkanInstance& instance, uint32_t frames_in_flight);
+    [[nodiscard]] bool CreateLogicalDeviceAndResources(uint32_t frames_in_flight);
     void Shutdown();
 
     [[nodiscard]] bool IsValid() const { return device_ != nullptr; }

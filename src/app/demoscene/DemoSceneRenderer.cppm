@@ -45,7 +45,6 @@ struct DemoVertex {
 struct FrameRenderData {
     VulkanEngine::Runtime::VulkanBootstrap* bootstrap = nullptr;
     const VulkanEngine::RenderGraph::GraphExecutionContext* graph_context = nullptr;
-    float angle_degrees = 0.0f;
     uint32_t image_index = 0; // Added image_index
     bool render_success = true;
 };
@@ -77,8 +76,7 @@ public:
     static void DestroyDemoSceneResources(VulkanEngine::Runtime::VulkanBootstrap& bootstrap);
 
     static bool RenderDemoFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                uint32_t image_index,
-                                float angle_degrees);
+                                uint32_t image_index);
 
 private:
     struct RawResources;

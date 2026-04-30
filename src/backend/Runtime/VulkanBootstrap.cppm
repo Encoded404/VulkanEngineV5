@@ -6,6 +6,7 @@ module;
 
 export module VulkanEngine.Runtime.VulkanBootstrap;
 
+export import VulkanBackend.Component;
 export import VulkanEngine.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
@@ -13,6 +14,9 @@ export namespace VulkanEngine::Runtime {
 class IVulkanBootstrapBackend {
 public:
     virtual ~IVulkanBootstrapBackend() = default;
+
+    [[nodiscard]] virtual ComponentRegistry& GetComponentRegistry() = 0;
+    [[nodiscard]] virtual const ComponentRegistry& GetComponentRegistry() const = 0;
 
     [[nodiscard]] virtual bool CreateInstance(const VulkanBootstrapConfig& config) = 0;
     [[nodiscard]] virtual bool SelectPhysicalDevice() = 0;

@@ -25,6 +25,7 @@
         "nlohmann-json",
         "glm",
         "fastgltf",
+        "stb",
         "boost-stacktrace",
         "cli11"
     ]

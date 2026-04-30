@@ -23,6 +23,9 @@ public:
     uint32_t produced_height = 720; // NOLINT(misc-non-private-member-variables-in-classes)
     uint32_t current_frames_in_flight = 2; // NOLINT(misc-non-private-member-variables-in-classes)
 
+    [[nodiscard]] VulkanEngine::ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
+    [[nodiscard]] const VulkanEngine::ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
+
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig&) override { return instance_result; }
     [[nodiscard]] bool SelectPhysicalDevice() override { return physical_device_result; }
     [[nodiscard]] bool CreateLogicalDevice(uint32_t frames_in_flight) override {
@@ -54,10 +57,10 @@ public:
     [[nodiscard]] uint32_t GetFramesInFlight() const override { return current_frames_in_flight; }
 
     [[nodiscard]] const vk::raii::SwapchainKHR& GetSwapchain() const override { throw std::runtime_error("Fake"); }
-    [[nodiscard]] const std::vector<vk::Image>& GetSwapchainImages() const override { static std::vector<vk::Image> dummy; return dummy; }
-    [[nodiscard]] const std::vector<vk::raii::ImageView>& GetSwapchainImageViews() const override { static std::vector<vk::raii::ImageView> dummy; return dummy; }
+    [[nodiscard]] const std::vector<vk::Image>& GetSwapchainImages() const override { static const std::vector<vk::Image> dummy; return dummy; }
+    [[nodiscard]] const std::vector<vk::raii::ImageView>& GetSwapchainImageViews() const override { static const std::vector<vk::raii::ImageView> dummy; return dummy; }
     [[nodiscard]] std::vector<bool>& GetSwapchainImageInitializedFlags() override { static std::vector<bool> dummy; return dummy; }
-    [[nodiscard]] const vk::SurfaceFormatKHR& GetSurfaceFormat() const override { static vk::SurfaceFormatKHR dummy; return dummy; }
+    [[nodiscard]] const vk::SurfaceFormatKHR& GetSurfaceFormat() const override { static const vk::SurfaceFormatKHR dummy; return dummy; }
     [[nodiscard]] vk::Format GetDepthFormat() const override { return vk::Format::eUndefined; }
     [[nodiscard]] const vk::raii::ImageView& GetDepthImageView() const override { throw std::runtime_error("Fake"); }
     [[nodiscard]] const vk::raii::Image& GetDepthImage() const override { throw std::runtime_error("Fake"); }
@@ -66,6 +69,9 @@ public:
     [[nodiscard]] bool Present(uint32_t, uint32_t, bool) override { return true; }
 
     void Shutdown() override { shutdown_called = true; }
+
+private:
+    VulkanEngine::ComponentRegistry component_registry_{};
 };
 
 TEST(VulkanBootstrapTest, InitializeBuildsRuntimeSkeletonState) {

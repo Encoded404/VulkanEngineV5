@@ -50,6 +50,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
+            Component/Component.cppm
             Event/Event.cppm
             Platform/SdlPlatform.cppm
             Platform/SdlPlatformBackend.cppm

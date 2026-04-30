@@ -1,52 +1,39 @@
+#include <filesystem>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <filesystem>
-#include <stdexcept>
-#include <chrono>
-#include <thread>
-#include <iostream>
-#include <map>
 
-#include <SDL3/SDL_video.h>
-#include <SDL3/SDL_keycode.h>
-#include <SDL3/SDL_mouse.h>
-#include <boost/stacktrace.hpp> // NOLINT(misc-include-cleaner)
 #include <CLI/CLI.hpp>
 
-#include <logging/logging.hpp>
-#include <logging/ConsoleLogger.hpp>
-
-import VulkanBackend.Platform.SdlPlatform;
-import VulkanEngine.Platform.SdlPlatformBackend;
-import VulkanBackend.Runtime.FrameLoop;
-import VulkanEngine.Input;
-import VulkanEngine.Runtime.VulkanBootstrap;
-import VulkanEngine.Runtime.VulkanBootstrapBackend;
+import VulkanEngine.Application;
+import VulkanEngine.Components.MeshRenderer;
+import VulkanEngine.Components.Transform;
 import VulkanEngine.RenderGraph;
 import VulkanEngine.RenderGraph.GraphExecutionBridge;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import App.DemoSceneRenderer;
-#include "Components/InputHandler.hpp"
+import App.Components.DemoInputComponent;
 
 namespace {
-    void InitializeLogger(Logiface::Level level) {
-        static std::shared_ptr<Logiface::ConsoleLogger> app_logger = std::make_shared<Logiface::ConsoleLogger>(); // NOLINT(misc-const-correctness)
-        app_logger->SetLevel(level);
-        Logiface::SetLogger(app_logger);
-    }
-
-    Logiface::Level ParseLogLevel(const std::string& level) {
-        if (level == "trace") return Logiface::Level::trace;
-        if (level == "debug") return Logiface::Level::debug;
-        if (level == "info") return Logiface::Level::info;
-        if (level == "warn") return Logiface::Level::warn;
-        if (level == "error") return Logiface::Level::error;
-        if (level == "critical") return Logiface::Level::critical;
-        return Logiface::Level::info;
-    }
-} // anonymous namespace
+    struct DemoAppState {
+        VulkanEngine::ResourceManager resource_manager{};
+        VulkanEngine::CheckerboardConfig missing_texture_config{};
+        std::shared_ptr<VulkanEngine::TextureResource> missing_texture{};
+        VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> fallback_handle{};
+        std::filesystem::path exe_dir{};
+        App::DemoSceneRenderer::MeshData mesh{};
+        VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> texture_handle{};
+        VulkanEngine::TextureResource* active_texture = nullptr;
+        std::vector<App::DemoSceneRenderer::DemoVertex> demo_vertices{};
+        std::vector<uint32_t> vert_spv{};
+        std::vector<uint32_t> frag_spv{};
+        VulkanEngine::RenderGraph::ResourceHandle backbuffer{};
+        VulkanEngine::RenderGraph::CompileResult compiled_graph{};
+        bool scene_uploaded = false;
+    };
+}
 
 int main(int argc, char* const argv[]) {
     CLI::App app{"VulkanEngineV5 Demo"};
@@ -65,104 +52,49 @@ int main(int argc, char* const argv[]) {
 
     CLI11_PARSE(app, argc, argv);
 
-    bool platform_initialized = false;
-    bool bootstrap_initialized = false;
-    bool runtime_initialized = false;
-    bool scene_uploaded = false;
-    std::shared_ptr<VulkanEngine::Platform::IPlatformBackend> platform_backend{};
-    std::unique_ptr<VulkanEngine::Platform::SdlPlatformShell> platform{};
-    std::shared_ptr<VulkanEngine::Runtime::IVulkanBootstrapBackend> vk_backend{};
-    std::unique_ptr<VulkanEngine::Runtime::VulkanBootstrap> bootstrap{};
-    std::unique_ptr<VulkanEngine::Runtime::RuntimeShell> runtime{};
-    VulkanEngine::Input::InputSystem input_system{};
+    DemoAppState state{};
+    const std::filesystem::path executable_path = std::filesystem::absolute(std::filesystem::path(argv[0]));
 
-    try {
-        InitializeLogger(ParseLogLevel(log_level_str));
-        LOGIFACE_LOG(info, "VulkanEngineV5 demo started");
+    VulkanEngine::Application::ApplicationConfig app_config{};
+    app_config.app_name = "VulkanEngineV5 Demo";
+    app_config.log_level = log_level_str;
 
-        platform_backend = VulkanEngine::Platform::CreateSdlPlatformBackend();
-        platform = std::make_unique<VulkanEngine::Platform::SdlPlatformShell>(platform_backend);
-        if (!platform->Initialize(VulkanEngine::Platform::PlatformConfig{})) {
-            throw std::runtime_error("Platform initialization failed");
-        }
-        platform_initialized = true;
+    VulkanEngine::Application::ApplicationHooks hooks{};
 
-        SDL_Window* window = platform->GetNativeWindowHandle();
-        if (window == nullptr) {
-            throw std::runtime_error("Native SDL window handle is null");
-        }
+    hooks.on_setup = [&](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
+        state.missing_texture_config.color1 = {255, 255, 255, 255};
+        state.missing_texture_config.color2 = {255, 0, 255, 255};
 
-        VulkanEngine::ResourceManager resource_manager;
+        state.missing_texture = VulkanEngine::TextureResource::CreateCheckerboardTexture("missing_texture", state.missing_texture_config);
+        state.fallback_handle = VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>("missing_texture", &state.resource_manager);
 
-        // Create the global missing texture
-        VulkanEngine::CheckerboardConfig missing_texture_config;
-        missing_texture_config.color1 = {255, 255, 255, 255}; // White
-        missing_texture_config.color2 = {255, 0, 255, 255};   // Purple
-
-        // Use an internal registration mechanism or just a shared pointer if ResourceHandle doesn't support manual injection easily.
-        // For now, let's assume we can create it and keep a handle to it.
-        auto missing_texture = VulkanEngine::TextureResource::CreateCheckerboardTexture("missing_texture", missing_texture_config);
-        const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> fallback_handle("missing_texture", &resource_manager);
-
-        const std::filesystem::path exe_dir = std::filesystem::absolute(std::filesystem::path(argv[0])).parent_path();
-        const auto mesh = App::DemoSceneRenderer::DemoSceneManager::LoadMeshFromAssets(exe_dir / "models");
-
-        auto texture_handle = App::DemoSceneRenderer::DemoSceneManager::LoadTexture(resource_manager, exe_dir / "textures", fallback_handle);
-
-        // If the handle is the fallback, we need to make sure the resource exists in the manager or use the pointer.
-        VulkanEngine::TextureResource* active_texture = texture_handle.IsValid() ? texture_handle.Get() : missing_texture.get();
-
-        const auto demo_vertices = App::DemoSceneRenderer::DemoSceneManager::ConvertToDemoVertices(mesh);
+        state.exe_dir = executable_path.parent_path();
+        state.mesh = App::DemoSceneRenderer::DemoSceneManager::LoadMeshFromAssets(state.exe_dir / "models");
+        state.texture_handle = App::DemoSceneRenderer::DemoSceneManager::LoadTexture(state.resource_manager, state.exe_dir / "textures", state.fallback_handle);
+        state.active_texture = state.texture_handle.IsValid() ? state.texture_handle.Get() : state.missing_texture.get();
+        state.demo_vertices = App::DemoSceneRenderer::DemoSceneManager::ConvertToDemoVertices(state.mesh);
 
         const std::filesystem::path shader_dir = SHADER_DIR;
-        std::string const vert_name = "textured.vert.spv";
+        const std::string vert_name = "textured.vert.spv";
         std::string frag_name = "textured.frag.spv";
-
         if (render_mode == App::DemoSceneRenderer::RenderMode::Normals) {
             frag_name = "normals.frag.spv";
         } else if (render_mode == App::DemoSceneRenderer::RenderMode::NoTextures) {
             frag_name = "solid.frag.spv";
         }
 
-        const auto vert_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / vert_name);
-        const auto frag_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / frag_name);
-
-        vk_backend = VulkanEngine::Runtime::CreateVulkanBootstrapBackend();
-        bootstrap = std::make_unique<VulkanEngine::Runtime::VulkanBootstrap>(vk_backend);
-        VulkanEngine::Runtime::VulkanBootstrapConfig vk_config{};
-        vk_config.native_window_handle = window;
-        if (!bootstrap->Initialize(vk_config)) {
-            throw std::runtime_error("Vulkan bootstrap initialization failed");
-        }
-        bootstrap_initialized = true;
-
-        if (!App::DemoSceneRenderer::DemoSceneManager::UploadDemoScene(
-                *bootstrap,
-                demo_vertices.data(),
-                static_cast<uint32_t>(demo_vertices.size()),
-                mesh.indices.data(),
-                static_cast<uint32_t>(mesh.indices.size()),
-                active_texture,
-                vert_spv.data(),
-                vert_spv.size() * sizeof(uint32_t),
-                frag_spv.data(),
-                frag_spv.size() * sizeof(uint32_t)
-                )
-            )
-        {
-            throw std::runtime_error("Failed to upload demo scene to Vulkan backend");
-        }
-        scene_uploaded = true;
+        state.vert_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / vert_name);
+        state.frag_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / frag_name);
 
         VulkanEngine::RenderGraph::RenderGraphBuilder render_graph{};
-        const auto backbuffer = render_graph.ImportResource("swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
+        state.backbuffer = render_graph.ImportResource("swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
         render_graph.SetFinalState(
-                backbuffer,
-                VulkanEngine::RenderGraph::ResourceState::ImageState(
-                    VulkanEngine::RenderGraph::PipelineStageIntent::Present,
-                    VulkanEngine::RenderGraph::AccessIntent::Read,
-                    VulkanEngine::RenderGraph::QueueType::Graphics,
-                    VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
+            state.backbuffer,
+            VulkanEngine::RenderGraph::ResourceState::ImageState(
+                VulkanEngine::RenderGraph::PipelineStageIntent::Present,
+                VulkanEngine::RenderGraph::AccessIntent::Read,
+                VulkanEngine::RenderGraph::QueueType::Graphics,
+                VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
 
         const auto render_pass = render_graph.AddPass(
             "demo-render",
@@ -174,150 +106,66 @@ int main(int argc, char* const argv[]) {
                     auto* mutable_frame = const_cast<App::DemoSceneRenderer::FrameRenderData*>(frame);
                     mutable_frame->render_success = App::DemoSceneRenderer::DemoSceneManager::RenderDemoFrame(
                         *frame->bootstrap,
-                        mutable_frame->image_index,
-                        mutable_frame->angle_degrees,
-                        mutable_frame->monkey_offset_x,
-                        mutable_frame->monkey_offset_y);
+                        mutable_frame->image_index);
                 }
             });
 
-        render_graph.AddWrite(render_pass, backbuffer);
-
-        const auto compiled_graph = render_graph.Compile();
-        if (!compiled_graph.success) {
-            throw std::runtime_error("Render graph compilation failed");
+        render_graph.AddWrite(render_pass, state.backbuffer);
+        state.compiled_graph = render_graph.Compile();
+        if (!state.compiled_graph.success) {
+            return false;
         }
 
-        runtime = std::make_unique<VulkanEngine::Runtime::RuntimeShell>();
-        if (!runtime->Initialize(VulkanEngine::Runtime::RuntimeConfig{})) {
-            throw std::runtime_error("Runtime shell initialization failed");
+        if (!App::DemoSceneRenderer::DemoSceneManager::UploadDemoScene(
+                *ctx.bootstrap,
+                state.demo_vertices.data(),
+                static_cast<uint32_t>(state.demo_vertices.size()),
+                state.mesh.indices.data(),
+                static_cast<uint32_t>(state.mesh.indices.size()),
+                state.active_texture,
+                state.vert_spv.data(),
+                state.vert_spv.size() * sizeof(uint32_t),
+                state.frag_spv.data(),
+                state.frag_spv.size() * sizeof(uint32_t))) {
+            return false;
         }
-        runtime_initialized = true;
+        state.scene_uploaded = true;
 
-        // Create an input handler component to own WASD / mouse input behavior.
-        auto input_handler = std::make_unique<App::Components::InputHandler>(&input_system);
-        input_handler->Initialize();
+        auto& component_registry = ctx.bootstrap->GetBackend().GetComponentRegistry();
+        auto& demo_entity = component_registry.CreateEntity();
+        component_registry.AddComponent<App::Components::Transform>(demo_entity);
+        component_registry.AddComponent<App::Components::MeshRenderer>(demo_entity);
+        component_registry.AddComponent<App::Components::DemoInputComponent>(demo_entity, ctx.input_system);
+        component_registry.InitializeAllComponents();
+        return true;
+    };
 
-        auto previous_time = std::chrono::steady_clock::now();
+    hooks.on_frame_update = [&](VulkanEngine::Application::ApplicationContext& ctx) {
+        ctx.bootstrap->GetBackend().GetComponentRegistry().UpdateAllComponentsAsync(ctx.frame.delta_time);
+    };
 
-        while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
-            LOGIFACE_LOG(trace, "new frame started");
-            const auto platform_events = platform->PollEvents();
-            input_system.ProcessEvents(platform_events);
-            if (input_system.WasActionStarted("quit")) {
-                runtime->RequestShutdown();
-            }
-            const auto& platform_state = platform->GetState();
+    hooks.on_frame_render = [&](VulkanEngine::Application::ApplicationContext& ctx) {
+        const VulkanEngine::RenderGraph::GraphExecutionContext graph_context = VulkanEngine::RenderGraph::CreateGraphExecutionContext(
+            ctx.frame.runtime_frame,
+            VulkanEngine::RenderGraph::ImportedFrameResources{.backbuffer = state.backbuffer});
 
-            if (platform_state.quit_requested) {
-                runtime->RequestShutdown();
-            }
+        App::DemoSceneRenderer::FrameRenderData frame_render_data{
+            .bootstrap = ctx.bootstrap,
+            .graph_context = &graph_context,
+            .image_index = ctx.frame.image_index,
+            .render_success = true,
+        };
 
-            runtime->NotifyWindowMinimized(platform_state.minimized);
-            const auto runtime_frame = runtime->BeginFrame();
-            if (runtime_frame.status == VulkanEngine::Runtime::RuntimeStatus::Minimized ||
-                runtime_frame.status == VulkanEngine::Runtime::RuntimeStatus::ShutdownRequested) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
+        state.compiled_graph.Execute(&frame_render_data);
+        ctx.frame.render_success = frame_render_data.render_success;
+    };
 
-            if (platform_state.resized) {
-                bootstrap->NotifySwapchainOutOfDate();
-            }
-
-            const auto bootstrap_frame = bootstrap->BeginFrame();
-            if (bootstrap_frame.status == VulkanEngine::Runtime::BootstrapStatus::SwapchainOutOfDate) {
-                if (!bootstrap->RecreateSwapchain()) {
-                    throw std::runtime_error("Swapchain recreation failed");
-                }
-                continue;
-            }
-            if (bootstrap_frame.status != VulkanEngine::Runtime::BootstrapStatus::Ok) {
-                throw std::runtime_error("Vulkan bootstrap entered non-OK frame status");
-            }
-
-            uint32_t image_index = 0;
-            if (!bootstrap->AcquireNextImage(image_index)) {
-                bootstrap->NotifySwapchainOutOfDate();
-                continue;
-            }
-
-            const auto now = std::chrono::steady_clock::now();
-            const float dt = std::chrono::duration<float>(now - previous_time).count();
-            previous_time = now;
-
-            // Let the input handler component update its internal state based on the processed input.
-            if (input_handler) {
-                input_handler->Update(dt);
-            }
-
-            const float angle = input_handler ? input_handler->GetAngle() : 0.0f;
-            const float monkey_offset_x = input_handler ? input_handler->GetMonkeyOffsetX() : 0.0f;
-            const float monkey_offset_y = input_handler ? input_handler->GetMonkeyOffsetY() : 0.0f;
-
-            const VulkanEngine::RenderGraph::GraphExecutionContext graph_context = VulkanEngine::RenderGraph::CreateGraphExecutionContext(
-                runtime_frame,
-                VulkanEngine::RenderGraph::ImportedFrameResources{.backbuffer = backbuffer});
-
-            App::DemoSceneRenderer::FrameRenderData frame_render_data{
-                .bootstrap = bootstrap.get(),
-                .graph_context = &graph_context,
-                .monkey_offset_x = monkey_offset_x,
-                .monkey_offset_y = monkey_offset_y,
-                .angle_degrees = angle,
-                .image_index = image_index,
-                .render_success = true,
-            };
-
-            compiled_graph.Execute(&frame_render_data);
-
-            // Always attempt to Present if an image was acquired.
-            // If rendering failed, the backend will submit a dummy sync to clean up semaphores.
-            if (!bootstrap->Present(image_index, frame_render_data.render_success)) {
-                bootstrap->NotifySwapchainOutOfDate();
-            }
-
-            runtime->EndFrame();
-            bootstrap->EndFrame();
+    hooks.on_shutdown = [&](VulkanEngine::Application::ApplicationContext& ctx) {
+        if (state.scene_uploaded && ctx.bootstrap != nullptr) {
+            App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*ctx.bootstrap);
+            state.scene_uploaded = false;
         }
+    };
 
-        if (scene_uploaded) {
-            App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
-            scene_uploaded = false;
-        }
-        if (runtime_initialized) {
-            runtime->Shutdown();
-            runtime_initialized = false;
-        }
-        if (bootstrap_initialized) {
-            bootstrap->Shutdown();
-            bootstrap_initialized = false;
-        }
-        if (platform_initialized) {
-            platform->Shutdown();
-            platform_initialized = false;
-        }
-
-        LOGIFACE_LOG(info, "App completed");
-        return 0;
-    } catch (const std::exception& ex) {
-        auto trace = boost::stacktrace::stacktrace::from_current_exception();
-        InitializeLogger(Logiface::Level::info);
-        LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
-        std::cerr << "\nStacktrace:\n" << trace << '\n';
-        if (scene_uploaded && bootstrap_initialized && bootstrap) {
-            App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*bootstrap);
-            scene_uploaded = false;
-        }
-        if (runtime_initialized && runtime) {
-            runtime->Shutdown();
-        }
-        if (bootstrap_initialized && bootstrap) {
-            bootstrap->Shutdown();
-        }
-        if (platform_initialized && platform) {
-            platform->Shutdown();
-        }
-        return 1;
-    }
+    return VulkanEngine::Application::RunApplication(app_config, hooks);
 }

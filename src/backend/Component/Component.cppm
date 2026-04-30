@@ -1,12 +1,17 @@
 module;
 
+#include <algorithm>
+#include <future>
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -271,6 +276,253 @@ public:
 
     void SetOwner(Entity* entity) { owner_ = entity; }
     [[nodiscard]] Entity* GetOwner() const { return owner_; }
+};
+
+class Entity {
+public:
+    using ComponentMap = std::unordered_map<std::size_t, Component*>;
+    using EntityId = std::size_t;
+
+    explicit Entity(EntityId id) noexcept
+        : id_(id) {}
+
+    [[nodiscard]] EntityId GetId() const noexcept {
+        return id_;
+    }
+
+    template<typename T>
+    [[nodiscard]] T* GetComponent() const {
+        const auto it = components_.find(ComponentTypeIDSystem::GetTypeID<T>());
+        if (it == components_.end()) {
+            return nullptr;
+        }
+        return static_cast<T*>(it->second);
+    }
+
+    template<typename T>
+    [[nodiscard]] bool HasComponent() const {
+        return GetComponent<T>() != nullptr;
+    }
+
+private:
+    friend class ComponentRegistry;
+
+    void AttachComponent(std::size_t type_id, Component& component) {
+        components_[type_id] = &component;
+    }
+
+    void DetachComponent(std::size_t type_id) {
+        components_.erase(type_id);
+    }
+
+    EntityId id_ = 0;
+    ComponentMap components_{};
+};
+
+class ComponentRegistry {
+private:
+    struct IComponentPool {
+        virtual ~IComponentPool() = default;
+        virtual void InitializeAll() = 0;
+        virtual void CollectAll(std::vector<Component*>& out_components) = 0;
+        virtual void Clear() = 0;
+    };
+
+    template<typename T>
+    class ComponentPool final : public IComponentPool {
+    public:
+        template<typename... Args>
+        T& Emplace(Entity& owner, Args&&... args) {
+            if (owner.HasComponent<T>()) {
+                throw std::logic_error("Entity already owns this component type");
+            }
+
+            auto component = std::make_unique<T>(std::forward<Args>(args)...);
+            component->SetOwner(&owner);
+            auto& component_ref = *component;
+            entries_.push_back(Entry{&owner, std::move(component)});
+            owner.AttachComponent(TypeId(), component_ref);
+            return component_ref;
+        }
+
+        template<typename Fn>
+        void ForEach(Fn&& fn) {
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    fn(*entry.component);
+                }
+            }
+        }
+
+        [[nodiscard]] std::vector<T*> GetAll() {
+            std::vector<T*> out{};
+            out.reserve(entries_.size());
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    out.push_back(entry.component.get());
+                }
+            }
+            return out;
+        }
+
+        void InitializeAll() override {
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    entry.component->Initialize();
+                }
+            }
+        }
+
+        void CollectAll(std::vector<Component*>& out_components) override {
+            out_components.reserve(out_components.size() + entries_.size());
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    out_components.push_back(entry.component.get());
+                }
+            }
+        }
+
+        void Clear() override {
+            for (auto& entry : entries_) {
+                if (entry.owner != nullptr) {
+                    entry.owner->DetachComponent(TypeId());
+                }
+                if (entry.component) {
+                    entry.component->SetOwner(nullptr);
+                }
+            }
+            entries_.clear();
+        }
+
+    private:
+        struct Entry {
+            Entity* owner = nullptr;
+            std::unique_ptr<T> component{};
+        };
+
+        [[nodiscard]] static std::size_t TypeId() {
+            static const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
+            return type_id;
+        }
+
+        std::vector<Entry> entries_{};
+    };
+
+    template<typename T>
+    [[nodiscard]] ComponentPool<T>* GetPool() {
+        const auto type_id = ComponentTypeIDSystem::GetTypeID<T>();
+        const auto it = pools_.find(type_id);
+        if (it == pools_.end()) {
+            return nullptr;
+        }
+        return static_cast<ComponentPool<T>*>(it->second.get());
+    }
+
+    template<typename T>
+    [[nodiscard]] ComponentPool<T>& GetOrCreatePool() {
+        const auto type_id = ComponentTypeIDSystem::GetTypeID<T>();
+        const auto it = pools_.find(type_id);
+        if (it != pools_.end()) {
+            return *static_cast<ComponentPool<T>*>(it->second.get());
+        }
+
+        auto pool = std::make_unique<ComponentPool<T>>();
+        auto& pool_ref = *pool;
+        pools_[type_id] = std::move(pool);
+        return pool_ref;
+    }
+
+    [[nodiscard]] std::vector<Component*> GatherAllComponents() {
+        std::vector<Component*> components{};
+        for (auto& [_, pool] : pools_) {
+            pool->CollectAll(components);
+        }
+        return components;
+    }
+
+    std::unordered_map<std::size_t, std::unique_ptr<IComponentPool>> pools_{};
+    std::vector<std::unique_ptr<Entity>> entities_{};
+    Entity::EntityId next_entity_id_ = 0;
+    mutable std::mutex mutex_{};
+
+public:
+    [[nodiscard]] Entity& CreateEntity() {
+        const std::scoped_lock lock(mutex_);
+        entities_.push_back(std::make_unique<Entity>(next_entity_id_++));
+        return *entities_.back();
+    }
+
+    template<typename T, typename... Args>
+    T& AddComponent(Entity& owner, Args&&... args) {
+        const std::scoped_lock lock(mutex_);
+        auto& pool = GetOrCreatePool<T>();
+        return pool.Emplace(owner, std::forward<Args>(args)...);
+    }
+
+    template<typename T>
+    [[nodiscard]] std::vector<T*> GetAll() {
+        const std::scoped_lock lock(mutex_);
+        auto* pool = GetPool<T>();
+        return pool != nullptr ? pool->GetAll() : std::vector<T*>{};
+    }
+
+    template<typename T, typename Fn>
+    void ForEach(Fn&& fn) {
+        const std::scoped_lock lock(mutex_);
+        auto* pool = GetPool<T>();
+        if (pool != nullptr) {
+            pool->ForEach(std::forward<Fn>(fn));
+        }
+    }
+
+    void InitializeAllComponents() {
+        const std::scoped_lock lock(mutex_);
+        for (auto& [_, pool] : pools_) {
+            pool->InitializeAll();
+        }
+    }
+
+    void UpdateAllComponentsAsync(float delta_time) {
+        std::vector<Component*> components;
+        {
+            const std::scoped_lock lock(mutex_);
+            components = GatherAllComponents();
+        }
+
+        if (components.empty()) {
+            return;
+        }
+
+        const unsigned int worker_count = std::max(1u, std::thread::hardware_concurrency());
+        const std::size_t chunk_size = std::max<std::size_t>(1, (components.size() + worker_count - 1) / worker_count);
+
+        std::vector<std::future<void>> tasks;
+        tasks.reserve((components.size() + chunk_size - 1) / chunk_size);
+
+        for (std::size_t start = 0; start < components.size(); start += chunk_size) {
+            const std::size_t end = std::min(components.size(), start + chunk_size);
+            tasks.emplace_back(std::async(std::launch::async, [start, end, delta_time, components]() mutable {
+                for (std::size_t index = start; index < end; ++index) {
+                    if (components[index] != nullptr) {
+                        components[index]->Update(delta_time);
+                    }
+                }
+            }));
+        }
+
+        for (auto& task : tasks) {
+            task.get();
+        }
+    }
+
+    void Clear() {
+        const std::scoped_lock lock(mutex_);
+        for (auto& [_, pool] : pools_) {
+            pool->Clear();
+        }
+        pools_.clear();
+        entities_.clear();
+    }
 };
 
 } // namespace VulkanEngine

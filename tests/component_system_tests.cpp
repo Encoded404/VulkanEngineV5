@@ -2,7 +2,7 @@
 
 #include <logging/logging.hpp>
 
-import VulkanEngine.Component;
+import VulkanBackend.Component;
 
 #include <type_traits>
 
@@ -15,6 +15,27 @@ struct TransformSchema {
         VulkanEngine::field<int>("position"),
         VulkanEngine::field<float>("rotation")
     );
+};
+
+struct RegistryProbeComponent : VulkanEngine::Component {
+public:
+    [[nodiscard]] bool WasInitialized() const noexcept { return initialized_; }
+    [[nodiscard]] bool WasUpdated() const noexcept { return updated_; }
+    [[nodiscard]] float GetLastDeltaTime() const noexcept { return last_delta_time_; }
+
+    void Initialize() override {
+        initialized_ = true;
+    }
+
+    void Update(float delta_time) override {
+        updated_ = true;
+        last_delta_time_ = delta_time;
+    }
+
+private:
+    bool initialized_ = false;
+    bool updated_ = false;
+    float last_delta_time_ = 0.0f;
 };
 }  // namespace
 
@@ -117,3 +138,41 @@ TEST(ComponentSystemTest, TypeIdSystemReturnsStableIdsPerType) {
     EXPECT_EQ(id_a_1, id_a_2);
     EXPECT_NE(id_a_1, id_b);
 }
+
+TEST(ComponentSystemTest, RegistryStoresComponentsAndEntityReferences) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    auto& component = registry.AddComponent<RegistryProbeComponent>(entity);
+
+    EXPECT_TRUE(entity.HasComponent<RegistryProbeComponent>());
+    EXPECT_EQ(entity.GetComponent<RegistryProbeComponent>(), &component);
+
+    const auto all_components = registry.GetAll<RegistryProbeComponent>();
+    ASSERT_EQ(all_components.size(), 1u);
+    EXPECT_EQ(all_components[0], &component);
+
+    bool visited = false;
+    registry.ForEach<RegistryProbeComponent>([&](RegistryProbeComponent& probe) {
+        visited = true;
+        EXPECT_EQ(&probe, &component);
+    });
+    EXPECT_TRUE(visited);
+}
+
+TEST(ComponentSystemTest, RegistryInitializesAndUpdatesComponentsAsync) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    auto& component = registry.AddComponent<RegistryProbeComponent>(entity);
+
+    registry.InitializeAllComponents();
+    EXPECT_TRUE(component.WasInitialized());
+
+    registry.UpdateAllComponentsAsync(0.25f);
+    EXPECT_TRUE(component.WasUpdated());
+    EXPECT_FLOAT_EQ(component.GetLastDeltaTime(), 0.25f);
+}
+

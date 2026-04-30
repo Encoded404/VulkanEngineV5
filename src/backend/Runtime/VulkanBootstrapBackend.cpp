@@ -10,14 +10,20 @@ module;
 
 module VulkanEngine.Runtime.VulkanBootstrapBackend;
 
+import VulkanBackend.Component;
 import VulkanEngine.Runtime.VulkanInstance;
 import VulkanEngine.Runtime.VulkanDevice;
 import VulkanEngine.Runtime.VulkanSwapchain;
 
 namespace VulkanEngine::Runtime {
 
+namespace {
+
 class RaiiVulkanBootstrapBackend final : public IVulkanBootstrapBackend {
 public:
+    [[nodiscard]] ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
+    [[nodiscard]] const ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
+
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig& config) override {
         instance_ = std::make_unique<VulkanInstance>();
         return instance_->Initialize(config);
@@ -33,7 +39,7 @@ public:
     [[nodiscard]] bool CreateLogicalDevice(uint32_t frames_in_flight) override {
         if (!device_ || !instance_) return false; // Ensure device and instance are initialized
         // Phase 2: Create the logical device and all associated resources using the correct frame count.
-        return device_->CreateLogicalDeviceAndResources(*instance_, frames_in_flight);
+        return device_->CreateLogicalDeviceAndResources(frames_in_flight);
     }
 
     [[nodiscard]] bool CreateSwapchain(const uint32_t preferred_image_count, uint32_t& out_image_count) override {
@@ -133,7 +139,7 @@ public:
 
         const vk::raii::Device& vk_device = device_->GetDevice();
         const vk::raii::Queue& vk_graphics_queue = device_->GetGraphicsQueue();
-        vk::raii::CommandBuffer& vk_command_buffer = device_->GetCommandBuffer(frame_idx);
+        const vk::raii::CommandBuffer& vk_command_buffer = device_->GetCommandBuffer(frame_idx);
         const vk::raii::Semaphore& vk_image_available_semaphore = device_->GetImageAvailableSemaphore(frame_idx);
         const vk::raii::Semaphore& vk_render_finished_semaphore = GetRenderFinishedSemaphore(image_index);
         const vk::raii::Fence& vk_in_flight_fence = device_->GetInFlightFence(frame_idx);
@@ -210,12 +216,15 @@ public:
     }
 
 private:
+    ComponentRegistry component_registry_{};
     std::unique_ptr<VulkanInstance> instance_{};
     std::unique_ptr<VulkanDevice> device_{};
     std::unique_ptr<VulkanSwapchain> swapchain_{};
     std::vector<std::unique_ptr<vk::raii::Semaphore>> render_finished_semaphores_{};
     uint32_t current_image_index_ = 0;
 };
+
+}  // namespace
 
 std::shared_ptr<IVulkanBootstrapBackend> CreateVulkanBootstrapBackend() {
     return std::make_shared<RaiiVulkanBootstrapBackend>();

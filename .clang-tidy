@@ -15,6 +15,7 @@ Checks: >-
   -modernize-use-designated-initializers,
 
   -bugprone-easily-swappable-parameters,
+  -bugprone-lambda-function-name,
 
   -performance-enum-size
 #  -misc-non-private-member-variables-in-classes,

@@ -265,42 +265,42 @@ int main(int argc, char* const argv[]) {
     };
 
     hooks.on_shutdown = [&]([[maybe_unused]] VulkanEngine::Application::ApplicationContext& ctx) {
-        VulkanEngine::Utils::Timer t{true};
+        VulkanEngine::Utils::Timer const t{true};
         double prev = 0.0;
         if (state.frame_renderer) {
             state.frame_renderer->Shutdown();
             state.frame_renderer.reset();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: frame_renderer " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: frame_renderer " + std::to_string(current - prev) + " ms");
+            prev = current;
         }
         if (state.pipeline) {
             state.pipeline->Shutdown();
             state.pipeline.reset();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: render_pipeline " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: render_pipeline " + std::to_string(current - prev) + " ms");
+            prev = current;
         }
         if (state.scene_uploaded && ctx.bootstrap != nullptr) {
             App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*ctx.bootstrap);
             state.scene_uploaded = false;
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: demo_scene " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: demo_scene " + std::to_string(current - prev) + " ms");
+            prev = current;
         }
         if (state.pipeline_manager) {
             state.pipeline_manager->Shutdown();
             state.pipeline_manager.reset();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: pipeline_manager " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: pipeline_manager " + std::to_string(current - prev) + " ms");
+            prev = current;
         }
         if (state.imgui_system) {
             state.imgui_system->Shutdown();
             state.imgui_system.reset();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: imgui " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: imgui " + std::to_string(current - prev) + " ms");
+            prev = current;
         }
     };
 

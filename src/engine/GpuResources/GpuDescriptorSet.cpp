@@ -21,6 +21,14 @@ namespace VulkanEngine::GpuResources {
 std::shared_ptr<DescriptorPool> DescriptorPool::Create(
     VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
     const DescriptorPoolConfig& config) {
+    // clang-tidy false positive (clang-analyzer-core.uninitialized.Assign):
+    // When constructing a shared_ptr to a type deriving from enable_shared_from_this,
+    // the analyzer cannot model that _Sp_counted_base's constructor initializes
+    // _M_weak_count to 0 before _M_weak_add_ref is called internally by the
+    // shared_ptr constructor. It incorrectly flags the compound assignment in
+    // __atomic_add_single as using uninitialized memory. This is a known analyzer
+    // limitation that has been reported multiple times to the LLVM project.
+    // NOLINTNEXTLINE(clang-analyzer-core.uninitialized.Assign)
     auto pool = std::shared_ptr<DescriptorPool>(new DescriptorPool());
     pool->Initialize(backend, config);
     return pool;

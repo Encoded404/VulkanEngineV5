@@ -1,13 +1,10 @@
 module;
 
-#include <algorithm>
-#include <future>
 #include <atomic>
 #include <cstddef>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
-#include <thread>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -16,6 +13,8 @@ module;
 #include <vector>
 
 export module VulkanBackend.Component;
+
+import VulkanBackend.Utils.ThreadPool;
 
 export namespace VulkanEngine {
 
@@ -444,6 +443,7 @@ private:
     std::vector<std::unique_ptr<Entity>> entities_{};
     Entity::EntityId next_entity_id_ = 0;
     mutable std::mutex mutex_{};
+    ThreadPool thread_pool_{};
 
 public:
     [[nodiscard]] Entity& CreateEntity() {
@@ -493,26 +493,12 @@ public:
             return;
         }
 
-        const unsigned int worker_count = std::max(1u, std::thread::hardware_concurrency());
-        const std::size_t chunk_size = std::max<std::size_t>(1, (components.size() + worker_count - 1) / worker_count);
-
-        std::vector<std::future<void>> tasks;
-        tasks.reserve((components.size() + chunk_size - 1) / chunk_size);
-
-        for (std::size_t start = 0; start < components.size(); start += chunk_size) {
-            const std::size_t end = std::min(components.size(), start + chunk_size);
-            tasks.emplace_back(std::async(std::launch::async, [start, end, delta_time, components]() mutable {
-                for (std::size_t index = start; index < end; ++index) {
-                    if (components[index] != nullptr) {
-                        components[index]->Update(delta_time);
-                    }
-                }
-            }));
-        }
-
-        for (auto& task : tasks) {
-            task.get();
-        }
+        const std::size_t component_count = components.size();
+        thread_pool_.ParallelFor(component_count, [delta_time, components = std::move(components)](std::size_t index) mutable {
+            if (components[index] != nullptr) {
+                components[index]->Update(delta_time);
+            }
+        });
     }
 
     void Clear() {

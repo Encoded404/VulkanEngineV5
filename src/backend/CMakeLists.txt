@@ -88,6 +88,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Utils/ImageUtils.cppm
             Utils/PipelineUtils.cppm
             Utils/Timer.cppm
+            Utils/ThreadPool.cppm
             ImGui/ImGuiBackend.cppm
     )
 endif()

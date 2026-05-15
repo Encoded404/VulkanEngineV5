@@ -109,6 +109,10 @@ SDL_Window* SdlPlatformShell::GetNativeWindowHandle() const {
     return backend_->GetNativeWindowHandle();
 }
 
+IPlatformBackend& SdlPlatformShell::GetBackend() const {
+    return *backend_;
+}
+
 }  // namespace VulkanEngine::Platform
 
 

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <gtest/gtest.h>
 
 #include <SDL3/SDL_keycode.h>
@@ -12,28 +13,28 @@ using namespace VulkanEngine::Input;
 
 TEST(InputSystemTest, TracksKeyboardActionsAcrossFrames) {
     InputSystem input_system;
-    input_system.BindAction("jump", InputBinding::Key(SDLK_SPACE));
+    const ActionHandle jump_handle = input_system.BindAction("jump", InputBinding::Key(SDLK_SPACE));
 
     input_system.BeginFrame();
-    input_system.ProcessEvent(KeyDownEvent{static_cast<int32_t>(SDLK_SPACE), false});
+    input_system.ProcessEvent(KeyDownEvent{static_cast<std::int32_t>(SDLK_SPACE), false});
     input_system.Update();
 
-    EXPECT_TRUE(input_system.IsActionActive("jump"));
-    EXPECT_TRUE(input_system.WasActionStarted("jump"));
-    EXPECT_FALSE(input_system.WasActionCanceled("jump"));
+    EXPECT_TRUE(input_system.IsActionActive(jump_handle));
+    EXPECT_TRUE(input_system.WasActionStarted(jump_handle));
+    EXPECT_FALSE(input_system.WasActionCanceled(jump_handle));
 
     input_system.BeginFrame();
     input_system.ProcessEvent(KeyUpEvent{static_cast<int32_t>(SDLK_SPACE)});
     input_system.Update();
 
-    EXPECT_FALSE(input_system.IsActionActive("jump"));
-    EXPECT_FALSE(input_system.WasActionStarted("jump"));
-    EXPECT_TRUE(input_system.WasActionCanceled("jump"));
+    EXPECT_FALSE(input_system.IsActionActive(jump_handle));
+    EXPECT_FALSE(input_system.WasActionStarted(jump_handle));
+    EXPECT_TRUE(input_system.WasActionCanceled(jump_handle));
 }
 
 TEST(InputSystemTest, ProcessesBatchedMouseInputEvents) {
     InputSystem input_system;
-    input_system.BindAction("fire", InputBinding::MouseButton(1));
+    const ActionHandle fire_handle = input_system.BindAction("fire", InputBinding::MouseButton(1));
 
     EventList events{};
     events.push_back(std::make_unique<MouseButtonDownEvent>(1, 100, 200));
@@ -42,8 +43,8 @@ TEST(InputSystemTest, ProcessesBatchedMouseInputEvents) {
 
     input_system.ProcessEvents(events);
 
-    EXPECT_TRUE(input_system.IsActionActive("fire"));
-    EXPECT_TRUE(input_system.WasActionStarted("fire"));
+    EXPECT_TRUE(input_system.IsActionActive(fire_handle));
+    EXPECT_TRUE(input_system.WasActionStarted(fire_handle));
     EXPECT_EQ(input_system.GetRawState().mouse_x, 100.0f);
     EXPECT_EQ(input_system.GetRawState().mouse_y, 200.0f);
     EXPECT_FLOAT_EQ(input_system.GetRawState().mouse_delta_x, 4.5f);
@@ -52,4 +53,3 @@ TEST(InputSystemTest, ProcessesBatchedMouseInputEvents) {
 }
 
 }  // namespace
-

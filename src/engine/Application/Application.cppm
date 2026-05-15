@@ -1,6 +1,8 @@
 module;
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <iostream>
@@ -13,6 +15,7 @@ module;
 
 export module VulkanEngine.Application;
 
+import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanEngine.Platform.SdlPlatformBackend;
 import VulkanBackend.Runtime.FrameLoop;
@@ -38,6 +41,7 @@ struct ApplicationContext {
     SDL_Window* window = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     const VulkanEngine::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationConfig {
@@ -51,6 +55,9 @@ struct ApplicationConfig {
 
 struct ApplicationHooks {
     std::function<bool(ApplicationContext&)> on_setup{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::function<void(ApplicationContext&)> on_pre_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::function<bool()> should_filter_mouse_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::function<bool()> should_filter_keyboard_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<void(ApplicationContext&)> on_frame_update{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<void(ApplicationContext&)> on_frame_render{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<void(ApplicationContext&)> on_shutdown{}; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -145,9 +152,38 @@ struct ApplicationHooks {
         auto previous_time = std::chrono::steady_clock::now();
 
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
-            const auto platform_events = platform->PollEvents();
-            input_system.ProcessEvents(platform_events);
-            if (input_system.WasActionStarted("quit")) {
+            auto platform_events = platform->PollEvents();
+
+            if (hooks.on_pre_input) {
+                hooks.on_pre_input(context);
+            }
+
+            bool filter_mouse = hooks.should_filter_mouse_input && hooks.should_filter_mouse_input();
+            bool filter_keyboard = hooks.should_filter_keyboard_input && hooks.should_filter_keyboard_input();
+
+            VulkanEngine::Backend::Event::EventList filtered_events;
+            filtered_events.reserve(platform_events.size());
+
+            for (auto& event : platform_events) {
+                bool is_mouse = dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonDownEvent*>(event.get()) ||
+                                dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonUpEvent*>(event.get()) ||
+                                dynamic_cast<const VulkanEngine::Backend::Event::MouseMotionEvent*>(event.get()) ||
+                                dynamic_cast<const VulkanEngine::Backend::Event::MouseWheelEvent*>(event.get());
+
+                bool is_keyboard = dynamic_cast<const VulkanEngine::Backend::Event::KeyDownEvent*>(event.get()) ||
+                                   dynamic_cast<const VulkanEngine::Backend::Event::KeyUpEvent*>(event.get());
+
+                if (is_mouse && filter_mouse) {
+                    continue;
+                }
+                if (is_keyboard && filter_keyboard) {
+                    continue;
+                }
+                filtered_events.push_back(std::move(event));
+            }
+
+            input_system.ProcessEvents(filtered_events);
+            if (context.quit_action_handle.id != UINT32_MAX && input_system.WasActionStarted(context.quit_action_handle)) {
                 runtime->RequestShutdown();
             }
 

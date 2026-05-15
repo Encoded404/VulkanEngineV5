@@ -26,9 +26,9 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
             const auto queue_families = device.getQueueFamilyProperties();
             for (uint32_t i = 0; i < queue_families.size(); ++i) {
                 const bool supports_graphics = (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) != vk::QueueFlags{};
-                const bool supports_present = device.getSurfaceSupportKHR(i, static_cast<VkSurfaceKHR>(*vk_surface)) == VK_TRUE;
+                const bool supports_present = device.getSurfaceSupportKHR(i, *vk_surface) == VK_TRUE;
                 if (supports_graphics && supports_present) {
-                    physical_device_ = std::make_unique<vk::raii::PhysicalDevice>(vk_instance, static_cast<VkPhysicalDevice>(*device));
+                    physical_device_ = std::make_unique<vk::raii::PhysicalDevice>(vk_instance, *device);
                     graphics_queue_family_ = i;
                     break;
                 }
@@ -87,7 +87,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         command_pool_ = std::make_unique<vk::raii::CommandPool>(*device_, pool_info);
 
         vk::CommandBufferAllocateInfo cmd_alloc{};
-        cmd_alloc.commandPool = static_cast<VkCommandPool>(**command_pool_);
+        cmd_alloc.commandPool = **command_pool_;
         cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
         cmd_alloc.commandBufferCount = frames_in_flight_;
         command_buffers_ = device_->allocateCommandBuffers(cmd_alloc);

@@ -1,6 +1,5 @@
 module;
 
-#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -12,9 +11,9 @@ module;
 
 #include <logging/logging.hpp>
 
-#include <engine/FileLoaders/Textures/TextureLoaders.hpp>
-
 module VulkanEngine.ResourceSystem.TextureResource;
+
+import VulkanEngine.FileLoaders.TextureLoaders;
 
 namespace VulkanEngine {
 

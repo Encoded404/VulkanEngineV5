@@ -5,33 +5,50 @@
 #include <vector>
 
 #include <CLI/CLI.hpp>
+#include <SDL3/SDL_keycode.h>
+#include <imgui.h>
+#include <vulkan/vulkan.hpp>
 
 import VulkanEngine.Application;
 import VulkanEngine.Components.MeshRenderer;
 import VulkanEngine.Components.Transform;
+import VulkanEngine.Input;
 import VulkanEngine.RenderGraph;
-import VulkanEngine.RenderGraph.GraphExecutionBridge;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
+import VulkanEngine.ImGuiSystem;
+import VulkanEngine.RenderPipeline;
+import VulkanEngine.ShaderLoader;
+import VulkanEngine.DefaultResources;
+import VulkanEngine.MeshRendererSystem;
+import VulkanEngine.FrameRenderer;
+import VulkanEngine.StandardMeshPipeline;
 import App.DemoSceneRenderer;
 import App.Components.DemoInputComponent;
 
 namespace {
     struct DemoAppState {
         VulkanEngine::ResourceManager resource_manager{};
-        VulkanEngine::CheckerboardConfig missing_texture_config{};
         std::shared_ptr<VulkanEngine::TextureResource> missing_texture{};
         VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> fallback_handle{};
         std::filesystem::path exe_dir{};
         App::DemoSceneRenderer::MeshData mesh{};
         VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> texture_handle{};
         VulkanEngine::TextureResource* active_texture = nullptr;
-        std::vector<App::DemoSceneRenderer::DemoVertex> demo_vertices{};
+        std::vector<VulkanEngine::StandardMeshPipeline::Vertex> vertices{};
         std::vector<uint32_t> vert_spv{};
         std::vector<uint32_t> frag_spv{};
-        VulkanEngine::RenderGraph::ResourceHandle backbuffer{};
-        VulkanEngine::RenderGraph::CompileResult compiled_graph{};
         bool scene_uploaded = false;
+        std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> imgui_backend{};
+        std::unique_ptr<VulkanEngine::ImGuiSystem::ImGuiSystem> imgui_system{};
+        std::unique_ptr<VulkanEngine::RenderPipeline::RenderPipeline> pipeline{};
+        std::unique_ptr<VulkanEngine::FrameRenderer::FrameRenderer> frame_renderer{};
+        VulkanEngine::MeshRendererSystem::MeshRendererSystem mesh_renderer_system{};
+        VulkanEngine::MeshRendererSystem::MeshRenderObject render_object{};
+        std::unique_ptr<VulkanEngine::StandardMeshPipeline::PipelineManager> pipeline_manager{};
+        App::DemoSceneRenderer::RenderPassData render_pass_data{};
+        uint32_t swapchain_width = 0;
+        uint32_t swapchain_height = 0;
     };
 }
 
@@ -62,20 +79,28 @@ int main(int argc, char* const argv[]) {
     VulkanEngine::Application::ApplicationHooks hooks{};
 
     hooks.on_setup = [&](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
-        state.missing_texture_config.color1 = {255, 255, 255, 255};
-        state.missing_texture_config.color2 = {255, 0, 255, 255};
-
-        state.missing_texture = VulkanEngine::TextureResource::CreateCheckerboardTexture("missing_texture", state.missing_texture_config);
-        state.fallback_handle = VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>("missing_texture", &state.resource_manager);
+        state.missing_texture = VulkanEngine::DefaultResources::DefaultResources::CreateCheckerboard(state.resource_manager);
+        state.fallback_handle = VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>("checkerboard_default", &state.resource_manager);
 
         state.exe_dir = executable_path.parent_path();
         state.mesh = App::DemoSceneRenderer::DemoSceneManager::LoadMeshFromAssets(state.exe_dir / "models");
         state.texture_handle = App::DemoSceneRenderer::DemoSceneManager::LoadTexture(state.resource_manager, state.exe_dir / "textures", state.fallback_handle);
         state.active_texture = state.texture_handle.IsValid() ? state.texture_handle.Get() : state.missing_texture.get();
-        state.demo_vertices = App::DemoSceneRenderer::DemoSceneManager::ConvertToDemoVertices(state.mesh);
+
+        auto demo_vertices = App::DemoSceneRenderer::DemoSceneManager::ConvertToDemoVertices(state.mesh);
+        state.vertices.resize(demo_vertices.size());
+        for (size_t i = 0; i < demo_vertices.size(); ++i) {
+            state.vertices[i].px = demo_vertices[i].px;
+            state.vertices[i].py = demo_vertices[i].py;
+            state.vertices[i].pz = demo_vertices[i].pz;
+            state.vertices[i].nx = demo_vertices[i].nx;
+            state.vertices[i].ny = demo_vertices[i].ny;
+            state.vertices[i].nz = demo_vertices[i].nz;
+            state.vertices[i].u = demo_vertices[i].u;
+            state.vertices[i].v = demo_vertices[i].v;
+        }
 
         const std::filesystem::path shader_dir = SHADER_DIR;
-        const std::string vert_name = "textured.vert.spv";
         std::string frag_name = "textured.frag.spv";
         if (render_mode == App::DemoSceneRenderer::RenderMode::Normals) {
             frag_name = "normals.frag.spv";
@@ -83,61 +108,144 @@ int main(int argc, char* const argv[]) {
             frag_name = "solid.frag.spv";
         }
 
-        state.vert_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / vert_name);
-        state.frag_spv = App::DemoSceneRenderer::DemoSceneManager::ReadSpirv(shader_dir / frag_name);
+        state.vert_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / "textured.vert.spv");
+        state.frag_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / frag_name);
 
-        VulkanEngine::RenderGraph::RenderGraphBuilder render_graph{};
-        state.backbuffer = render_graph.ImportResource("swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-        render_graph.SetFinalState(
-            state.backbuffer,
+        state.pipeline = std::make_unique<VulkanEngine::RenderPipeline::RenderPipeline>();
+        state.pipeline->Initialize(*ctx.bootstrap);
+
+        auto backbuffer = state.pipeline->ImportBackbuffer();
+        auto depth_buffer = state.pipeline->ImportDepthBuffer();
+
+        state.pipeline->SetInitialState(
+            backbuffer,
             VulkanEngine::RenderGraph::ResourceState::ImageState(
-                VulkanEngine::RenderGraph::PipelineStageIntent::Present,
-                VulkanEngine::RenderGraph::AccessIntent::Read,
+                VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
+                VulkanEngine::RenderGraph::AccessIntent::None,
                 VulkanEngine::RenderGraph::QueueType::Graphics,
-                VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
+                VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
-        const auto render_pass = render_graph.AddPass(
-            "demo-render",
-            VulkanEngine::RenderGraph::QueueType::Graphics,
-            true,
-            [](const void* user_data) {
-                const auto* frame = static_cast<const App::DemoSceneRenderer::FrameRenderData*>(user_data);
-                if (frame != nullptr && frame->bootstrap != nullptr) {
-                    auto* mutable_frame = const_cast<App::DemoSceneRenderer::FrameRenderData*>(frame);
-                    mutable_frame->render_success = App::DemoSceneRenderer::DemoSceneManager::RenderDemoFrame(
-                        *frame->bootstrap,
-                        mutable_frame->image_index);
-                }
-            });
+        (void)ctx.bootstrap->GetBackend().GetSwapchainExtent(state.swapchain_width, state.swapchain_height);
 
-        render_graph.AddWrite(render_pass, state.backbuffer);
-        state.compiled_graph = render_graph.Compile();
-        if (!state.compiled_graph.success) {
+        App::DemoSceneRenderer::RenderPassData pass_data{};
+        pass_data.bootstrap = ctx.bootstrap;
+        pass_data.width = state.swapchain_width;
+        pass_data.height = state.swapchain_height;
+
+        VulkanEngine::RenderGraph::PassAttachmentSetup attachment_setup{};
+        attachment_setup.auto_begin_rendering = true;
+
+        VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
+        color_attach.resource = backbuffer;
+        color_attach.load_op = vk::AttachmentLoadOp::eClear;
+        color_attach.store_op = vk::AttachmentStoreOp::eStore;
+        color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{0.1f, 0.1f, 0.1f, 1.0f});
+        attachment_setup.color_attachments.push_back(color_attach);
+
+        VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
+        depth_attach.resource = depth_buffer;
+        depth_attach.load_op = vk::AttachmentLoadOp::eClear;
+        depth_attach.store_op = vk::AttachmentStoreOp::eDontCare;
+        depth_attach.clear_depth = vk::ClearDepthStencilValue(1.0f, 0);
+        attachment_setup.depth_attachment = depth_attach;
+
+        VulkanEngine::RenderPipeline::RenderPipelinePassDesc render_pass_desc{};
+        render_pass_desc.name = "demo-render";
+        render_pass_desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        render_pass_desc.writes = {backbuffer, depth_buffer};
+        render_pass_desc.attachments = attachment_setup;
+        render_pass_desc.execute = [&state](const void* user_data, vk::CommandBuffer command_buffer) {
+            const auto* pass_data = static_cast<const App::DemoSceneRenderer::RenderPassData*>(user_data);
+            auto& registry = pass_data->bootstrap->GetBackend().GetComponentRegistry();
+            state.mesh_renderer_system.RecordAllMeshDraws(command_buffer, registry, state.render_object, pass_data->width, pass_data->height);
+        };
+
+        state.pipeline->AddPass(render_pass_desc);
+        state.pipeline->Compile();
+        if (!state.pipeline->IsCompiled()) {
             return false;
         }
+
+        state.pipeline_manager = std::make_unique<VulkanEngine::StandardMeshPipeline::PipelineManager>();
+        state.pipeline_manager->Initialize(*ctx.bootstrap, state.vert_spv, state.frag_spv);
 
         if (!App::DemoSceneRenderer::DemoSceneManager::UploadDemoScene(
                 *ctx.bootstrap,
-                state.demo_vertices.data(),
-                static_cast<uint32_t>(state.demo_vertices.size()),
+                reinterpret_cast<const VulkanEngine::StandardMeshPipeline::Vertex*>(state.vertices.data()),
+                static_cast<uint32_t>(state.vertices.size()),
                 state.mesh.indices.data(),
                 static_cast<uint32_t>(state.mesh.indices.size()),
                 state.active_texture,
-                state.vert_spv.data(),
-                state.vert_spv.size() * sizeof(uint32_t),
-                state.frag_spv.data(),
-                state.frag_spv.size() * sizeof(uint32_t))) {
+                state.pipeline_manager.get())) {
             return false;
         }
         state.scene_uploaded = true;
+        state.render_object = App::DemoSceneRenderer::DemoSceneManager::GetMeshRenderObject();
+
+        state.imgui_backend = VulkanEngine::Backend::ImGui::CreateImGuiBackend();
+        state.imgui_system = std::make_unique<VulkanEngine::ImGuiSystem::ImGuiSystem>(state.imgui_backend);
+
+        const auto& backend = ctx.bootstrap->GetBackend();
+        const auto surface_format = backend.GetSurfaceFormat();
+
+        VulkanEngine::Backend::ImGui::ImGuiBackendConfig imgui_backend_config{};
+        imgui_backend_config.image_count = ctx.bootstrap->GetSnapshot().swapchain_image_count;
+        imgui_backend_config.swapchain_format = static_cast<vk::Format>(surface_format.format);
+
+        VulkanEngine::ImGuiSystem::ImGuiSystemInitInfo imgui_init_info{};
+        imgui_init_info.sdl_window = ctx.window;
+        imgui_init_info.config.show_demo_window = true;
+        imgui_init_info.backend_config = imgui_backend_config;
+        imgui_init_info.instance = backend.GetInstance();
+        imgui_init_info.physical_device = backend.GetPhysicalDevice();
+        imgui_init_info.device = backend.GetDevice();
+        imgui_init_info.queue_family = backend.GetGraphicsQueueFamily();
+        imgui_init_info.queue = backend.GetGraphicsQueue();
+        imgui_init_info.api_version = VK_API_VERSION_1_3;
+
+        if (!state.imgui_system->Initialize(imgui_init_info)) {
+            return false;
+        }
+
+        auto& platform_backend = ctx.platform->GetBackend();
+        platform_backend.SetEventProcessor(
+            [](void* user_data, void* sdl_event) {
+                auto* imgui_sys = static_cast<VulkanEngine::ImGuiSystem::ImGuiSystem*>(user_data);
+                if (imgui_sys && imgui_sys->IsInitialized()) {
+                    imgui_sys->ProcessSDLEvent(sdl_event);
+                }
+            },
+            state.imgui_system.get());
 
         auto& component_registry = ctx.bootstrap->GetBackend().GetComponentRegistry();
         auto& demo_entity = component_registry.CreateEntity();
-        component_registry.AddComponent<App::Components::Transform>(demo_entity);
-        component_registry.AddComponent<App::Components::MeshRenderer>(demo_entity);
+        component_registry.AddComponent<VulkanEngine::Components::Transform>(demo_entity);
+        component_registry.AddComponent<VulkanEngine::Components::MeshRenderer>(demo_entity);
         component_registry.AddComponent<App::Components::DemoInputComponent>(demo_entity, ctx.input_system);
         component_registry.InitializeAllComponents();
+
+        ctx.quit_action_handle = ctx.input_system->BindAction("quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+
+        VulkanEngine::FrameRenderer::FrameRendererConfig frame_config{};
+        frame_config.enable_imgui = true;
+        state.frame_renderer = std::make_unique<VulkanEngine::FrameRenderer::FrameRenderer>();
+        state.frame_renderer->Initialize(*ctx.bootstrap, *state.pipeline, frame_config);
+
         return true;
+    };
+
+    hooks.on_pre_input = [&]([[maybe_unused]] VulkanEngine::Application::ApplicationContext& ctx) {
+        if (state.imgui_system && state.imgui_system->IsInitialized()) {
+            state.imgui_system->NewFrame();
+        }
+    };
+
+    hooks.should_filter_mouse_input = []() -> bool {
+        return ImGui::GetIO().WantCaptureMouse;
+    };
+
+    hooks.should_filter_keyboard_input = []() -> bool {
+        return ImGui::GetIO().WantCaptureKeyboard;
     };
 
     hooks.on_frame_update = [&](VulkanEngine::Application::ApplicationContext& ctx) {
@@ -145,25 +253,38 @@ int main(int argc, char* const argv[]) {
     };
 
     hooks.on_frame_render = [&](VulkanEngine::Application::ApplicationContext& ctx) {
-        const VulkanEngine::RenderGraph::GraphExecutionContext graph_context = VulkanEngine::RenderGraph::CreateGraphExecutionContext(
-            ctx.frame.runtime_frame,
-            VulkanEngine::RenderGraph::ImportedFrameResources{.backbuffer = state.backbuffer});
+        if (!state.pipeline || !state.pipeline->IsCompiled()) {
+            return;
+        }
 
-        App::DemoSceneRenderer::FrameRenderData frame_render_data{
-            .bootstrap = ctx.bootstrap,
-            .graph_context = &graph_context,
-            .image_index = ctx.frame.image_index,
-            .render_success = true,
-        };
+        state.render_pass_data.bootstrap = ctx.bootstrap;
+        state.render_pass_data.image_index = ctx.frame.image_index;
+        (void)ctx.bootstrap->GetBackend().GetSwapchainExtent(state.render_pass_data.width, state.render_pass_data.height);
 
-        state.compiled_graph.Execute(&frame_render_data);
-        ctx.frame.render_success = frame_render_data.render_success;
+        state.frame_renderer->RenderFrame(*state.pipeline, &state.render_pass_data,
+                                          state.imgui_system.get(), ctx.frame.image_index);
     };
 
     hooks.on_shutdown = [&](VulkanEngine::Application::ApplicationContext& ctx) {
+        if (state.frame_renderer) {
+            state.frame_renderer->Shutdown();
+            state.frame_renderer.reset();
+        }
+        if (state.pipeline) {
+            state.pipeline->Shutdown();
+            state.pipeline.reset();
+        }
         if (state.scene_uploaded && ctx.bootstrap != nullptr) {
             App::DemoSceneRenderer::DemoSceneManager::DestroyDemoSceneResources(*ctx.bootstrap);
             state.scene_uploaded = false;
+        }
+        if (state.pipeline_manager) {
+            state.pipeline_manager->Shutdown();
+            state.pipeline_manager.reset();
+        }
+        if (state.imgui_system) {
+            state.imgui_system->Shutdown();
+            state.imgui_system.reset();
         }
     };
 

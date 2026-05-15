@@ -1,10 +1,14 @@
 module;
 
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <vulkan/vulkan.hpp>
 
 export module VulkanEngine.RenderGraph;
 
@@ -17,7 +21,9 @@ enum class PipelineStageIntent : uint8_t {
     DepthAttachment,
     FragmentShader,
     ComputeShader,
-    Present
+    Present,
+    TopOfPipe,
+    BottomOfPipe
 };
 
 enum class AccessIntent : uint8_t {
@@ -35,7 +41,8 @@ enum class ImageLayoutIntent : uint8_t {
     ShaderReadOnly,
     TransferSource,
     TransferDestination,
-    Present
+    Present,
+    DepthReadOnly
 };
 
 enum class QueueType : uint8_t {
@@ -52,8 +59,8 @@ struct ResourceState {
     bool has_image_layout = false; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] static ResourceState BufferState(PipelineStageIntent stage_intent,
-                                                   AccessIntent access_intent,
-                                                   QueueType queue_intent = QueueType::Graphics) {
+                                                    AccessIntent access_intent,
+                                                    QueueType queue_intent = QueueType::Graphics) {
         return ResourceState{
             .stage = stage_intent,
             .access = access_intent,
@@ -128,13 +135,88 @@ struct CompileDiagnostic {
     std::string message{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-using PassExecutionCallback = std::function<void(const void* user_data)>;
+struct TransientImageInfo {
+    vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t mip_levels = 1; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t array_layers = 1; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::SampleCountFlagBits sample_count = vk::SampleCountFlagBits::e1; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageTiling tiling = vk::ImageTiling::eOptimal; // NOLINT(misc-non-private-member-variables-in-classes)
+};
 
-struct ExecutablePass {
+struct TransientBufferInfo {
+    vk::DeviceSize size = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::MemoryPropertyFlags memory_properties = vk::MemoryPropertyFlagBits::eDeviceLocal; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct ImageBarrier {
+    vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AccessFlags src_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AccessFlags dst_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageLayout old_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageLayout new_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::Image image = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageSubresourceRange subresource_range = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct BufferBarrier {
+    vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AccessFlags src_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AccessFlags dst_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct AttachmentInfo {
+    ResourceHandle resource{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageView image_view = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AttachmentLoadOp load_op = vk::AttachmentLoadOp::eClear; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::AttachmentStoreOp store_op = vk::AttachmentStoreOp::eStore; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ClearColorValue clear_color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}); // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ClearDepthStencilValue clear_depth = vk::ClearDepthStencilValue(1.0f, 0); // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct PassAttachmentSetup {
+    std::vector<AttachmentInfo> color_attachments{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::optional<AttachmentInfo> depth_attachment{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::Rect2D render_area = {}; // NOLINT(misc-non-private-member-variables-in-classes)
+    bool auto_begin_rendering = false; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct PassExecutionCallback {
+    std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> callback{}; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct ResourceTransition {
+    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    ResourceState target_state{}; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct ResourceInfo {
+    std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    ResourceKind kind = ResourceKind::Image; // NOLINT(misc-non-private-member-variables-in-classes)
+    bool imported = false; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::optional<TransientImageInfo> image_info{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::optional<TransientBufferInfo> buffer_info{}; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+struct CompiledPass {
     PassHandle handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
     QueueType queue = QueueType::Graphics; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<ResourceTransition> pre_pass_transitions{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<ResourceTransition> post_pass_transitions{}; // NOLINT(misc-non-private-member-variables-in-classes)
     PassExecutionCallback execute{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::optional<PassAttachmentSetup> attachment_setup{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ResourceLifetime {
@@ -146,20 +228,30 @@ struct ResourceLifetime {
     int32_t last_pass = -1; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-struct CompileResult {
+struct CompiledRenderGraph {
     bool success = false; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<CompileDiagnostic> diagnostics{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<PassHandle> execution_order{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<ExecutablePass> executable_passes{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<CompiledPass> passes{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<ResourceLifetime> resource_lifetimes{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<ResourceInfo> resource_info{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    mutable std::vector<ResourceState> initial_states{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    mutable std::vector<bool> has_initial_state{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<vk::Image> resource_images{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<vk::Format> resource_formats{}; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    void Execute(const void* user_data = nullptr) const;
+    void Execute(const void* user_data, vk::CommandBuffer command_buffer) const;
+    void SetImportedResourceState(uint32_t resource_index, ResourceState state) const;
+    void SetResourceImage(uint32_t resource_index, vk::Image image);
+    void SetResourceFormat(uint32_t resource_index, vk::Format format);
 };
 
 class RenderGraphBuilder {
 public:
     ResourceHandle CreateTransientResource(std::string name, ResourceKind kind);
     ResourceHandle ImportResource(std::string name, ResourceKind kind);
+
+    bool SetTransientImageInfo(ResourceHandle resource, TransientImageInfo info);
+    bool SetTransientBufferInfo(ResourceHandle resource, TransientBufferInfo info);
 
     bool SetInitialState(ResourceHandle resource, ResourceState state);
     bool SetFinalState(ResourceHandle resource, ResourceState state);
@@ -173,7 +265,9 @@ public:
     bool AddWrite(PassHandle pass, ResourceHandle resource);
     bool AddDependency(PassHandle before, PassHandle after);
 
-    [[nodiscard]] CompileResult Compile() const;
+    bool SetPassAttachments(PassHandle pass, PassAttachmentSetup setup);
+
+    [[nodiscard]] CompiledRenderGraph Compile() const;
 
 private:
     struct ResourceNode {
@@ -186,6 +280,8 @@ private:
         bool has_final_state = false;
         ResourceState initial_state{};
         ResourceState final_state{};
+        std::optional<TransientImageInfo> image_info{};
+        std::optional<TransientBufferInfo> buffer_info{};
     };
 
     struct PassNode {
@@ -196,6 +292,7 @@ private:
         std::vector<ResourceHandle> reads{};
         std::vector<ResourceHandle> writes{};
         PassExecutionCallback execute{};
+        std::optional<PassAttachmentSetup> attachment_setup{};
     };
 
     [[nodiscard]] bool IsValidResourceHandle(ResourceHandle handle) const;

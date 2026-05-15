@@ -3,6 +3,7 @@ module;
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 module VulkanEngine.Input;
@@ -17,11 +18,11 @@ namespace {
 
 }  // namespace
 
-InputBinding InputBinding::Key(int32_t keycode) {
+InputBinding InputBinding::Key(const int32_t keycode) {
     return InputBinding{.type = BindingType::Key, .code = keycode};
 }
 
-InputBinding InputBinding::MouseButton(int32_t button) {
+InputBinding InputBinding::MouseButton(const int32_t button) {
     return InputBinding{.type = BindingType::MouseButton, .code = button};
 }
 
@@ -90,9 +91,12 @@ void InputSystem::ProcessEvents(const VulkanEngine::Backend::Event::EventList& e
 }
 
 void InputSystem::Update() {
-    action_states_.clear();
+    for (auto& [handle, state] : action_states_) {
+        state.started = false;
+        state.canceled = false;
+    }
 
-    for (const auto& [action, action_bindings] : bindings_) {
+    for (const auto& [handle, action_bindings] : bindings_) {
         ActionState state{};
         for (const auto& binding : action_bindings) {
             switch (binding.type) {
@@ -108,44 +112,103 @@ void InputSystem::Update() {
                     break;
             }
         }
-        action_states_[action] = state;
+        
+        auto& current_state = action_states_[handle];
+        // const bool was_active = current_state.active;
+        
+        current_state.active = state.active;
+        current_state.started = state.started;
+        current_state.canceled = state.canceled;
+        
+        if (current_state.started && action_used_started_callbacks_.contains(handle)) {
+            action_used_started_callbacks_[handle]();
+        }
+        
+        if (current_state.canceled && action_used_ended_callbacks_.contains(handle)) {
+            action_used_ended_callbacks_[handle]();
+        }
+        
+        if (current_state.active && action_used_callbacks_.contains(handle)) {
+            action_used_callbacks_[handle]();
+        }
     }
 }
 
-void InputSystem::BindAction(ActionId action, InputBinding binding) {
-    bindings_[std::move(action)].push_back(binding);
+ActionHandle InputSystem::BindAction(std::string_view name, InputBinding binding) {
+    ActionHandle handle{.id = next_action_id_++};
+    bindings_[handle].push_back(binding);
+    action_names_[handle] = std::string(name);
+    action_states_[handle] = ActionState{};
+    return handle;
+}
+
+void InputSystem::UnbindAction(ActionHandle handle) {
+    bindings_.erase(handle);
+    action_states_.erase(handle);
+    action_names_.erase(handle);
+    action_used_callbacks_.erase(handle);
+    action_used_started_callbacks_.erase(handle);
+    action_used_ended_callbacks_.erase(handle);
 }
 
 void InputSystem::ClearBindings() {
     bindings_.clear();
     action_states_.clear();
+    action_names_.clear();
+    action_used_callbacks_.clear();
+    action_used_started_callbacks_.clear();
+    action_used_ended_callbacks_.clear();
+    next_action_id_ = 0;
 }
 
 const RawInputState& InputSystem::GetRawState() const noexcept {
     return raw_state_;
 }
 
-const ActionState& InputSystem::GetActionState(std::string_view action) const {
+const ActionState& InputSystem::GetActionState(ActionHandle handle) const {
     static const ActionState empty_state{};
-    const auto it = action_states_.find(std::string(action));
+    const auto it = action_states_.find(handle);
     if (it == action_states_.end()) {
         return empty_state;
     }
     return it->second;
 }
 
-bool InputSystem::IsActionActive(std::string_view action) const {
-    return GetActionState(action).active;
+bool InputSystem::IsActionActive(ActionHandle handle) const {
+    return GetActionState(handle).active;
 }
 
-bool InputSystem::WasActionStarted(std::string_view action) const {
-    return GetActionState(action).started;
+bool InputSystem::WasActionStarted(ActionHandle handle) const {
+    return GetActionState(handle).started;
 }
 
-bool InputSystem::WasActionCanceled(std::string_view action) const {
-    return GetActionState(action).canceled;
+bool InputSystem::WasActionCanceled(ActionHandle handle) const {
+    return GetActionState(handle).canceled;
+}
+
+float InputSystem::GetActionValue(ActionHandle handle) const {
+    return GetActionState(handle).value;
+}
+
+std::pair<float, float> InputSystem::GetActionValue2D(ActionHandle handle) const {
+    const auto& state = GetActionState(handle);
+    return {state.value_x, state.value_y};
+}
+
+void InputSystem::SetActionUsedCallback(ActionHandle handle, ActionCallback callback) {
+    action_used_callbacks_[handle] = callback;
+}
+
+void InputSystem::SetActionUsedStartedCallback(ActionHandle handle, ActionCallback callback) {
+    action_used_started_callbacks_[handle] = callback;
+}
+
+void InputSystem::SetActionUsedEndedCallback(ActionHandle handle, ActionCallback callback) {
+    action_used_ended_callbacks_[handle] = callback;
+}
+
+const std::unordered_map<ActionHandle, std::string>& InputSystem::GetAllActions() const {
+    return action_names_;
 }
 
 }  // namespace VulkanEngine::Input
-
-

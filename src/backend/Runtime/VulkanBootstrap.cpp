@@ -66,6 +66,7 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
 
     pending_status_ = BootstrapStatus::Ok;
     initialized_ = true;
+
     return true;
 }
 

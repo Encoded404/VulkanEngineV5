@@ -28,6 +28,10 @@ target_link_libraries(${APP_TARGET} PRIVATE
 
 set_target_properties(${APP_TARGET} PROPERTIES OUTPUT_NAME ${APP_TARGET})
 
+if(SYSTEM_VULKAN)
+  set_target_properties(${APP_TARGET} PROPERTIES BUILD_RPATH "/usr/lib64")
+endif()
+
 if(OUTPUT_PATH)
     set_target_properties(${APP_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_PATH})
 endif()

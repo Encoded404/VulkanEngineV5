@@ -65,7 +65,7 @@ namespace {
     }
 }
 
-export namespace App::FileLoaders::Mesh {
+export namespace VulkanEngine::FileLoaders::Mesh {
 
 class BinMeshAssembler : public FileLoader::IAssembler<VulkanEngine::Mesh, FileLoader::AssemblyMode::FullBuffer>
 {
@@ -180,4 +180,4 @@ public:
     }
 };
 
-} // namespace App::FileLoaders::Mesh
+} // namespace VulkanEngine::FileLoaders::Mesh

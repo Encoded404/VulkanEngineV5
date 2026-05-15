@@ -4,10 +4,26 @@ target_link_libraries(${BACKEND_TARGET} PUBLIC logiface::logiface)
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+
+if(SYSTEM_VULKAN)
+  find_library(SYSTEM_VULKAN_LIB NAMES vulkan PATHS /usr/lib64 /usr/lib NO_DEFAULT_PATH)
+  find_path(SYSTEM_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h PATHS /usr/include NO_DEFAULT_PATH)
+  if(SYSTEM_VULKAN_LIB AND SYSTEM_VULKAN_INCLUDE_DIR)
+    message(STATUS "Overriding vcpkg Vulkan with system: ${SYSTEM_VULKAN_LIB}")
+    set_target_properties(Vulkan::Vulkan PROPERTIES
+      IMPORTED_LOCATION "${SYSTEM_VULKAN_LIB}"
+      INTERFACE_INCLUDE_DIRECTORIES "${SYSTEM_VULKAN_INCLUDE_DIR}"
+    )
+  else()
+    message(WARNING "System Vulkan not found at /usr, using vcpkg Vulkan")
+  endif()
+endif()
 
 target_link_libraries(${BACKEND_TARGET} PRIVATE
     SDL3::SDL3
     Vulkan::Vulkan
+    imgui::imgui
 )
 
 target_include_directories(${BACKEND_TARGET} PUBLIC
@@ -43,6 +59,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     Utils/MemoryUtils.cpp
     Utils/ImageUtils.cpp
     Utils/PipelineUtils.cpp
+    ImGui/ImGuiBackend.cpp
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -67,6 +84,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Utils/MemoryUtils.cppm
             Utils/ImageUtils.cppm
             Utils/PipelineUtils.cppm
+            ImGui/ImGuiBackend.cppm
     )
 endif()
 

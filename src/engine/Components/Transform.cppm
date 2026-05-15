@@ -1,12 +1,14 @@
 module;
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.Components.Transform;
 
 import VulkanBackend.Component;
 
-export namespace App::Components {
+export namespace VulkanEngine::Components {
 
 class Transform : public VulkanEngine::Component {
 public:
@@ -23,4 +25,4 @@ public:
     }
 };
 
-} // namespace App::Components
+} // namespace VulkanEngine::Components

@@ -29,6 +29,10 @@ target_compile_definitions(example_tests PRIVATE
     LOGIFACE_ENABLE_LOGGING=1
 )
 
+if(SYSTEM_VULKAN)
+  set_target_properties(example_tests PROPERTIES BUILD_RPATH "/usr/lib64")
+endif()
+
 # Set compiler options for the test executable
 target_compile_options(example_tests PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>

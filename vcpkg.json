@@ -8,7 +8,7 @@
             "name": "gtest",
             "version>=": "1.13.0"
         },
-        "vulkan",
+        "vulkan-headers",
         {
             "name": "ktx",
             "features": [ "vulkan" ]
@@ -27,6 +27,10 @@
         "fastgltf",
         "stb",
         "boost-stacktrace",
-        "cli11"
+        "cli11",
+        {
+            "name": "imgui",
+            "features": [ "vulkan-binding", "sdl3-binding" ]
+        }
     ]
 }

@@ -1,5 +1,6 @@
 module;
 
+#include <functional>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
@@ -61,11 +62,20 @@ public:
         return window_ != nullptr;
     }
 
+    void SetEventProcessor(EventProcessor processor, void* user_data) override {
+        event_processor_ = processor;
+        event_processor_user_data_ = user_data;
+    }
+
     [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
         VulkanEngine::Backend::Event::EventList events{};
 
         SDL_Event event{};
         while (SDL_PollEvent(&event)) {
+            if (event_processor_) {
+                event_processor_(event_processor_user_data_, &event);
+            }
+            
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
@@ -129,6 +139,8 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     bool initialized_ = false;
+    EventProcessor event_processor_ = nullptr;
+    void* event_processor_user_data_ = nullptr;
 };
 
 }  // namespace

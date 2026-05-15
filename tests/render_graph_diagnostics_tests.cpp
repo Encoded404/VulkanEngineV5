@@ -6,7 +6,7 @@ namespace {
 
 using namespace VulkanEngine::RenderGraph;
 
-bool ContainsDiagnosticCode(const CompileResult& result, DiagnosticCode code) {
+bool ContainsDiagnosticCode(const CompiledRenderGraph& result, DiagnosticCode code) {
     for (const auto& diagnostic : result.diagnostics) {
         if (diagnostic.code == code) {
             return true;
@@ -28,8 +28,8 @@ TEST(RenderGraphDiagnosticsTest, EmptyGraphEmitsEmptyGraphDiagnosticCode) {
 TEST(RenderGraphDiagnosticsTest, CycleCompileFailureEmitsCycleDiagnosticCode) {
     RenderGraphBuilder builder;
 
-    const auto pass_a = builder.AddPass("a");
-    const auto pass_b = builder.AddPass("b");
+    const auto pass_a = builder.AddPass("a", QueueType::Graphics, true, {});
+    const auto pass_b = builder.AddPass("b", QueueType::Graphics, true, {});
 
     ASSERT_TRUE(builder.AddDependency(pass_a, pass_b));
     ASSERT_TRUE(builder.AddDependency(pass_b, pass_a));

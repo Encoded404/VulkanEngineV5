@@ -75,6 +75,7 @@ else()
 endif()
 
 option(CLANG_TIDY_ENABLED "Enable Clang-Tidy static analysis" ON)
+option(SYSTEM_VULKAN "Use system Vulkan loader instead of vcpkg's" ON)
 # disable Clang-Tidy if not using Clang or GCC
 if(CLANG_TIDY_ENABLED AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set(CLANG_TIDY_ENABLED OFF)

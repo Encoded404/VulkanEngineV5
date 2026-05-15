@@ -1,5 +1,7 @@
-#include <array>
+module;
+
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -7,11 +9,14 @@
 #include <string>
 
 #include <ktx.h>
+#include <vulkan/vulkan_raii.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#include "TextureLoaders.hpp"
+#include <FileLoader/Types.hpp>
+
+module VulkanEngine.FileLoaders.TextureLoaders;
 
 namespace VulkanEngine::FileLoaders::Textures {
 
@@ -36,7 +41,7 @@ struct KtxTextureDeleter {
 using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
 
 [[nodiscard]] std::string ToLowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    std::ranges::transform(value, value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
@@ -208,24 +213,24 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
 }
 
 [[nodiscard]] bool LooksLikeKtx(const FileLoader::ByteBuffer& buffer) {
-    static constexpr std::byte ktx1_magic[] = {
+    static constexpr std::array<std::byte, 12> ktx1_magic = {
         std::byte{0xAB}, std::byte{'K'}, std::byte{'T'}, std::byte{'X'}, std::byte{' '}, std::byte{'1'},
         std::byte{'1'}, std::byte{0xBB}, std::byte{0x0D}, std::byte{0x0A}, std::byte{0x1A}, std::byte{0x0A}
     };
-    static constexpr std::byte ktx2_magic[] = {
+    static constexpr std::array<std::byte, 12> ktx2_magic = {
         std::byte{0xAB}, std::byte{'K'}, std::byte{'T'}, std::byte{'X'}, std::byte{' '}, std::byte{'2'},
         std::byte{'0'}, std::byte{0xBB}, std::byte{0x0D}, std::byte{0x0A}, std::byte{0x1A}, std::byte{0x0A}
     };
 
-    return HasPrefix(buffer, ktx1_magic, sizeof(ktx1_magic)) ||
-           HasPrefix(buffer, ktx2_magic, sizeof(ktx2_magic));
+    return HasPrefix(buffer, ktx1_magic.data(), sizeof(ktx1_magic)) ||
+           HasPrefix(buffer, ktx2_magic.data(), sizeof(ktx2_magic));
 }
 
 [[nodiscard]] bool LooksLikePng(const FileLoader::ByteBuffer& buffer) {
-    static constexpr std::byte png_magic[] = {
+    static constexpr std::array<std::byte, 8> png_magic = {
         std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'}, std::byte{0x0D}, std::byte{0x0A}, std::byte{0x1A}, std::byte{0x0A}
     };
-    return HasPrefix(buffer, png_magic, sizeof(png_magic));
+    return HasPrefix(buffer, png_magic.data(), sizeof(png_magic));
 }
 
 [[nodiscard]] bool LooksLikeJpeg(const FileLoader::ByteBuffer& buffer) {
@@ -363,7 +368,3 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
 }
 
 }  // namespace VulkanEngine::FileLoaders::Textures
-
-
-
-

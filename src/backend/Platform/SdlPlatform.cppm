@@ -46,6 +46,9 @@ public:
     [[nodiscard]] virtual bool CreateMainWindow(const PlatformConfig& config) = 0;
     [[nodiscard]] virtual VulkanEngine::Backend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
+    
+    using EventProcessor = void(*)(void* user_data, void* sdl_event);
+    virtual void SetEventProcessor(EventProcessor processor, void* user_data) = 0;
 };
 
 class SdlPlatformShell {
@@ -60,6 +63,7 @@ public:
     [[nodiscard]] bool IsInitialized() const;
     [[nodiscard]] bool ShouldQuit() const;
     [[nodiscard]] SDL_Window* GetNativeWindowHandle() const;
+    [[nodiscard]] IPlatformBackend& GetBackend() const;
 
 private:
     std::shared_ptr<IPlatformBackend> backend_{};

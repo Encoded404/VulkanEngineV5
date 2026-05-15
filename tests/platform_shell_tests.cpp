@@ -39,6 +39,8 @@ public:
     [[nodiscard]] SDL_Window* GetNativeWindowHandle() const override {
         return nullptr;
     }
+
+    void SetEventProcessor(EventProcessor, void*) override {}
 };
 
 TEST(PlatformShellTest, InitializesAndShutsDownThroughBackend) {

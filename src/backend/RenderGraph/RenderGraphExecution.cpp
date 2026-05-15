@@ -141,8 +141,8 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
         }
 
         if (pass.attachment_setup.has_value()) {
-            if (pass.attachment_setup->auto_begin_rendering) {
-                const auto& setup = *pass.attachment_setup;
+            if (pass.attachment_setup->auto_begin_rendering) { // NOLINT(bugprone-unchecked-optional-access)
+                const auto& setup = *pass.attachment_setup; // NOLINT(bugprone-unchecked-optional-access)
 
                 std::vector<vk::RenderingAttachmentInfo> color_attachments;
                 color_attachments.reserve(setup.color_attachments.size());
@@ -161,12 +161,12 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                 std::optional<vk::RenderingAttachmentInfo> depth_attachment;
                 if (setup.depth_attachment.has_value()) {
                     depth_attachment = vk::RenderingAttachmentInfo{};
-                    depth_attachment->imageView = setup.depth_attachment->image_view;
+                    depth_attachment->imageView = setup.depth_attachment->image_view; // NOLINT(bugprone-unchecked-optional-access)
                     depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-                    depth_attachment->loadOp = setup.depth_attachment->load_op;
-                    depth_attachment->storeOp = setup.depth_attachment->store_op;
-                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) {
-                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth);
+                    depth_attachment->loadOp = setup.depth_attachment->load_op; // NOLINT(bugprone-unchecked-optional-access)
+                    depth_attachment->storeOp = setup.depth_attachment->store_op; // NOLINT(bugprone-unchecked-optional-access)
+                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) { // NOLINT(bugprone-unchecked-optional-access)
+                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth); // NOLINT(bugprone-unchecked-optional-access)
                     }
                 }
 
@@ -187,7 +187,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             pass.execute.callback(user_data, command_buffer);
         }
 
-        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) {
+        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) { // NOLINT(bugprone-unchecked-optional-access)
             command_buffer.endRendering();
         }
 

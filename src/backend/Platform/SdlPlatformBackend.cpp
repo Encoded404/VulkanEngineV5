@@ -1,6 +1,5 @@
 module;
 
-#include <functional>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>

@@ -1,8 +1,5 @@
 module;
 
-#include <array>
-#include <cmath>
-#include <cstdint>
 #include <numbers>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE

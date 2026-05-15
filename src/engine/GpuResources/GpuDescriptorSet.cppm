@@ -11,7 +11,9 @@ export import VulkanEngine.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuTexture;
 
-export class GpuDescriptorSet;
+namespace VulkanEngine::GpuResources {
+    export class GpuDescriptorSet;
+}
 
 export namespace VulkanEngine::GpuResources {
 

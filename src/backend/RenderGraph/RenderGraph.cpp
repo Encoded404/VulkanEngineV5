@@ -87,8 +87,8 @@ vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessIntent acce
             return access == AccessIntent::Write
                        ? vk::AccessFlagBits::eShaderWrite
                        : vk::AccessFlagBits::eShaderRead;
-        case PipelineStageIntent::Present:
-            return {};
+        /*case PipelineStageIntent::Present:
+            return {};*/
         default:
             return {};
     }
@@ -180,7 +180,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
 
                 if (res_info.kind == ResourceKind::Image) {
                     if (!has_state[transition.resource_index]) {
-                        ResourceState undefined_state = ResourceState::ImageState(
+                        const ResourceState undefined_state = ResourceState::ImageState(
                             PipelineStageIntent::TopOfPipe, AccessIntent::None,
                             QueueType::Graphics, ImageLayoutIntent::Undefined);
                         current_states[transition.resource_index] = undefined_state;
@@ -215,7 +215,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     }
                 } else {
                     if (!has_state[transition.resource_index]) {
-                        ResourceState undefined_state = ResourceState::BufferState(
+                        const ResourceState undefined_state = ResourceState::BufferState(
                             PipelineStageIntent::TopOfPipe, AccessIntent::None, QueueType::Graphics);
                         current_states[transition.resource_index] = undefined_state;
                         has_state[transition.resource_index] = true;
@@ -272,52 +272,54 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             }
         }
 
-        if (pass.attachment_setup && pass.attachment_setup->auto_begin_rendering) {
-            const auto& setup = *pass.attachment_setup;
+        if (pass.attachment_setup.has_value()) {
+            if (pass.attachment_setup->auto_begin_rendering) { //NOLINT(bugprone-unchecked-optional-access)
+                const auto& setup = *pass.attachment_setup; //NOLINT(bugprone-unchecked-optional-access)
 
-            std::vector<vk::RenderingAttachmentInfo> color_attachments;
-            color_attachments.reserve(setup.color_attachments.size());
-            for (const auto& attach : setup.color_attachments) {
-                vk::RenderingAttachmentInfo info{};
-                info.imageView = attach.image_view;
-                info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                info.loadOp = attach.load_op;
-                info.storeOp = attach.store_op;
-                if (attach.load_op == vk::AttachmentLoadOp::eClear) {
-                    info.clearValue = vk::ClearValue(attach.clear_color);
+                std::vector<vk::RenderingAttachmentInfo> color_attachments;
+                color_attachments.reserve(setup.color_attachments.size());
+                for (const auto& attach : setup.color_attachments) {
+                    vk::RenderingAttachmentInfo info{};
+                    info.imageView = attach.image_view;
+                    info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+                    info.loadOp = attach.load_op;
+                    info.storeOp = attach.store_op;
+                    if (attach.load_op == vk::AttachmentLoadOp::eClear) {
+                        info.clearValue = vk::ClearValue(attach.clear_color);
+                    }
+                    color_attachments.push_back(info);
                 }
-                color_attachments.push_back(info);
-            }
 
-            std::optional<vk::RenderingAttachmentInfo> depth_attachment;
-            if (setup.depth_attachment) {
-                depth_attachment = vk::RenderingAttachmentInfo{};
-                depth_attachment->imageView = setup.depth_attachment->image_view;
-                depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-                depth_attachment->loadOp = setup.depth_attachment->load_op;
-                depth_attachment->storeOp = setup.depth_attachment->store_op;
-                if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) {
-                    depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth);
+                std::optional<vk::RenderingAttachmentInfo> depth_attachment;
+                if (setup.depth_attachment.has_value()) {
+                    depth_attachment = vk::RenderingAttachmentInfo{};
+                    depth_attachment->imageView = setup.depth_attachment->image_view; //NOLINT(bugprone-unchecked-optional-access)
+                    depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+                    depth_attachment->loadOp = setup.depth_attachment->load_op; //NOLINT(bugprone-unchecked-optional-access)
+                    depth_attachment->storeOp = setup.depth_attachment->store_op; //NOLINT(bugprone-unchecked-optional-access)
+                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) { //NOLINT(bugprone-unchecked-optional-access)
+                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth); //NOLINT(bugprone-unchecked-optional-access)
+                    }
                 }
-            }
 
-            vk::RenderingInfo render_info{};
-            render_info.renderArea = setup.render_area;
-            render_info.layerCount = 1;
-            render_info.colorAttachmentCount = static_cast<uint32_t>(color_attachments.size());
-            render_info.pColorAttachments = color_attachments.data();
-            if (depth_attachment) {
-                render_info.pDepthAttachment = &*depth_attachment;
-            }
+                vk::RenderingInfo render_info{};
+                render_info.renderArea = setup.render_area;
+                render_info.layerCount = 1;
+                render_info.colorAttachmentCount = static_cast<uint32_t>(color_attachments.size());
+                render_info.pColorAttachments = color_attachments.data();
+                if (depth_attachment) {
+                    render_info.pDepthAttachment = &*depth_attachment;
+                }
 
-            command_buffer.beginRendering(render_info);
+                command_buffer.beginRendering(render_info);
+            }
         }
 
         if (pass.execute.callback) {
             pass.execute.callback(user_data, command_buffer);
         }
 
-        if (pass.attachment_setup && pass.attachment_setup->auto_begin_rendering) {
+        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) { //NOLINT(bugprone-unchecked-optional-access)
             command_buffer.endRendering();
         }
 
@@ -333,7 +335,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
 
                 if (res_info.kind == ResourceKind::Image) {
                     if (!has_state[transition.resource_index]) {
-                        ResourceState undefined_state = ResourceState::ImageState(
+                        const ResourceState undefined_state = ResourceState::ImageState(
                             PipelineStageIntent::TopOfPipe, AccessIntent::None,
                             QueueType::Graphics, ImageLayoutIntent::Undefined);
                         current_states[transition.resource_index] = undefined_state;
@@ -439,7 +441,7 @@ bool RenderGraphBuilder::SetTransientImageInfo(ResourceHandle resource, Transien
         return false;
     }
 
-    resource_node.image_info = std::move(info);
+    resource_node.image_info = info;
     return true;
 }
 
@@ -453,7 +455,7 @@ bool RenderGraphBuilder::SetTransientBufferInfo(ResourceHandle resource, Transie
         return false;
     }
 
-    resource_node.buffer_info = std::move(info);
+    resource_node.buffer_info = info;
     return true;
 }
 
@@ -727,8 +729,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         return t;
     };
 
-    for (size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
-        const uint32_t pass_index = sorted_indices[ordered_index];
+    for (const unsigned int pass_index : sorted_indices) {
         const auto& pass = passes_[pass_index];
         const PassHandle handle{.index = pass_index, .generation = pass.generation};
 
@@ -759,7 +760,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             }
 
             if (!current_state.has_state) {
-                ResourceState undefined_state = ResourceState::ImageState(
+                const ResourceState undefined_state = ResourceState::ImageState(
                     PipelineStageIntent::TopOfPipe, AccessIntent::None,
                     QueueType::Graphics, ImageLayoutIntent::Undefined);
                 if (!StatesEqual(undefined_state, target_state)) {
@@ -794,7 +795,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             }
 
             if (!current_state.has_state) {
-                ResourceState undefined_state = ResourceState::ImageState(
+                const ResourceState undefined_state = ResourceState::ImageState(
                     PipelineStageIntent::TopOfPipe, AccessIntent::None,
                     QueueType::Graphics, ImageLayoutIntent::Undefined);
                 if (!StatesEqual(undefined_state, target_state)) {

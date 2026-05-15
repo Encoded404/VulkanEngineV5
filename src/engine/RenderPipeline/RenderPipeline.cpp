@@ -1,8 +1,6 @@
 module;
 
-#include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,7 +9,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-#include <logging/logging.hpp>
+//#include <logging/logging.hpp>
 
 module VulkanEngine.RenderPipeline;
 
@@ -277,8 +275,8 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
             for (auto& attach : setup.color_attachments) {
                 resolve_attachment_view(attach);
             }
-            if (setup.depth_attachment) {
-                resolve_attachment_view(*setup.depth_attachment);
+            if (setup.depth_attachment.has_value()) {
+                resolve_attachment_view(*setup.depth_attachment); //NOLINT(bugprone-unchecked-optional-access)
             }
 
             uint32_t max_width = 0, max_height = 0;

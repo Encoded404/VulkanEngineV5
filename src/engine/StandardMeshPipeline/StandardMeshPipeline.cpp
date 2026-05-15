@@ -88,7 +88,7 @@ void PipelineManager::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBoo
         {0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment}
     };
 
-    vk::DescriptorSetLayoutCreateInfo info({}, bindings);
+    const vk::DescriptorSetLayoutCreateInfo info({}, bindings);
     descriptor_set_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(device, info);
 
     LOGIFACE_LOG(trace, "leaving CreateDescriptorSetLayout successfully");
@@ -112,11 +112,11 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
 
     const auto& device = bootstrap.GetBackend().GetDevice();
 
-    vk::ShaderModuleCreateInfo vert_info({}, vert_spv.size() * sizeof(uint32_t), vert_spv.data());
-    vk::raii::ShaderModule vert_module(device, vert_info);
+    const vk::ShaderModuleCreateInfo vert_info({}, vert_spv.size() * sizeof(uint32_t), vert_spv.data());
+    const vk::raii::ShaderModule vert_module(device, vert_info);
 
-    vk::ShaderModuleCreateInfo frag_info({}, frag_spv.size() * sizeof(uint32_t), frag_spv.data());
-    vk::raii::ShaderModule frag_module(device, frag_info);
+    const vk::ShaderModuleCreateInfo frag_info({}, frag_spv.size() * sizeof(uint32_t), frag_spv.data());
+    const vk::raii::ShaderModule frag_module(device, frag_info);
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
         vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, *vert_module, "main"),
@@ -126,7 +126,7 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     const std::array<vk::DescriptorSetLayout, 1> set_layouts = { **descriptor_set_layout_ };
 
     constexpr uint32_t push_constant_size = 64;
-    vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
+    constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
 
     vk::PipelineLayoutCreateInfo layout_info{};
     layout_info.setLayoutCount = static_cast<uint32_t>(set_layouts.size());
@@ -145,20 +145,20 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
         vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)}
     };
 
-    vk::PipelineVertexInputStateCreateInfo vertex_input({}, vertex_bindings, vertex_attributes);
-    vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, vk::PrimitiveTopology::eTriangleList);
-    vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
-    vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise, false, 0, 0, 0, 1.0f);
-    vk::PipelineMultisampleStateCreateInfo multisample({}, vk::SampleCountFlagBits::e1);
-    vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, true, true, vk::CompareOp::eLess);
+    const vk::PipelineVertexInputStateCreateInfo vertex_input({}, vertex_bindings, vertex_attributes);
+    constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, vk::PrimitiveTopology::eTriangleList);
+    constexpr vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
+    constexpr vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise, false, 0, 0, 0, 1.0f);
+    constexpr vk::PipelineMultisampleStateCreateInfo multisample({}, vk::SampleCountFlagBits::e1);
+    constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, true, true, vk::CompareOp::eLess);
 
-    vk::PipelineColorBlendAttachmentState color_blend_attachment(false, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-    vk::PipelineColorBlendStateCreateInfo color_blend({}, false, vk::LogicOp::eCopy, color_blend_attachment);
+    constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment(false, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+    const vk::PipelineColorBlendStateCreateInfo color_blend({}, false, vk::LogicOp::eCopy, color_blend_attachment);
 
     std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-    vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
+    const vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
 
-    vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
+    const vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
     vk::PipelineRenderingCreateInfo rendering_info{};
     rendering_info.colorAttachmentCount = 1;
     rendering_info.pColorAttachmentFormats = &format;

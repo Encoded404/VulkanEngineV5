@@ -1,6 +1,5 @@
 module;
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <functional>

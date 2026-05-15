@@ -18,6 +18,7 @@ import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanBackend.Platform.SdlPlatformBackend;
 import VulkanBackend.Runtime.FrameLoop;
+import VulkanBackend.Utils.Timer;
 import VulkanEngine.Input;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Runtime.VulkanBootstrapBackend;
@@ -76,22 +77,37 @@ struct ApplicationHooks {
     bool setup_completed = false;
 
     auto cleanup = [&]() {
+        VulkanEngine::Utils::Timer t{true};
+        double prev = 0.0;
         if (setup_completed && hooks.on_shutdown) {
             hooks.on_shutdown(context);
+            double cur = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: app hooks " + std::to_string(cur - prev) + " ms");
+            prev = cur;
             setup_completed = false;
         }
         if (runtime_initialized && runtime) {
             runtime->Shutdown();
+            double cur = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: runtime " + std::to_string(cur - prev) + " ms");
+            prev = cur;
             runtime_initialized = false;
         }
         if (bootstrap_initialized && bootstrap) {
             bootstrap->Shutdown();
+            double cur = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: bootstrap " + std::to_string(cur - prev) + " ms");
+            prev = cur;
             bootstrap_initialized = false;
         }
         if (platform_initialized && platform) {
             platform->Shutdown();
+            double cur = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: platform " + std::to_string(cur - prev) + " ms");
+            prev = cur;
             platform_initialized = false;
         }
+        LOGIFACE_LOG(info, "shutdown: total " + std::to_string(t.ElapsedMs()) + " ms");
     };
 
     auto fail = [&](const std::string& message) -> int {

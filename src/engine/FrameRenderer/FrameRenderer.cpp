@@ -90,6 +90,7 @@ void FrameRenderer::RenderFrame(VulkanEngine::RenderPipeline::RenderPipeline& pi
     if (enable_imgui_ && imgui && imgui->IsInitialized()) {
         uint32_t w = 0, h = 0;
         if (backend.GetSwapchainExtent(w, h) && w > 0 && h > 0) {
+            imgui->NewFrame();
             imgui->RenderDrawData(cmd, *backend.GetSwapchainImageViews()[image_index], w, h);
         }
     }

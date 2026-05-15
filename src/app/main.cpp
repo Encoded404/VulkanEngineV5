@@ -235,9 +235,6 @@ int main(int argc, char* const argv[]) {
     };
 
     hooks.on_pre_input = [&]([[maybe_unused]] VulkanEngine::Application::ApplicationContext& ctx) {
-        if (state.imgui_system && state.imgui_system->IsInitialized()) {
-            state.imgui_system->NewFrame();
-        }
     };
 
     hooks.should_filter_mouse_input = []() -> bool {

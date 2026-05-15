@@ -7,10 +7,10 @@ module;
 #include <algorithm>
 #include <memory>
 
-module VulkanEngine.Runtime.VulkanSwapchain;
+module VulkanBackend.Runtime.VulkanSwapchain;
 
-import VulkanEngine.Runtime.VulkanDevice;
-import VulkanEngine.Runtime.VulkanInstance;
+import VulkanBackend.Runtime.VulkanDevice;
+import VulkanBackend.Runtime.VulkanInstance;
 
 namespace VulkanEngine::Runtime {
 

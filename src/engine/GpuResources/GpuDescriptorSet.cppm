@@ -7,7 +7,7 @@ module;
 
 export module VulkanEngine.GpuDescriptorSet;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuTexture;
 

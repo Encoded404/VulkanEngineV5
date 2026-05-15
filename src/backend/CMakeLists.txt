@@ -49,6 +49,8 @@ target_sources(${BACKEND_TARGET} PRIVATE
     Platform/SdlPlatform.cpp
     Platform/SdlPlatformBackend.cpp
     RenderGraph/RenderGraph.cpp
+    RenderGraph/RenderGraphExecution.cpp
+    RenderGraph/RenderGraphCompile.cpp
     Runtime/FrameLoop.cpp
     Runtime/VulkanBootstrap.cpp
     Runtime/VulkanDispatchLoader.cpp

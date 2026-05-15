@@ -7,7 +7,7 @@ module;
 #include <memory>
 #include <vector>
 
-module VulkanEngine.Platform.SdlPlatformBackend;
+module VulkanBackend.Platform.SdlPlatformBackend;
 
 import VulkanBackend.Event;
 

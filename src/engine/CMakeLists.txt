@@ -48,7 +48,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
     Input/Input.cpp
     FileLoaders/Textures/TextureLoaders.cpp
     FileLoaders/Textures/TextureLoaders.cppm
-    Mesh/MeshAssembler.cpp
     ResourceSystem/ResourceSystem.cpp
     ResourceSystem/TextureResource.cpp
     ImGui/ImGuiSystem.cpp
@@ -70,7 +69,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
             FILES
                 Input/Input.cppm
                 Mesh/MeshTypes.cppm
-                Mesh/MeshAssembler.cppm
                 ResourceSystem/ResourceSystem.cppm
                 ResourceSystem/TextureResource.cppm
                 Application/Application.cppm

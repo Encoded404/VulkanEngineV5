@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-import VulkanEngine.RenderGraph;
+import VulkanBackend.RenderGraph;
 
 namespace {
 

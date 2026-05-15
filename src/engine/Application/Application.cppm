@@ -16,11 +16,11 @@ export module VulkanEngine.Application;
 
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
-import VulkanEngine.Platform.SdlPlatformBackend;
+import VulkanBackend.Platform.SdlPlatformBackend;
 import VulkanBackend.Runtime.FrameLoop;
 import VulkanEngine.Input;
-import VulkanEngine.Runtime.VulkanBootstrap;
-import VulkanEngine.Runtime.VulkanBootstrapBackend;
+import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrapBackend;
 import VulkanEngine.Startup;
 
 export namespace VulkanEngine::Application {

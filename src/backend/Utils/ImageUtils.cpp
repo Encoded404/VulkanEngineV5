@@ -4,7 +4,7 @@ module;
 #include <algorithm>
 #include <cmath>
 
-module VulkanEngine.Utils.ImageUtils;
+module VulkanBackend.Utils.ImageUtils;
 
 namespace VulkanEngine::Utils {
 

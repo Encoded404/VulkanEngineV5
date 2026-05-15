@@ -2,9 +2,9 @@ module;
 
 #include <cstdint>
 
-export module VulkanEngine.RenderGraph.GraphExecutionContext;
+export module VulkanBackend.RenderGraph.GraphExecutionContext;
 
-import VulkanEngine.RenderGraph;
+import VulkanBackend.RenderGraph;
 
 export namespace VulkanEngine::RenderGraph {
 

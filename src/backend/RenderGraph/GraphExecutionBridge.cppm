@@ -1,8 +1,8 @@
 module;
 
-export module VulkanEngine.RenderGraph.GraphExecutionBridge;
+export module VulkanBackend.RenderGraph.GraphExecutionBridge;
 
-export import VulkanEngine.RenderGraph.GraphExecutionContext;
+export import VulkanBackend.RenderGraph.GraphExecutionContext;
 import VulkanBackend.Runtime.FrameLoop;
 
 export namespace VulkanEngine::RenderGraph {

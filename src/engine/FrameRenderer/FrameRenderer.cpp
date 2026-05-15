@@ -7,10 +7,10 @@ module;
 
 module VulkanEngine.FrameRenderer;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.RenderPipeline;
 import VulkanEngine.ImGuiSystem;
-import VulkanEngine.RenderGraph;
+import VulkanBackend.RenderGraph;
 
 namespace VulkanEngine::FrameRenderer {
 

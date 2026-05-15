@@ -10,8 +10,8 @@ module;
 
 export module VulkanEngine.RenderPipeline;
 
-export import VulkanEngine.RenderGraph;
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.RenderGraph;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 
 export namespace VulkanEngine::RenderPipeline {
 

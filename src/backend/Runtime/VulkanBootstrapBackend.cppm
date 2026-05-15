@@ -2,9 +2,9 @@ module;
 
 #include <memory>
 
-export module VulkanEngine.Runtime.VulkanBootstrapBackend;
+export module VulkanBackend.Runtime.VulkanBootstrapBackend;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 
 export namespace VulkanEngine::Runtime {
 

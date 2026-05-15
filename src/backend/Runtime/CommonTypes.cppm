@@ -3,7 +3,7 @@ module;
 #include <cstdint>
 #include <SDL3/SDL_video.h>
 
-export module VulkanEngine.Runtime.CommonTypes;
+export module VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
 

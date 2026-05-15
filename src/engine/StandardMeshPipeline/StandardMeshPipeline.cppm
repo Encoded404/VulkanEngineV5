@@ -8,7 +8,7 @@ module;
 
 export module VulkanEngine.StandardMeshPipeline;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
 
 export namespace VulkanEngine::StandardMeshPipeline {

@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <vector>
 #include <stdexcept>
+#include <exception>
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -11,7 +12,7 @@ module;
 
 module VulkanEngine.GpuDescriptorSet;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuTexture;
 
@@ -83,16 +84,15 @@ GpuDescriptorSet DescriptorPool::Allocate(vk::DescriptorSetLayout layout) {
     const vk::DescriptorSetAllocateInfo alloc_info(**pool_, layout);
     
     auto sets = backend_->GetDevice().allocateDescriptorSets(alloc_info);
-    const vk::raii::DescriptorSet set = std::move(sets[0]);
-    
-    return GpuDescriptorSet::Create(backend_, shared_from_this(), set, layout);
+
+    return GpuDescriptorSet::Create(backend_, shared_from_this(), sets[0].release(), layout);
 }
 
 GpuDescriptorSet::GpuDescriptorSet(
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend,
     std::shared_ptr<DescriptorPool> pool,
-    vk::DescriptorSet set,
-    vk::DescriptorSetLayout layout)
+    const vk::DescriptorSet set,
+    const vk::DescriptorSetLayout layout)
     : backend_(backend)
     , pool_(std::move(pool))
     , descriptor_set_(set)
@@ -112,9 +112,11 @@ GpuDescriptorSet::GpuDescriptorSet(GpuDescriptorSet&& other) noexcept
 
 GpuDescriptorSet& GpuDescriptorSet::operator=(GpuDescriptorSet&& other) noexcept {
     if (this != &other) {
-        try {
-            backend_->GetDevice().waitIdle();
-        } catch (...) { // NOLINT(bugprone-empty-catch)
+        if (backend_) {
+            try {
+                backend_->GetDevice().waitIdle();
+            } catch (...) { // NOLINT(bugprone-empty-catch)
+            }
         }
         backend_ = other.backend_;
         pool_ = std::move(other.pool_);
@@ -131,7 +133,14 @@ GpuDescriptorSet& GpuDescriptorSet::operator=(GpuDescriptorSet&& other) noexcept
 GpuDescriptorSet::~GpuDescriptorSet() {
     try {
         Destroy();
-    } catch (...) { // NOLINT(bugprone-empty-catch)
+    } catch (const std::exception& err) { // NOLINT(bugprone-empty-catch)
+        LOGIFACE_LOG(
+            error,
+            std::string("Exception type: ") +
+            typeid(err).name() +
+            ", message: " +
+            err.what()
+        );
     }
 }
 
@@ -139,14 +148,14 @@ void GpuDescriptorSet::Destroy() {
     if (destroyed_ || !descriptor_set_ || !pool_) {
         return;
     }
-    
+
     if (backend_) {
         try {
             backend_->GetDevice().waitIdle();
         } catch (...) { // NOLINT(bugprone-empty-catch)
         }
     }
-    
+
     pool_->FreeDescriptorSet(descriptor_set_);
     descriptor_set_ = nullptr;
     layout_ = nullptr;
@@ -156,8 +165,8 @@ void GpuDescriptorSet::Destroy() {
 GpuDescriptorSet GpuDescriptorSet::Create(
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend,
     std::shared_ptr<DescriptorPool> pool,
-    vk::DescriptorSet set,
-    vk::DescriptorSetLayout layout) {
+    const vk::DescriptorSet set,
+    const vk::DescriptorSetLayout layout) {
     return GpuDescriptorSet(backend, std::move(pool), set, layout);
 }
 

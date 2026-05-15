@@ -11,7 +11,7 @@ module;
 
 module VulkanEngine.ShaderLoader;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace VulkanEngine::ShaderLoader {
 

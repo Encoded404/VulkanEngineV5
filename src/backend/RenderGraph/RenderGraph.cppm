@@ -10,7 +10,7 @@ module;
 
 #include <vulkan/vulkan.hpp>
 
-export module VulkanEngine.RenderGraph;
+export module VulkanBackend.RenderGraph;
 
 export namespace VulkanEngine::RenderGraph {
 
@@ -303,4 +303,19 @@ private:
     std::vector<std::pair<PassHandle, PassHandle>> explicit_dependencies_{};
 };
 
-}  // namespace VulkanEngine::RenderGraph
+}  // namespace VulkanEngine::RenderGraph (exported)
+
+// Module-linkage helpers (visible to all implementation units, not exported)
+namespace VulkanEngine::RenderGraph {
+
+bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value);
+bool ContainsDependency(const std::vector<std::pair<PassHandle, PassHandle>>& deps,
+                        const std::pair<PassHandle, PassHandle>& value);
+bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state);
+vk::PipelineStageFlags IntentToPipelineStage(PipelineStageIntent intent, AccessIntent access);
+vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessIntent access);
+vk::ImageLayout IntentToImageLayout(ImageLayoutIntent intent);
+vk::ImageAspectFlags FormatToAspectFlags(vk::Format format);
+bool StatesEqual(const ResourceState& a, const ResourceState& b);
+
+}  // namespace VulkanEngine::RenderGraph (helpers)

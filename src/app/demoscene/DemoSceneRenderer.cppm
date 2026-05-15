@@ -7,7 +7,7 @@ module;
 
 export module App.DemoSceneRenderer;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.ResourceSystem;
 export import VulkanEngine.ResourceSystem.TextureResource;
 export import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;

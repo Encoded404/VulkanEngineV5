@@ -13,8 +13,8 @@ module;
 
 module VulkanEngine.RenderPipeline;
 
-import VulkanEngine.RenderGraph;
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.RenderGraph;
+import VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace VulkanEngine::RenderPipeline {
 

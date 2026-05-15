@@ -12,7 +12,7 @@ module;
 
 module VulkanEngine.StandardMeshPipeline;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 
 namespace VulkanEngine::StandardMeshPipeline {

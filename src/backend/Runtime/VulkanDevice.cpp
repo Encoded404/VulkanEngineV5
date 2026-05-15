@@ -7,10 +7,10 @@ module;
 #include <array>
 #include <memory>
 
-module VulkanEngine.Runtime.VulkanDevice;
+module VulkanBackend.Runtime.VulkanDevice;
 
-import VulkanEngine.Runtime.VulkanInstance;
-import VulkanEngine.Runtime.CommonTypes;
+import VulkanBackend.Runtime.VulkanInstance;
+import VulkanBackend.Runtime.CommonTypes;
 
 namespace VulkanEngine::Runtime {
 

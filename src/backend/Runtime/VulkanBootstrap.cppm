@@ -4,10 +4,10 @@ module;
 #include <cstdint>
 #include <vulkan/vulkan_raii.hpp>
 
-export module VulkanEngine.Runtime.VulkanBootstrap;
+export module VulkanBackend.Runtime.VulkanBootstrap;
 
 export import VulkanBackend.Component;
-export import VulkanEngine.Runtime.CommonTypes;
+export import VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
 

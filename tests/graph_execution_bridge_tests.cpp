@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-import VulkanEngine.RenderGraph;
-import VulkanEngine.RenderGraph.GraphExecutionBridge;
+import VulkanBackend.RenderGraph;
+import VulkanBackend.RenderGraph.GraphExecutionBridge;
 import VulkanBackend.Runtime.FrameLoop;
 
 namespace {

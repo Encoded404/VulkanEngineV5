@@ -5,7 +5,7 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-import VulkanEngine.Runtime.VulkanBootstrap;
+import VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace {
 

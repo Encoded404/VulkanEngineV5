@@ -6,7 +6,7 @@ module;
 
 export module VulkanEngine.FrameRenderer;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.RenderPipeline;
 export import VulkanEngine.ImGuiSystem;
 

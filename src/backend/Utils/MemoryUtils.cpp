@@ -6,7 +6,7 @@ module;
 #include <stdexcept>
 #include <vector>
 
-module VulkanEngine.Utils.MemoryUtils;
+module VulkanBackend.Utils.MemoryUtils;
 
 namespace VulkanEngine::Utils {
 

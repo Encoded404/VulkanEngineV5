@@ -9,7 +9,7 @@ module;
 
 export module VulkanEngine.ShaderLoader;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 
 export namespace VulkanEngine::ShaderLoader {
 

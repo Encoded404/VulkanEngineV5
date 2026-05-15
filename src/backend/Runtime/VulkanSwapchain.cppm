@@ -4,10 +4,10 @@ module;
 #include <memory>
 #include <vector>
 
-export module VulkanEngine.Runtime.VulkanSwapchain;
+export module VulkanBackend.Runtime.VulkanSwapchain;
 
-import VulkanEngine.Runtime.VulkanDevice;
-import VulkanEngine.Runtime.VulkanInstance;
+import VulkanBackend.Runtime.VulkanDevice;
+import VulkanBackend.Runtime.VulkanInstance;
 
 export namespace VulkanEngine::Runtime {
 

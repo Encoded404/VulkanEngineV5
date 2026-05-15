@@ -5,7 +5,7 @@ module;
 
 export module VulkanEngine.GpuBuffer;
 
-export import VulkanEngine.Runtime.VulkanBootstrap;
+export import VulkanBackend.Runtime.VulkanBootstrap;
 
 export namespace VulkanEngine::GpuResources {
 

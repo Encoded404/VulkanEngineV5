@@ -3,7 +3,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 #include <vector>
 
-export module VulkanEngine.Utils.MemoryUtils;
+export module VulkanBackend.Utils.MemoryUtils;
 
 export namespace VulkanEngine::Utils {
 

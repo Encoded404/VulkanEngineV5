@@ -4,7 +4,7 @@
 
 #include <vulkan/vulkan.hpp>
 
-import VulkanEngine.RenderGraph;
+import VulkanBackend.RenderGraph;
 
 namespace {
 

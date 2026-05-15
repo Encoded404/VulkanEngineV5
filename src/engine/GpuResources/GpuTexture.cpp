@@ -8,9 +8,9 @@ module;
 
 module VulkanEngine.GpuTexture;
 
-import VulkanEngine.Runtime.VulkanBootstrap;
-import VulkanEngine.Utils.MemoryUtils;
-import VulkanEngine.Utils.ImageUtils;
+import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Utils.MemoryUtils;
+import VulkanBackend.Utils.ImageUtils;
 
 namespace VulkanEngine::GpuResources {
 

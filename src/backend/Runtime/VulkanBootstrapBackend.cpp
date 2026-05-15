@@ -6,14 +6,14 @@ module;
 #include <vector>
 //# include <cmath> clang tidy says its unused
 
-#include "logging/logging.hpp"
+#include <logging/logging.hpp>
 
-module VulkanEngine.Runtime.VulkanBootstrapBackend;
+module VulkanBackend.Runtime.VulkanBootstrapBackend;
 
 import VulkanBackend.Component;
-import VulkanEngine.Runtime.VulkanInstance;
-import VulkanEngine.Runtime.VulkanDevice;
-import VulkanEngine.Runtime.VulkanSwapchain;
+import VulkanBackend.Runtime.VulkanInstance;
+import VulkanBackend.Runtime.VulkanDevice;
+import VulkanBackend.Runtime.VulkanSwapchain;
 
 namespace VulkanEngine::Runtime {
 

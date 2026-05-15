@@ -7,7 +7,7 @@ module;
 #include <memory>
 #include <vector>
 
-module VulkanEngine.Runtime.VulkanInstance;
+module VulkanBackend.Runtime.VulkanInstance;
 
 namespace VulkanEngine::Runtime {
 

@@ -4,9 +4,9 @@ module;
 #include <memory>
 #include <vector>
 
-export module VulkanEngine.Runtime.VulkanDevice;
+export module VulkanBackend.Runtime.VulkanDevice;
 
-import VulkanEngine.Runtime.VulkanInstance;
+import VulkanBackend.Runtime.VulkanInstance;
 
 export namespace VulkanEngine::Runtime {
 

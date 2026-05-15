@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-import VulkanEngine.Platform.SdlPlatformBackend;
-import VulkanEngine.Runtime.VulkanBootstrapBackend;
+import VulkanBackend.Platform.SdlPlatformBackend;
+import VulkanBackend.Runtime.VulkanBootstrapBackend;
 
 namespace {
 

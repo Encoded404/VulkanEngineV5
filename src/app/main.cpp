@@ -13,7 +13,7 @@ import VulkanEngine.Application;
 import VulkanEngine.Components.MeshRenderer;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Input;
-import VulkanEngine.RenderGraph;
+import VulkanBackend.RenderGraph;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import VulkanEngine.ImGuiSystem;

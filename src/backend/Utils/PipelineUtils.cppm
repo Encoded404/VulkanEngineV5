@@ -3,7 +3,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 #include <vector>
 
-export module VulkanEngine.Utils.PipelineUtils;
+export module VulkanBackend.Utils.PipelineUtils;
 
 export namespace VulkanEngine::Utils {
 

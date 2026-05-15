@@ -6,9 +6,9 @@ module;
 #include <memory>
 #include <utility>
 
-#include "logging/logging.hpp"
+#include <logging/logging.hpp>
 
-module VulkanEngine.Runtime.VulkanBootstrap;
+module VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace VulkanEngine::Runtime {
 

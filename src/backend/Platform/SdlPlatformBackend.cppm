@@ -2,7 +2,7 @@ module;
 
 #include <memory>
 
-export module VulkanEngine.Platform.SdlPlatformBackend;
+export module VulkanBackend.Platform.SdlPlatformBackend;
 
 import VulkanBackend.Platform.SdlPlatform;
 

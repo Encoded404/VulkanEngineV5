@@ -10,7 +10,7 @@ module;
 #include <imgui_impl_vulkan.h>
 #include <vulkan/vulkan.hpp>
 
-#include "logging/logging.hpp"
+#include <logging/logging.hpp>
 
 module VulkanBackend.ImGui;
 

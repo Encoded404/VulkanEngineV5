@@ -4,9 +4,9 @@ module;
 #include <SDL3/SDL_video.h>
 #include <memory>
 
-export module VulkanEngine.Runtime.VulkanInstance;
+export module VulkanBackend.Runtime.VulkanInstance;
 
-import VulkanEngine.Runtime.CommonTypes;
+import VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
 

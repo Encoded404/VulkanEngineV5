@@ -2,7 +2,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module VulkanEngine.Utils.ImageUtils;
+export module VulkanBackend.Utils.ImageUtils;
 
 export namespace VulkanEngine::Utils {
 

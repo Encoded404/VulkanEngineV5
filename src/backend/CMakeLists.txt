@@ -44,6 +44,18 @@ if(CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
+target_precompile_headers(${BACKEND_TARGET} PRIVATE
+    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
+    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
+)
+
+set_source_files_properties(
+    Runtime/VulkanInstance.cpp
+    Runtime/VulkanDevice.cpp
+    Runtime/VulkanDispatchLoader.cpp
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+)
+
 target_sources(${BACKEND_TARGET} PRIVATE
     Event/Event.cpp
     Platform/SdlPlatform.cpp

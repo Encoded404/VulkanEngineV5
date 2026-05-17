@@ -6,7 +6,7 @@ import VulkanBackend.Component;
 
 #include <type_traits>
 
-#include "test_logging.hpp"
+#include "../test_logging.hpp"
 
 namespace {
 // Compile-time schema used to verify field metadata extraction in the tests.

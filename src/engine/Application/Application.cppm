@@ -81,30 +81,30 @@ struct ApplicationHooks {
         double prev = 0.0;
         if (setup_completed && hooks.on_shutdown) {
             hooks.on_shutdown(context);
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: app hooks " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: app hooks " + std::to_string(current - prev) + " ms");
+            prev = current;
             setup_completed = false;
         }
         if (runtime_initialized && runtime) {
             runtime->Shutdown();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: runtime " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: runtime " + std::to_string(current - prev) + " ms");
+            prev = current;
             runtime_initialized = false;
         }
         if (bootstrap_initialized && bootstrap) {
             bootstrap->Shutdown();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: bootstrap " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: bootstrap " + std::to_string(current - prev) + " ms");
+            prev = current;
             bootstrap_initialized = false;
         }
         if (platform_initialized && platform) {
             platform->Shutdown();
-            double cur = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: platform " + std::to_string(cur - prev) + " ms");
-            prev = cur;
+            const double current = t.ElapsedMs();
+            LOGIFACE_LOG(info, "shutdown: platform " + std::to_string(current - prev) + " ms");
+            prev = current;
             platform_initialized = false;
         }
         LOGIFACE_LOG(info, "shutdown: total " + std::to_string(t.ElapsedMs()) + " ms");

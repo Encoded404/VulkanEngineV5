@@ -14,6 +14,7 @@ import VulkanBackend.Component;
 import VulkanBackend.Runtime.VulkanInstance;
 import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanSwapchain;
+import VulkanBackend.Utils.Timer;
 
 namespace VulkanEngine::Runtime {
 
@@ -199,19 +200,25 @@ public:
     }
 
     void Shutdown() override {
+        const ::VulkanEngine::Utils::Timer t{true};
         if (device_ && device_->IsValid()) {
             device_->GetDevice().waitIdle();
         }
+        LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to wait for device idle in VulkanBootstrapBackend::Shutdown before destroying resources.");
 
         render_finished_semaphores_.clear();
+        LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy render finished semaphores in VulkanBootstrapBackend::Shutdown.");
         if (swapchain_) {
             swapchain_->Shutdown();
+            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown swapchain in VulkanBootstrapBackend::Shutdown.");
         }
         if (device_) {
             device_->Shutdown();
+            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown device in VulkanBootstrapBackend::Shutdown.");
         }
         if (instance_) {
             instance_->Shutdown();
+            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown instance in VulkanBootstrapBackend::Shutdown.");
         }
     }
 

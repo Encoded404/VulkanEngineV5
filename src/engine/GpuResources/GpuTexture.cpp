@@ -55,7 +55,7 @@ GpuTexture GpuTexture::CreateFromPixels(VulkanEngine::Runtime::IVulkanBootstrapB
     std::unique_ptr<vk::raii::DeviceMemory> staging_memory;
     CreateBufferResource(backend, pixel_size,
                          vk::BufferUsageFlagBits::eTransferSrc,
-                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+                         vk::MemoryPropertyFlags(vk::MemoryPropertyFlagBits::eHostVisible) | vk::MemoryPropertyFlagBits::eHostCoherent,
                          staging_buffer, staging_memory);
 
     void* data = staging_memory->mapMemory(0, pixel_size);

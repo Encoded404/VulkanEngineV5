@@ -44,6 +44,11 @@ if(CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
+target_precompile_headers(${ENGINE_TARGET} PRIVATE
+    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
+    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
+)
+
 target_sources(${ENGINE_TARGET} PRIVATE
     Input/Input.cpp
     FileLoaders/Textures/TextureLoaders.cpp

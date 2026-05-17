@@ -7,7 +7,11 @@ module;
 #include <memory>
 #include <vector>
 
+#include "logging/logging.hpp"
+
 module VulkanBackend.Runtime.VulkanInstance;
+
+import VulkanBackend.Utils.Timer;
 
 namespace VulkanEngine::Runtime {
 
@@ -67,9 +71,13 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 }
 
 void VulkanInstance::Shutdown() {
+    const VulkanEngine::Utils::Timer t{true};
     surface_.reset();
+    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy surface in VulkanInstance::Shutdown.");
     instance_.reset();
+    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy instance in VulkanInstance::Shutdown.");
     loader_.reset();
+    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy loader in VulkanInstance::Shutdown.");
     window_ = nullptr;
 }
 

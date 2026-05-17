@@ -52,6 +52,11 @@ if(CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
+target_precompile_headers(${APP_TARGET} PRIVATE
+    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
+    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
+)
+
 target_compile_definitions(${APP_TARGET}
     PUBLIC
         $<$<BOOL:${ENABLE_LOGGING}>:LOGIFACE_ENABLE_LOGGING=1>

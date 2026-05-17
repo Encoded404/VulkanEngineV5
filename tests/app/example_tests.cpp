@@ -4,7 +4,7 @@
 
 // #include <lib1/lib_example.hpp>
 
-#include "test_logging.hpp"
+#include "../test_logging.hpp"
 
 // using modern_cmake_template::example;
 

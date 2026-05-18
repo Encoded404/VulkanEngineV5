@@ -191,6 +191,7 @@ CombinedScene SceneManager::UploadCombined(
         MeshInfo info{};
         info.name = "mesh_" + std::to_string(i);
         info.vertex_offset = vertex_offset;
+        info.vertex_count = static_cast<uint32_t>(verts.size());
         info.index_offset = index_offset;
         info.index_count = static_cast<uint32_t>(meshes[i].indices.size());
 
@@ -222,7 +223,7 @@ CombinedScene SceneManager::UploadCombined(
     scene.index_buffer = VulkanEngine::GpuResources::GpuBuffer::Create(
         backend,
         all_indices.size() * sizeof(uint32_t),
-        vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+        vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
         all_indices.data());
 

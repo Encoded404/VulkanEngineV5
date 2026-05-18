@@ -6,8 +6,8 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
-#include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.hpp>
 
 export module VulkanEngine.SceneRenderer;
@@ -26,15 +26,26 @@ export namespace VulkanEngine::SceneRenderer {
 
 struct alignas(16) InstanceData {
     glm::mat4 model_matrix;
-    uint32_t material_id;
-    uint32_t pad[3]; //NOLINT(modernize-avoid-c-arrays)
+    uint32_t technique_id;
+    uint32_t pad[3];
 };
 
 struct alignas(4) MeshData {
     uint32_t index_count;
-    uint32_t instance_count; // always 1
+    uint32_t vertex_count;
     uint32_t first_index;
     int32_t  vertex_offset;
+};
+
+struct CameraUBO {
+    glm::mat4 view_proj;
+    glm::vec4 frustum_planes[6];
+};
+
+struct TechniqueDrawRange {
+    uint16_t technique_id;
+    uint32_t first_entity;
+    uint32_t entity_count;
 };
 
 class SceneRenderer {
@@ -48,17 +59,29 @@ public:
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+                    uint32_t total_vertex_count);
     void Shutdown();
 
     [[nodiscard]] vk::DescriptorSetLayout* GetInstanceDataLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetExpandedDataLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetCameraDataLayout() const;
 
-    // Must be called BEFORE the render pass begins — dispatches compute indirect generation
     void PrepareCompute(vk::CommandBuffer cmd,
                         VulkanEngine::ComponentRegistry& registry,
+                        const VulkanEngine::GpuResources::GpuBuffer& raw_vertex_buffer,
+                        const VulkanEngine::GpuResources::GpuBuffer& original_index_buffer,
+                        const glm::mat4& view_matrix,
+                        const glm::mat4& projection_matrix,
+                        uint32_t width,
+                        uint32_t height,
                         uint32_t frame_index);
 
-    // Called inside the render pass — draws using GPU-generated indirect commands
+    void DepthPrepass(vk::CommandBuffer cmd,
+                      uint32_t width,
+                      uint32_t height,
+                      uint32_t frame_index);
+
     void Render(vk::CommandBuffer cmd,
                 VulkanEngine::ComponentRegistry& registry,
                 const VulkanEngine::GpuResources::GpuBuffer& vertex_buffer,
@@ -71,41 +94,58 @@ public:
                 uint32_t height,
                 uint32_t frame_index);
 
+    [[nodiscard]] uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
+    [[nodiscard]] const std::vector<TechniqueDrawRange>& GetCurrentRanges() const { return current_ranges_; }
+
 private:
     struct FrameResources {
-        // Graphics resources
         VulkanEngine::GpuResources::GpuBuffer instance_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer indirect_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer indirect_buffer{};          // CPU-written, main pass
+        VulkanEngine::GpuResources::GpuBuffer depth_indirect_buffer{};    // GPU-written by expand, depth pass
         VulkanEngine::GpuResources::GpuBuffer mesh_data_buffer{};
-        VulkanEngine::GpuResources::GpuDescriptorSet gfx_descriptor_set{};
-        // Compute resources
-        VulkanEngine::GpuResources::GpuDescriptorSet compute_descriptor_set{};
+        VulkanEngine::GpuResources::GpuBuffer expanded_position_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer expanded_attribute_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer expanded_index_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer expand_counter_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer camera_buffer{};
+        VulkanEngine::GpuResources::GpuDescriptorSet instance_descriptor_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet expanded_descriptor_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet camera_descriptor_set{};
     };
 
-    bool CreateComputePipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    void DispatchCompute(vk::CommandBuffer cmd, uint32_t entity_count, uint32_t frame_index);
+    bool CreateExpandPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    void DispatchExpand(vk::CommandBuffer cmd, uint32_t entity_count, uint32_t frame_index);
 
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend_ = nullptr;
 
-    // Instance data descriptor set (graphics, set=1)
+    // Descriptor set layouts — set numbers match pipeline layouts
+    // Set 0: Instance data (shared: expand compute set 0, main pass set 1)
     std::unique_ptr<vk::raii::DescriptorSetLayout> instance_data_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> gfx_pool_;
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> instance_pool_;
 
-    // Compute pipeline
-    std::unique_ptr<vk::raii::DescriptorSetLayout> compute_layout_{};
+    // Set 1: Expanded buffers (expand compute set 1, depth pass set 0)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> expanded_data_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> expanded_pool_;
+
+    // Set 2: Camera + mesh + raw vertex (expand compute set 2, depth pass set 1)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> camera_data_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> camera_pool_;
+
+    // Expand compute pipeline
     std::unique_ptr<vk::raii::PipelineLayout> compute_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> compute_pipeline_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> compute_pool_;
 
-    struct TechniqueDrawRange {
-        uint16_t technique_id;
-        uint32_t first_entity;
-        uint32_t entity_count;
-    };
+    // Depth pre-pass pipeline
+    std::unique_ptr<vk::raii::PipelineLayout> depth_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> depth_pipeline_{};
+
+    uint32_t total_vertex_count_ = 0;
 
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames_;
     std::vector<TechniqueDrawRange> current_ranges_{};
     uint32_t current_entity_count_ = 0;
 };
 
-}
+} // namespace VulkanEngine::SceneRenderer

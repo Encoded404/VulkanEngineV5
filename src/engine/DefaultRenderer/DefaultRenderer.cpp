@@ -2,8 +2,8 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
-#include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <cstdint>
 #include <array>
 #include <memory>
@@ -25,7 +25,7 @@ import VulkanEngine.ImGuiSystem;
 
 namespace VulkanEngine::DefaultRenderer {
 
-DefaultRenderer::~DefaultRenderer() { // NOLINT(bugprone-exception-escape)
+DefaultRenderer::~DefaultRenderer() {
     Shutdown();
 }
 
@@ -47,46 +47,73 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
             VulkanEngine::RenderGraph::QueueType::Graphics,
             VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
 
-    VulkanEngine::RenderGraph::PassAttachmentSetup attachment_setup{};
-    attachment_setup.auto_begin_rendering = true;
+    // ── Pass 1: Depth pre-pass ──
+    {
+        VulkanEngine::RenderGraph::PassAttachmentSetup depth_setup{};
+        depth_setup.auto_begin_rendering = true;
 
-    VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-    color_attach.resource = backbuffer;
-    color_attach.load_op = vk::AttachmentLoadOp::eClear;
-    color_attach.store_op = vk::AttachmentStoreOp::eStore;
-    color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{
-        config.clear_color.r, config.clear_color.g, config.clear_color.b, config.clear_color.a});
-    attachment_setup.color_attachments.push_back(color_attach);
+        VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
+        depth_attach.resource = depth_buffer;
+        depth_attach.load_op = vk::AttachmentLoadOp::eClear;
+        depth_attach.store_op = vk::AttachmentStoreOp::eStore;
+        depth_attach.clear_depth = config.clear_depth_stencil;
+        depth_setup.depth_attachment = depth_attach;
 
-    VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
-    depth_attach.resource = depth_buffer;
-    depth_attach.load_op = vk::AttachmentLoadOp::eClear;
-    depth_attach.store_op = vk::AttachmentStoreOp::eDontCare;
-    depth_attach.clear_depth = config.clear_depth_stencil;
-    attachment_setup.depth_attachment = depth_attach;
+        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
+        desc.name = "depth-prepass";
+        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        desc.writes = {depth_buffer};
+        desc.attachments = depth_setup;
+        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                current_scene_renderer_->DepthPrepass(cmd, current_width_, current_height_, frame_counter_);
+            }
+        };
+        pipeline_->AddPass(desc);
+    }
 
-    VulkanEngine::RenderPipeline::RenderPipelinePassDesc render_pass_desc{};
-    render_pass_desc.name = "default-render";
-    render_pass_desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-    render_pass_desc.writes = {backbuffer, depth_buffer};
-    render_pass_desc.attachments = attachment_setup;
-    render_pass_desc.execute = [this](const void*, vk::CommandBuffer cmd) {
-        if (current_scene_renderer_) {
-            const float aspect = static_cast<float>(current_width_) / static_cast<float>(current_height_);
-            const glm::mat4 view = current_camera_->GetViewMatrix();
-            const glm::mat4 proj = current_camera_->GetProjectionMatrix(aspect);
+    // ── Pass 2: Main pass (opaque) ──
+    {
+        VulkanEngine::RenderGraph::PassAttachmentSetup attachment_setup{};
+        attachment_setup.auto_begin_rendering = true;
 
-            current_scene_renderer_->Render(cmd, *current_registry_,
-                                            *current_vertex_buffer_, *current_index_buffer_,
-                                            *current_technique_mgr_, *current_bindless_mgr_,
-                                            proj, view,
-                                            current_width_, current_height_,
-                                            frame_counter_);
-        }
-    };
+        VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
+        color_attach.resource = backbuffer;
+        color_attach.load_op = vk::AttachmentLoadOp::eClear;
+        color_attach.store_op = vk::AttachmentStoreOp::eStore;
+        color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{
+            config.clear_color.r, config.clear_color.g, config.clear_color.b, config.clear_color.a});
+        attachment_setup.color_attachments.push_back(color_attach);
 
-    pipeline_->AddPass(render_pass_desc);
+        VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
+        depth_attach.resource = depth_buffer;
+        depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
+        depth_attach.store_op = vk::AttachmentStoreOp::eStore;
+        attachment_setup.depth_attachment = depth_attach;
 
+        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
+        desc.name = "main-pass";
+        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        desc.writes = {backbuffer, depth_buffer};
+        desc.attachments = attachment_setup;
+        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                const float aspect = static_cast<float>(current_width_) / static_cast<float>(current_height_);
+                const glm::mat4 view = current_camera_->GetViewMatrix();
+                const glm::mat4 proj = current_camera_->GetProjectionMatrix(aspect);
+
+                current_scene_renderer_->Render(cmd, *current_registry_,
+                                                *current_vertex_buffer_, *current_index_buffer_,
+                                                *current_technique_mgr_, *current_bindless_mgr_,
+                                                proj, view,
+                                                current_width_, current_height_,
+                                                frame_counter_);
+            }
+        };
+        pipeline_->AddPass(desc);
+    }
+
+    // ── Pass 3: ImGui overlay ──
     if (config.enable_imgui) {
         VulkanEngine::RenderPipeline::RenderPipelinePassDesc imgui_pass_desc{};
         imgui_pass_desc.name = "imgui-overlay";
@@ -116,7 +143,7 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
         vkResetQueryPool(*device, **gpu_stats_pool_, 0, 1);
     }
 
-    LOGIFACE_LOG(info, "DefaultRenderer initialized");
+    LOGIFACE_LOG(info, "DefaultRenderer initialized with GPU-driven passes (depth-prepass + main-pass)");
     return true;
 }
 
@@ -171,7 +198,6 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     if (gpu_stats_pool_) {
-        // Read back previous frame's GPU pipeline statistics
         std::array<uint64_t, 7> gpu_stats{};
         VkQueryPool pool = **gpu_stats_pool_;
         VkDevice dev = *backend.GetDevice();
@@ -196,11 +222,21 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
         cmd.beginQuery(**gpu_stats_pool_, 0, {});
     }
 
-    LOGIFACE_LOG(trace, "Pre-compute: frustum culling");
+    // Phase 1: CPU cull + upload + expand compute dispatch (before render graph)
     if (current_scene_renderer_ && current_registry_) {
-        current_scene_renderer_->PrepareCompute(cmd, *current_registry_, frame_counter_);
+        const float aspect = static_cast<float>(current_width_) / static_cast<float>(current_height_);
+        const glm::mat4 view = current_camera_->GetViewMatrix();
+        const glm::mat4 proj = current_camera_->GetProjectionMatrix(aspect);
+
+        current_scene_renderer_->PrepareCompute(cmd, *current_registry_,
+                                                *current_vertex_buffer_,
+                                                *current_index_buffer_,
+                                                view, proj,
+                                                current_width_, current_height_,
+                                                frame_counter_);
     }
 
+    // Phase 2: Render graph executes depth pre-pass + main pass + imgui
     pipeline_->Execute(nullptr, cmd, image_index);
 
     if (gpu_stats_pool_) {
@@ -221,4 +257,4 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
     current_imgui_ = nullptr;
 }
 
-}
+} // namespace VulkanEngine::DefaultRenderer

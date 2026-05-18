@@ -1,0 +1,142 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Set 0: Instance data (modelMatrix + techniqueId)
+layout(std430, set = 0, binding = 0) readonly buffer InstanceBuffer {
+    mat4 modelMatrix;
+    uint techniqueId;
+} instances[];
+
+// Set 1: Expanded buffers (written by this shader)
+// Binding 0: Expanded position + materialId (vec3 + uint = 16 bytes)
+layout(std430, set = 1, binding = 0) buffer ExpandedPositionBuffer {
+    vec4 data[];
+} expandedPos;
+
+// Binding 1: Expanded attributes (packedNormal, texCoordPacked, packedTangent, pad)
+layout(std430, set = 1, binding = 1) buffer ExpandedAttributeBuffer {
+    uvec4 data[];
+} expandedAttrib;
+
+// Binding 2: Expanded index buffer
+layout(std430, set = 1, binding = 2) buffer ExpandedIndexBuffer {
+    uint data[];
+} expandedIdx;
+
+// Binding 3: Depth indirect command buffer (VkDrawIndexedIndirectCommand)
+layout(std430, set = 1, binding = 3) buffer IndirectBuffer {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+} cmd[];
+
+// Binding 4: Expand counter (atomic vertex counter)
+layout(std430, set = 1, binding = 4) coherent buffer ExpandCounter {
+    uint vertexCounter;
+} expandCounter;
+
+// Binding 5: Original index buffer (readonly, combined absolute indices)
+layout(std430, set = 1, binding = 5) readonly buffer OriginalIndexBuffer {
+    uint indices[];
+} origIdx;
+
+// Set 2: Camera + mesh + raw vertex data (readonly)
+layout(set = 2, binding = 0) uniform CameraData {
+    mat4 viewProj;
+    vec4 frustumPlanes[6];
+} camera;
+
+layout(std430, set = 2, binding = 1) readonly buffer MeshDataBuffer {
+    uint indexCount;
+    uint vertexCount;
+    uint firstIndex;
+    int  vertexOffset;
+} meshes[];
+
+layout(std430, set = 2, binding = 2) readonly buffer RawVertexBuffer {
+    uint data[];
+} rawVerts;
+
+layout(push_constant) uniform PushConstants {
+    uint entityCount;
+} pc;
+
+uint packNormalOctahedral(vec3 n) {
+    n = normalize(n);
+    float sum = abs(n.x) + abs(n.y) + abs(n.z);
+    if (sum < 1e-8) return 0u;
+    n.xy /= sum;
+    if (n.z >= 0.0) {
+        n.xy = n.xy;
+    } else {
+        vec2 signXY = sign(n.xy);
+        n.xy = (1.0 - abs(n.yx)) * signXY;
+    }
+    uvec2 p = uvec2(clamp(round(n.xy * 127.0 + 127.0), 0.0, 255.0));
+    return p.x | (p.y << 8);
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.entityCount) return;
+
+    int  baseVertex   = meshes[id].vertexOffset;
+    uint idxCount     = meshes[id].indexCount;
+    uint firstIdx     = meshes[id].firstIndex;
+
+    mat4 model = instances[id].modelMatrix;
+    mat3 normalMat = transpose(inverse(mat3(model)));
+
+    // Reserve space for all expanded entries (one per index)
+    uint writeBase = atomicAdd(expandCounter.vertexCounter, idxCount);
+
+    // Write depth indirect command
+    cmd[id].indexCount    = idxCount;
+    cmd[id].instanceCount = 1;
+    cmd[id].firstIndex    = writeBase;
+    cmd[id].vertexOffset  = 0;
+    cmd[id].firstInstance = id;
+
+    // Loop over each index, expand the referenced vertex
+    for (uint i = 0; i < idxCount; ++i) {
+        // Read absolute vertex index from combined index buffer
+        uint absVertex = origIdx.indices[firstIdx + i];
+        uint rawBase = absVertex * 9u;
+
+        vec3 rawPos = vec3(
+            uintBitsToFloat(rawVerts.data[rawBase]),
+            uintBitsToFloat(rawVerts.data[rawBase + 1u]),
+            uintBitsToFloat(rawVerts.data[rawBase + 2u])
+        );
+
+        vec3 normal = vec3(
+            uintBitsToFloat(rawVerts.data[rawBase + 3u]),
+            uintBitsToFloat(rawVerts.data[rawBase + 4u]),
+            uintBitsToFloat(rawVerts.data[rawBase + 5u])
+        );
+
+        vec2 texCoord = vec2(
+            uintBitsToFloat(rawVerts.data[rawBase + 6u]),
+            uintBitsToFloat(rawVerts.data[rawBase + 7u])
+        );
+
+        uint materialId = rawVerts.data[rawBase + 8u] & 0xFFFFu;
+
+        vec4 worldPos = model * vec4(rawPos, 1.0);
+
+        expandedPos.data[writeBase + i] = vec4(worldPos.xyz, uintBitsToFloat(materialId));
+        expandedAttrib.data[writeBase + i] = uvec4(
+            packNormalOctahedral(normalMat * normal),
+            packHalf2x16(texCoord),
+            0u,
+            0u
+        );
+
+        // Sequential expanded index
+        expandedIdx.data[writeBase + i] = writeBase + i;
+    }
+}

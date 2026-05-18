@@ -5,7 +5,7 @@ module;
 #include <memory>
 #include <vector>
 
-#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -71,7 +71,6 @@ private:
     uint32_t current_image_index_ = 0;
     uint32_t frame_counter_ = 0;
 
-    // GPU pipeline statistics
     static constexpr vk::QueryPipelineStatisticFlags GPU_STATS_FLAGS =
         vk::QueryPipelineStatisticFlagBits::eInputAssemblyVertices |
         vk::QueryPipelineStatisticFlagBits::eInputAssemblyPrimitives |
@@ -83,4 +82,4 @@ private:
     std::unique_ptr<vk::raii::QueryPool> gpu_stats_pool_{};
 };
 
-}
+} // namespace VulkanEngine::DefaultRenderer

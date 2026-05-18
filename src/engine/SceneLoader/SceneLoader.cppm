@@ -27,6 +27,7 @@ struct LoadedMeshData {
 struct MeshInfo {
     std::string name;
     uint32_t vertex_offset = 0;    // in vertices
+    uint32_t vertex_count = 0;     // in vertices
     uint32_t index_offset = 0;     // in indices
     uint32_t index_count = 0;
 };

@@ -2,8 +2,7 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-//NOLINTNEXTLINE(misc-include-cleaner)
-#include <glm/vec4.hpp> // it is used, glm is just weird in the way it does stuff
+#include <glm/vec4.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -66,18 +65,15 @@ DemoGame::DemoGame(const std::string& log_level, RenderMode render_mode, const s
 DemoGame::~DemoGame() = default;
 
 bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
-    // Create fallback checkerboard texture
     missing_texture_ = VulkanEngine::DefaultResources::DefaultResources::CreateCheckerboard(resource_manager_);
     fallback_handle_ = VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>("checkerboard_default", &resource_manager_);
 
-    // Load texture
     auto* active_texture = missing_texture_.get();
     auto tex_handle = VulkanEngine::SceneLoader::SceneManager::LoadTexture(resource_manager_, exe_dir_ / "textures", fallback_handle_);
     if (tex_handle.IsValid()) {
         active_texture = tex_handle.Get();
     }
 
-    // Load shaders
     const std::filesystem::path shader_dir = SHADER_DIR;
     std::string frag_name = "textured.frag.spv";
     if (render_mode_ == RenderMode::Normals) {
@@ -89,13 +85,11 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     auto vert_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / "textured.vert.spv");
     auto frag_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / frag_name);
 
-    // Create BindlessManager (must be before TechniqueManager so pipelines use its layout)
     bindless_mgr_ = std::make_unique<VulkanEngine::BindlessManager::BindlessManager>();
     if (!bindless_mgr_->Initialize(ctx.bootstrap->GetBackend())) {
         return false;
     }
 
-    // Upload textures to bindless array
     auto upload_to_bindless = [&](VulkanEngine::TextureResource* tex) -> uint32_t {
         if (!tex || !tex->HasPixels()) return 0;
         auto gpu_tex = VulkanEngine::GpuResources::GpuTexture::CreateFromPixels(
@@ -117,25 +111,42 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         }
     }
 
-    // Create SceneRenderer for instance data + indirect drawing
+    // Load meshes first so we know total vertex count
+    std::vector<VulkanEngine::SceneLoader::LoadedMeshData> meshes;
+    std::vector<std::string> mesh_names;
+    [[maybe_unused]] const bool meshes_loaded = VulkanEngine::SceneLoader::SceneManager::LoadAllMeshes(exe_dir_ / "models", meshes, mesh_names);
+
+    if (meshes.empty()) {
+        meshes.push_back(VulkanEngine::SceneLoader::SceneManager::CreateFallbackQuad());
+        mesh_names.emplace_back("fallback_quad");
+    }
+
+    // Compute total vertex count
+    uint32_t total_vertex_count = 0;
+    for (const auto& m : meshes) {
+        total_vertex_count += static_cast<uint32_t>(m.positions.size() / 3);
+    }
+
+    // Create SceneRenderer with known vertex count
     scene_renderer_ = std::make_unique<VulkanEngine::SceneRenderer::SceneRenderer>();
-    if (!scene_renderer_->Initialize(ctx.bootstrap->GetBackend())) {
+    if (!scene_renderer_->Initialize(ctx.bootstrap->GetBackend(), total_vertex_count)) {
         return false;
     }
 
-    // Create TechniqueManager and register the standard technique with bindless + instance data layouts
+    // Create TechniqueManager and register standard technique
     technique_mgr_ = std::make_unique<VulkanEngine::TechniqueManager::TechniqueManager>();
     VulkanEngine::StandardMeshPipeline::PipelineConfig pipeline_config{};
     pipeline_config.cull_mode = vk::CullModeFlagBits::eFront;
     pipeline_config.front_face = vk::FrontFace::eClockwise;
     pipeline_config.depth_test_enable = true;
     pipeline_config.depth_write_enable = true;
+    pipeline_config.depth_compare_op = vk::CompareOp::eLessOrEqual;
     const uint16_t main_technique = technique_mgr_->RegisterTechnique(
         *ctx.bootstrap, vert_spv, frag_spv, pipeline_config,
         bindless_mgr_->GetLayout(),
         scene_renderer_->GetInstanceDataLayout());
 
-    // Create MaterialManager with BindlessManager
+    // Create MaterialManager
     material_mgr_ = std::make_unique<VulkanEngine::MaterialManager::MaterialManager>();
     material_mgr_->Initialize(*ctx.bootstrap, *technique_mgr_, *bindless_mgr_);
 
@@ -147,16 +158,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     mat_def.roughness_factor = 1.0f;
     const uint16_t default_material = material_mgr_->RegisterMaterial(mat_def);
 
-    // Load and upload all meshes as a combined scene
-    std::vector<VulkanEngine::SceneLoader::LoadedMeshData> meshes;
-    std::vector<std::string> mesh_names;
-    [[maybe_unused]] const bool meshes_loaded = VulkanEngine::SceneLoader::SceneManager::LoadAllMeshes(exe_dir_ / "models", meshes, mesh_names);
-
-    if (meshes.empty()) {
-        meshes.push_back(VulkanEngine::SceneLoader::SceneManager::CreateFallbackQuad());
-        mesh_names.emplace_back("fallback_quad");
-    }
-
+    // Upload combined scene
     const std::vector<uint16_t> material_ids(meshes.size(), default_material);
     combined_scene_ = VulkanEngine::SceneLoader::SceneManager::UploadCombined(
         *ctx.bootstrap, meshes, material_ids, default_material);
@@ -213,13 +215,14 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     auto& camera_entity = component_registry.CreateEntity();
     component_registry.AddComponent<VulkanEngine::Components::Camera>(camera_entity);
 
-    // Create game entities — one per loaded mesh with mesh + material
+    // Create game entities
     for (size_t i = 0; i < combined_scene_.meshes.size(); ++i) {
         auto& entity = component_registry.CreateEntity();
         component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
 
         auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.vertex_offset = combined_scene_.meshes[i].vertex_offset;
+        mesh_ref.vertex_count = combined_scene_.meshes[i].vertex_count;
         mesh_ref.index_offset = combined_scene_.meshes[i].index_offset;
         mesh_ref.index_count = combined_scene_.meshes[i].index_count;
 
@@ -241,7 +244,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     return true;
 }
 
-void DemoGame::OnPreInput([[maybe_unused]] VulkanEngine::Application::ApplicationContext& ctx) {
+void DemoGame::OnPreInput(VulkanEngine::Application::ApplicationContext& ctx) {
 }
 
 bool DemoGame::ShouldFilterMouseInput() {
@@ -273,7 +276,7 @@ void DemoGame::OnFrameRender(VulkanEngine::Application::ApplicationContext& ctx)
                            ctx.frame.image_index);
 }
 
-void DemoGame::OnShutdown([[maybe_unused]] VulkanEngine::Application::ApplicationContext& ctx) {
+void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& ctx) {
     if (renderer_) {
         renderer_->Shutdown();
         renderer_.reset();
@@ -294,7 +297,6 @@ void DemoGame::OnShutdown([[maybe_unused]] VulkanEngine::Application::Applicatio
         technique_mgr_->Shutdown();
         technique_mgr_.reset();
     }
-    // Clean up combined geometry buffer before device shuts down
     if (scene_valid_) {
         combined_scene_.vertex_buffer = VulkanEngine::GpuResources::GpuBuffer{};
         combined_scene_.index_buffer = VulkanEngine::GpuResources::GpuBuffer{};
@@ -308,4 +310,4 @@ void DemoGame::OnShutdown([[maybe_unused]] VulkanEngine::Application::Applicatio
     }
 }
 
-}
+} // namespace App::Game

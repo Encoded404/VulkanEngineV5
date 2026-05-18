@@ -5,8 +5,6 @@ module;
 #include <string>
 #include <filesystem>
 
-//#include <SDL3/SDL_keycode.h> // unused??
-
 export module App.Game;
 
 export import VulkanEngine.Application;
@@ -60,7 +58,6 @@ private:
     RenderMode render_mode_;
     VulkanEngine::Application::ApplicationHooks hooks_{};
 
-    // Game state
     std::filesystem::path exe_dir_{};
     VulkanEngine::ResourceManager resource_manager_{};
     std::shared_ptr<VulkanEngine::TextureResource> missing_texture_{};
@@ -77,4 +74,4 @@ private:
     bool scene_valid_ = false;
 };
 
-}
+} // namespace App::Game

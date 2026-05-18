@@ -4,8 +4,8 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
-#include <glm/gtc/matrix_transform.hpp> // NOLINT(misc-include-cleaner)
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 module VulkanEngine.MeshRendererSystem;
@@ -23,15 +23,15 @@ struct PushConstants {
     glm::mat4 mvp{};
 };
 
-[[nodiscard]] PushConstants BuildPushConstants(const VulkanEngine::Components::Transform& transform, float aspect) {
+[[nodiscard]] PushConstants BuildPushConstants(const VulkanEngine::Components::Transform& transform,
+                                                const glm::mat4& view,
+                                                const glm::mat4& proj) {
     constexpr float pi = std::numbers::pi_v<float>;
     const float radians = transform.rotation_degrees_y * (pi / 180.0f);
 
     const glm::mat4 model = glm::translate(glm::mat4(1.0f), transform.position)
                           * glm::rotate(glm::mat4(1.0f), radians, glm::vec3(0.0f, 1.0f, 0.0f))
                           * glm::scale(glm::mat4(1.0f), transform.scale);
-    const glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -3.0f));
-    const glm::mat4 proj = glm::perspective(60.0f * (pi / 180.0f), aspect, 0.1f, 100.0f);
 
     PushConstants constants{};
     constants.mvp = proj * view * model;
@@ -43,6 +43,8 @@ struct PushConstants {
 void MeshRendererSystem::RecordAllMeshDraws(vk::CommandBuffer cmd,
                                             VulkanEngine::ComponentRegistry& registry,
                                             const MeshRenderObject& render_object,
+                                            const glm::mat4& view_matrix,
+                                            const glm::mat4& projection_matrix,
                                             uint32_t width,
                                             uint32_t height) {
     if (width == 0U || height == 0U) return;
@@ -61,8 +63,6 @@ void MeshRendererSystem::RecordAllMeshDraws(vk::CommandBuffer cmd,
                                {render_object.descriptor_set}, {});
     }
 
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-
     registry.ForEach<VulkanEngine::Components::MeshRenderer>([&](VulkanEngine::Components::MeshRenderer& mesh_renderer) {
         if (!mesh_renderer.visible) {
             return;
@@ -73,7 +73,7 @@ void MeshRendererSystem::RecordAllMeshDraws(vk::CommandBuffer cmd,
             return;
         }
 
-        const PushConstants push_constants = BuildPushConstants(*transform, aspect);
+        const PushConstants push_constants = BuildPushConstants(*transform, view_matrix, projection_matrix);
         cmd.pushConstants(*render_object.pipeline_layout,
                           vk::ShaderStageFlagBits::eVertex,
                           0,

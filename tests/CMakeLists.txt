@@ -1,56 +1,34 @@
-# Add the test executable
-add_executable(project_tests
-    backend/backend_factory_tests.cpp
-    backend/vulkan_bootstrap_tests.cpp
-    backend/platform_shell_tests.cpp
-    backend/graph_execution_context_tests.cpp
-    backend/graph_execution_bridge_tests.cpp
-    backend/render_graph_tests.cpp
-    backend/render_graph_diagnostics_tests.cpp
-    backend/runtime_shell_tests.cpp
-    backend/event_system_tests.cpp
-    backend/component_system_tests.cpp
-    engine/input_system_tests.cpp
-    engine/resource_system_texture_tests.cpp
-    app/example_tests.cpp
-)
-
-# Find GTest installed via vcpkg and link it along with the main library
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
-target_link_libraries(project_tests PRIVATE
-    ${ENGINE_TARGET}
-    ${BACKEND_TARGET}
-    GTest::gtest
-    GTest::gtest_main
+
+# Shared options and helper shared by all test subdirectories
+set(TEST_COMPILE_OPTS
+  $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
+  $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+)
+set(TEST_COMPILE_OPTS_DEBUG
+  "$<$<CONFIG:Debug>:-g>"
+  "$<$<CONFIG:Debug>:-O0>"
+  "$<$<CONFIG:Release>:-O3>"
 )
 
-target_compile_definitions(project_tests PRIVATE
-    LOGIFACE_ENABLE_LOGGING=1
-)
-
-if(SYSTEM_VULKAN)
-  set_target_properties(project_tests PROPERTIES BUILD_RPATH "/usr/lib64")
-endif()
-
-# Set compiler options for the test executable
-target_compile_options(project_tests PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
-)
-
-# Multi-configuration generator options
-if(CMAKE_CONFIGURATION_TYPES)
-	target_compile_options(project_tests PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
-
-# Let CTest discover individual GoogleTest tests in the binary
-gtest_discover_tests(project_tests
+function(setup_test_target TARGET)
+  target_link_libraries(${TARGET} PRIVATE GTest::gtest GTest::gtest_main)
+  target_compile_definitions(${TARGET} PRIVATE LOGIFACE_ENABLE_LOGGING=1)
+  target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS})
+  if(CMAKE_CONFIGURATION_TYPES)
+    target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS_DEBUG})
+  endif()
+  if(SYSTEM_VULKAN)
+    set_target_properties(${TARGET} PROPERTIES BUILD_RPATH "/usr/lib64")
+  endif()
+  gtest_discover_tests(${TARGET}
     PROPERTIES
-        ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"
-)
+      ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"
+  )
+endfunction()
+
+add_subdirectory(backend)
+add_subdirectory(engine)
+add_subdirectory(app)

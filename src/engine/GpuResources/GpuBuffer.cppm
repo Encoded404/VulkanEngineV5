@@ -18,6 +18,9 @@ public:
                             const void* initial_data = nullptr);
 
     void Upload(const void* data, uint64_t size);
+    void UploadAt(const void* data, uint64_t size, uint64_t offset);
+    void* Map(uint64_t offset, uint64_t size);
+    void Unmap();
 
     [[nodiscard]] vk::raii::Buffer& GetBuffer() { return *buffer_; }
     [[nodiscard]] const vk::raii::Buffer& GetBuffer() const { return *buffer_; }

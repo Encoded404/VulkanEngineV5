@@ -4,7 +4,6 @@ module;
 #include <memory>
 #include <vector>
 #include <array>
-#include <stdexcept>
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -22,11 +21,21 @@ PipelineManager::~PipelineManager() = default;
 
 void PipelineManager::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                   const std::vector<uint32_t>& vertex_spirv,
-                                  const std::vector<uint32_t>& fragment_spirv) {
+                                  const std::vector<uint32_t>& fragment_spirv,
+                                  const PipelineConfig& config,
+                                  vk::DescriptorSetLayout* bindless_layout,
+                                  vk::DescriptorSetLayout* instance_data_layout) {
     bootstrap_ = &bootstrap;
-    CreateDescriptorSetLayout(bootstrap);
-    CreateDescriptorPool(bootstrap);
-    CreatePipeline(bootstrap, vertex_spirv, fragment_spirv);
+    config_ = config;
+    instance_data_layout_ = instance_data_layout;
+
+    if (bindless_layout) {
+        external_layout_ = bindless_layout;
+    } else {
+        CreateDescriptorSetLayout(bootstrap);
+        CreateDescriptorPool(bootstrap);
+    }
+    CreatePipeline(bootstrap, vertex_spirv, fragment_spirv, config);
 }
 
 void PipelineManager::Shutdown() {
@@ -57,26 +66,13 @@ const vk::raii::Pipeline* PipelineManager::GetPipeline() const {
 }
 
 vk::DescriptorSetLayout* PipelineManager::GetDescriptorSetLayout() {
+    if (external_layout_) return external_layout_;
     return descriptor_set_layout_ ? const_cast<vk::DescriptorSetLayout*>(&**descriptor_set_layout_) : nullptr;
 }
 
 const vk::DescriptorSetLayout* PipelineManager::GetDescriptorSetLayout() const {
+    if (external_layout_) return external_layout_;
     return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr;
-}
-
-VulkanEngine::GpuResources::GpuDescriptorSet PipelineManager::AllocateDescriptorSet() {
-    if (!pool_) {
-        throw std::runtime_error("Descriptor pool not initialized");
-    }
-    return pool_->Allocate(*descriptor_set_layout_);
-}
-
-VulkanEngine::GpuResources::GpuDescriptorSet PipelineManager::AllocateDescriptorSet(const VulkanEngine::GpuResources::GpuTexture& texture) {
-    auto set = AllocateDescriptorSet();
-    if (texture.IsValid()) {
-        set.UpdateBinding(0, texture);
-    }
-    return set;
 }
 
 void PipelineManager::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
@@ -107,7 +103,8 @@ void PipelineManager::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstra
 
 void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                       const std::vector<uint32_t>& vert_spv,
-                                      const std::vector<uint32_t>& frag_spv) {
+                                      const std::vector<uint32_t>& frag_spv,
+                                      const PipelineConfig& config) {
     LOGIFACE_LOG(trace, "entering CreatePipeline");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
@@ -123,7 +120,11 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
         vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, *frag_module, "main")
     };
 
-    const std::array<vk::DescriptorSetLayout, 1> set_layouts = { **descriptor_set_layout_ };
+    const vk::DescriptorSetLayout tex_layout = external_layout_ ? *external_layout_ : **descriptor_set_layout_;
+    std::vector<vk::DescriptorSetLayout> set_layouts = { tex_layout };
+    if (instance_data_layout_) {
+        set_layouts.push_back(*instance_data_layout_);
+    }
 
     constexpr uint32_t push_constant_size = 64;
     constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
@@ -131,6 +132,7 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     vk::PipelineLayoutCreateInfo layout_info{};
     layout_info.setLayoutCount = static_cast<uint32_t>(set_layouts.size());
     layout_info.pSetLayouts = set_layouts.data();
+
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges = &push_range;
     pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
@@ -139,20 +141,25 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
         vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
     };
 
-    std::array<vk::VertexInputAttributeDescription, 3> vertex_attributes = {
+    std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes = {
         vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, px)},
         vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, nx)},
-        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)}
+        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)},
+        vk::VertexInputAttributeDescription{3, 0, vk::Format::eR16Uint,         offsetof(Vertex, material_id)}
     };
 
     const vk::PipelineVertexInputStateCreateInfo vertex_input({}, vertex_bindings, vertex_attributes);
-    constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, vk::PrimitiveTopology::eTriangleList);
+    const vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, config.primitive_topology);
     constexpr vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
-    constexpr vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise, false, 0, 0, 0, 1.0f);
-    constexpr vk::PipelineMultisampleStateCreateInfo multisample({}, vk::SampleCountFlagBits::e1);
-    constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, true, true, vk::CompareOp::eLess);
+    const vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
+    const vk::PipelineMultisampleStateCreateInfo multisample({}, config.sample_count);
+    const vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
 
-    constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment(false, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eZero, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+    const vk::PipelineColorBlendAttachmentState color_blend_attachment(
+        config.blend_enable,
+        config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
+        config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
     const vk::PipelineColorBlendStateCreateInfo color_blend({}, false, vk::LogicOp::eCopy, color_blend_attachment);
 
     std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};

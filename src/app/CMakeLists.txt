@@ -1,7 +1,7 @@
 add_executable(${APP_TARGET})
 target_sources(${APP_TARGET} PRIVATE
     main.cpp
-    demoscene/DemoSceneRenderer.cpp
+    Game.cpp
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -10,7 +10,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
             Components/DemoInputComponent.cppm
-            demoscene/DemoSceneRenderer.cppm
+            Game.cppm
     )
 endif()
 

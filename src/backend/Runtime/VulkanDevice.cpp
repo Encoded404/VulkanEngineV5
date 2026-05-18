@@ -64,16 +64,31 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
 
         constexpr std::array<const char*, 1> device_extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+        vk::PhysicalDeviceVulkan12Features vulkan12_features{};
+        vulkan12_features.hostQueryReset = VK_TRUE;
+        vulkan12_features.descriptorIndexing = VK_TRUE;
+        vulkan12_features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        vulkan12_features.runtimeDescriptorArray = VK_TRUE;
+        vulkan12_features.descriptorBindingPartiallyBound = VK_TRUE;
+        vulkan12_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        vulkan12_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+
         vk::PhysicalDeviceVulkan13Features vulkan13_features{};
         vulkan13_features.dynamicRendering = VK_TRUE;
         vulkan13_features.synchronization2 = VK_TRUE;
+        vulkan12_features.pNext = &vulkan13_features;
+
+        vk::PhysicalDeviceFeatures2 core_features{};
+        core_features.features.multiDrawIndirect = VK_TRUE;
+        core_features.features.pipelineStatisticsQuery = VK_TRUE;
+        core_features.pNext = &vulkan12_features;
 
         vk::DeviceCreateInfo device_info{};
+        device_info.pNext = &core_features;
         device_info.queueCreateInfoCount = 1;
         device_info.pQueueCreateInfos = &queue_info;
         device_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
         device_info.ppEnabledExtensionNames = device_extensions.data();
-        device_info.pNext = &vulkan13_features;
 
         device_ = std::make_unique<vk::raii::Device>(*physical_device_, device_info);
 

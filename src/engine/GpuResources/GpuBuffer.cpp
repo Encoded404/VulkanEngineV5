@@ -62,4 +62,19 @@ void GpuBuffer::Upload(const void* data, uint64_t size) {
     memory_->unmapMemory();
 }
 
+void GpuBuffer::UploadAt(const void* data, uint64_t size, uint64_t offset) {
+    if (offset + size > size_) return;
+    void* mapped = memory_->mapMemory(offset, size);
+    std::memcpy(mapped, data, size);
+    memory_->unmapMemory();
+}
+
+void* GpuBuffer::Map(uint64_t offset, uint64_t size) {
+    return memory_->mapMemory(offset, size);
+}
+
+void GpuBuffer::Unmap() {
+    memory_->unmapMemory();
+}
+
 } // namespace VulkanEngine::GpuResources

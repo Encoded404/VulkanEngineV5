@@ -1,5 +1,8 @@
 module;
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
 #include <cstdint>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -26,6 +29,8 @@ public:
     void RecordAllMeshDraws(vk::CommandBuffer cmd,
                             VulkanEngine::ComponentRegistry& registry,
                             const MeshRenderObject& render_object,
+                            const glm::mat4& view_matrix,
+                            const glm::mat4& projection_matrix,
                             uint32_t width,
                             uint32_t height);
 };

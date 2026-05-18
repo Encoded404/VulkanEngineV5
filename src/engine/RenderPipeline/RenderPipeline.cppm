@@ -53,7 +53,6 @@ public:
 
     void Compile();
     void Execute(const void* user_data, vk::CommandBuffer command_buffer, uint32_t image_index);
-    void SetImportedResourceState(uint32_t resource_index, VulkanEngine::RenderGraph::ResourceState state);
 
     [[nodiscard]] bool IsCompiled() const { return compiled_; }
     [[nodiscard]] const VulkanEngine::RenderGraph::CompiledRenderGraph& GetCompiledGraph() const { return compiled_graph_; }
@@ -75,7 +74,10 @@ private:
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
 
-    std::unordered_map<uint32_t, VulkanEngine::RenderGraph::ResourceState> pending_imported_states_{};
+    uint32_t backbuffer_resource_index_ = 0;
+    uint32_t depth_buffer_resource_index_ = 0;
+    std::vector<bool> swapchain_image_presented_{};
+    bool depth_buffer_initialized_ = false;
 
     bool compiled_ = false;
     bool initialized_ = false;

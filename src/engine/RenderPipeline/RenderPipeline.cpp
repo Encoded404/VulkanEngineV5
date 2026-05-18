@@ -22,8 +22,10 @@ namespace {
 
 uint32_t FindMemoryType(vk::raii::PhysicalDevice const& physical_device, uint32_t type_filter, vk::MemoryPropertyFlags properties) {
     const auto mem_properties = physical_device.getMemoryProperties();
+    auto const required = static_cast<VkMemoryPropertyFlags>(properties);
     for (uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
-        if ((type_filter & (1u << i)) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+        auto const& raw = static_cast<VkMemoryType const&>(mem_properties.memoryTypes[i]);
+        if ((type_filter & (1u << i)) && ((raw.propertyFlags & required) == required)) {
             return i;
         }
     }
@@ -149,11 +151,16 @@ void RenderPipeline::Compile() {
 
     if (compiled_) {
         AllocateTransients();
-    }
-}
 
-void RenderPipeline::SetImportedResourceState(uint32_t resource_index, VulkanEngine::RenderGraph::ResourceState state) {
-    pending_imported_states_[resource_index] = state;
+        for (size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
+            const auto& resource = compiled_graph_.resource_lifetimes[i];
+            if (resource.name == "swapchain-backbuffer") {
+                backbuffer_resource_index_ = static_cast<uint32_t>(i);
+            } else if (resource.name == "depth-buffer") {
+                depth_buffer_resource_index_ = static_cast<uint32_t>(i);
+            }
+        }
+    }
 }
 
 void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer, uint32_t image_index) {
@@ -163,14 +170,39 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
 
     auto resolved_graph = compiled_graph_;
 
-    for (const auto& [index, state] : pending_imported_states_) {
-        resolved_graph.SetImportedResourceState(index, state);
+    if (!bootstrap_) return;
+    const uint32_t sc_count = bootstrap_->GetSnapshot().swapchain_image_count;
+    if (swapchain_image_presented_.size() != sc_count) {
+        swapchain_image_presented_.assign(sc_count, false);
     }
-    pending_imported_states_.clear();
+
+    const bool backbuffer_was_presented = swapchain_image_presented_[image_index];
+    resolved_graph.SetImportedResourceState(backbuffer_resource_index_,
+        VulkanEngine::RenderGraph::ResourceState::ImageState(
+            backbuffer_was_presented
+                ? VulkanEngine::RenderGraph::PipelineStageIntent::BottomOfPipe
+                : VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
+            VulkanEngine::RenderGraph::AccessIntent::None,
+            VulkanEngine::RenderGraph::QueueType::Graphics,
+            backbuffer_was_presented
+                ? VulkanEngine::RenderGraph::ImageLayoutIntent::Present
+                : VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
+
+    if (depth_buffer_initialized_) {
+        resolved_graph.SetImportedResourceState(depth_buffer_resource_index_,
+            VulkanEngine::RenderGraph::ResourceState::ImageState(
+                VulkanEngine::RenderGraph::PipelineStageIntent::DepthAttachment,
+                VulkanEngine::RenderGraph::AccessIntent::Write,
+                VulkanEngine::RenderGraph::QueueType::Graphics,
+                VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment));
+    }
 
     ResolveResources(resolved_graph, image_index);
 
     resolved_graph.Execute(user_data, command_buffer);
+
+    swapchain_image_presented_[image_index] = true;
+    depth_buffer_initialized_ = true;
 }
 
 void RenderPipeline::AllocateTransients() {

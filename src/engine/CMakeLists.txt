@@ -63,8 +63,13 @@ target_sources(${ENGINE_TARGET} PRIVATE
     ShaderLoader/ShaderLoader.cpp
     DefaultResources/DefaultResources.cpp
     MeshRendererSystem/MeshRendererSystem.cpp
-    FrameRenderer/FrameRenderer.cpp
     StandardMeshPipeline/StandardMeshPipeline.cpp
+    SceneLoader/SceneLoader.cpp
+    DefaultRenderer/DefaultRenderer.cpp
+    TechniqueManager/TechniqueManager.cpp
+    MaterialManager/MaterialManager.cpp
+    SceneRenderer/SceneRenderer.cpp
+    BindlessManager/BindlessManager.cpp
 )
 
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -80,6 +85,9 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 Startup/Startup.cppm
                 Components/Transform.cppm
                 Components/MeshRenderer.cppm
+                Components/Camera.cppm
+                Components/Material.cppm
+                Components/MeshReference.cppm
                 FileLoaders/Mesh/BinMeshAssembler.cppm
                 FileLoaders/Mesh/GltfMeshAssembler.cppm
                 FileLoaders/Textures/TextureLoaders.cppm
@@ -92,8 +100,13 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 ShaderLoader/ShaderLoader.cppm
                 DefaultResources/DefaultResources.cppm
                 MeshRendererSystem/MeshRendererSystem.cppm
-                FrameRenderer/FrameRenderer.cppm
                 StandardMeshPipeline/StandardMeshPipeline.cppm
+                SceneLoader/SceneLoader.cppm
+                DefaultRenderer/DefaultRenderer.cppm
+                TechniqueManager/TechniqueManager.cppm
+                MaterialManager/MaterialManager.cppm
+                SceneRenderer/SceneRenderer.cppm
+                BindlessManager/BindlessManager.cppm
         )
     endif()
 

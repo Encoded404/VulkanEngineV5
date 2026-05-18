@@ -24,7 +24,7 @@ struct VulkanBootstrapConfig {
     uint32_t api_minor = 3;
     uint32_t api_patch = 0;
     bool enable_validation = true;
-    uint32_t frames_in_flight = 2;
+    uint32_t frames_in_flight = 3;
     uint32_t preferred_swapchain_image_count = 3;
     SDL_Window* native_window_handle = nullptr;
 };

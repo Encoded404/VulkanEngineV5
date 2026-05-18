@@ -1,0 +1,39 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer InstanceBuffer {
+    mat4 modelMatrix;
+    uint materialId;
+} instances[];
+
+layout(std430, set = 0, binding = 1) readonly buffer MeshDataBuffer {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+} meshes[];
+
+layout(std430, set = 0, binding = 2) buffer IndirectBuffer {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+} cmd[];
+
+layout(push_constant) uniform PushConstants {
+    uint entityCount;
+} pc;
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.entityCount) return;
+
+    cmd[id].indexCount    = meshes[id].indexCount;
+    cmd[id].instanceCount = 1;
+    cmd[id].firstIndex    = meshes[id].firstIndex;
+    cmd[id].vertexOffset  = meshes[id].vertexOffset;
+    cmd[id].firstInstance = id;
+}

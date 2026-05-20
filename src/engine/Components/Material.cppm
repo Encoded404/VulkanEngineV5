@@ -2,7 +2,7 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp>
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 
 #include <cstdint>
 

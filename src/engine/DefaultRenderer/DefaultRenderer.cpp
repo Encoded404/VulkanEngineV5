@@ -72,7 +72,33 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
         pipeline_->AddPass(desc);
     }
 
-    // ── Pass 2: Main pass (opaque) ──
+    // ── Pass 2: Hi-Z generation compute (placeholder — requires depth image handle) ──
+    {
+        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
+        desc.name = "hiz-gen";
+        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                current_scene_renderer_->DispatchHiZGen(cmd, current_width_, current_height_, frame_counter_);
+            }
+        };
+        pipeline_->AddPass(desc);
+    }
+
+    // ── Pass 3: Occlusion sort compute ──
+    {
+        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
+        desc.name = "occlusion-sort";
+        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                current_scene_renderer_->DispatchOcclusionSort(cmd, frame_counter_);
+            }
+        };
+        pipeline_->AddPass(desc);
+    }
+
+    // ── Pass 4: Main pass (opaque) ──
     {
         VulkanEngine::RenderGraph::PassAttachmentSetup attachment_setup{};
         attachment_setup.auto_begin_rendering = true;
@@ -113,7 +139,7 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
         pipeline_->AddPass(desc);
     }
 
-    // ── Pass 3: ImGui overlay ──
+    // ── Pass 5: ImGui overlay ──
     if (config.enable_imgui) {
         VulkanEngine::RenderPipeline::RenderPipelinePassDesc imgui_pass_desc{};
         imgui_pass_desc.name = "imgui-overlay";

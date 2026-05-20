@@ -75,14 +75,9 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     }
 
     const std::filesystem::path shader_dir = SHADER_DIR;
-    std::string frag_name = "textured.frag.spv";
-    if (render_mode_ == RenderMode::Normals) {
-        frag_name = "normals.frag.spv";
-    } else if (render_mode_ == RenderMode::NoTextures) {
-        frag_name = "solid.frag.spv";
-    }
+    std::string frag_name = "standard_mesh.frag.spv";
 
-    auto vert_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / "textured.vert.spv");
+    auto vert_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / "main_world.vert.spv");
     auto frag_spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(shader_dir / frag_name);
 
     bindless_mgr_ = std::make_unique<VulkanEngine::BindlessManager::BindlessManager>();
@@ -144,7 +139,8 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const uint16_t main_technique = technique_mgr_->RegisterTechnique(
         *ctx.bootstrap, vert_spv, frag_spv, pipeline_config,
         bindless_mgr_->GetLayout(),
-        scene_renderer_->GetInstanceDataLayout());
+        scene_renderer_->GetInstanceDataLayout(),
+        scene_renderer_->GetMainExpandedLayout());
 
     // Create MaterialManager
     material_mgr_ = std::make_unique<VulkanEngine::MaterialManager::MaterialManager>();

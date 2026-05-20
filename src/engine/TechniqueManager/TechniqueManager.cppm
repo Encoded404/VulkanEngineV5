@@ -25,7 +25,8 @@ public:
                                               const std::vector<uint32_t>& frag_spv,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config = {},
                                               vk::DescriptorSetLayout* bindless_layout = nullptr,
-                                              vk::DescriptorSetLayout* instance_data_layout = nullptr);
+                                              vk::DescriptorSetLayout* instance_data_layout = nullptr,
+                                              vk::DescriptorSetLayout* expanded_data_layout = nullptr);
 
     [[nodiscard]] VulkanEngine::StandardMeshPipeline::PipelineManager* GetPipelineManager(uint16_t technique_id);
 

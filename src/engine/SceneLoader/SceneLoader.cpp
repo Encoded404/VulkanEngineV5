@@ -215,7 +215,7 @@ CombinedScene SceneManager::UploadCombined(
     scene.vertex_buffer = VulkanEngine::GpuResources::GpuBuffer::Create(
         backend,
         all_vertices.size() * sizeof(VulkanEngine::StandardMeshPipeline::Vertex),
-        vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+        vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
         all_vertices.data());
 

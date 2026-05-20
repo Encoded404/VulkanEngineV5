@@ -6,8 +6,8 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
+#include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <vulkan/vulkan.hpp>
 
 export module VulkanEngine.SceneRenderer;
@@ -27,7 +27,7 @@ export namespace VulkanEngine::SceneRenderer {
 struct alignas(16) InstanceData {
     glm::mat4 model_matrix;
     uint32_t technique_id;
-    uint32_t pad[3];
+    uint32_t pad[3]; //NOLINT(modernize-avoid-c-arrays)
 };
 
 struct alignas(4) MeshData {
@@ -39,7 +39,7 @@ struct alignas(4) MeshData {
 
 struct CameraUBO {
     glm::mat4 view_proj;
-    glm::vec4 frustum_planes[6];
+    glm::vec4 frustum_planes[6]; //NOLINT(modernize-avoid-c-arrays)
 };
 
 struct TechniqueDrawRange {
@@ -94,6 +94,17 @@ public:
                 uint32_t height,
                 uint32_t frame_index);
 
+    // Phase 3: Hi-Z generation + occlusion sort
+    void DispatchHiZGen(vk::CommandBuffer cmd,
+                        uint32_t width,
+                        uint32_t height,
+                        uint32_t frame_index);
+
+    void DispatchOcclusionSort(vk::CommandBuffer cmd,
+                                uint32_t frame_index);
+
+    [[nodiscard]] vk::DescriptorSetLayout* GetMainExpandedLayout() const;
+
     [[nodiscard]] uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
     [[nodiscard]] const std::vector<TechniqueDrawRange>& GetCurrentRanges() const { return current_ranges_; }
 
@@ -111,11 +122,23 @@ private:
         VulkanEngine::GpuResources::GpuDescriptorSet instance_descriptor_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet expanded_descriptor_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet camera_descriptor_set{};
+
+        // Phase 2: Main pass expanded descriptor (set 2 — position + attribute only)
+        VulkanEngine::GpuResources::GpuDescriptorSet main_expanded_descriptor_set{};
+
+        // Phase 3: Sorted indirect command buffer + descriptor sets
+        VulkanEngine::GpuResources::GpuBuffer sorted_indirect_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer technique_range_buffer{};
+        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_input_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_output_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet hiz_descriptor_set{};
     };
 
     bool CreateExpandPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
     bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    void DispatchExpand(vk::CommandBuffer cmd, uint32_t entity_count, uint32_t frame_index);
+    bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateOcclusionPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    void DispatchExpand(vk::CommandBuffer cmd, uint32_t entity_count, const glm::vec4 frustum_planes[6], uint32_t frame_index);
 
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend_ = nullptr;
 
@@ -140,6 +163,25 @@ private:
     // Depth pre-pass pipeline
     std::unique_ptr<vk::raii::PipelineLayout> depth_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> depth_pipeline_{};
+
+    // Set 2 for main pass (expanded position + attribute — lightweight binding)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> main_expanded_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> main_expanded_pool_;
+
+    // Phase 3: Hi-Z generation
+    std::unique_ptr<vk::raii::DescriptorSetLayout> hiz_layout_{};
+    std::unique_ptr<vk::raii::PipelineLayout> hiz_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> hiz_pipeline_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> hiz_pool_;
+
+    // Phase 3: Occlusion sort
+    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_input_layout_{};
+    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_output_layout_{};
+    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_hiz_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_input_pool_;
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_output_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> occlusion_pipeline_{};
 
     uint32_t total_vertex_count_ = 0;
 

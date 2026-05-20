@@ -24,10 +24,12 @@ void PipelineManager::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
                                   const std::vector<uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
                                   vk::DescriptorSetLayout* bindless_layout,
-                                  vk::DescriptorSetLayout* instance_data_layout) {
+                                  vk::DescriptorSetLayout* instance_data_layout,
+                                  vk::DescriptorSetLayout* expanded_data_layout) {
     bootstrap_ = &bootstrap;
     config_ = config;
     instance_data_layout_ = instance_data_layout;
+    expanded_data_layout_ = expanded_data_layout;
 
     if (bindless_layout) {
         external_layout_ = bindless_layout;
@@ -125,6 +127,9 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     if (instance_data_layout_) {
         set_layouts.push_back(*instance_data_layout_);
     }
+    if (expanded_data_layout_) {
+        set_layouts.push_back(*expanded_data_layout_);
+    }
 
     constexpr uint32_t push_constant_size = 64;
     constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
@@ -137,18 +142,22 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     layout_info.pPushConstantRanges = &push_range;
     pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
 
-    std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
-        vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
-    };
-
-    std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes = {
-        vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, px)},
-        vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, nx)},
-        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)},
-        vk::VertexInputAttributeDescription{3, 0, vk::Format::eR16Uint,         offsetof(Vertex, material_id)}
-    };
-
-    const vk::PipelineVertexInputStateCreateInfo vertex_input({}, vertex_bindings, vertex_attributes);
+    // World-space path (expanded layout present): zero vertex bindings — shader reads from SSBOs
+    // Traditional path: standard vertex attributes
+    const bool use_world_space = (expanded_data_layout_ != nullptr);
+    vk::PipelineVertexInputStateCreateInfo vertex_input({}, 0, nullptr, 0, nullptr);
+    if (!use_world_space) {
+        const std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
+            vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
+        };
+        const std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes = {
+            vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, px)},
+            vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, nx)},
+            vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)},
+            vk::VertexInputAttributeDescription{3, 0, vk::Format::eR16Uint,         offsetof(Vertex, material_id)}
+        };
+        vertex_input = vk::PipelineVertexInputStateCreateInfo({}, vertex_bindings, vertex_attributes);
+    }
     const vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, config.primitive_topology);
     constexpr vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
     const vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);

@@ -69,7 +69,8 @@ public:
                     const std::vector<uint32_t>& fragment_spirv,
                     const PipelineConfig& config = {},
                     vk::DescriptorSetLayout* bindless_layout = nullptr,
-                    vk::DescriptorSetLayout* instance_data_layout = nullptr);
+                    vk::DescriptorSetLayout* instance_data_layout = nullptr,
+                    vk::DescriptorSetLayout* expanded_data_layout = nullptr);
     void Shutdown();
 
     [[nodiscard]] vk::PipelineLayout* GetPipelineLayout();
@@ -91,6 +92,7 @@ private:
     PipelineConfig config_{};
     vk::DescriptorSetLayout* external_layout_ = nullptr;
     vk::DescriptorSetLayout* instance_data_layout_ = nullptr;
+    vk::DescriptorSetLayout* expanded_data_layout_ = nullptr;
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> pool_;
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_set_layout_{};
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};

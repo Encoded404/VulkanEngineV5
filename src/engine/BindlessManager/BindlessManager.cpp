@@ -2,7 +2,6 @@ module;
 
 #include <cstdint>
 #include <vector>
-#include <array>
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -28,7 +27,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend&
         vk::PhysicalDeviceProperties2,
         vk::PhysicalDeviceDescriptorIndexingProperties>();
     const auto& indexing_props = props.get<vk::PhysicalDeviceDescriptorIndexingProperties>();
-    const uint32_t max_samplers = indexing_props.maxDescriptorSetUpdateAfterBindSamplers;
+    const uint32_t max_samplers = indexing_props.maxDescriptorSetUpdateAfterBindSampledImages;
 
     LOGIFACE_LOG(debug, "maxDescriptorSetUpdateAfterBindSamplers=" + std::to_string(max_samplers));
 
@@ -40,7 +39,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend&
     binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
     binding.pImmutableSamplers = nullptr;
 
-    vk::DescriptorBindingFlags binding_flags =
+    constexpr vk::DescriptorBindingFlags binding_flags =
         vk::DescriptorBindingFlagBits::ePartiallyBound |
         vk::DescriptorBindingFlagBits::eUpdateAfterBind |
         vk::DescriptorBindingFlagBits::eVariableDescriptorCount;

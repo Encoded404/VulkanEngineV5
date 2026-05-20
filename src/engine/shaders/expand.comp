@@ -10,22 +10,18 @@ layout(std430, set = 0, binding = 0) readonly buffer InstanceBuffer {
 } instances[];
 
 // Set 1: Expanded buffers (written by this shader)
-// Binding 0: Expanded position + materialId (vec3 + uint = 16 bytes)
 layout(std430, set = 1, binding = 0) buffer ExpandedPositionBuffer {
     vec4 data[];
 } expandedPos;
 
-// Binding 1: Expanded attributes (packedNormal, texCoordPacked, packedTangent, pad)
 layout(std430, set = 1, binding = 1) buffer ExpandedAttributeBuffer {
     uvec4 data[];
 } expandedAttrib;
 
-// Binding 2: Expanded index buffer
 layout(std430, set = 1, binding = 2) buffer ExpandedIndexBuffer {
     uint data[];
 } expandedIdx;
 
-// Binding 3: Depth indirect command buffer (VkDrawIndexedIndirectCommand)
 layout(std430, set = 1, binding = 3) buffer IndirectBuffer {
     uint indexCount;
     uint instanceCount;
@@ -34,17 +30,15 @@ layout(std430, set = 1, binding = 3) buffer IndirectBuffer {
     uint firstInstance;
 } cmd[];
 
-// Binding 4: Expand counter (atomic vertex counter)
 layout(std430, set = 1, binding = 4) coherent buffer ExpandCounter {
     uint vertexCounter;
 } expandCounter;
 
-// Binding 5: Original index buffer (readonly, combined absolute indices)
 layout(std430, set = 1, binding = 5) readonly buffer OriginalIndexBuffer {
     uint indices[];
 } origIdx;
 
-// Set 2: Camera + mesh + raw vertex data (readonly)
+// Set 2: Camera + mesh + raw vertex
 layout(set = 2, binding = 0) uniform CameraData {
     mat4 viewProj;
     vec4 frustumPlanes[6];
@@ -63,7 +57,12 @@ layout(std430, set = 2, binding = 2) readonly buffer RawVertexBuffer {
 
 layout(push_constant) uniform PushConstants {
     uint entityCount;
+    uint pad;
+    vec4 frustumPlanes[6];
 } pc;
+
+// Specialization constant: 0 = no culling (fast), 1 = per-vertex frustum cull
+layout(constant_id = 0) const bool ENABLE_CULL = false;
 
 uint packNormalOctahedral(vec3 n) {
     n = normalize(n);
@@ -80,6 +79,15 @@ uint packNormalOctahedral(vec3 n) {
     return p.x | (p.y << 8);
 }
 
+bool testFrustum(vec4 clipPos) {
+    // Test against 6 frustum planes using clip-space position
+    // w is positive for points in front of camera
+    float w = clipPos.w;
+    return clipPos.x >= -w && clipPos.x <= w &&
+           clipPos.y >= -w && clipPos.y <= w &&
+           clipPos.z >= 0.0 && clipPos.z <= w;
+}
+
 void main() {
     uint id = gl_GlobalInvocationID.x;
     if (id >= pc.entityCount) return;
@@ -91,19 +99,43 @@ void main() {
     mat4 model = instances[id].modelMatrix;
     mat3 normalMat = transpose(inverse(mat3(model)));
 
-    // Reserve space for all expanded entries (one per index)
-    uint writeBase = atomicAdd(expandCounter.vertexCounter, idxCount);
+    // ── Count phase: determine how many vertices survive frustum cull ──
+    uint visibleCount = 0;
+    for (uint i = 0; i < idxCount; ++i) {
+        uint absVertex = origIdx.indices[firstIdx + i];
+        uint rawBase = absVertex * 9u;
 
-    // Write depth indirect command
-    cmd[id].indexCount    = idxCount;
+        vec3 rawPos = vec3(
+            uintBitsToFloat(rawVerts.data[rawBase]),
+            uintBitsToFloat(rawVerts.data[rawBase + 1u]),
+            uintBitsToFloat(rawVerts.data[rawBase + 2u])
+        );
+
+        vec4 worldPos = model * vec4(rawPos, 1.0);
+        visibleCount += 1;
+
+        if (ENABLE_CULL) {
+            vec4 clipPos = camera.viewProj * worldPos;
+            bool visible = testFrustum(clipPos);
+            if (!visible) continue;
+        }
+
+        visibleCount++;
+    }
+
+    // ── Reserve phase: atomically allocate space in expanded buffers ──
+    uint writeBase = atomicAdd(expandCounter.vertexCounter, visibleCount);
+
+    // Write depth indirect command with visible vertex count
+    cmd[id].indexCount    = visibleCount;
     cmd[id].instanceCount = 1;
     cmd[id].firstIndex    = writeBase;
     cmd[id].vertexOffset  = 0;
     cmd[id].firstInstance = id;
 
-    // Loop over each index, expand the referenced vertex
+    // ── Write phase: transform and write surviving vertices ──
+    uint writeOffset = 0;
     for (uint i = 0; i < idxCount; ++i) {
-        // Read absolute vertex index from combined index buffer
         uint absVertex = origIdx.indices[firstIdx + i];
         uint rawBase = absVertex * 9u;
 
@@ -128,15 +160,20 @@ void main() {
 
         vec4 worldPos = model * vec4(rawPos, 1.0);
 
-        expandedPos.data[writeBase + i] = vec4(worldPos.xyz, uintBitsToFloat(materialId));
-        expandedAttrib.data[writeBase + i] = uvec4(
+        if (ENABLE_CULL) {
+            vec4 clipPos = camera.viewProj * worldPos;
+            if (!testFrustum(clipPos)) continue;
+        }
+
+        uint dest = writeBase + writeOffset;
+        expandedPos.data[dest] = vec4(worldPos.xyz, uintBitsToFloat(materialId));
+        expandedAttrib.data[dest] = uvec4(
             packNormalOctahedral(normalMat * normal),
             packHalf2x16(texCoord),
             0u,
             0u
         );
-
-        // Sequential expanded index
-        expandedIdx.data[writeBase + i] = writeBase + i;
+        expandedIdx.data[dest] = dest;
+        writeOffset++;
     }
 }

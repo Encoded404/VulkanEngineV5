@@ -19,11 +19,12 @@ uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootst
                                               const std::vector<uint32_t>& frag_spv,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                                               vk::DescriptorSetLayout* bindless_layout,
-                                              vk::DescriptorSetLayout* instance_data_layout) {
+                                              vk::DescriptorSetLayout* instance_data_layout,
+                                              vk::DescriptorSetLayout* expanded_data_layout) {
     const uint16_t id = static_cast<uint16_t>(techniques_.size());
 
     auto pipeline_manager = std::make_unique<VulkanEngine::StandardMeshPipeline::PipelineManager>();
-    pipeline_manager->Initialize(bootstrap, vert_spv, frag_spv, config, bindless_layout, instance_data_layout);
+    pipeline_manager->Initialize(bootstrap, vert_spv, frag_spv, config, bindless_layout, instance_data_layout, expanded_data_layout);
 
     techniques_.push_back(Technique{std::move(pipeline_manager)});
     return id;

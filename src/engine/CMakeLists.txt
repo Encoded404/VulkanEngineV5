@@ -118,3 +118,9 @@ include(ShaderUtils)
 compile_shaders(${ENGINE_TARGET}_shaders)
 target_link_shaders(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
 
+# Expose SHADER_DIR to dependent targets (e.g. the app)
+get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
+target_compile_definitions(${ENGINE_TARGET} PUBLIC
+    SHADER_DIR="$<$<CONFIG:Debug>:${_engine_shader_dir}>$<$<CONFIG:Release>:${_engine_shader_dir}>$<$<CONFIG:RelWithDebInfo>:${_engine_shader_dir}>$<$<CONFIG:MinSizeRel>:${_engine_shader_dir}>"
+)
+

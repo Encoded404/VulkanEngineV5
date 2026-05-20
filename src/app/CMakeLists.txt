@@ -68,10 +68,6 @@ if(COMMAND enable_target_clang_tidy)
     enable_target_clang_tidy(${APP_TARGET})
 endif()
 
-include(ShaderUtils)
-compile_shaders(${APP_TARGET}_shaders)
-target_link_shaders(${APP_TARGET} ${APP_TARGET}_shaders)
-
 include(CopyAppAssets)
 configure_app_asset_copy(${APP_TARGET}
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/models"

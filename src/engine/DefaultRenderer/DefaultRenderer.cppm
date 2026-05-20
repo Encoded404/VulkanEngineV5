@@ -1,11 +1,9 @@
 module;
 
-#include <array>
 #include <cstdint>
 #include <memory>
-#include <vector>
 
-#include <glm/glm.hpp>
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 

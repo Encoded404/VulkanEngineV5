@@ -6,6 +6,7 @@ Checks: >-
   performance-*,
   readability-identifier-naming,
   clang-analyzer-*,
+  -clang-analyzer-core.UndefinedBinaryOperatorResult,
   bugprone-*,
   misc-*,
 

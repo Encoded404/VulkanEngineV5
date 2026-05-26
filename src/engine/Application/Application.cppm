@@ -6,6 +6,7 @@ module;
 #include <memory>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #include <SDL3/SDL_video.h>
@@ -42,6 +43,7 @@ struct ApplicationContext {
     const VulkanEngine::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationConfig {
@@ -51,6 +53,7 @@ struct ApplicationConfig {
     VulkanEngine::Runtime::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Runtime::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
+    uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationHooks {
@@ -62,6 +65,19 @@ struct ApplicationHooks {
     std::function<void(ApplicationContext&)> on_frame_render{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<void(ApplicationContext&)> on_shutdown{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
+
+[[nodiscard]] std::string_view PlatformStatusToString(VulkanEngine::Platform::PlatformStatus status) {
+    using VulkanEngine::Platform::PlatformStatus;
+    switch (status) {
+        case PlatformStatus::Ok: return "Ok";
+        case PlatformStatus::NotInitialized: return "NotInitialized";
+        case PlatformStatus::BackendInitFailed: return "BackendInitFailed";
+        case PlatformStatus::WindowCreateFailed: return "WindowCreateFailed";
+        case PlatformStatus::QuitRequested: return "QuitRequested";
+        case PlatformStatus::FatalError: return "FatalError";
+    }
+    return "unknown";
+}
 
 // NOLINTBEGIN
 [[nodiscard]] int RunApplication(const ApplicationConfig& config, const ApplicationHooks& hooks) {
@@ -128,7 +144,11 @@ struct ApplicationHooks {
             platform_config.window_title = config.app_name;
         }
         if (!platform->Initialize(platform_config)) {
-            return fail("Platform initialization failed");
+            std::string msg = std::string{"Platform initialization failed: "} + std::string{PlatformStatusToString(platform->GetState().status)};
+            if (!platform->GetState().error_message.empty()) {
+                msg += " (" + platform->GetState().error_message + ")";
+            }
+            return fail(msg);
         }
         platform_initialized = true;
 
@@ -158,6 +178,7 @@ struct ApplicationHooks {
         context.input_system = &input_system;
         context.window = window;
         context.platform_state = &platform->GetState();
+        context.geometry_buffer_size_mb = config.geometry_buffer_size_mb;
 
         if (hooks.on_setup && !hooks.on_setup(context)) {
             return fail("Application setup failed");
@@ -180,13 +201,14 @@ struct ApplicationHooks {
             filtered_events.reserve(platform_events.size());
 
             for (auto& event : platform_events) {
-                bool is_mouse = dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonDownEvent*>(event.get()) ||
-                                dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonUpEvent*>(event.get()) ||
-                                dynamic_cast<const VulkanEngine::Backend::Event::MouseMotionEvent*>(event.get()) ||
-                                dynamic_cast<const VulkanEngine::Backend::Event::MouseWheelEvent*>(event.get());
+                const auto etype = event->GetEventType();
+                bool is_mouse = etype == VulkanEngine::Backend::Event::EventType::MouseButtonDown ||
+                                etype == VulkanEngine::Backend::Event::EventType::MouseButtonUp ||
+                                etype == VulkanEngine::Backend::Event::EventType::MouseMotion ||
+                                etype == VulkanEngine::Backend::Event::EventType::MouseWheel;
 
-                bool is_keyboard = dynamic_cast<const VulkanEngine::Backend::Event::KeyDownEvent*>(event.get()) ||
-                                   dynamic_cast<const VulkanEngine::Backend::Event::KeyUpEvent*>(event.get());
+                bool is_keyboard = etype == VulkanEngine::Backend::Event::EventType::KeyDown ||
+                                   etype == VulkanEngine::Backend::Event::EventType::KeyUp;
 
                 if (is_mouse && filter_mouse) {
                     continue;
@@ -261,7 +283,6 @@ struct ApplicationHooks {
         LOGIFACE_LOG(info, "App completed");
         return 0;
     } catch (const std::exception& ex) {
-        VulkanEngine::Startup::InitializeLogger(Logiface::Level::info);
         LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
         const auto trace = boost::stacktrace::stacktrace::from_current_exception();
         std::cerr << "\nStacktrace:\n" << trace << '\n';

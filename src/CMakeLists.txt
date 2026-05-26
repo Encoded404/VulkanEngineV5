@@ -17,3 +17,16 @@ if(ENABLE_SANITIZERS)
   target_link_libraries(${ENGINE_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(${BACKEND_TARGET} PRIVATE project_sanitizers)
 endif()
+
+# Sections optimization for dead-code stripping (gc-sections)
+add_library(project_sections INTERFACE)
+target_compile_options(project_sections INTERFACE
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffunction-sections>
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fdata-sections>
+)
+target_link_options(project_sections INTERFACE
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
+)
+target_link_libraries(${APP_TARGET} PRIVATE project_sections)
+target_link_libraries(${ENGINE_TARGET} PRIVATE project_sections)
+target_link_libraries(${BACKEND_TARGET} PRIVATE project_sections)

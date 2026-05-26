@@ -7,6 +7,7 @@ layout(location = 2) flat in uint inMaterialId;
 
 layout(location = 0) out vec4 outColor;
 
+// Bindless texture array (indexed by materialId)
 layout(set = 0, binding = 0) uniform sampler2D allTextures[];
 
 void main() {

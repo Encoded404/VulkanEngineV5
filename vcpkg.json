@@ -26,6 +26,7 @@
         "glm",
         "fastgltf",
         "stb",
+        "tinyobjloader",
         "boost-stacktrace",
         "cli11",
         {

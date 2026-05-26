@@ -19,6 +19,8 @@ enum class PipelineStageIntent : uint8_t {
     Transfer,
     ColorAttachment,
     DepthAttachment,
+    VertexShader,
+    IndirectDraw,
     FragmentShader,
     ComputeShader,
     Present,
@@ -238,15 +240,23 @@ struct CompiledRenderGraph {
     mutable std::vector<bool> has_initial_state{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<vk::Image> resource_images{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<vk::Format> resource_formats{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    mutable VkDevice device = VK_NULL_HANDLE; // NOLINT(misc-non-private-member-variables-in-classes)
 
     void Execute(const void* user_data, vk::CommandBuffer command_buffer) const;
     void SetImportedResourceState(uint32_t resource_index, ResourceState state) const;
     void SetResourceImage(uint32_t resource_index, vk::Image image);
     void SetResourceFormat(uint32_t resource_index, vk::Format format);
+    void SetDevice(VkDevice dev) const { device = dev; }
 };
 
 class RenderGraphBuilder {
 public:
+    struct ReadInfo {
+        ResourceHandle resource{};
+        PipelineStageIntent stage = PipelineStageIntent::FragmentShader;
+        AccessIntent access = AccessIntent::Read;
+    };
+
     ResourceHandle CreateTransientResource(std::string name, ResourceKind kind);
     ResourceHandle ImportResource(std::string name, ResourceKind kind);
 
@@ -262,6 +272,8 @@ public:
                        PassExecutionCallback execute = {});
 
     bool AddRead(PassHandle pass, ResourceHandle resource);
+    bool AddRead(PassHandle pass, ResourceHandle resource,
+                 PipelineStageIntent stage, AccessIntent access);
     bool AddWrite(PassHandle pass, ResourceHandle resource);
     bool AddDependency(PassHandle before, PassHandle after);
 
@@ -289,7 +301,7 @@ private:
         QueueType queue = QueueType::Graphics;
         uint32_t generation = 1;
         bool enabled = true;
-        std::vector<ResourceHandle> reads{};
+        std::vector<ReadInfo> reads{};
         std::vector<ResourceHandle> writes{};
         PassExecutionCallback execute{};
         std::optional<PassAttachmentSetup> attachment_setup{};
@@ -309,6 +321,7 @@ private:
 namespace VulkanEngine::RenderGraph {
 
 bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value);
+bool ContainsReadResource(const std::vector<RenderGraphBuilder::ReadInfo>& reads, ResourceHandle value);
 bool ContainsDependency(const std::vector<std::pair<PassHandle, PassHandle>>& deps,
                         const std::pair<PassHandle, PassHandle>& value);
 bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state);

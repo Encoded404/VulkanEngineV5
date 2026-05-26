@@ -11,6 +11,7 @@ module VulkanEngine.GpuBuffer;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.MemoryUtils;
 import VulkanBackend.Utils.ImageUtils;
+import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::GpuResources {
 
@@ -24,6 +25,7 @@ void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrapBackend& backen
                           std::unique_ptr<vk::raii::DeviceMemory>& out_memory) {
     vk::BufferCreateInfo const info({}, size, usage);
     out_buffer = std::make_unique<vk::raii::Buffer>(backend.GetDevice(), info);
+    VulkanEngine::Utils::SetVulkanObjectName(backend.GetDevice(), *out_buffer, "gpu-buffer");
 
     const vk::DeviceBufferMemoryRequirements mem_req_info{
         &info,
@@ -35,6 +37,7 @@ void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrapBackend& backen
     vk::MemoryAllocateInfo const alloc(reqs.size,
         VulkanEngine::Utils::MemoryUtils::FindMemoryType(backend.GetPhysicalDevice(), reqs.memoryTypeBits, properties));
     out_memory = std::make_unique<vk::raii::DeviceMemory>(backend.GetDevice(), alloc);
+    VulkanEngine::Utils::SetVulkanObjectName(backend.GetDevice(), *out_memory, "gpu-buffer-memory");
     out_buffer->bindMemory(*out_memory, 0);
 }
 

@@ -30,6 +30,7 @@ public:
     virtual void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment,
                                 vk::Format render_target_format, uint32_t width, uint32_t height) = 0;
     virtual void OnResize() = 0;
+    virtual void OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format) = 0;
 
     [[nodiscard]] virtual vk::DescriptorPool GetDescriptorPool() const = 0;
 };

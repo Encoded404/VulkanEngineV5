@@ -12,6 +12,7 @@ module;
 module VulkanEngine.StandardMeshPipeline;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 
 namespace VulkanEngine::StandardMeshPipeline {
@@ -24,12 +25,14 @@ void PipelineManager::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
                                   const std::vector<uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
                                   vk::DescriptorSetLayout* bindless_layout,
-                                  vk::DescriptorSetLayout* instance_data_layout,
-                                  vk::DescriptorSetLayout* expanded_data_layout) {
+                                  vk::DescriptorSetLayout* object_data_layout,
+                                  vk::DescriptorSetLayout* raw_vertex_layout,
+                                  vk::DescriptorSetLayout* indirection_layout) {
     bootstrap_ = &bootstrap;
     config_ = config;
-    instance_data_layout_ = instance_data_layout;
-    expanded_data_layout_ = expanded_data_layout;
+    object_data_layout_ = object_data_layout;
+    raw_vertex_layout_ = raw_vertex_layout;
+    indirection_layout_ = indirection_layout;
 
     if (bindless_layout) {
         external_layout_ = bindless_layout;
@@ -88,6 +91,7 @@ void PipelineManager::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBoo
 
     const vk::DescriptorSetLayoutCreateInfo info({}, bindings);
     descriptor_set_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(device, info);
+    VulkanEngine::Utils::SetVulkanObjectName(device, *descriptor_set_layout_, "standard-mesh-layout");
 
     LOGIFACE_LOG(trace, "leaving CreateDescriptorSetLayout successfully");
 }
@@ -99,22 +103,23 @@ void PipelineManager::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstra
     config.max_sets = 100;
     config.max_combined_image_samplers = 100;
     pool_ = VulkanEngine::GpuResources::DescriptorPool::Create(bootstrap.GetBackend(), config);
+    pool_->SetDebugName(bootstrap.GetBackend().GetDevice(), "standard-mesh-pool");
 
     LOGIFACE_LOG(trace, "leaving CreateDescriptorPool successfully");
 }
 
 void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                      const std::vector<uint32_t>& vert_spv,
-                                      const std::vector<uint32_t>& frag_spv,
+                                      const std::vector<uint32_t>& vertex_spirv,
+                                      const std::vector<uint32_t>& fragment_spirv,
                                       const PipelineConfig& config) {
     LOGIFACE_LOG(trace, "entering CreatePipeline");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
 
-    const vk::ShaderModuleCreateInfo vert_info({}, vert_spv.size() * sizeof(uint32_t), vert_spv.data());
+    const vk::ShaderModuleCreateInfo vert_info({}, vertex_spirv.size() * sizeof(uint32_t), vertex_spirv.data());
     const vk::raii::ShaderModule vert_module(device, vert_info);
 
-    const vk::ShaderModuleCreateInfo frag_info({}, frag_spv.size() * sizeof(uint32_t), frag_spv.data());
+    const vk::ShaderModuleCreateInfo frag_info({}, fragment_spirv.size() * sizeof(uint32_t), fragment_spirv.data());
     const vk::raii::ShaderModule frag_module(device, frag_info);
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
@@ -124,11 +129,14 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
 
     const vk::DescriptorSetLayout tex_layout = external_layout_ ? *external_layout_ : **descriptor_set_layout_;
     std::vector<vk::DescriptorSetLayout> set_layouts = { tex_layout };
-    if (instance_data_layout_) {
-        set_layouts.push_back(*instance_data_layout_);
+    if (object_data_layout_) {
+        set_layouts.push_back(*object_data_layout_);     // set 1
     }
-    if (expanded_data_layout_) {
-        set_layouts.push_back(*expanded_data_layout_);
+    if (raw_vertex_layout_) {
+        set_layouts.push_back(*raw_vertex_layout_);      // set 2
+    }
+    if (indirection_layout_) {
+        set_layouts.push_back(*indirection_layout_);      // set 3
     }
 
     constexpr uint32_t push_constant_size = 64;
@@ -141,20 +149,19 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges = &push_range;
     pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
+    VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_layout_, "standard-mesh-pipeline-layout");
 
-    // World-space path (expanded layout present): zero vertex bindings — shader reads from SSBOs
-    // Traditional path: standard vertex attributes
-    const bool use_world_space = (expanded_data_layout_ != nullptr);
+    // When indirection layout is present, use zero vertex bindings (SSBO pulling)
+    const bool use_vertex_pulling = (indirection_layout_ != nullptr);
     vk::PipelineVertexInputStateCreateInfo vertex_input({}, 0, nullptr, 0, nullptr);
-    if (!use_world_space) {
-        const std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
+    if (!use_vertex_pulling) {
+        constexpr std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
             vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
         };
-        const std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes = {
+        constexpr std::array<vk::VertexInputAttributeDescription, 3> vertex_attributes = {
             vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, px)},
             vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, nx)},
             vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)},
-            vk::VertexInputAttributeDescription{3, 0, vk::Format::eR16Uint,         offsetof(Vertex, material_id)}
         };
         vertex_input = vk::PipelineVertexInputStateCreateInfo({}, vertex_bindings, vertex_attributes);
     }
@@ -185,6 +192,7 @@ void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& boo
     pipeline_info.setPNext(&rendering_info);
 
     pipeline_ = std::make_unique<vk::raii::Pipeline>(device, nullptr, pipeline_info);
+    VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_, "standard-mesh-pipeline");
 
     LOGIFACE_LOG(trace, "leaving CreatePipeline successfully");
 }

@@ -135,6 +135,12 @@ public:
         ImGui_ImplVulkan_SetMinImageCount(config_.image_count);
     }
 
+    void OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format) override {
+        config_.image_count = new_image_count;
+        config_.swapchain_format = new_format;
+        ImGui_ImplVulkan_SetMinImageCount(config_.image_count);
+    }
+
     [[nodiscard]] vk::DescriptorPool GetDescriptorPool() const override {
         return *descriptor_pool_;
     }

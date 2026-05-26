@@ -32,6 +32,7 @@ bool SdlPlatformShell::Initialize(const PlatformConfig& config) {
     if (!backend_->CreateMainWindow(config)) {
         state_.status = PlatformStatus::WindowCreateFailed;
         state_.window_created = false;
+        state_.error_message = "Failed to create main window: " + std::string(SDL_GetError());
         return false;
     }
 

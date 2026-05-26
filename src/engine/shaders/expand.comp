@@ -3,177 +3,131 @@
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-// Set 0: Instance data (modelMatrix + techniqueId)
-layout(std430, set = 0, binding = 0) readonly buffer InstanceBuffer {
-    mat4 modelMatrix;
-    uint techniqueId;
-} instances[];
+// Compact submesh dynamic data (CPU-written): position + scale + rotation per submesh
+struct DynEntry {
+    vec3 pos;
+    float pad0;
+    vec3 scale;
+    float pad1;
+    vec4 rot;
+};
 
-// Set 1: Expanded buffers (written by this shader)
-layout(std430, set = 1, binding = 0) buffer ExpandedPositionBuffer {
-    vec4 data[];
-} expandedPos;
+layout(std430, set = 0, binding = 0) readonly buffer DynBuffer {
+    DynEntry data[];
+} dyn[];
 
-layout(std430, set = 1, binding = 1) buffer ExpandedAttributeBuffer {
-    uvec4 data[];
-} expandedAttrib;
-
-layout(std430, set = 1, binding = 2) buffer ExpandedIndexBuffer {
-    uint data[];
-} expandedIdx;
-
-layout(std430, set = 1, binding = 3) buffer IndirectBuffer {
-    uint indexCount;
-    uint instanceCount;
-    uint firstIndex;
-    int  vertexOffset;
-    uint firstInstance;
-} cmd[];
-
-layout(std430, set = 1, binding = 4) coherent buffer ExpandCounter {
-    uint vertexCounter;
-} expandCounter;
-
-layout(std430, set = 1, binding = 5) readonly buffer OriginalIndexBuffer {
-    uint indices[];
-} origIdx;
-
-// Set 2: Camera + mesh + raw vertex
-layout(set = 2, binding = 0) uniform CameraData {
-    mat4 viewProj;
-    vec4 frustumPlanes[6];
-} camera;
-
-layout(std430, set = 2, binding = 1) readonly buffer MeshDataBuffer {
-    uint indexCount;
-    uint vertexCount;
-    uint firstIndex;
-    int  vertexOffset;
-} meshes[];
-
-layout(std430, set = 2, binding = 2) readonly buffer RawVertexBuffer {
-    uint data[];
-} rawVerts;
-
-layout(push_constant) uniform PushConstants {
-    uint entityCount;
+// Compact submesh static data (CPU-written): index start/range + packed technique/texture
+struct StaticEntry {
+    uint indexStart;      // (idxBlock << 24) | idxOffset
+    uint indexRange;
+    uint techniqueTexture; // (textureSlot << 16) | techniqueId
     uint pad;
-    vec4 frustumPlanes[6];
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer StaticBuffer {
+    StaticEntry data[];
+} st[];
+
+// Expanded submesh vertex data (GPU-written): MVP matrix + maxScale + texture slot
+struct VertEntry {
+    mat4 MVP;
+    float maxScale;
+    uint textureSlot;
+};
+
+layout(std430, set = 0, binding = 2) buffer VertBuffer {
+    VertEntry data[];
+} vtx[];
+
+// Per-submesh cull data (GPU-written): indirection offset + index count + technique
+struct CullEntry {
+    uint indirOffset;
+    uint indexCount;
+    uint techniqueId;
+    uint pad;
+};
+
+layout(std430, set = 0, binding = 3) buffer CullBuffer {
+    CullEntry data[];
+} cull[];
+
+// Indirection entry (GPU-written): links vertexId to submeshId
+struct IndirEntry {
+    uint vertexId;   // (vbBlock << 24) | vertexIndex
+    uint submeshId;
+};
+
+layout(std430, set = 0, binding = 4) buffer IndirBuffer {
+    IndirEntry entries[];
+} indir;
+
+// Draw call counter: atomically incremented to allocate ranges in indir
+layout(std430, set = 0, binding = 5) coherent buffer DrawCount {
+    uint count;
+} dc;
+
+// Index buffer blocks (GPU-read): raw index data
+layout(std430, set = 1, binding = 0) readonly buffer IdxBuffer {
+    uint d[];
+} idx[];
+
+layout(push_constant) uniform PC {
+    mat4 vp;          // view-projection matrix
+    uint objectCount; // number of submeshes to expand
+    uint pad0;
+    uint pad1;
 } pc;
 
-// Specialization constant: 0 = no culling (fast), 1 = per-vertex frustum cull
-layout(constant_id = 0) const bool ENABLE_CULL = false;
+// Construct a model matrix from translation, quaternion rotation, and scale:
+// modelMat = translate(p) * rotate(r) * scale(s)
+mat4 modelMat(vec3 p, vec4 r, vec3 s) {
+    float x = r.x, y = r.y, z = r.z, w = r.w;
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, xz = x * z, xw = x * w;
+    float yz = y * z, yw = y * w, zw = z * w;
 
-uint packNormalOctahedral(vec3 n) {
-    n = normalize(n);
-    float sum = abs(n.x) + abs(n.y) + abs(n.z);
-    if (sum < 1e-8) return 0u;
-    n.xy /= sum;
-    if (n.z >= 0.0) {
-        n.xy = n.xy;
-    } else {
-        vec2 signXY = sign(n.xy);
-        n.xy = (1.0 - abs(n.yx)) * signXY;
-    }
-    uvec2 p = uvec2(clamp(round(n.xy * 127.0 + 127.0), 0.0, 255.0));
-    return p.x | (p.y << 8);
-}
-
-bool testFrustum(vec4 clipPos) {
-    // Test against 6 frustum planes using clip-space position
-    // w is positive for points in front of camera
-    float w = clipPos.w;
-    return clipPos.x >= -w && clipPos.x <= w &&
-           clipPos.y >= -w && clipPos.y <= w &&
-           clipPos.z >= 0.0 && clipPos.z <= w;
+    return mat4(
+        (1.0 - 2.0 * (yy + zz)) * s.x, 2.0 * (xy + zw) * s.x,      2.0 * (xz - yw) * s.x,      0.0,
+        2.0 * (xy - zw) * s.y,           (1.0 - 2.0 * (xx + zz)) * s.y, 2.0 * (yz + xw) * s.y,      0.0,
+        2.0 * (xz + yw) * s.z,            2.0 * (yz - xw) * s.z,        (1.0 - 2.0 * (xx + yy)) * s.z, 0.0,
+        p.x,                              p.y,                          p.z,                         1.0
+    );
 }
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= pc.entityCount) return;
+    if (id >= pc.objectCount) return;
 
-    int  baseVertex   = meshes[id].vertexOffset;
-    uint idxCount     = meshes[id].indexCount;
-    uint firstIdx     = meshes[id].firstIndex;
+    uint block = id / 256u;
+    uint elemIdx = id % 256u;
 
-    mat4 model = instances[id].modelMatrix;
-    mat3 normalMat = transpose(inverse(mat3(model)));
+    vec3 p = dyn[nonuniformEXT(block)].data[elemIdx].pos;
+    vec3 s = dyn[nonuniformEXT(block)].data[elemIdx].scale;
+    vec4 r = dyn[nonuniformEXT(block)].data[elemIdx].rot;
 
-    // ── Count phase: determine how many vertices survive frustum cull ──
-    uint visibleCount = 0;
-    for (uint i = 0; i < idxCount; ++i) {
-        uint absVertex = origIdx.indices[firstIdx + i];
-        uint rawBase = absVertex * 9u;
+    uint indexRange = st[nonuniformEXT(block)].data[elemIdx].indexRange;
+    uint techniqueTexture = st[nonuniformEXT(block)].data[elemIdx].techniqueTexture;
+    uint textureSlot = techniqueTexture >> 16;
 
-        vec3 rawPos = vec3(
-            uintBitsToFloat(rawVerts.data[rawBase]),
-            uintBitsToFloat(rawVerts.data[rawBase + 1u]),
-            uintBitsToFloat(rawVerts.data[rawBase + 2u])
-        );
+    float maxScale = max(abs(s.x), max(abs(s.y), abs(s.z)));
+    mat4 mvp = pc.vp * modelMat(p, r, s);
 
-        vec4 worldPos = model * vec4(rawPos, 1.0);
-        visibleCount += 1;
+    vtx[nonuniformEXT(block)].data[elemIdx].MVP = mvp;
+    vtx[nonuniformEXT(block)].data[elemIdx].maxScale = maxScale;
+    vtx[nonuniformEXT(block)].data[elemIdx].textureSlot = textureSlot;
 
-        if (ENABLE_CULL) {
-            vec4 clipPos = camera.viewProj * worldPos;
-            bool visible = testFrustum(clipPos);
-            if (!visible) continue;
-        }
+    uint offsetBase = atomicAdd(dc.count, indexRange);
 
-        visibleCount++;
-    }
+    cull[nonuniformEXT(block)].data[elemIdx].indirOffset = offsetBase;
+    cull[nonuniformEXT(block)].data[elemIdx].indexCount = indexRange;
+    cull[nonuniformEXT(block)].data[elemIdx].techniqueId = techniqueTexture & 0xFFFFu;
 
-    // ── Reserve phase: atomically allocate space in expanded buffers ──
-    uint writeBase = atomicAdd(expandCounter.vertexCounter, visibleCount);
+    // unpack the index slot and offset, first 8 bits are the block id and the rest of the 24 bits are for the offset
+    uint idxBlock = st[nonuniformEXT(block)].data[elemIdx].indexStart >> 24;
+    uint idxOffset = st[nonuniformEXT(block)].data[elemIdx].indexStart & 0xFFFFFFu;
 
-    // Write depth indirect command with visible vertex count
-    cmd[id].indexCount    = visibleCount;
-    cmd[id].instanceCount = 1;
-    cmd[id].firstIndex    = writeBase;
-    cmd[id].vertexOffset  = 0;
-    cmd[id].firstInstance = id;
-
-    // ── Write phase: transform and write surviving vertices ──
-    uint writeOffset = 0;
-    for (uint i = 0; i < idxCount; ++i) {
-        uint absVertex = origIdx.indices[firstIdx + i];
-        uint rawBase = absVertex * 9u;
-
-        vec3 rawPos = vec3(
-            uintBitsToFloat(rawVerts.data[rawBase]),
-            uintBitsToFloat(rawVerts.data[rawBase + 1u]),
-            uintBitsToFloat(rawVerts.data[rawBase + 2u])
-        );
-
-        vec3 normal = vec3(
-            uintBitsToFloat(rawVerts.data[rawBase + 3u]),
-            uintBitsToFloat(rawVerts.data[rawBase + 4u]),
-            uintBitsToFloat(rawVerts.data[rawBase + 5u])
-        );
-
-        vec2 texCoord = vec2(
-            uintBitsToFloat(rawVerts.data[rawBase + 6u]),
-            uintBitsToFloat(rawVerts.data[rawBase + 7u])
-        );
-
-        uint materialId = rawVerts.data[rawBase + 8u] & 0xFFFFu;
-
-        vec4 worldPos = model * vec4(rawPos, 1.0);
-
-        if (ENABLE_CULL) {
-            vec4 clipPos = camera.viewProj * worldPos;
-            if (!testFrustum(clipPos)) continue;
-        }
-
-        uint dest = writeBase + writeOffset;
-        expandedPos.data[dest] = vec4(worldPos.xyz, uintBitsToFloat(materialId));
-        expandedAttrib.data[dest] = uvec4(
-            packNormalOctahedral(normalMat * normal),
-            packHalf2x16(texCoord),
-            0u,
-            0u
-        );
-        expandedIdx.data[dest] = dest;
-        writeOffset++;
+    for (uint i = 0; i < indexRange; i++) {
+        indir.entries[offsetBase + i].vertexId = idx[idxBlock].d[idxOffset + i];
+        indir.entries[offsetBase + i].submeshId = id;
     }
 }

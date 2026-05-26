@@ -18,6 +18,10 @@ bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle
     return std::ranges::find(handles, value) != handles.end();
 }
 
+bool ContainsReadResource(const std::vector<RenderGraphBuilder::ReadInfo>& reads, ResourceHandle value) {
+    return std::ranges::find_if(reads, [value](const RenderGraphBuilder::ReadInfo& r) { return r.resource == value; }) != reads.end();
+}
+
 bool ContainsDependency(const std::vector<std::pair<PassHandle, PassHandle>>& deps,
                         const std::pair<PassHandle, PassHandle>& value) {
     return std::ranges::find(deps, value) != deps.end();
@@ -43,6 +47,10 @@ vk::PipelineStageFlags IntentToPipelineStage(PipelineStageIntent intent, AccessI
             return vk::PipelineStageFlagBits::eColorAttachmentOutput;
         case PipelineStageIntent::DepthAttachment:
             return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
+        case PipelineStageIntent::VertexShader:
+            return vk::PipelineStageFlagBits::eVertexShader;
+        case PipelineStageIntent::IndirectDraw:
+            return vk::PipelineStageFlagBits::eDrawIndirect;
         case PipelineStageIntent::FragmentShader:
             return access == AccessIntent::Write
                        ? vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -74,6 +82,12 @@ vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessIntent acce
             return access == AccessIntent::Write
                        ? vk::AccessFlagBits::eDepthStencilAttachmentWrite
                        : vk::AccessFlagBits::eDepthStencilAttachmentRead;
+        case PipelineStageIntent::VertexShader:
+            return access == AccessIntent::Write
+                       ? vk::AccessFlagBits::eShaderWrite
+                       : vk::AccessFlagBits::eShaderRead;
+        case PipelineStageIntent::IndirectDraw:
+            return vk::AccessFlagBits::eIndirectCommandRead;
         case PipelineStageIntent::FragmentShader:
             return access == AccessIntent::Write
                        ? vk::AccessFlagBits::eColorAttachmentWrite
@@ -235,13 +249,18 @@ PassHandle RenderGraphBuilder::AddPass(std::string name, QueueType queue, bool e
 }
 
 bool RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource) {
+    return AddRead(pass, resource, PipelineStageIntent::FragmentShader, AccessIntent::Read);
+}
+
+bool RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource,
+                                 PipelineStageIntent stage, AccessIntent access) {
     if (!IsValidPassHandle(pass) || !IsValidResourceHandle(resource)) {
         return false;
     }
 
     auto& pass_node = passes_[pass.index];
-    if (!ContainsResource(pass_node.reads, resource)) {
-        pass_node.reads.push_back(resource);
+    if (!ContainsReadResource(pass_node.reads, resource)) {
+        pass_node.reads.push_back(ReadInfo{resource, stage, access});
     }
 
     return true;

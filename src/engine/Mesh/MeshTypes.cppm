@@ -6,6 +6,9 @@ module;
 
 export module VulkanEngine.Mesh.MeshTypes;
 
+export import VulkanEngine.TechniqueId;
+export import VulkanEngine.TextureSlot;
+
 export namespace VulkanEngine
 {
     class Vector3
@@ -20,11 +23,32 @@ export namespace VulkanEngine
         float u, v; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
+    struct BoundingSphere
+    {
+        Vector3 center{};
+        float radius{0.0f};
+    };
+
+    struct BoundingOBB
+    {
+        Vector3 center{};
+        float _pad0{0.0f};
+        Vector3 axis_u{};
+        float half_extent_u{0.0f};
+        Vector3 axis_v{};
+        float half_extent_v{0.0f};
+        Vector3 axis_w{};
+        float half_extent_w{0.0f};
+    };
+
     struct SubMesh
     {
         uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
-        uint16_t material_index{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        TechniqueId technique_id{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        TextureSlot texture_slot{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        BoundingSphere sphere{};
+        BoundingOBB obb{};
     };
 
     struct BoneWeight

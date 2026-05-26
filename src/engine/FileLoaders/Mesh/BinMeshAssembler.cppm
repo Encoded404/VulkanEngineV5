@@ -10,12 +10,15 @@ module;
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <filesystem>
+#include <fstream>
 #include <FileLoader/FileLoader.hpp>
 #include <FileLoader/Types.hpp>
 
 export module VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 
 import VulkanEngine.Mesh.MeshTypes;
+import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
 
 // helpers (non-exported)
 namespace {
@@ -55,7 +58,7 @@ namespace {
         const std::string p = "subMesh[" + std::to_string(index) + "]";
         sm.index_start = ReadU32(buffer, off, p + ".index_start");
         sm.index_count = ReadU32(buffer, off, p + ".index_count");
-        sm.material_index = ReadU16(buffer, off, p + ".material_index");
+        [[maybe_unused]] const uint16_t raw_mat = ReadU16(buffer, off, p + ".material_index");
     }
 
     void ReadBoneWeight(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::BoneWeight& bw, uint32_t index) {
@@ -177,6 +180,37 @@ public:
             prom->set_exception(std::current_exception());
         }
         return prom->get_future();
+    }
+};
+
+class BinMeshLoader : public IMeshLoader {
+public:
+    BinMeshLoader() = default;
+
+protected:
+    std::shared_ptr<VulkanEngine::Mesh> DoLoad(const std::filesystem::path& path) override {
+        auto buf = ReadEntireFile(path);
+        auto buf_ptr = std::make_shared<FileLoader::ByteBuffer>(buf.begin(), buf.end());
+        BinMeshAssembler assembler;
+        return assembler.AssembleFromFullBuffer(std::move(buf_ptr)).get();
+    }
+
+private:
+    static std::vector<std::byte> ReadEntireFile(const std::filesystem::path& file_path) {
+        std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            throw std::runtime_error("BinMeshLoader: Failed to open file: " + file_path.string());
+        }
+        const auto size = static_cast<size_t>(file.tellg());
+        if (size == 0) {
+            throw std::runtime_error("BinMeshLoader: File is empty: " + file_path.string());
+        }
+        std::vector<std::byte> buf(size);
+        file.seekg(0, std::ios::beg);
+        if (!file.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(size))) {
+            throw std::runtime_error("BinMeshLoader: Failed to read file: " + file_path.string());
+        }
+        return buf;
     }
 };
 

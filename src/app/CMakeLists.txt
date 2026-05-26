@@ -77,3 +77,13 @@ configure_app_asset_copy(${APP_TARGET}
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/textures"
     DEST_SUBDIR "textures"
 )
+
+include(ShaderUtils)
+compile_shaders(${APP_TARGET}_shaders)
+
+get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
+get_target_property(_app_shader_dir ${APP_TARGET}_shaders SHADER_OUTPUT_DIR)
+add_custom_command(TARGET ${APP_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${_app_shader_dir} ${_engine_shader_dir}
+    COMMENT "Copying app shaders to engine shader output directory"
+)

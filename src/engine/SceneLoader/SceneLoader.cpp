@@ -3,9 +3,8 @@ module;
 #include <string>
 #include <vector>
 #include <filesystem>
-#include <fstream>
-#include <stdexcept>
 #include <algorithm>
+#include <cstring>
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -14,8 +13,6 @@ module;
 module VulkanEngine.SceneLoader;
 
 import VulkanEngine.Components.Transform;
-import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
-import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.GpuResources;
 import VulkanEngine.StandardMeshPipeline;
@@ -53,22 +50,6 @@ namespace {
         return result;
     }
 
-    [[nodiscard]] std::vector<std::byte> ReadBinaryFile(const std::filesystem::path& path) {
-        std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            throw std::runtime_error("Failed to open model file: " + path.string());
-        }
-        const std::streamsize size = file.tellg();
-        if (size <= 0) {
-            throw std::runtime_error("Model file is empty: " + path.string());
-        }
-        std::vector<std::byte> bytes(static_cast<size_t>(size));
-        file.seekg(0, std::ios::beg);
-        if (!file.read(reinterpret_cast<char*>(bytes.data()), size)) {
-            throw std::runtime_error("Failed to read model file: " + path.string());
-        }
-        return bytes;
-    }
 }
 
 LoadedMeshData SceneManager::CreateFallbackQuad() {
@@ -81,18 +62,17 @@ LoadedMeshData SceneManager::CreateFallbackQuad() {
 }
 
 LoadedMeshData SceneManager::LoadMeshFromFile(const std::filesystem::path& models_dir) {
-    const auto bin_path = FindFirstFileWithExtension(models_dir, {".bin"});
-    if (!bin_path.empty()) {
+    const auto mesh_path = FindFirstFileWithExtension(models_dir, VulkanEngine::FileLoaders::Mesh::KnownMeshExtensions());
+    if (!mesh_path.empty()) {
         try {
-            const auto bytes = ReadBinaryFile(bin_path);
-            auto assembler = std::make_shared<VulkanEngine::FileLoaders::Mesh::BinMeshAssembler>();
-            auto mesh = assembler->AssembleFromFullBuffer(std::make_shared<std::vector<std::byte>>(bytes)).get();
+            auto mesh = VulkanEngine::FileLoaders::Mesh::LoadMeshFromFile(mesh_path).get();
             if (mesh) {
                 LoadedMeshData data{};
                 for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
                 for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
                 for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
                 data.indices = mesh->indices;
+                data.submeshes = mesh->subMeshes;
                 return data;
             }
         } catch (const std::exception& e) {
@@ -102,26 +82,52 @@ LoadedMeshData SceneManager::LoadMeshFromFile(const std::filesystem::path& model
     return CreateFallbackQuad();
 }
 
+LoadedMeshData SceneManager::LoadMeshFromFilePath(const std::filesystem::path& file_path) {
+    try {
+        auto mesh = VulkanEngine::FileLoaders::Mesh::LoadMeshFromFile(file_path).get();
+        if (mesh) {
+            LoadedMeshData data{};
+            for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
+            for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
+            for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
+            data.indices = mesh->indices;
+            data.submeshes = mesh->subMeshes;
+            return data;
+        }
+    } catch (const std::exception& e) {
+        LOGIFACE_LOG(error, "Failed to load mesh: " + file_path.string() + " - " + std::string(e.what()));
+    }
+    return CreateFallbackQuad();
+}
+
+VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
+SceneManager::LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
+                                  const std::filesystem::path& texture_path,
+                                  const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback) {
+    if (texture_path.empty()) return fallback;
+    auto handle = resource_manager.LoadFromFile<VulkanEngine::TextureResource>(texture_path);
+    return (handle.IsValid() && handle->IsLoaded()) ? handle : fallback;
+}
+
 bool SceneManager::LoadAllMeshes(const std::filesystem::path& models_dir,
                                   std::vector<LoadedMeshData>& out_meshes,
                                   std::vector<std::string>& out_names) {
-    const auto bin_files = FindAllFilesWithExtensions(models_dir, {".bin"});
-    if (bin_files.empty()) {
-        LOGIFACE_LOG(warn, "No .bin files found in: " + models_dir.string());
+    const auto mesh_files = FindAllFilesWithExtensions(models_dir, VulkanEngine::FileLoaders::Mesh::KnownMeshExtensions());
+    if (mesh_files.empty()) {
+        LOGIFACE_LOG(warn, "No supported mesh files found in: " + models_dir.string());
         return false;
     }
 
-    for (const auto& path : bin_files) {
+    for (const auto& path : mesh_files) {
         try {
-            const auto bytes = ReadBinaryFile(path);
-            auto assembler = std::make_shared<VulkanEngine::FileLoaders::Mesh::BinMeshAssembler>();
-            auto mesh = assembler->AssembleFromFullBuffer(std::make_shared<std::vector<std::byte>>(bytes)).get();
+            auto mesh = VulkanEngine::FileLoaders::Mesh::LoadMeshFromFile(path).get();
             if (mesh) {
                 LoadedMeshData data{};
                 for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
                 for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
                 for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
                 data.indices = mesh->indices;
+                data.submeshes = mesh->subMeshes;
                 out_meshes.push_back(std::move(data));
                 out_names.push_back(path.stem().string());
             }
@@ -144,11 +150,6 @@ SceneManager::LoadTexture(VulkanEngine::ResourceManager& resource_manager,
 
 std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
 SceneManager::ConvertToVertices(const LoadedMeshData& mesh) {
-    return ConvertToVertices(mesh, 0);
-}
-
-std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
-SceneManager::ConvertToVertices(const LoadedMeshData& mesh, uint16_t default_material_id) {
     std::vector<VulkanEngine::StandardMeshPipeline::Vertex> vertices{};
     const size_t vertex_count = mesh.positions.size() / 3U;
     if (vertex_count == 0U) return vertices;
@@ -165,18 +166,17 @@ SceneManager::ConvertToVertices(const LoadedMeshData& mesh, uint16_t default_mat
         }
         vertices[i].u = (t + 1 < mesh.uvs.size()) ? mesh.uvs[t + 0] : 0.0f;
         vertices[i].v = (t + 1 < mesh.uvs.size()) ? mesh.uvs[t + 1] : 0.0f;
-        vertices[i].material_id = default_material_id;
     }
     return vertices;
 }
 
 CombinedScene SceneManager::UploadCombined(
-    VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-    const std::vector<LoadedMeshData>& meshes,
-    const std::vector<uint16_t>& material_ids_for_meshes,
-    uint16_t default_material_id) {
+    VulkanEngine::Runtime::VulkanBootstrap& /*bootstrap*/,
+    VulkanEngine::GpuResources::StagingManager& staging_mgr,
+    VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
+    VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
+    const std::vector<LoadedMeshData>& meshes) {
     CombinedScene scene;
-    auto& backend = bootstrap.GetBackend();
 
     // Convert all meshes to vertices and combine
     std::vector<VulkanEngine::StandardMeshPipeline::Vertex> all_vertices;
@@ -184,9 +184,10 @@ CombinedScene SceneManager::UploadCombined(
     uint32_t vertex_offset = 0;
     uint32_t index_offset = 0;
 
+    std::vector<VulkanEngine::SubMesh> all_submeshes;
+
     for (size_t i = 0; i < meshes.size(); ++i) {
-        const uint16_t mat_id = (i < material_ids_for_meshes.size()) ? material_ids_for_meshes[i] : default_material_id;
-        auto verts = ConvertToVertices(meshes[i], mat_id);
+        auto verts = ConvertToVertices(meshes[i]);
 
         MeshInfo info{};
         info.name = "mesh_" + std::to_string(i);
@@ -195,12 +196,26 @@ CombinedScene SceneManager::UploadCombined(
         info.index_offset = index_offset;
         info.index_count = static_cast<uint32_t>(meshes[i].indices.size());
 
+        info.first_submesh_index = static_cast<uint32_t>(all_submeshes.size());
+        info.submesh_count = static_cast<uint32_t>(meshes[i].submeshes.size());
+        if (info.submesh_count == 0) {
+            VulkanEngine::SubMesh default_sm{};
+            default_sm.index_start = index_offset;
+            default_sm.index_count = info.index_count;
+            all_submeshes.push_back(default_sm);
+            info.submesh_count = 1;
+        } else {
+            for (const auto& sm : meshes[i].submeshes) {
+                VulkanEngine::SubMesh adjusted = sm;
+                adjusted.index_start += index_offset;
+                all_submeshes.push_back(adjusted);
+            }
+        }
+
         scene.meshes.push_back(info);
 
-        // Copy vertices
         all_vertices.insert(all_vertices.end(), verts.begin(), verts.end());
 
-        // Copy indices with vertex offset adjustment
         for (const uint32_t idx : meshes[i].indices) {
             all_indices.push_back(idx + vertex_offset);
         }
@@ -209,27 +224,70 @@ CombinedScene SceneManager::UploadCombined(
         index_offset += static_cast<uint32_t>(meshes[i].indices.size());
     }
 
+    scene.submeshes = std::move(all_submeshes);
+
     if (all_vertices.empty()) return scene;
 
-    // Upload combined vertex buffer
-    scene.vertex_buffer = VulkanEngine::GpuResources::GpuBuffer::Create(
-        backend,
-        all_vertices.size() * sizeof(VulkanEngine::StandardMeshPipeline::Vertex),
-        vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-        all_vertices.data());
+    const uint64_t vertex_data_size = all_vertices.size() * sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
+    const uint64_t index_data_size = all_indices.size() * sizeof(uint32_t);
 
-    // Upload combined index buffer
-    scene.index_buffer = VulkanEngine::GpuResources::GpuBuffer::Create(
-        backend,
-        all_indices.size() * sizeof(uint32_t),
-        vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-        all_indices.data());
+    // Allocate from heaps
+    constexpr uint64_t VERTEX_ALIGNMENT = 4;
+    scene.vertex_allocation = vertex_heap.Allocate(vertex_data_size, VERTEX_ALIGNMENT);
+    if (scene.vertex_allocation.buffer_index == UINT32_MAX) {
+        LOGIFACE_LOG(error, "UploadCombined: vertex heap allocation failed");
+        return scene;
+    }
+
+    // Pack indices with buffer index into the top 8 bits
+    std::vector<uint32_t> packed_indices;
+    packed_indices.reserve(all_indices.size());
+    for (const uint32_t idx : all_indices) {
+        const uint32_t packed = (scene.vertex_allocation.buffer_index << 24) | idx;
+        packed_indices.push_back(packed);
+    }
+
+    scene.index_allocation = index_heap.Allocate(index_data_size, 4);
+    if (scene.index_allocation.buffer_index == UINT32_MAX) {
+        LOGIFACE_LOG(error, "UploadCombined: index heap allocation failed");
+        return scene;
+    }
 
     LOGIFACE_LOG(info, "UploadCombined: " + std::to_string(scene.meshes.size()) + " meshes, " +
                  std::to_string(all_vertices.size()) + " vertices, " +
                  std::to_string(all_indices.size()) + " indices");
+
+    // Upload vertex data via staging
+    {
+        auto slice = staging_mgr.Allocate(vertex_data_size);
+        if (!slice.data) {
+            LOGIFACE_LOG(error, "UploadCombined: staging allocation failed for vertex data");
+            return scene;
+        }
+        std::memcpy(slice.data, all_vertices.data(), vertex_data_size);
+
+        staging_mgr.RecordBufferCopy(slice,
+            vertex_heap.GetBuffer(scene.vertex_allocation.buffer_index),
+            scene.vertex_allocation.offset);
+    }
+
+    // Upload index data via staging
+    {
+        auto slice = staging_mgr.Allocate(index_data_size);
+        if (!slice.data) {
+            LOGIFACE_LOG(error, "UploadCombined: staging allocation failed for index data");
+            return scene;
+        }
+        std::memcpy(slice.data, packed_indices.data(), index_data_size);
+
+        staging_mgr.RecordBufferCopy(slice,
+            index_heap.GetBuffer(scene.index_allocation.buffer_index),
+            scene.index_allocation.offset);
+    }
+
+    // Flush staging and wait for completion
+    staging_mgr.Flush();
+    staging_mgr.WaitForAll();
 
     return scene;
 }

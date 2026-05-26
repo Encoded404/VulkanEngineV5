@@ -3,7 +3,6 @@ module;
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan_raii.hpp>
 #include <SDL3/SDL_vulkan.h>
-#include <cstdio>
 #include <memory>
 #include <vector>
 
@@ -20,14 +19,14 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 
     window_ = config.native_window_handle;
     if (!window_) {
-        std::fprintf(stderr, "[VulkanInstance] native window handle is null\n");
+        LOGIFACE_LOG(error, "native window handle is null");
         return false;
     }
 
     loader_ = std::make_unique<vk::detail::DynamicLoader>();
     auto vkGetInstanceProcAddr = loader_->getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"); // NOLINT(readability-identifier-naming)
     if (!vkGetInstanceProcAddr) {
-        std::fprintf(stderr, "[VulkanInstance] failed to resolve vkGetInstanceProcAddr\n");
+        LOGIFACE_LOG(error, "failed to resolve vkGetInstanceProcAddr");
         return false;
     }
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
@@ -35,7 +34,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     uint32_t extension_count = 0;
     const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
     if (!sdl_extensions) {
-        std::fprintf(stderr, "[VulkanInstance] SDL_Vulkan_GetInstanceExtensions failed\n");
+        LOGIFACE_LOG(error, "SDL_Vulkan_GetInstanceExtensions failed");
         return false;
     }
 
@@ -54,14 +53,14 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         instance_ = std::make_unique<vk::raii::Instance>(vk::raii::Context{}, instance_info);
         VULKAN_HPP_DEFAULT_DISPATCHER.init(**instance_);
     } catch (const std::exception& ex) {
-        std::fprintf(stderr, "[VulkanInstance] instance creation failed: %s\n", ex.what());
+        LOGIFACE_LOG(error, "instance creation failed: " + std::string(ex.what()));
         instance_.reset();
         return false;
     }
 
     VkSurfaceKHR raw_surface = VK_NULL_HANDLE;
     if (!SDL_Vulkan_CreateSurface(window_, static_cast<VkInstance>(**instance_), nullptr, &raw_surface)) {
-        std::fprintf(stderr, "[VulkanInstance] SDL_Vulkan_CreateSurface failed\n");
+        LOGIFACE_LOG(error, "SDL_Vulkan_CreateSurface failed");
         Shutdown();
         return false;
     }

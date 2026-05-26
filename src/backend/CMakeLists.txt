@@ -74,6 +74,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     Utils/ImageUtils.cpp
     Utils/PipelineUtils.cpp
     Utils/Timer.cpp
+    Utils/VulkanDebugUtils.cpp
     ImGui/ImGuiBackend.cpp
 )
 
@@ -101,6 +102,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Utils/PipelineUtils.cppm
             Utils/Timer.cppm
             Utils/ThreadPool.cppm
+            Utils/VulkanDebugUtils.cppm
             ImGui/ImGuiBackend.cppm
     )
 endif()

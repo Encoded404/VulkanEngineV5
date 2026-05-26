@@ -21,7 +21,7 @@ public:
     [[nodiscard]] virtual bool CreateInstance(const VulkanBootstrapConfig& config) = 0;
     [[nodiscard]] virtual bool SelectPhysicalDevice() = 0;
     [[nodiscard]] virtual bool CreateLogicalDevice(uint32_t frames_in_flight) = 0; // Modified
-    [[nodiscard]] virtual bool CreateSwapchain(uint32_t preferred_image_count, uint32_t& out_image_count) = 0;
+    [[nodiscard]] virtual bool CreateSwapchain(uint32_t preferred_image_count, PresentMode present_mode, uint32_t& out_image_count) = 0;
     [[nodiscard]] virtual bool GetSwapchainExtent(uint32_t& out_width, uint32_t& out_height) const = 0;
 
     // Core low-level access
@@ -47,8 +47,8 @@ public:
     [[nodiscard]] virtual std::vector<bool>& GetSwapchainImageInitializedFlags() = 0;
     [[nodiscard]] virtual const vk::SurfaceFormatKHR& GetSurfaceFormat() const = 0;
     [[nodiscard]] virtual vk::Format GetDepthFormat() const = 0;
-    [[nodiscard]] virtual const vk::raii::ImageView& GetDepthImageView() const = 0;
-    [[nodiscard]] virtual const vk::raii::Image& GetDepthImage() const = 0;
+    [[nodiscard]] virtual const vk::raii::ImageView& GetDepthImageView(uint32_t image_index) const = 0;
+    [[nodiscard]] virtual const vk::raii::Image& GetDepthImage(uint32_t image_index) const = 0;
 
     // RenderGraph support
     [[nodiscard]] virtual bool AcquireNextImage(uint32_t frame_idx, uint32_t& out_image_index) = 0; // Modified

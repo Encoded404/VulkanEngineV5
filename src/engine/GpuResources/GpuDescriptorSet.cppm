@@ -8,6 +8,7 @@ module;
 export module VulkanEngine.GpuDescriptorSet;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Utils.VulkanDebugUtils;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuTexture;
 
@@ -23,6 +24,8 @@ export namespace VulkanEngine::GpuResources {
         uint32_t max_uniform_buffers = 10;
         uint32_t max_storage_buffers = 10;
         uint32_t max_storage_images = 10;
+        uint32_t max_sampled_images = 0;
+        uint32_t max_samplers = 0;
     };
 
     class DescriptorPool : public std::enable_shared_from_this<DescriptorPool> {
@@ -39,6 +42,8 @@ export namespace VulkanEngine::GpuResources {
         DescriptorPool& operator=(DescriptorPool&&) = delete;
 
         GpuDescriptorSet Allocate(vk::DescriptorSetLayout layout);
+
+        void SetDebugName(const vk::raii::Device& dev, const std::string& name) const;
 
         [[nodiscard]] vk::DescriptorSetLayout* GetLayout() { return descriptor_set_layout_ ? const_cast<vk::DescriptorSetLayout*>(&**descriptor_set_layout_) : nullptr; }
         [[nodiscard]] const vk::DescriptorSetLayout* GetLayout() const { return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr; }
@@ -78,6 +83,29 @@ export namespace VulkanEngine::GpuResources {
                            vk::DescriptorType type,
                            uint64_t size = 0,
                            uint64_t offset = 0) const;
+
+        void UpdateBinding(uint32_t binding,
+                           uint32_t array_element,
+                           const GpuBuffer& buffer,
+                           vk::DescriptorType type,
+                           uint64_t size = 0,
+                           uint64_t offset = 0) const;
+
+        void UpdateBinding(uint32_t binding,
+                           vk::Buffer buffer,
+                           vk::DescriptorType type,
+                           uint64_t size,
+                           uint64_t offset) const;
+
+        void UpdateBinding(uint32_t binding,
+                           VkImageView image_view,
+                           vk::DescriptorType type,
+                           vk::ImageLayout layout) const;
+
+        void UpdateBinding(uint32_t binding,
+                           VkSampler sampler) const;
+
+        void SetDebugName(const vk::raii::Device& dev, const std::string& name) const;
 
         [[nodiscard]] vk::DescriptorSet GetHandle() const { return descriptor_set_; }
         [[nodiscard]] bool IsValid() const { return descriptor_set_ != nullptr; }

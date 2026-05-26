@@ -15,6 +15,7 @@ module VulkanEngine.RenderPipeline;
 
 import VulkanBackend.RenderGraph;
 import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::RenderPipeline {
 
@@ -53,6 +54,19 @@ RenderPipeline::~RenderPipeline() = default;
 void RenderPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
     bootstrap_ = &bootstrap;
     initialized_ = true;
+
+    auto& backend = bootstrap.GetBackend();
+    const auto surface_format = static_cast<vk::Format>(backend.GetSurfaceFormat().format);
+    const auto depth_format = backend.GetDepthFormat();
+
+    RegisterResourceResolver("swapchain-backbuffer",
+        [&backend](uint32_t img_idx) { return backend.GetSwapchainImages()[img_idx]; },
+        [&backend](uint32_t img_idx) { return *backend.GetSwapchainImageViews()[img_idx]; },
+        surface_format);
+    RegisterResourceResolver("depth-buffer",
+        [&backend](uint32_t img_idx) { return *backend.GetDepthImage(img_idx); },
+        [&backend](uint32_t img_idx) { return *backend.GetDepthImageView(img_idx); },
+        depth_format);
 }
 
 void RenderPipeline::Shutdown() {
@@ -70,6 +84,14 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportBackbuffer() {
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportDepthBuffer() {
     depth_buffer_handle_ = graph_builder_.ImportResource("depth-buffer", VulkanEngine::RenderGraph::ResourceKind::Image);
     return depth_buffer_handle_;
+}
+
+VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportImage(const std::string& name) {
+    return graph_builder_.ImportResource(name, VulkanEngine::RenderGraph::ResourceKind::Image);
+}
+
+VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportBuffer(const std::string& name) {
+    return graph_builder_.ImportResource(name, VulkanEngine::RenderGraph::ResourceKind::Buffer);
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(const TransientImageDesc& desc) {
@@ -117,6 +139,17 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
     return handle;
 }
 
+void RenderPipeline::RegisterResourceResolver(const std::string& name,
+                                               ImageResolver resolve_image,
+                                               ImageViewResolver resolve_image_view,
+                                               vk::Format format) {
+    resource_resolvers_[name] = ExternalResourceResolver{
+        .resolve_image = std::move(resolve_image),
+        .resolve_image_view = std::move(resolve_image_view),
+        .format = format
+    };
+}
+
 VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipelinePassDesc& desc) {
     VulkanEngine::RenderGraph::PassExecutionCallback callback{};
     callback.callback = desc.execute;
@@ -124,7 +157,7 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipeli
     auto handle = graph_builder_.AddPass(desc.name, desc.queue, true, callback);
 
     for (const auto& read : desc.reads) {
-        graph_builder_.AddRead(handle, read);
+        graph_builder_.AddRead(handle, read.resource, read.stage, read.access);
     }
     for (const auto& write : desc.writes) {
         graph_builder_.AddWrite(handle, write);
@@ -135,6 +168,11 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipeli
     }
 
     return handle;
+}
+
+bool RenderPipeline::AddDependency(VulkanEngine::RenderGraph::PassHandle before,
+                                   VulkanEngine::RenderGraph::PassHandle after) {
+    return graph_builder_.AddDependency(before, after);
 }
 
 bool RenderPipeline::SetInitialState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state) {
@@ -174,6 +212,7 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     const uint32_t sc_count = bootstrap_->GetSnapshot().swapchain_image_count;
     if (swapchain_image_presented_.size() != sc_count) {
         swapchain_image_presented_.assign(sc_count, false);
+        swapchain_depth_initialized_.assign(sc_count, false);
     }
 
     const bool backbuffer_was_presented = swapchain_image_presented_[image_index];
@@ -188,21 +227,27 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
                 ? VulkanEngine::RenderGraph::ImageLayoutIntent::Present
                 : VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
-    if (depth_buffer_initialized_) {
-        resolved_graph.SetImportedResourceState(depth_buffer_resource_index_,
-            VulkanEngine::RenderGraph::ResourceState::ImageState(
-                VulkanEngine::RenderGraph::PipelineStageIntent::DepthAttachment,
-                VulkanEngine::RenderGraph::AccessIntent::Write,
-                VulkanEngine::RenderGraph::QueueType::Graphics,
-                VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment));
-    }
+    resolved_graph.SetImportedResourceState(depth_buffer_resource_index_,
+        VulkanEngine::RenderGraph::ResourceState::ImageState(
+            swapchain_depth_initialized_[image_index]
+                ? VulkanEngine::RenderGraph::PipelineStageIntent::DepthAttachment
+                : VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
+            VulkanEngine::RenderGraph::AccessIntent::None,
+            VulkanEngine::RenderGraph::QueueType::Graphics,
+            swapchain_depth_initialized_[image_index]
+                ? VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment
+                : VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
     ResolveResources(resolved_graph, image_index);
+
+    if (bootstrap_) {
+        resolved_graph.SetDevice(*bootstrap_->GetBackend().GetDevice());
+    }
 
     resolved_graph.Execute(user_data, command_buffer);
 
     swapchain_image_presented_[image_index] = true;
-    depth_buffer_initialized_ = true;
+    swapchain_depth_initialized_[image_index] = true;
 }
 
 void RenderPipeline::AllocateTransients() {
@@ -231,6 +276,7 @@ void RenderPipeline::AllocateTransients() {
         image_info.initialLayout = vk::ImageLayout::eUndefined;
 
         transient_images_.emplace_back(device, image_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, transient_images_.back(), "transient-image");
 
         const auto mem_requirements = transient_images_.back().getMemoryRequirements();
         vk::MemoryAllocateInfo alloc_info{};
@@ -238,6 +284,7 @@ void RenderPipeline::AllocateTransients() {
         alloc_info.memoryTypeIndex = FindMemoryType(physical_device, mem_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
         transient_memories_.emplace_back(device, alloc_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, transient_memories_.back(), "transient-memory");
         transient_images_.back().bindMemory(transient_memories_.back(), 0);
 
         vk::ImageViewCreateInfo view_info{};
@@ -247,6 +294,7 @@ void RenderPipeline::AllocateTransients() {
         view_info.subresourceRange = {FormatToAspectFlags(desc.format), 0, 1, 0, 1};
 
         transient_image_views_.emplace_back(device, view_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, transient_image_views_.back(), "transient-image-view");
     }
 }
 
@@ -268,12 +316,10 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
         const auto& resource = graph.resource_lifetimes[i];
 
         if (resource.imported) {
-            if (resource.name == "swapchain-backbuffer") {
-                graph.SetResourceImage(static_cast<uint32_t>(i), backend.GetSwapchainImages()[image_index]);
-                graph.SetResourceFormat(static_cast<uint32_t>(i), static_cast<vk::Format>(backend.GetSurfaceFormat().format));
-            } else if (resource.name == "depth-buffer") {
-                graph.SetResourceImage(static_cast<uint32_t>(i), *backend.GetDepthImage());
-                graph.SetResourceFormat(static_cast<uint32_t>(i), backend.GetDepthFormat());
+            auto it = resource_resolvers_.find(resource.name);
+            if (it != resource_resolvers_.end()) {
+                graph.SetResourceImage(static_cast<uint32_t>(i), it->second.resolve_image(image_index));
+                graph.SetResourceFormat(static_cast<uint32_t>(i), it->second.format);
             }
         } else {
             if (i < transient_images_.size()) {
@@ -291,10 +337,9 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
             auto resolve_attachment_view = [&](VulkanEngine::RenderGraph::AttachmentInfo& attach) {
                 const auto& resource = graph.resource_lifetimes[attach.resource.index];
                 if (resource.imported) {
-                    if (resource.name == "swapchain-backbuffer") {
-                        attach.image_view = *backend.GetSwapchainImageViews()[image_index];
-                    } else if (resource.name == "depth-buffer") {
-                        attach.image_view = *backend.GetDepthImageView();
+                    auto it = resource_resolvers_.find(resource.name);
+                    if (it != resource_resolvers_.end()) {
+                        attach.image_view = it->second.resolve_image_view(image_index);
                     }
                 } else {
                     if (attach.resource.index < transient_image_views_.size()) {

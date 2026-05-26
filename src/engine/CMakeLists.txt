@@ -11,6 +11,7 @@ find_package(Vulkan REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
@@ -19,6 +20,7 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     KTX::ktx
     glm::glm
     fastgltf::fastgltf
+    tinyobjloader::tinyobjloader
     imgui::imgui
 )
 
@@ -51,6 +53,8 @@ target_precompile_headers(${ENGINE_TARGET} PRIVATE
 
 target_sources(${ENGINE_TARGET} PRIVATE
     Input/Input.cpp
+    GpuResources/BlockBuffer.cpp
+    FileLoaders/Mesh/MeshLoaderBase.cpp
     FileLoaders/Textures/TextureLoaders.cpp
     FileLoaders/Textures/TextureLoaders.cppm
     ResourceSystem/ResourceSystem.cpp
@@ -60,6 +64,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     GpuResources/GpuBuffer.cpp
     GpuResources/GpuTexture.cpp
     GpuResources/GpuDescriptorSet.cpp
+    GpuResources/StagingManager.cpp
+    GpuResources/DeviceBufferHeap.cpp
     ShaderLoader/ShaderLoader.cpp
     DefaultResources/DefaultResources.cpp
     MeshRendererSystem/MeshRendererSystem.cpp
@@ -69,6 +75,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     TechniqueManager/TechniqueManager.cpp
     MaterialManager/MaterialManager.cpp
     SceneRenderer/SceneRenderer.cpp
+    SceneRenderer/SceneRendererPipeline.cpp
+    SceneRenderer/SceneRendererFrame.cpp
     BindlessManager/BindlessManager.cpp
 )
 
@@ -86,17 +94,22 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 Components/Transform.cppm
                 Components/MeshRenderer.cppm
                 Components/Camera.cppm
-                Components/Material.cppm
                 Components/MeshReference.cppm
                 FileLoaders/Mesh/BinMeshAssembler.cppm
                 FileLoaders/Mesh/GltfMeshAssembler.cppm
+                FileLoaders/Mesh/MeshLoaderBase.cppm
+                FileLoaders/Mesh/ObjMeshAssembler.cppm
+                FileLoaders/Mesh/MeshMagicLoader.cppm
                 FileLoaders/Textures/TextureLoaders.cppm
                 ImGui/ImGuiSystem.cppm
                 RenderPipeline/RenderPipeline.cppm
                 GpuResources/GpuResources.cppm
                 GpuResources/GpuBuffer.cppm
+                GpuResources/BlockBuffer.cppm
                 GpuResources/GpuTexture.cppm
                 GpuResources/GpuDescriptorSet.cppm
+                GpuResources/StagingManager.cppm
+                GpuResources/DeviceBufferHeap.cppm
                 ShaderLoader/ShaderLoader.cppm
                 DefaultResources/DefaultResources.cppm
                 MeshRendererSystem/MeshRendererSystem.cppm
@@ -104,9 +117,12 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 SceneLoader/SceneLoader.cppm
                 DefaultRenderer/DefaultRenderer.cppm
                 TechniqueManager/TechniqueManager.cppm
+                TechniqueManager/TechniqueId.cppm
                 MaterialManager/MaterialManager.cppm
+                MaterialManager/MaterialId.cppm
                 SceneRenderer/SceneRenderer.cppm
                 BindlessManager/BindlessManager.cppm
+                BindlessManager/TextureSlot.cppm
         )
     endif()
 

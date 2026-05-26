@@ -3,12 +3,12 @@ module;
 #include <cstdint>
 #include <vector>
 #include <array>
+#include <memory>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
-#include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 
 export module VulkanEngine.SceneRenderer;
 
@@ -16,42 +16,24 @@ export import VulkanBackend.Component;
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
-export import VulkanEngine.Components.Material;
-export import VulkanEngine.GpuResources;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
+export import VulkanEngine.Mesh.MeshTypes;
+export import VulkanEngine.GpuResources;
+export import VulkanEngine.GpuResources.BlockBuffer;
 
 export namespace VulkanEngine::SceneRenderer {
 
-struct alignas(16) InstanceData {
-    glm::mat4 model_matrix;
-    uint32_t technique_id;
-    uint32_t pad[3]; //NOLINT(modernize-avoid-c-arrays)
-};
-
-struct alignas(4) MeshData {
-    uint32_t index_count;
-    uint32_t vertex_count;
-    uint32_t first_index;
-    int32_t  vertex_offset;
-};
-
-struct CameraUBO {
-    glm::mat4 view_proj;
-    glm::vec4 frustum_planes[6]; //NOLINT(modernize-avoid-c-arrays)
-};
-
-struct TechniqueDrawRange {
-    uint16_t technique_id;
-    uint32_t first_entity;
-    uint32_t entity_count;
-};
-
 class SceneRenderer {
 public:
-    static constexpr uint32_t MAX_ENTITIES = 4096;
     static constexpr uint32_t FRAMES_IN_FLIGHT = 3;
+    static constexpr uint32_t MAX_HIZ_MIPS = 12;
+    static constexpr uint32_t MAX_VERTEX_BUFFERS = 64;
+    static constexpr uint32_t MAX_INDEX_BUFFERS = 64;
+    static constexpr uint32_t BLOCK_ENTRIES = 256;
+    static constexpr uint32_t MAX_BLOCKS = 1024;
+    static constexpr uint32_t MAX_TECHNIQUES = 256;
 
     SceneRenderer() = default;
     ~SceneRenderer();
@@ -60,17 +42,20 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     bool Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
-                    uint32_t total_vertex_count);
+                    VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
+                    uint32_t total_vertex_count,
+                    uint32_t total_index_count);
     void Shutdown();
 
-    [[nodiscard]] vk::DescriptorSetLayout* GetInstanceDataLayout() const;
-    [[nodiscard]] vk::DescriptorSetLayout* GetExpandedDataLayout() const;
-    [[nodiscard]] vk::DescriptorSetLayout* GetCameraDataLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexDataLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetRawVertexLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetIndirectionLayout() const;
+
+    void UpdateVertexBufferArrayElement(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
+    void UpdateIndexBufferArrayElement(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
 
     void PrepareCompute(vk::CommandBuffer cmd,
                         VulkanEngine::ComponentRegistry& registry,
-                        const VulkanEngine::GpuResources::GpuBuffer& raw_vertex_buffer,
-                        const VulkanEngine::GpuResources::GpuBuffer& original_index_buffer,
                         const glm::mat4& view_matrix,
                         const glm::mat4& projection_matrix,
                         uint32_t width,
@@ -84,8 +69,6 @@ public:
 
     void Render(vk::CommandBuffer cmd,
                 VulkanEngine::ComponentRegistry& registry,
-                const VulkanEngine::GpuResources::GpuBuffer& vertex_buffer,
-                const VulkanEngine::GpuResources::GpuBuffer& index_buffer,
                 VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
                 VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                 const glm::mat4& projection_matrix,
@@ -94,100 +77,143 @@ public:
                 uint32_t height,
                 uint32_t frame_index);
 
-    // Phase 3: Hi-Z generation + occlusion sort
     void DispatchHiZGen(vk::CommandBuffer cmd,
                         uint32_t width,
                         uint32_t height,
-                        uint32_t frame_index);
+                        uint32_t frame_index,
+                        uint32_t image_index);
 
-    void DispatchOcclusionSort(vk::CommandBuffer cmd,
-                                uint32_t frame_index);
+    void DispatchOcclusion(vk::CommandBuffer cmd,
+                           uint32_t frame_index);
 
-    [[nodiscard]] vk::DescriptorSetLayout* GetMainExpandedLayout() const;
+    void InitializeHizFirstFrame(vk::CommandBuffer cmd);
+
+    void SetSubmeshes(const std::vector<VulkanEngine::SubMesh>& submeshes) { scene_submeshes_ = submeshes; }
 
     [[nodiscard]] uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
-    [[nodiscard]] const std::vector<TechniqueDrawRange>& GetCurrentRanges() const { return current_ranges_; }
+
+    [[nodiscard]] VkImage GetHizImage(uint32_t frame_index) const {
+        const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
+        return static_cast<VkImage>(*frame.hiz_image);
+    }
+    [[nodiscard]] VkImageView GetHizFullView(uint32_t frame_index) const {
+        const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
+        return static_cast<VkImageView>(*frame.hiz_full_view);
+    }
+    void UpdateHizDepthBinding(uint32_t frame_index, VkImageView depth_view);
+
+    void DispatchExpand(vk::CommandBuffer cmd, uint32_t object_count,
+                        const glm::mat4& view_proj, uint32_t frame_index);
+
+    void DispatchCollect(vk::CommandBuffer cmd, uint32_t frame_index);
 
 private:
     struct FrameResources {
-        VulkanEngine::GpuResources::GpuBuffer instance_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer indirect_buffer{};          // CPU-written, main pass
-        VulkanEngine::GpuResources::GpuBuffer depth_indirect_buffer{};    // GPU-written by expand, depth pass
-        VulkanEngine::GpuResources::GpuBuffer mesh_data_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer expanded_position_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer expanded_attribute_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer expanded_index_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer expand_counter_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer camera_buffer{};
-        VulkanEngine::GpuResources::GpuDescriptorSet instance_descriptor_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet expanded_descriptor_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet camera_descriptor_set{};
+        // Block-based per-submesh buffers
+        VulkanEngine::GpuResources::BlockBuffer compact_dynamic{};
+        VulkanEngine::GpuResources::BlockBuffer compact_static{};
+        VulkanEngine::GpuResources::BlockBuffer bounding_spheres{};
+        VulkanEngine::GpuResources::BlockBuffer bounding_obb{};
+        VulkanEngine::GpuResources::BlockBuffer submesh_vertex_data{};
+        VulkanEngine::GpuResources::BlockBuffer submesh_cull{};
 
-        // Phase 2: Main pass expanded descriptor (set 2 — position + attribute only)
-        VulkanEngine::GpuResources::GpuDescriptorSet main_expanded_descriptor_set{};
+        // Single buffers for indirection, draw commands
+        VulkanEngine::GpuResources::GpuBuffer indirection_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer compacted_indirection_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer draw_count_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
 
-        // Phase 3: Sorted indirect command buffer + descriptor sets
-        VulkanEngine::GpuResources::GpuBuffer sorted_indirect_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer technique_range_buffer{};
-        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_input_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_output_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet hiz_descriptor_set{};
+        // Descriptor sets
+        VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet collect_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
+        vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet depth_indirection_set = vk::raii::DescriptorSet(nullptr);
+        VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
+
+        vk::raii::Image hiz_image = vk::raii::Image(nullptr);
+        vk::raii::DeviceMemory hiz_memory = vk::raii::DeviceMemory(nullptr);
+        std::vector<vk::raii::ImageView> hiz_mip_views{};
+        vk::raii::ImageView hiz_full_view = vk::raii::ImageView(nullptr);
     };
 
-    bool CreateExpandPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+                             const vk::PipelineRasterizationStateCreateInfo& rasterization);
     bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    bool CreateOcclusionPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    void DispatchExpand(vk::CommandBuffer cmd, uint32_t entity_count, const glm::vec4 frustum_planes[6], uint32_t frame_index);
+    bool CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateCollectPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+
+
+    void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, uint32_t binding,
+                                     VulkanEngine::GpuResources::BlockBuffer& block_buf,
+                                     vk::DescriptorType desc_type);
 
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend_ = nullptr;
 
-    // Descriptor set layouts — set numbers match pipeline layouts
-    // Set 0: Instance data (shared: expand compute set 0, main pass set 1)
-    std::unique_ptr<vk::raii::DescriptorSetLayout> instance_data_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> instance_pool_;
+    // Set 1: SubmeshVertexData blocks
+    std::unique_ptr<vk::raii::DescriptorSetLayout> submesh_vertex_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> submesh_vertex_pool_;
 
-    // Set 1: Expanded buffers (expand compute set 1, depth pass set 0)
-    std::unique_ptr<vk::raii::DescriptorSetLayout> expanded_data_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> expanded_pool_;
+    // Set 2: Bindless vertex buffer array
+    std::unique_ptr<vk::raii::DescriptorSetLayout> raw_vertex_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> raw_vertex_pool_;
+    vk::raii::DescriptorSet bindless_vertex_set_{nullptr};
 
-    // Set 2: Camera + mesh + raw vertex (expand compute set 2, depth pass set 1)
-    std::unique_ptr<vk::raii::DescriptorSetLayout> camera_data_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> camera_pool_;
+    // Set 3: Indirection buffer (depth uses dedicated set, main uses indirection_raw_set)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> indirection_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> indirection_pool_;
+    std::unique_ptr<vk::raii::DescriptorPool> indirection_raw_pool_;
 
-    // Expand compute pipeline
-    std::unique_ptr<vk::raii::PipelineLayout> compute_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> compute_pipeline_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> compute_pool_;
+    // Set 4: Expand compute (block arrays + single buffers)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> expand_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> expand_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> expand_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> expand_pipeline_{};
 
-    // Depth pre-pass pipeline
+    // Set 5: Occlusion compute (blocks + Hi-Z)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> occlusion_pipeline_{};
+
+    // Set 6: Collect compute (cull blocks + indirections + draw cmds)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> collect_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> collect_pipeline_{};
+
+    std::unique_ptr<vk::raii::Sampler> depth_sampler_{};
+    std::unique_ptr<vk::raii::Sampler> hiz_sampler_{};
+
+    uint32_t depth_width_ = 0;
+    uint32_t depth_height_ = 0;
+    uint32_t hiz_mip_count_ = 0;
+    bool hiz_initialized_ = false;
+    uint32_t total_index_count_ = 0;
+
+    std::unique_ptr<vk::raii::DescriptorSetLayout> empty_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> empty_pool_{};
+    std::vector<VulkanEngine::GpuResources::GpuDescriptorSet> empty_sets_{};
+
     std::unique_ptr<vk::raii::PipelineLayout> depth_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> depth_pipeline_{};
 
-    // Set 2 for main pass (expanded position + attribute — lightweight binding)
-    std::unique_ptr<vk::raii::DescriptorSetLayout> main_expanded_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> main_expanded_pool_;
-
-    // Phase 3: Hi-Z generation
     std::unique_ptr<vk::raii::DescriptorSetLayout> hiz_layout_{};
     std::unique_ptr<vk::raii::PipelineLayout> hiz_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> hiz_pipeline_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> hiz_pool_;
 
-    // Phase 3: Occlusion sort
-    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_input_layout_{};
-    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_output_layout_{};
-    std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_hiz_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_input_pool_;
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_output_pool_;
-    std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> occlusion_pipeline_{};
+    // Bindless index buffer array (used by expand at set 5)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
+    vk::raii::DescriptorSet bindless_index_set_{nullptr};
 
-    uint32_t total_vertex_count_ = 0;
+    std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames_;
-    std::vector<TechniqueDrawRange> current_ranges_{};
     uint32_t current_entity_count_ = 0;
 };
 
-} // namespace VulkanEngine::SceneRenderer
+}

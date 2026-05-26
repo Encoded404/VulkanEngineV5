@@ -53,6 +53,13 @@ void ImGuiSystem::ProcessSDLEvent(void* sdl_event) {
     backend_->ProcessSDLEvent(sdl_event);
 }
 
+void ImGuiSystem::OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format) {
+    if (!initialized_) return;
+    backend_config_.image_count = new_image_count;
+    backend_config_.swapchain_format = new_format;
+    backend_->OnSwapchainRecreated(new_image_count, new_format);
+}
+
 void ImGuiSystem::SetDrawCallback(ImGuiDrawCallback callback) {
     draw_callback_ = std::move(callback);
 }
@@ -66,9 +73,6 @@ void ImGuiSystem::RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView
         draw_callback_();
     }
 
-    if (config_.show_demo_window) {
-        ::ImGui::ShowDemoWindow(&config_.show_demo_window);
-    }
     if (config_.show_metrics) {
         ::ImGui::ShowMetricsWindow(&config_.show_metrics);
     }

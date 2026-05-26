@@ -93,7 +93,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         }
 
         for (const auto& read : pass.reads) {
-            if (!IsValidResourceHandle(read)) {
+            if (!IsValidResourceHandle(read.resource)) {
                 emit_diagnostic(
                     DiagnosticCode::InvalidReadHandle,
                     DiagnosticSeverity::Error,
@@ -101,7 +101,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
                 continue;
             }
 
-            auto& tracker = resource_trackers[read.index];
+            auto& tracker = resource_trackers[read.resource.index];
             if (tracker.last_writer >= 0) {
                 add_edge(static_cast<uint32_t>(tracker.last_writer), pass_index);
             }
@@ -203,72 +203,123 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         for (const auto& write : pass.writes) {
             if (!IsValidResourceHandle(write)) continue;
             const auto& resource = resources_[write.index];
-            if (resource.kind != ResourceKind::Image) continue;
-
             auto& current_state = resource_states[write.index];
 
-            ResourceState target_state;
-            if (pass.attachment_setup && pass.attachment_setup->depth_attachment &&
-                       pass.attachment_setup->depth_attachment->resource.index == write.index) {
-                target_state = ResourceState::ImageState(
-                    PipelineStageIntent::DepthAttachment, AccessIntent::Write,
-                    QueueType::Graphics, ImageLayoutIntent::DepthAttachment);
-            } else {
-                target_state = ResourceState::ImageState(
-                    PipelineStageIntent::ColorAttachment, AccessIntent::Write,
-                    QueueType::Graphics, ImageLayoutIntent::ColorAttachment);
-            }
+            if (resource.kind == ResourceKind::Image) {
+                ResourceState target_state;
+                bool is_attachment = false;
+                if (pass.attachment_setup) {
+                    if (pass.attachment_setup->depth_attachment &&
+                        pass.attachment_setup->depth_attachment->resource.index == write.index) {
+                        target_state = ResourceState::ImageState(
+                            PipelineStageIntent::DepthAttachment, AccessIntent::Write,
+                            QueueType::Graphics, ImageLayoutIntent::DepthAttachment);
+                        is_attachment = true;
+                    } else {
+                        for (const auto& color : pass.attachment_setup->color_attachments) {
+                            if (color.resource.index == write.index) {
+                                target_state = ResourceState::ImageState(
+                                    PipelineStageIntent::ColorAttachment, AccessIntent::Write,
+                                    QueueType::Graphics, ImageLayoutIntent::ColorAttachment);
+                                is_attachment = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!is_attachment) {
+                    target_state = ResourceState::ImageState(
+                        PipelineStageIntent::ComputeShader, AccessIntent::Write,
+                        QueueType::Graphics, ImageLayoutIntent::General);
+                }
 
-            if (!current_state.has_state) {
-                const ResourceState undefined_state = ResourceState::ImageState(
-                    PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                    QueueType::Graphics, ImageLayoutIntent::Undefined);
-                if (!StatesEqual(undefined_state, target_state)) {
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::ImageState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics, ImageLayoutIntent::Undefined);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(write.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
                     compiled_pass.pre_pass_transitions.push_back(
                         make_transition(write.index, target_state));
                 }
-            } else if (!StatesEqual(current_state.state, target_state)) {
-                compiled_pass.pre_pass_transitions.push_back(
-                    make_transition(write.index, target_state));
-            }
 
-            current_state.state = target_state;
-            current_state.has_state = true;
+                current_state.state = target_state;
+                current_state.has_state = true;
+            } else if (resource.kind == ResourceKind::Buffer) {
+                const ResourceState target_state = ResourceState::BufferState(
+                    PipelineStageIntent::ComputeShader, AccessIntent::Write,
+                    QueueType::Graphics);
+
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::BufferState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(write.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
+                    compiled_pass.pre_pass_transitions.push_back(
+                        make_transition(write.index, target_state));
+                }
+
+                current_state.state = target_state;
+                current_state.has_state = true;
+            }
         }
 
         for (const auto& read : pass.reads) {
-            if (!IsValidResourceHandle(read)) continue;
-            const auto& resource = resources_[read.index];
-            if (resource.kind != ResourceKind::Image) continue;
+            if (!IsValidResourceHandle(read.resource)) continue;
+            const auto& resource = resources_[read.resource.index];
+            auto& current_state = resource_states[read.resource.index];
 
-            auto& current_state = resource_states[read.index];
-
-            ResourceState target_state;
-            if (resource.image_info && (resource.image_info->usage & vk::ImageUsageFlagBits::eDepthStencilAttachment)) {
-                target_state = ResourceState::ImageState(
-                    PipelineStageIntent::DepthAttachment, AccessIntent::Read,
-                    QueueType::Graphics, ImageLayoutIntent::DepthAttachment);
-            } else {
-                target_state = ResourceState::ImageState(
-                    PipelineStageIntent::FragmentShader, AccessIntent::Read,
-                    QueueType::Graphics, ImageLayoutIntent::ShaderReadOnly);
-            }
-
-            if (!current_state.has_state) {
-                const ResourceState undefined_state = ResourceState::ImageState(
-                    PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                    QueueType::Graphics, ImageLayoutIntent::Undefined);
-                if (!StatesEqual(undefined_state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(read.index, target_state));
+            if (resource.kind == ResourceKind::Image) {
+                ImageLayoutIntent layout = ImageLayoutIntent::ShaderReadOnly;
+                if (read.stage == PipelineStageIntent::DepthAttachment) {
+                    layout = ImageLayoutIntent::DepthReadOnly;
                 }
-            } else if (!StatesEqual(current_state.state, target_state)) {
-                compiled_pass.pre_pass_transitions.push_back(
-                    make_transition(read.index, target_state));
-            }
+                const ResourceState target_state = ResourceState::ImageState(
+                    read.stage, read.access,
+                    QueueType::Graphics, layout);
 
-            current_state.state = target_state;
-            current_state.has_state = true;
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::ImageState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics, ImageLayoutIntent::Undefined);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(read.resource.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
+                    compiled_pass.pre_pass_transitions.push_back(
+                        make_transition(read.resource.index, target_state));
+                }
+
+                current_state.state = target_state;
+                current_state.has_state = true;
+            } else if (resource.kind == ResourceKind::Buffer) {
+                const ResourceState target_state = ResourceState::BufferState(
+                    read.stage, read.access, QueueType::Graphics);
+
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::BufferState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(read.resource.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
+                    compiled_pass.pre_pass_transitions.push_back(
+                        make_transition(read.resource.index, target_state));
+                }
+
+                current_state.state = target_state;
+                current_state.has_state = true;
+            }
         }
 
         compiled_passes.push_back(std::move(compiled_pass));
@@ -288,7 +339,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             for (int32_t oi = static_cast<int32_t>(sorted_indices.size()) - 1; oi > current_oi; --oi) {
                 const auto& p = passes_[sorted_indices[static_cast<size_t>(oi)]];
                 const ResourceHandle h{.index = write.index, .generation = resource.generation};
-                if (ContainsResource(p.writes, h) || ContainsResource(p.reads, h)) {
+                if (ContainsResource(p.writes, h) || ContainsReadResource(p.reads, h)) {
                     last_usage = oi;
                     break;
                 }
@@ -322,7 +373,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             const auto pass_index = sorted_indices[ordered_index];
             const auto& pass = passes_[pass_index];
             const ResourceHandle handle{.index = resource_index, .generation = resource.generation};
-            if (ContainsResource(pass.reads, handle) || ContainsResource(pass.writes, handle)) {
+            if (ContainsReadResource(pass.reads, handle) || ContainsResource(pass.writes, handle)) {
                 if (first < 0) {
                     first = static_cast<int32_t>(ordered_index);
                 }

@@ -28,8 +28,6 @@ public:
 
     [[nodiscard]] const vk::raii::Fence& GetInFlightFence(uint32_t frame_idx) const { return *in_flight_fences_[frame_idx % frames_in_flight_]; }
     [[nodiscard]] const vk::raii::Semaphore& GetImageAvailableSemaphore(uint32_t frame_idx) const { return *image_available_semaphores_[frame_idx % frames_in_flight_]; }
-    [[nodiscard]] const vk::raii::Semaphore& GetRenderFinishedSemaphore(uint32_t frame_idx) const { return *render_finished_semaphores_[frame_idx % frames_in_flight_]; }
-
     [[nodiscard]] vk::raii::CommandBuffer& GetCommandBuffer(uint32_t frame_idx) { return command_buffers_[frame_idx % frames_in_flight_]; }
 
     [[nodiscard]] uint32_t GetFramesInFlight() const { return frames_in_flight_; }
@@ -44,7 +42,6 @@ private:
     std::vector<vk::raii::CommandBuffer> command_buffers_{};
 
     std::vector<std::unique_ptr<vk::raii::Semaphore>> image_available_semaphores_{};
-    std::vector<std::unique_ptr<vk::raii::Semaphore>> render_finished_semaphores_{};
     std::vector<std::unique_ptr<vk::raii::Fence>> in_flight_fences_{};
 
     uint32_t frames_in_flight_ = 0;

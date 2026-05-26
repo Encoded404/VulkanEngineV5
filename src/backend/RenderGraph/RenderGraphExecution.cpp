@@ -2,6 +2,7 @@ module;
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -9,6 +10,25 @@ module;
 module VulkanBackend.RenderGraph;
 
 namespace VulkanEngine::RenderGraph {
+
+namespace {
+    static void BeginPassLabel(vk::CommandBuffer cmd, VkDevice dev, const std::string& name) {
+        auto* fn = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            ::vkGetDeviceProcAddr(dev, "vkCmdBeginDebugUtilsLabelEXT"));
+        if (!fn) return;
+        VkDebugUtilsLabelEXT label{};
+        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+        label.pLabelName = name.c_str();
+        fn(static_cast<VkCommandBuffer>(cmd), &label);
+    }
+
+    static void EndPassLabel(vk::CommandBuffer cmd, VkDevice dev) {
+        auto* fn = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            ::vkGetDeviceProcAddr(dev, "vkCmdEndDebugUtilsLabelEXT"));
+        if (!fn) return;
+        fn(static_cast<VkCommandBuffer>(cmd));
+    }
+}
 
 void CompiledRenderGraph::SetImportedResourceState(uint32_t resource_index, ResourceState state) const {
     if (resource_index < initial_states.size()) {
@@ -38,9 +58,11 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
     std::vector<bool> has_state = has_initial_state;
 
     for (const auto& pass : passes) {
+        BeginPassLabel(command_buffer, device, pass.name);
+
         if (!pass.pre_pass_transitions.empty()) {
             std::vector<vk::ImageMemoryBarrier> image_barriers;
-            std::vector<vk::BufferMemoryBarrier> buffer_barriers;
+            std::vector<vk::MemoryBarrier> memory_barriers;
             vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
             vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
 
@@ -72,8 +94,8 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                         const auto format = resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
                             FormatToAspectFlags(format),
-                            0, 1u,
-                            0, 1u
+                            0, VK_REMAINING_MIP_LEVELS,
+                            0, VK_REMAINING_ARRAY_LAYERS
                         };
 
                         src_stage |= IntentToPipelineStage(from.stage, from.access);
@@ -94,17 +116,14 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     const auto& to = transition.target_state;
 
                     if (!StatesEqual(from, to)) {
-                        vk::BufferMemoryBarrier barrier{};
+                        vk::MemoryBarrier barrier{};
                         barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
                         barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
-                        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.size = VK_WHOLE_SIZE;
 
                         src_stage |= IntentToPipelineStage(from.stage, from.access);
                         dst_stage |= IntentToPipelineStage(to.stage, to.access);
 
-                        buffer_barriers.push_back(barrier);
+                        memory_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
                     }
                 }
@@ -116,7 +135,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
                 }
                 for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : buffer_barriers) b.dstAccessMask = {};
+                for (auto& b : memory_barriers) b.dstAccessMask = {};
             }
             if (src_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
                 src_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
@@ -124,19 +143,19 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
                 }
                 for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : buffer_barriers) b.srcAccessMask = {};
+                for (auto& b : memory_barriers) b.srcAccessMask = {};
             }
             if (dst_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
                 for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : buffer_barriers) b.dstAccessMask = {};
+                for (auto& b : memory_barriers) b.dstAccessMask = {};
             }
             if (src_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
                 for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : buffer_barriers) b.srcAccessMask = {};
+                for (auto& b : memory_barriers) b.srcAccessMask = {};
             }
 
-            if (!image_barriers.empty() || !buffer_barriers.empty()) {
-                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, {}, buffer_barriers, image_barriers);
+            if (!image_barriers.empty() || !memory_barriers.empty()) {
+                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, memory_barriers, {}, image_barriers);
             }
         }
 
@@ -193,7 +212,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
 
         if (!pass.post_pass_transitions.empty()) {
             std::vector<vk::ImageMemoryBarrier> image_barriers;
-            std::vector<vk::BufferMemoryBarrier> buffer_barriers;
+            std::vector<vk::MemoryBarrier> memory_barriers;
             vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
             vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
 
@@ -225,14 +244,36 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                         const auto format = resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
                             FormatToAspectFlags(format),
-                            0, 1u,
-                            0, 1u
+                            0, VK_REMAINING_MIP_LEVELS,
+                            0, VK_REMAINING_ARRAY_LAYERS
                         };
 
                         src_stage |= IntentToPipelineStage(from.stage, from.access);
                         dst_stage |= IntentToPipelineStage(to.stage, to.access);
 
                         image_barriers.push_back(barrier);
+                        current_states[transition.resource_index] = to;
+                    }
+                } else {
+                    if (!has_state[transition.resource_index]) {
+                        const ResourceState undefined_state = ResourceState::BufferState(
+                            PipelineStageIntent::TopOfPipe, AccessIntent::None, QueueType::Graphics);
+                        current_states[transition.resource_index] = undefined_state;
+                        has_state[transition.resource_index] = true;
+                    }
+
+                    const auto& from = current_states[transition.resource_index];
+                    const auto& to = transition.target_state;
+
+                    if (!StatesEqual(from, to)) {
+                        vk::MemoryBarrier barrier{};
+                        barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
+                        barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
+
+                        src_stage |= IntentToPipelineStage(from.stage, from.access);
+                        dst_stage |= IntentToPipelineStage(to.stage, to.access);
+
+                        memory_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
                     }
                 }
@@ -244,7 +285,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
                 }
                 for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : buffer_barriers) b.dstAccessMask = {};
+                for (auto& b : memory_barriers) b.dstAccessMask = {};
             }
             if (src_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
                 src_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
@@ -252,21 +293,23 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
                 }
                 for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : buffer_barriers) b.srcAccessMask = {};
+                for (auto& b : memory_barriers) b.srcAccessMask = {};
             }
             if (dst_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
                 for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : buffer_barriers) b.dstAccessMask = {};
+                for (auto& b : memory_barriers) b.dstAccessMask = {};
             }
             if (src_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
                 for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : buffer_barriers) b.srcAccessMask = {};
+                for (auto& b : memory_barriers) b.srcAccessMask = {};
             }
 
-            if (!image_barriers.empty() || !buffer_barriers.empty()) {
-                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, {}, buffer_barriers, image_barriers);
+            if (!image_barriers.empty() || !memory_barriers.empty()) {
+                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, memory_barriers, {}, image_barriers);
             }
         }
+
+        EndPassLabel(command_buffer, device);
     }
 }
 

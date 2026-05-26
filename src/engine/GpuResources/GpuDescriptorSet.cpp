@@ -13,6 +13,7 @@ module;
 module VulkanEngine.GpuDescriptorSet;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuTexture;
 
@@ -66,6 +67,12 @@ void DescriptorPool::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& 
     if (config.max_storage_images > 0) {
         pool_sizes.emplace_back(vk::DescriptorType::eStorageImage, config.max_storage_images);
     }
+    if (config.max_sampled_images > 0) {
+        pool_sizes.emplace_back(vk::DescriptorType::eSampledImage, config.max_sampled_images);
+    }
+    if (config.max_samplers > 0) {
+        pool_sizes.emplace_back(vk::DescriptorType::eSampler, config.max_samplers);
+    }
 
     if (pool_sizes.empty()) {
         throw std::runtime_error("DescriptorPoolConfig must specify at least one descriptor type");
@@ -75,6 +82,12 @@ void DescriptorPool::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& 
     pool_ = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
 
     LOGIFACE_LOG(trace, "leaving DescriptorPool::Initialize successfully");
+}
+
+void DescriptorPool::SetDebugName(const vk::raii::Device& dev, const std::string& name) const {
+    if (pool_) {
+        VulkanEngine::Utils::SetVulkanObjectName(dev, *pool_, name);
+    }
 }
 
 void DescriptorPool::FreeDescriptorSet(vk::DescriptorSet set) const {
@@ -170,6 +183,18 @@ void GpuDescriptorSet::Destroy() {
     destroyed_ = true;
 }
 
+void GpuDescriptorSet::SetDebugName(const vk::raii::Device& dev, const std::string& name) const {
+    if (!descriptor_set_) return;
+    auto* fn = dev.getDispatcher()->vkSetDebugUtilsObjectNameEXT;
+    if (!fn) return;
+    VkDebugUtilsObjectNameInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    info.objectType = VK_OBJECT_TYPE_DESCRIPTOR_SET;
+    info.objectHandle = reinterpret_cast<uint64_t>(static_cast<VkDescriptorSet>(descriptor_set_));
+    info.pObjectName = name.c_str();
+    fn(static_cast<VkDevice>(*dev), &info);
+}
+
 GpuDescriptorSet GpuDescriptorSet::Create(
     VulkanEngine::Runtime::IVulkanBootstrapBackend* backend,
     std::shared_ptr<DescriptorPool> pool,
@@ -224,6 +249,102 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     write.descriptorCount = 1;
     write.descriptorType = type;
     write.pBufferInfo = &buffer_info;
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+                                     uint32_t array_element,
+                                     const GpuBuffer& buffer,
+                                     vk::DescriptorType type,
+                                     uint64_t size,
+                                     uint64_t offset) const {
+    if (!backend_ || !descriptor_set_) {
+        return;
+    }
+
+    const uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
+
+    const vk::DescriptorBufferInfo buffer_info(
+        *buffer.GetBuffer(),
+        offset,
+        buffer_size);
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = array_element;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pBufferInfo = &buffer_info;
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+                                     vk::Buffer buffer,
+                                     vk::DescriptorType type,
+                                     uint64_t size,
+                                     uint64_t offset) const {
+    if (!backend_ || !descriptor_set_) {
+        return;
+    }
+
+    const vk::DescriptorBufferInfo buffer_info(
+        buffer,
+        offset,
+        size);
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pBufferInfo = &buffer_info;
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+                                     VkImageView image_view,
+                                     vk::DescriptorType type,
+                                     vk::ImageLayout layout) const {
+    if (!backend_ || !descriptor_set_ || !image_view) {
+        return;
+    }
+
+    vk::DescriptorImageInfo image_info{};
+    image_info.imageView = image_view;
+    image_info.imageLayout = layout;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pImageInfo = &image_info;
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+                                     VkSampler sampler) const {
+    if (!backend_ || !descriptor_set_ || !sampler) {
+        return;
+    }
+
+    vk::DescriptorImageInfo image_info{};
+    image_info.sampler = sampler;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = vk::DescriptorType::eSampler;
+    write.pImageInfo = &image_info;
 
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }

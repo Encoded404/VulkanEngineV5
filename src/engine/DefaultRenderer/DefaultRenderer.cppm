@@ -44,8 +44,6 @@ public:
     void RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                      VulkanEngine::ComponentRegistry& registry,
                      const VulkanEngine::Components::Camera& camera,
-                     const VulkanEngine::GpuResources::GpuBuffer& vertex_buffer,
-                     const VulkanEngine::GpuResources::GpuBuffer& index_buffer,
                      VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                      VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
@@ -58,16 +56,18 @@ private:
 
     VulkanEngine::ComponentRegistry* current_registry_ = nullptr;
     const VulkanEngine::Components::Camera* current_camera_ = nullptr;
-    const VulkanEngine::GpuResources::GpuBuffer* current_vertex_buffer_ = nullptr;
-    const VulkanEngine::GpuResources::GpuBuffer* current_index_buffer_ = nullptr;
     VulkanEngine::TechniqueManager::TechniqueManager* current_technique_mgr_ = nullptr;
     VulkanEngine::BindlessManager::BindlessManager* current_bindless_mgr_ = nullptr;
     VulkanEngine::SceneRenderer::SceneRenderer* current_scene_renderer_ = nullptr;
     VulkanEngine::ImGuiSystem::ImGuiSystem* current_imgui_ = nullptr;
+    vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};
     uint32_t current_width_ = 0;
     uint32_t current_height_ = 0;
     uint32_t current_image_index_ = 0;
+    glm::mat4 current_view_proj_{1.0f};
     uint32_t frame_counter_ = 0;
+    uint32_t last_swapchain_image_count_ = 0;
+
 
     static constexpr vk::QueryPipelineStatisticFlags GPU_STATS_FLAGS =
         vk::QueryPipelineStatisticFlagBits::eInputAssemblyVertices |

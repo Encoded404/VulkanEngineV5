@@ -7,6 +7,13 @@ export module VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
 
+enum class PresentMode : uint8_t {
+    Mailbox,
+    Fifo,
+    Immediate,
+    FifoRelaxed
+};
+
 enum class BootstrapStatus : uint8_t {
     Ok,
     NotInitialized,
@@ -26,6 +33,7 @@ struct VulkanBootstrapConfig {
     bool enable_validation = true;
     uint32_t frames_in_flight = 3;
     uint32_t preferred_swapchain_image_count = 3;
+    PresentMode present_mode = PresentMode::Mailbox;
     SDL_Window* native_window_handle = nullptr;
 };
 

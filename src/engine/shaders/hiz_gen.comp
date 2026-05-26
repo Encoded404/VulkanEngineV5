@@ -1,69 +1,78 @@
 #version 450
 #extension GL_EXT_samplerless_texture_functions : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
-// Generate Hi-Z mip chain from depth attachment.
-// Reads depth at full resolution, writes min-filtered mip levels.
+// Batched Hi-Z mip generation.
+// Each thread reads a STRIDE×STRIDE tile from source and cascades BATCH_LEVELS
+// reductions in registers, writing one tile to each output level.
+// No synchronization needed within a dispatch (no cross-invocation dependencies).
+
+#define BATCH_LEVELS 2
+#define STRIDE (1 << BATCH_LEVELS)
+#define HALF (STRIDE >> 1)
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform texture2D depthTexture;
 layout(set = 0, binding = 1) uniform sampler depthSampler;
 
-layout(r32f, set = 0, binding = 2) uniform image2D hizLevel0;
-layout(r32f, set = 0, binding = 3) uniform image2D hizLevel1;
-layout(r32f, set = 0, binding = 4) uniform image2D hizLevel2;
-layout(r32f, set = 0, binding = 5) uniform image2D hizLevel3;
-layout(r32f, set = 0, binding = 6) uniform image2D hizLevel4;
-layout(r32f, set = 0, binding = 7) uniform image2D hizLevel5;
-layout(r32f, set = 0, binding = 8) uniform image2D hizLevel6;
-layout(r32f, set = 0, binding = 9) uniform image2D hizLevel7;
-layout(r32f, set = 0, binding = 10) uniform image2D hizLevel8;
-layout(r32f, set = 0, binding = 11) uniform image2D hizLevel9;
-layout(r32f, set = 0, binding = 12) uniform image2D hizLevel10;
-layout(r32f, set = 0, binding = 13) uniform image2D hizLevel11;
+layout(r32f, set = 0, binding = 2) coherent uniform image2D hizLevels[];
 
 layout(push_constant) uniform PushConstants {
-    uint mipCount;
+    uint baseLevel;
     uint srcWidth;
     uint srcHeight;
+    uint totalLevels;
 } pc;
-
-shared float tileMin[256];
 
 void main() {
     ivec2 srcSize = ivec2(pc.srcWidth, pc.srcHeight);
-    ivec2 baseCoord = ivec2(gl_GlobalInvocationID.xy) * 2;
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 coord = pos * STRIDE;
 
-    // Sample 4 source texels
-    float d0 = texelFetch(sampler2D(depthTexture, depthSampler), baseCoord, 0).r;
-    float d1 = texelFetch(sampler2D(depthTexture, depthSampler), min(baseCoord + ivec2(1,0), srcSize - 1), 0).r;
-    float d2 = texelFetch(sampler2D(depthTexture, depthSampler), min(baseCoord + ivec2(0,1), srcSize - 1), 0).r;
-    float d3 = texelFetch(sampler2D(depthTexture, depthSampler), min(baseCoord + ivec2(1,1), srcSize - 1), 0).r;
+    if (coord.x < srcSize.x && coord.y < srcSize.y) {
+        float d[STRIDE][STRIDE];
 
-    float minVal = min(min(d0, d1), min(d2, d3));
-
-    uint tileIdx = gl_LocalInvocationIndex;
-    tileMin[tileIdx] = minVal;
-    barrier();
-    memoryBarrierShared();
-
-    // Reduce in shared memory
-    for (uint s = 128; s > 0; s >>= 1) {
-        if (tileIdx < s) {
-            tileMin[tileIdx] = min(tileMin[tileIdx], tileMin[tileIdx + s]);
+        // Read STRIDE×STRIDE tile from source (clamped at edges)
+        for (int y = 0; y < STRIDE; y++) {
+            for (int x = 0; x < STRIDE; x++) {
+                ivec2 c = min(coord + ivec2(x, y), srcSize - 1);
+                if (pc.baseLevel == 0)
+                    d[y][x] = texelFetch(sampler2D(depthTexture, depthSampler), c, 0).r;
+                else
+                    d[y][x] = imageLoad(hizLevels[pc.baseLevel - 1], c).r;
+            }
         }
-        barrier();
-    }
 
-    // Write first mip level
-    if (gl_LocalInvocationID.x == 0 && gl_LocalInvocationID.y == 0) {
-        ivec2 outCoord = ivec2(gl_WorkGroupID.xy);
-        ivec2 level0Size = max(ivec2(1), (srcSize + 1) / 2);
-        if (outCoord.x < level0Size.x && outCoord.y < level0Size.y) {
-            imageStore(hizLevel0, outCoord, vec4(minVal));
+        // hiz[baseLevel] size: depth→hiz[0] uses ceil, mip→mip uses floor (Vulkan mip sizing)
+        ivec2 lvl0Size = (pc.baseLevel == 0)
+            ? max(ivec2(1), (srcSize + 1) / 2)
+            : max(ivec2(1), srcSize >> 1);
+
+        // Level 0: reduce STRIDE×STRIDE → HALF×HALF, write to hiz[baseLevel]
+        {
+            uint dstLvl = pc.baseLevel;
+            for (int y = 0; y < HALF; y++) {
+                for (int x = 0; x < HALF; x++) {
+                    float v = max(
+                        max(d[y * 2][x * 2], d[y * 2 + 1][x * 2]),
+                        max(d[y * 2][x * 2 + 1], d[y * 2 + 1][x * 2 + 1])
+                    );
+                    ivec2 wPos = pos * HALF + ivec2(x, y);
+                    if (dstLvl < pc.baseLevel + pc.totalLevels && wPos.x < lvl0Size.x && wPos.y < lvl0Size.y)
+                        imageStore(hizLevels[dstLvl], wPos, vec4(v));
+                    d[y][x] = v;
+                }
+            }
+        }
+
+        // Level 1: reduce HALF×HALF → 1×1, write to hiz[baseLevel+1]
+        {
+            uint dstLvl = pc.baseLevel + 1;
+            ivec2 lvl1Size = max(ivec2(1), lvl0Size >> 1);
+            float v = max(max(d[0][0], d[1][0]), max(d[0][1], d[1][1]));
+            if (dstLvl < pc.baseLevel + pc.totalLevels && pos.x < lvl1Size.x && pos.y < lvl1Size.y)
+                imageStore(hizLevels[dstLvl], pos, vec4(v));
         }
     }
-
-    // Further mip levels would be generated by additional dispatches
-    // For now, generate just level 0 — higher levels are optional optimizations
 }

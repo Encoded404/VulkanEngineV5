@@ -43,12 +43,12 @@ public:
         return device_->CreateLogicalDeviceAndResources(frames_in_flight);
     }
 
-    [[nodiscard]] bool CreateSwapchain(const uint32_t preferred_image_count, uint32_t& out_image_count) override {
+    [[nodiscard]] bool CreateSwapchain(const uint32_t preferred_image_count, const PresentMode present_mode, uint32_t& out_image_count) override {
         if (device_ && device_->IsValid()) {
             device_->GetDevice().waitIdle();
         }
         swapchain_ = std::make_unique<VulkanSwapchain>();
-        if (!swapchain_->Initialize(*instance_, *device_, preferred_image_count)) {
+        if (!swapchain_->Initialize(*instance_, *device_, preferred_image_count, present_mode)) {
             swapchain_->Shutdown();
             swapchain_.reset();
             render_finished_semaphores_.clear();
@@ -92,8 +92,8 @@ public:
     [[nodiscard]] std::vector<bool>& GetSwapchainImageInitializedFlags() override { return swapchain_->GetImageInitializedFlags(); }
     [[nodiscard]] const vk::SurfaceFormatKHR& GetSurfaceFormat() const override { return swapchain_->GetSurfaceFormat(); }
     [[nodiscard]] vk::Format GetDepthFormat() const override { return swapchain_->GetDepthFormat(); }
-    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView() const override { return swapchain_->GetDepthImageView(); }
-    [[nodiscard]] const vk::raii::Image& GetDepthImage() const override { return swapchain_->GetDepthImage(); }
+    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(uint32_t image_index) const override { return swapchain_->GetDepthImageView(image_index); }
+    [[nodiscard]] const vk::raii::Image& GetDepthImage(uint32_t image_index) const override { return swapchain_->GetDepthImage(image_index); }
 
     [[nodiscard]] bool AcquireNextImage(uint32_t frame_idx, uint32_t& out_image_index) override {
         LOGIFACE_LOG(trace, "entering AcquireNextImage with frame index " + std::to_string(frame_idx));

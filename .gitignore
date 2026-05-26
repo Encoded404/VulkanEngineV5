@@ -35,3 +35,6 @@
 /build/
 /md-files
 /.cache
+
+/src/app/models/*
+/src/app/textures/*

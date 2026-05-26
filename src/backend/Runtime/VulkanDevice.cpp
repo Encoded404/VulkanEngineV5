@@ -11,6 +11,7 @@ module VulkanBackend.Runtime.VulkanDevice;
 
 import VulkanBackend.Runtime.VulkanInstance;
 import VulkanBackend.Runtime.CommonTypes;
+import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::Runtime {
 
@@ -68,10 +69,14 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         vulkan12_features.hostQueryReset = VK_TRUE;
         vulkan12_features.descriptorIndexing = VK_TRUE;
         vulkan12_features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        vulkan12_features.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+        vulkan12_features.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
         vulkan12_features.runtimeDescriptorArray = VK_TRUE;
         vulkan12_features.descriptorBindingPartiallyBound = VK_TRUE;
         vulkan12_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        vulkan12_features.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
         vulkan12_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        vulkan12_features.bufferDeviceAddress = VK_TRUE;
 
         vk::PhysicalDeviceVulkan13Features vulkan13_features{};
         vulkan13_features.dynamicRendering = VK_TRUE;
@@ -100,6 +105,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         pool_info.queueFamilyIndex = graphics_queue_family_;
         pool_info.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
         command_pool_ = std::make_unique<vk::raii::CommandPool>(*device_, pool_info);
+        VulkanEngine::Utils::SetVulkanObjectName(*device_, *command_pool_, "main-command-pool");
 
         vk::CommandBufferAllocateInfo cmd_alloc{};
         cmd_alloc.commandPool = **command_pool_;
@@ -112,13 +118,13 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
 
         image_available_semaphores_.resize(frames_in_flight_);
-        render_finished_semaphores_.resize(frames_in_flight_);
         in_flight_fences_.resize(frames_in_flight_);
 
         for (uint32_t i = 0; i < frames_in_flight_; ++i) {
             image_available_semaphores_[i] = std::make_unique<vk::raii::Semaphore>(*device_, sem_info);
-            render_finished_semaphores_[i] = std::make_unique<vk::raii::Semaphore>(*device_, sem_info);
+            VulkanEngine::Utils::SetVulkanObjectName(*device_, *image_available_semaphores_[i], "image-available-semaphore-" + std::to_string(i));
             in_flight_fences_[i] = std::make_unique<vk::raii::Fence>(*device_, fence_info);
+            VulkanEngine::Utils::SetVulkanObjectName(*device_, *in_flight_fences_[i], "in-flight-fence-" + std::to_string(i));
         }
 
     } catch (const std::exception& ex) {
@@ -137,12 +143,10 @@ void VulkanDevice::Shutdown() {
 
     for (uint32_t i = 0; i < frames_in_flight_; ++i) {
         in_flight_fences_[i].reset();
-        render_finished_semaphores_[i].reset();
         image_available_semaphores_[i].reset();
     }
 
     image_available_semaphores_.clear();
-    render_finished_semaphores_.clear();
     in_flight_fences_.clear();
 
     command_buffers_.clear(); // MUST clear buffers before the pool

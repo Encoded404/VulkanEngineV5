@@ -2,6 +2,7 @@ module;
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -323,7 +324,9 @@ private:
     struct IComponentPool {
         virtual ~IComponentPool() = default;
         virtual void InitializeAll() = 0;
+        virtual void ForEachComponent(const std::function<void(Component&)>& fn) = 0;
         virtual void CollectAll(std::vector<Component*>& out_components) = 0;
+        virtual void CollectAllShared(std::vector<std::shared_ptr<Component>>& out_components) = 0;
         virtual void Clear() = 0;
     };
 
@@ -336,10 +339,10 @@ private:
                 throw std::logic_error("Entity already owns this component type");
             }
 
-            auto component = std::make_unique<T>(std::forward<Args>(args)...);
+            auto component = std::make_shared<T>(std::forward<Args>(args)...);
             component->SetOwner(&owner);
             auto& component_ref = *component;
-            entries_.push_back(Entry{&owner, std::move(component)});
+            entries_.push_back(Entry{&owner, component});
             owner.AttachComponent(TypeId(), component_ref);
             return component_ref;
         }
@@ -372,11 +375,28 @@ private:
             }
         }
 
+        void ForEachComponent(const std::function<void(Component&)>& fn) override {
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    fn(*entry.component);
+                }
+            }
+        }
+
         void CollectAll(std::vector<Component*>& out_components) override {
             out_components.reserve(out_components.size() + entries_.size());
             for (auto& entry : entries_) {
                 if (entry.component) {
                     out_components.push_back(entry.component.get());
+                }
+            }
+        }
+
+        void CollectAllShared(std::vector<std::shared_ptr<Component>>& out_components) override {
+            out_components.reserve(out_components.size() + entries_.size());
+            for (auto& entry : entries_) {
+                if (entry.component) {
+                    out_components.push_back(entry.component);
                 }
             }
         }
@@ -396,7 +416,7 @@ private:
     private:
         struct Entry {
             Entity* owner = nullptr;
-            std::unique_ptr<T> component{};
+            std::shared_ptr<T> component{};
         };
 
         [[nodiscard]] static std::size_t TypeId() {
@@ -483,22 +503,23 @@ public:
     }
 
     void UpdateAllComponentsAsync(float delta_time) {
-        std::vector<Component*> components;
+        std::vector<std::shared_ptr<Component>> components;
         {
             const std::scoped_lock lock(mutex_);
-            components = GatherAllComponents();
+            for (auto& [_, pool] : pools_) {
+                pool->CollectAllShared(components);
+            }
         }
 
         if (components.empty()) {
             return;
         }
 
-        const std::size_t component_count = components.size();
-        thread_pool_.ParallelFor(component_count, [delta_time, components = std::move(components)](std::size_t index) mutable {
-            if (components[index] != nullptr) {
+        const size_t component_count = components.size();
+        thread_pool_.ParallelFor(component_count,
+            [delta_time, components = std::move(components)](const std::size_t index) mutable {
                 components[index]->Update(delta_time);
-            }
-        });
+            });
     }
 
     void Clear() {

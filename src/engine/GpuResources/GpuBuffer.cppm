@@ -27,6 +27,7 @@ public:
     [[nodiscard]] vk::raii::DeviceMemory& GetMemory() { return *memory_; }
     [[nodiscard]] const vk::raii::DeviceMemory& GetMemory() const { return *memory_; }
     [[nodiscard]] uint64_t GetSize() const { return size_; }
+    [[nodiscard]] bool IsValid() const { return buffer_ != nullptr; }
 
 private:
     std::unique_ptr<vk::raii::Buffer> buffer_;

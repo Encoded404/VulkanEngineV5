@@ -32,7 +32,7 @@ public:
         current_frames_in_flight = frames_in_flight;
         return logical_device_result;
     }
-    [[nodiscard]] bool CreateSwapchain(uint32_t, uint32_t& out_image_count) override {
+    [[nodiscard]] bool CreateSwapchain(uint32_t, VulkanEngine::Runtime::PresentMode, uint32_t& out_image_count) override {
         out_image_count = produced_swapchain_image_count;
         return swapchain_result;
     }
@@ -62,8 +62,8 @@ public:
     [[nodiscard]] std::vector<bool>& GetSwapchainImageInitializedFlags() override { static std::vector<bool> dummy; return dummy; }
     [[nodiscard]] const vk::SurfaceFormatKHR& GetSurfaceFormat() const override { static const vk::SurfaceFormatKHR dummy; return dummy; }
     [[nodiscard]] vk::Format GetDepthFormat() const override { return vk::Format::eUndefined; }
-    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView() const override { throw std::runtime_error("Fake"); }
-    [[nodiscard]] const vk::raii::Image& GetDepthImage() const override { throw std::runtime_error("Fake"); }
+    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(uint32_t) const override { throw std::runtime_error("Fake"); }
+    [[nodiscard]] const vk::raii::Image& GetDepthImage(uint32_t) const override { throw std::runtime_error("Fake"); }
 
     [[nodiscard]] bool AcquireNextImage(uint32_t, uint32_t&) override { return true; }
     [[nodiscard]] bool Present(uint32_t, uint32_t, bool) override { return true; }

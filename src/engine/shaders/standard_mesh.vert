@@ -13,12 +13,13 @@ layout(push_constant) uniform PushConstants {
     mat4 viewProj;
 } pc;
 
+// Per-instance data (CPU-written, used for simple non-GPU-driven rendering)
 layout(std430, set = 1, binding = 0) readonly buffer InstanceBuffer {
     mat4 modelMatrix;
     uint materialId;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    uint pad0;
+    uint pad1;
+    uint pad2;
 } instances[];
 
 void main() {

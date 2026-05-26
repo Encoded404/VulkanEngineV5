@@ -14,7 +14,6 @@ export namespace VulkanEngine::ImGuiSystem {
 
 struct ImGuiConfig {
     bool enabled = true;
-    bool show_demo_window = false;
     bool show_metrics = false;
     bool show_style_editor = false;
     float font_size = 16.0f;
@@ -47,6 +46,7 @@ public:
     void SetDrawCallback(ImGuiDrawCallback callback);
 
     void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, uint32_t width, uint32_t height);
+    void OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format);
 
     [[nodiscard]] const ImGuiConfig& GetConfig() const { return config_; }
     void SetConfig(const ImGuiConfig& config) { config_ = config; }

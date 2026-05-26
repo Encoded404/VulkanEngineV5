@@ -27,14 +27,17 @@ struct PlatformConfig {
 };
 
 struct PlatformState {
-    bool initialized = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    bool window_created = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    bool quit_requested = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    bool minimized = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    bool resized = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t drawable_width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t drawable_height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    PlatformStatus status = PlatformStatus::NotInitialized; // NOLINT(misc-non-private-member-variables-in-classes)
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    bool initialized = false;
+    bool window_created = false;
+    bool quit_requested = false;
+    bool minimized = false;
+    bool resized = false;
+    uint32_t drawable_width = 0;
+    uint32_t drawable_height = 0;
+    PlatformStatus status = PlatformStatus::NotInitialized;
+    std::string error_message; // Optional detailed error message for fatal errors
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
 class IPlatformBackend {

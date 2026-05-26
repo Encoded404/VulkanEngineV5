@@ -1,8 +1,6 @@
 module;
 
-#include <cstdint>
 #include <memory>
-#include <string>
 #include <filesystem>
 
 export module App.Game;
@@ -17,7 +15,6 @@ export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
-export import VulkanEngine.Components.Material;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.ImGuiSystem;
 export import VulkanEngine.ResourceSystem;
@@ -38,7 +35,9 @@ enum class RenderMode : uint8_t {
 
 class DemoGame {
 public:
-    DemoGame(const std::string& log_level, RenderMode render_mode, const std::filesystem::path& executable_path);
+    DemoGame(RenderMode render_mode, const std::filesystem::path& executable_path,
+             const std::filesystem::path model_path = {},
+             const std::filesystem::path texture_path = {});
     ~DemoGame();
 
     DemoGame(const DemoGame&) = delete;
@@ -51,14 +50,16 @@ private:
     void OnPreInput(VulkanEngine::Application::ApplicationContext& ctx);
     bool ShouldFilterMouseInput();
     bool ShouldFilterKeyboardInput();
-    void OnFrameUpdate(VulkanEngine::Application::ApplicationContext& ctx);
-    void OnFrameRender(VulkanEngine::Application::ApplicationContext& ctx);
+    void OnFrameUpdate(const VulkanEngine::Application::ApplicationContext &ctx);
+    void OnFrameRender(const VulkanEngine::Application::ApplicationContext &ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
     RenderMode render_mode_;
     VulkanEngine::Application::ApplicationHooks hooks_{};
 
     std::filesystem::path exe_dir_{};
+    std::filesystem::path model_path_{};
+    std::filesystem::path texture_path_{};
     VulkanEngine::ResourceManager resource_manager_{};
     std::shared_ptr<VulkanEngine::TextureResource> missing_texture_{};
     VulkanEngine::ResourceHandle<VulkanEngine::TextureResource> fallback_handle_{};
@@ -66,12 +67,15 @@ private:
     std::unique_ptr<VulkanEngine::DefaultRenderer::DefaultRenderer> renderer_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::SceneRenderer> scene_renderer_{};
     std::unique_ptr<VulkanEngine::TechniqueManager::TechniqueManager> technique_mgr_{};
-    std::unique_ptr<VulkanEngine::MaterialManager::MaterialManager> material_mgr_{};
     std::unique_ptr<VulkanEngine::BindlessManager::BindlessManager> bindless_mgr_{};
     std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> imgui_backend_{};
     std::unique_ptr<VulkanEngine::ImGuiSystem::ImGuiSystem> imgui_system_{};
     VulkanEngine::SceneLoader::CombinedScene combined_scene_{};
     bool scene_valid_ = false;
+
+    VulkanEngine::GpuResources::StagingManager staging_mgr_{};
+    VulkanEngine::GpuResources::DeviceBufferHeap vertex_heap_{};
+    VulkanEngine::GpuResources::DeviceBufferHeap index_heap_{};
 };
 
 } // namespace App::Game

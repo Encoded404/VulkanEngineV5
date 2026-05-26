@@ -20,6 +20,13 @@ function(setup_test_target TARGET)
   if(CMAKE_CONFIGURATION_TYPES)
     target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS_DEBUG})
   endif()
+  target_compile_options(${TARGET} PRIVATE
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffunction-sections>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fdata-sections>
+  )
+  target_link_options(${TARGET} PRIVATE
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
+  )
   if(SYSTEM_VULKAN)
     set_target_properties(${TARGET} PROPERTIES BUILD_RPATH "/usr/lib64")
   endif()

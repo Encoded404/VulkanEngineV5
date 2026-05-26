@@ -49,7 +49,7 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
     snapshot_.device_ready = true;
 
     uint32_t swapchain_image_count = 0;
-    if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, swapchain_image_count)) {
+    if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, config_.present_mode, swapchain_image_count)) {
         snapshot_.status = BootstrapStatus::SwapchainCreationFailed;
         backend_->Shutdown();
         return false;
@@ -124,7 +124,7 @@ bool VulkanBootstrap::RecreateSwapchain() {
     }
 
     uint32_t swapchain_image_count = 0;
-    if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, swapchain_image_count)) {
+    if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, config_.present_mode, swapchain_image_count)) {
         snapshot_.status = BootstrapStatus::SwapchainCreationFailed;
         snapshot_.swapchain_ready = false;
         return false;

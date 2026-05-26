@@ -1,0 +1,115 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Per-submesh cull data (written by expand, optionally zeroed by occlusion)
+struct CullEntry {
+    uint indirOffset;
+    uint indexCount;  // set to 0 by occlusion if occluded
+    uint techniqueId;
+    uint pad;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer CullBuffer {
+    CullEntry data[];
+} cull[];
+
+// Full (uncompacted) indirection list (written by expand)
+struct IndirEntry {
+    uint vertexId;
+    uint submeshId;
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer FullIndir {
+    IndirEntry entries[];
+} full;
+
+// Compacted indirection list (GPU-written): only visible entries
+layout(std430, set = 0, binding = 2) buffer CompactIndir {
+    IndirEntry entries[];
+} comp;
+
+struct DrawIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+};
+
+// Layout: [0..256) = counts, [256..512) = offsets, [512..) = DrawIndirectCommand
+layout(std430, set = 0, binding = 3) buffer TechBuffer {
+    uint   counts[256];
+    uint   offsets[256];
+    DrawIndirectCommand cmds[];
+} tech;
+
+layout(push_constant) uniform PC {
+    uint elementCount; // number of submeshes to process
+    uint pad0;
+    uint maxTechnique; // number of technique slots in tech buffer
+    uint pass;         // 0 = count, 1 = compact
+} pc;
+
+shared uint s_off[256];
+
+// Pass 0: sum visible index counts per technique
+void passCount() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.elementCount) return;
+
+    uint block = id / 256u;
+    uint elemIdx = id % 256u;
+
+    CullEntry e = cull[nonuniformEXT(block)].data[elemIdx];
+    if (e.indexCount == 0) return;
+
+    atomicAdd(tech.counts[e.techniqueId], e.indexCount);
+}
+
+// Pass 1: build per-technique prefix sums and compact visible entries
+void passCompact() {
+    // Compute prefix sums for each technique's write offset
+    if (gl_LocalInvocationIndex == 0) {
+        uint offset = 0;
+        for (uint t = 0; t < min(pc.maxTechnique, 256u); t++) {
+            s_off[t] = offset;
+            offset += tech.counts[t];
+        }
+    }
+    barrier();
+
+    // Write indirect draw commands for techniques with visible geometry
+    if (gl_GlobalInvocationID.x == 0) {
+        for (uint t = 0; t < min(pc.maxTechnique, 256u); t++) {
+            uint firstCount = tech.counts[t];
+            if (firstCount > 0) {
+                tech.cmds[t] = DrawIndirectCommand(firstCount, 1u, s_off[t], 0);
+            }
+        }
+    }
+    barrier();
+
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.elementCount) return;
+
+    uint block = id / 256u;
+    uint elemIdx = id % 256u;
+
+    CullEntry e = cull[nonuniformEXT(block)].data[elemIdx];
+    if (e.indexCount == 0) return;
+
+    uint techOffset = s_off[e.techniqueId];
+    uint destOffset = atomicAdd(tech.offsets[e.techniqueId], e.indexCount) + techOffset;
+
+    for (uint i = 0; i < e.indexCount; i++) {
+        comp.entries[destOffset + i] = full.entries[e.indirOffset + i];
+    }
+}
+
+void main() {
+    if (pc.pass == 0)
+        passCount();
+    else
+        passCompact();
+}

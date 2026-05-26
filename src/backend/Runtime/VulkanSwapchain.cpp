@@ -9,12 +9,28 @@ module;
 
 module VulkanBackend.Runtime.VulkanSwapchain;
 
+import VulkanBackend.Runtime.CommonTypes;
 import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanInstance;
+import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::Runtime {
 
-bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count) {
+namespace {
+
+vk::PresentModeKHR ToVkPresentMode(PresentMode mode) {
+    switch (mode) {
+        case PresentMode::Mailbox:     return vk::PresentModeKHR::eMailbox;
+        case PresentMode::Fifo:        return vk::PresentModeKHR::eFifo;
+        case PresentMode::Immediate:   return vk::PresentModeKHR::eImmediate;
+        case PresentMode::FifoRelaxed: return vk::PresentModeKHR::eFifoRelaxed;
+        default:                       return vk::PresentModeKHR::eFifo;
+    }
+}
+
+} // anonymous namespace
+
+bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode) {
     try {
         const auto& vk_surface = instance.GetSurface();
         const auto& vk_physical_device = device.GetPhysicalDevice();
@@ -26,9 +42,9 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         surface_format_ = formats.empty() ? vk::SurfaceFormatKHR{} : formats.front();
 
         const auto present_modes = vk_physical_device.getSurfacePresentModesKHR(*vk_surface);
-        vk::PresentModeKHR present_mode = vk::PresentModeKHR::eFifo;
-        if (std::ranges::find(present_modes, vk::PresentModeKHR::eMailbox) != present_modes.end()) {
-            present_mode = vk::PresentModeKHR::eMailbox;
+        vk::PresentModeKHR vk_present_mode = ToVkPresentMode(present_mode);
+        if (std::ranges::find(present_modes, vk_present_mode) == present_modes.end()) {
+            vk_present_mode = vk::PresentModeKHR::eFifo;
         }
 
         if (capabilities.currentExtent.width == UINT32_MAX || capabilities.currentExtent.height == UINT32_MAX) {
@@ -56,10 +72,11 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         swap_info.imageSharingMode = vk::SharingMode::eExclusive;
         swap_info.preTransform = capabilities.currentTransform;
         swap_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        swap_info.presentMode = present_mode;
+        swap_info.presentMode = vk_present_mode;
         swap_info.clipped = VK_TRUE;
 
         swapchain_ = std::make_unique<vk::raii::SwapchainKHR>(vk_device, swap_info);
+        VulkanEngine::Utils::SetVulkanObjectName(vk_device, *swapchain_, "swapchain");
         swapchain_images_ = swapchain_->getImages();
         swapchain_image_initialized_.assign(swapchain_images_.size(), false);
         swapchain_image_count_ = static_cast<uint32_t>(swapchain_images_.size());
@@ -75,6 +92,7 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
 bool VulkanSwapchain::RebuildSwapchainViews(const vk::raii::Device& device) {
     try {
         swapchain_image_views_.clear();
+        uint32_t view_idx = 0;
         for (const auto& image : swapchain_images_) {
             vk::ImageViewCreateInfo view_info{};
             view_info.image = image;
@@ -84,6 +102,7 @@ bool VulkanSwapchain::RebuildSwapchainViews(const vk::raii::Device& device) {
             view_info.subresourceRange.levelCount = 1;
             view_info.subresourceRange.layerCount = 1;
             swapchain_image_views_.emplace_back(device, view_info);
+            VulkanEngine::Utils::SetVulkanObjectName(device, swapchain_image_views_.back(), "swapchain-image-view-" + std::to_string(view_idx++));
         }
         return true;
     } catch (...) {
@@ -93,6 +112,15 @@ bool VulkanSwapchain::RebuildSwapchainViews(const vk::raii::Device& device) {
 
 bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device) {
     try {
+        const uint32_t count = swapchain_image_count_;
+
+        depth_images_.clear();
+        depth_image_memories_.clear();
+        depth_image_views_.clear();
+        depth_images_.reserve(count);
+        depth_image_memories_.reserve(count);
+        depth_image_views_.reserve(count);
+
         vk::ImageCreateInfo image_info{};
         image_info.imageType = vk::ImageType::e2D;
         image_info.extent = vk::Extent3D{swapchain_extent_.width, swapchain_extent_.height, 1};
@@ -101,40 +129,44 @@ bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physi
         image_info.format = depth_format_;
         image_info.tiling = vk::ImageTiling::eOptimal;
         image_info.initialLayout = vk::ImageLayout::eUndefined;
-        image_info.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+        image_info.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled;
         image_info.samples = vk::SampleCountFlagBits::e1;
         image_info.sharingMode = vk::SharingMode::eExclusive;
 
-        depth_image_ = std::make_unique<vk::raii::Image>(device, image_info);
+        for (uint32_t i = 0; i < count; ++i) {
+            depth_images_.emplace_back(device, image_info);
+            VulkanEngine::Utils::SetVulkanObjectName(device, depth_images_.back(), "depth-image-" + std::to_string(i));
 
-        const auto requirements = depth_image_->getMemoryRequirements();
-        vk::MemoryAllocateInfo alloc_info{};
-        alloc_info.allocationSize = requirements.size;
+            const auto requirements = depth_images_.back().getMemoryRequirements();
+            vk::MemoryAllocateInfo alloc_info{};
+            alloc_info.allocationSize = requirements.size;
 
-        const auto mem_properties = physical_device.getMemoryProperties();
-        uint32_t memory_type_index = UINT32_MAX;
-        for (uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
-            if ((requirements.memoryTypeBits & (1u << i)) && (mem_properties.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
-                memory_type_index = i;
-                break;
+            const auto mem_properties = physical_device.getMemoryProperties();
+            uint32_t memory_type_index = UINT32_MAX;
+            for (uint32_t j = 0; j < mem_properties.memoryTypeCount; ++j) {
+                if ((requirements.memoryTypeBits & (1u << j)) && (mem_properties.memoryTypes[j].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
+                    memory_type_index = j;
+                    break;
+                }
             }
+            if (memory_type_index == UINT32_MAX) return false;
+
+            alloc_info.memoryTypeIndex = memory_type_index;
+            depth_image_memories_.emplace_back(device, alloc_info);
+            VulkanEngine::Utils::SetVulkanObjectName(device, depth_image_memories_.back(), "depth-memory-" + std::to_string(i));
+            depth_images_.back().bindMemory(depth_image_memories_.back(), 0);
+
+            vk::ImageViewCreateInfo view_info{};
+            view_info.image = *depth_images_.back();
+            view_info.viewType = vk::ImageViewType::e2D;
+            view_info.format = depth_format_;
+            view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+            view_info.subresourceRange.levelCount = 1;
+            view_info.subresourceRange.layerCount = 1;
+
+            depth_image_views_.emplace_back(device, view_info);
+            VulkanEngine::Utils::SetVulkanObjectName(device, depth_image_views_.back(), "depth-image-view-" + std::to_string(i));
         }
-        if (memory_type_index == UINT32_MAX) return false;
-
-        alloc_info.memoryTypeIndex = memory_type_index;
-
-        depth_image_memory_ = std::make_unique<vk::raii::DeviceMemory>(device, alloc_info);
-        depth_image_->bindMemory(**depth_image_memory_, 0);
-
-        vk::ImageViewCreateInfo view_info{};
-        view_info.image = **depth_image_;
-        view_info.viewType = vk::ImageViewType::e2D;
-        view_info.format = depth_format_;
-        view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
-        view_info.subresourceRange.levelCount = 1;
-        view_info.subresourceRange.layerCount = 1;
-
-        depth_image_view_ = std::make_unique<vk::raii::ImageView>(device, view_info);
         return true;
     } catch (...) {
         return false;
@@ -142,17 +174,17 @@ bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physi
 }
 
 void VulkanSwapchain::Shutdown() {
-    depth_image_view_.reset();
-    depth_image_memory_.reset();
-    depth_image_.reset();
+    depth_image_views_.clear();
+    depth_image_memories_.clear();
+    depth_images_.clear();
     swapchain_image_views_.clear();
     swapchain_images_.clear();
     swapchain_.reset();
 }
 
-bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count) {
+bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode) {
     Shutdown();
-    return Initialize(instance, device, preferred_image_count);
+    return Initialize(instance, device, preferred_image_count, present_mode);
 }
 
 } // namespace VulkanEngine::Runtime

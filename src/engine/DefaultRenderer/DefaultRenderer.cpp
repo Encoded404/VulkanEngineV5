@@ -2,8 +2,8 @@ module;
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
+#include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <cstdint>
 #include <array>
 #include <memory>
@@ -14,6 +14,7 @@ module;
 module VulkanEngine.DefaultRenderer;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanBackend.RenderGraph;
 import VulkanEngine.RenderPipeline;
 import VulkanEngine.SceneRenderer;
@@ -38,6 +39,14 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
 
     auto backbuffer = pipeline_->ImportBackbuffer();
     auto depth_buffer = pipeline_->ImportDepthBuffer();
+    auto hiz_image = pipeline_->ImportImage("hiz-image");
+    auto scene_buffers = pipeline_->ImportBuffer("scene-buffers");
+    auto draw_indirect = pipeline_->ImportBuffer("draw-indirect");
+
+    pipeline_->RegisterResourceResolver("hiz-image",
+        [this](uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizImage(frame_counter_) : VK_NULL_HANDLE; },
+        [this](uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizFullView(frame_counter_) : VK_NULL_HANDLE; },
+        vk::Format::eR32Sfloat);
 
     pipeline_->SetFinalState(
         backbuffer,
@@ -47,117 +56,173 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
             VulkanEngine::RenderGraph::QueueType::Graphics,
             VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
 
-    // ── Pass 1: Depth pre-pass ──
-    {
-        VulkanEngine::RenderGraph::PassAttachmentSetup depth_setup{};
-        depth_setup.auto_begin_rendering = true;
-
-        VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
-        depth_attach.resource = depth_buffer;
-        depth_attach.load_op = vk::AttachmentLoadOp::eClear;
-        depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-        depth_attach.clear_depth = config.clear_depth_stencil;
-        depth_setup.depth_attachment = depth_attach;
-
-        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
-        desc.name = "depth-prepass";
-        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-        desc.writes = {depth_buffer};
-        desc.attachments = depth_setup;
-        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+    // ── Pass 1: Expand (compute) ──
+    auto expand_pass = pipeline_->AddPass({
+        .name = "expand",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .writes = {scene_buffers, draw_indirect},
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
             if (current_scene_renderer_) {
-                current_scene_renderer_->DepthPrepass(cmd, current_width_, current_height_, frame_counter_);
+                const uint32_t cnt = current_scene_renderer_->GetCurrentEntityCount();
+                if (cnt) {
+                    current_scene_renderer_->DispatchExpand(cmd, cnt,
+                        current_view_proj_, frame_counter_);
+                }
             }
-        };
-        pipeline_->AddPass(desc);
-    }
+        }
+    });
 
-    // ── Pass 2: Hi-Z generation compute (placeholder — requires depth image handle) ──
-    {
-        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
-        desc.name = "hiz-gen";
-        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+    // ── Pass 2: Depth pre-pass ──
+    VulkanEngine::RenderGraph::PassAttachmentSetup depth_setup{};
+    depth_setup.auto_begin_rendering = true;
+
+    VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
+    depth_attach.resource = depth_buffer;
+    depth_attach.load_op = vk::AttachmentLoadOp::eClear;
+    depth_attach.store_op = vk::AttachmentStoreOp::eStore;
+    depth_attach.clear_depth = config.clear_depth_stencil;
+    depth_setup.depth_attachment = depth_attach;
+
+    auto depth_pass = pipeline_->AddPass({
+        .name = "depth-prepass",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {draw_indirect,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {depth_buffer},
+        .attachments = depth_setup,
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
             if (current_scene_renderer_) {
-                current_scene_renderer_->DispatchHiZGen(cmd, current_width_, current_height_, frame_counter_);
+                current_scene_renderer_->DepthPrepass(cmd, current_width_, current_height_,
+                                                     frame_counter_);
             }
-        };
-        pipeline_->AddPass(desc);
-    }
+        }
+    });
 
-    // ── Pass 3: Occlusion sort compute ──
-    {
-        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
-        desc.name = "occlusion-sort";
-        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+    // ── Pass 3: Hi-Z generation compute ──
+    auto hiz_pass = pipeline_->AddPass({
+        .name = "hiz-gen",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{depth_buffer,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {hiz_image},
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
             if (current_scene_renderer_) {
-                current_scene_renderer_->DispatchOcclusionSort(cmd, frame_counter_);
+                current_scene_renderer_->DispatchHiZGen(cmd, current_width_, current_height_,
+                                                        frame_counter_, current_image_index_);
             }
-        };
-        pipeline_->AddPass(desc);
-    }
+        }
+    });
 
-    // ── Pass 4: Main pass (opaque) ──
-    {
-        VulkanEngine::RenderGraph::PassAttachmentSetup attachment_setup{};
-        attachment_setup.auto_begin_rendering = true;
+    // ── Pass 4: Occlusion cull compute ──
+    auto occlusion_pass = pipeline_->AddPass({
+        .name = "occlusion",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{hiz_image,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {scene_buffers},
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                current_scene_renderer_->DispatchOcclusion(cmd, frame_counter_);
+            }
+        }
+    });
 
-        VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-        color_attach.resource = backbuffer;
-        color_attach.load_op = vk::AttachmentLoadOp::eClear;
-        color_attach.store_op = vk::AttachmentStoreOp::eStore;
-        color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{
-            config.clear_color.r, config.clear_color.g, config.clear_color.b, config.clear_color.a});
-        attachment_setup.color_attachments.push_back(color_attach);
+    // ── Pass 5: Collect compute (count + compact + draw commands) ──
+    auto collect_pass = pipeline_->AddPass({
+        .name = "collect",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {scene_buffers, draw_indirect},
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
+            if (current_scene_renderer_) {
+                current_scene_renderer_->DispatchCollect(cmd, frame_counter_);
+            }
+        }
+    });
 
-        VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
-        depth_attach.resource = depth_buffer;
-        depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
-        depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-        attachment_setup.depth_attachment = depth_attach;
+    // ── Pass 6: Main pass (opaque) ──
+    VulkanEngine::RenderGraph::PassAttachmentSetup main_setup{};
+    main_setup.auto_begin_rendering = true;
 
-        VulkanEngine::RenderPipeline::RenderPipelinePassDesc desc{};
-        desc.name = "main-pass";
-        desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-        desc.writes = {backbuffer, depth_buffer};
-        desc.attachments = attachment_setup;
-        desc.execute = [this](const void*, vk::CommandBuffer cmd) {
+    VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
+    color_attach.resource = backbuffer;
+    color_attach.load_op = vk::AttachmentLoadOp::eClear;
+    color_attach.store_op = vk::AttachmentStoreOp::eStore;
+    color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{
+        config.clear_color.r, config.clear_color.g, config.clear_color.b, config.clear_color.a});
+    main_setup.color_attachments.push_back(color_attach);
+
+    VulkanEngine::RenderGraph::AttachmentInfo main_depth_attach{};
+    main_depth_attach.resource = depth_buffer;
+    main_depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
+    main_depth_attach.store_op = vk::AttachmentStoreOp::eStore;
+    main_setup.depth_attachment = main_depth_attach;
+
+    auto main_pass = pipeline_->AddPass({
+        .name = "main-pass",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {draw_indirect,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {backbuffer, depth_buffer},
+        .attachments = main_setup,
+        .execute = [this](const void*, vk::CommandBuffer cmd) {
             if (current_scene_renderer_) {
                 const float aspect = static_cast<float>(current_width_) / static_cast<float>(current_height_);
                 const glm::mat4 view = current_camera_->GetViewMatrix();
                 const glm::mat4 proj = current_camera_->GetProjectionMatrix(aspect);
 
                 current_scene_renderer_->Render(cmd, *current_registry_,
-                                                *current_vertex_buffer_, *current_index_buffer_,
                                                 *current_technique_mgr_, *current_bindless_mgr_,
                                                 proj, view,
                                                 current_width_, current_height_,
                                                 frame_counter_);
             }
-        };
-        pipeline_->AddPass(desc);
+        }
+    });
+
+    // ── Pass 7: ImGui overlay ──
+    if (config.enable_imgui) {
+        pipeline_->AddPass({
+            .name = "imgui-overlay",
+            .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+            .writes = {backbuffer},
+            .execute = [this](const void*, vk::CommandBuffer cmd) {
+                if (current_imgui_ && current_imgui_->IsInitialized()) {
+                    auto& backend = bootstrap_->GetBackend();
+                    current_imgui_->RenderDrawData(cmd,
+                        *backend.GetSwapchainImageViews()[current_image_index_],
+                        current_width_, current_height_);
+                }
+            }
+        });
     }
 
-    // ── Pass 5: ImGui overlay ──
-    if (config.enable_imgui) {
-        VulkanEngine::RenderPipeline::RenderPipelinePassDesc imgui_pass_desc{};
-        imgui_pass_desc.name = "imgui-overlay";
-        imgui_pass_desc.queue = VulkanEngine::RenderGraph::QueueType::Graphics;
-        imgui_pass_desc.writes = {backbuffer};
-        imgui_pass_desc.execute = [this](const void*, vk::CommandBuffer cmd) {
-            if (current_imgui_ && current_imgui_->IsInitialized()) {
-                auto& backend = bootstrap_->GetBackend();
-                current_imgui_->RenderDrawData(cmd,
-                    *backend.GetSwapchainImageViews()[current_image_index_],
-                    current_width_, current_height_);
-            }
-        };
-        pipeline_->AddPass(imgui_pass_desc);
-    }
+    // Explicit ordering ensures correct pipeline
+    pipeline_->AddDependency(expand_pass, depth_pass);
+    pipeline_->AddDependency(depth_pass, hiz_pass);
+    pipeline_->AddDependency(hiz_pass, occlusion_pass);
+    pipeline_->AddDependency(occlusion_pass, collect_pass);
+    pipeline_->AddDependency(collect_pass, main_pass);
 
     pipeline_->Compile();
     if (!pipeline_->IsCompiled()) return false;
+
+    clear_depth_stencil_ = config.clear_depth_stencil;
 
     {
         auto& device = bootstrap.GetBackend().GetDevice();
@@ -166,16 +231,21 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
         qp_info.pipelineStatistics = GPU_STATS_FLAGS;
         qp_info.queryCount = 1;
         gpu_stats_pool_ = std::make_unique<vk::raii::QueryPool>(device, qp_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
         vkResetQueryPool(*device, **gpu_stats_pool_, 0, 1);
     }
 
-    LOGIFACE_LOG(info, "DefaultRenderer initialized with GPU-driven passes (depth-prepass + main-pass)");
+    LOGIFACE_LOG(info, "DefaultRenderer initialized with full render-graph pipeline");
     return true;
 }
 
 void DefaultRenderer::Shutdown() {
     if (bootstrap_) {
-        bootstrap_->GetBackend().GetDevice().waitIdle();
+        try {
+            bootstrap_->GetBackend().GetDevice().waitIdle();
+        } catch (const std::exception& err) {
+            LOGIFACE_LOG(error, "Error during DefaultRenderer shutdown: " + std::string(err.what()));
+        }
     }
     gpu_stats_pool_.reset();
     if (pipeline_) {
@@ -188,8 +258,6 @@ void DefaultRenderer::Shutdown() {
 void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                    VulkanEngine::ComponentRegistry& registry,
                                    const VulkanEngine::Components::Camera& camera,
-                                   const VulkanEngine::GpuResources::GpuBuffer& vertex_buffer,
-                                   const VulkanEngine::GpuResources::GpuBuffer& index_buffer,
                                    VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
                                    VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
@@ -199,8 +267,6 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
 
     current_registry_ = &registry;
     current_camera_ = &camera;
-    current_vertex_buffer_ = &vertex_buffer;
-    current_index_buffer_ = &index_buffer;
     current_technique_mgr_ = &technique_mgr;
     current_bindless_mgr_ = &bindless_mgr;
     current_scene_renderer_ = &scene_renderer;
@@ -218,51 +284,48 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
     }
 
     auto& backend = bootstrap.GetBackend();
+    const uint32_t sc_count = bootstrap.GetSnapshot().swapchain_image_count;
+    if (sc_count != last_swapchain_image_count_) {
+        last_swapchain_image_count_ = sc_count;
+        if (current_imgui_ && current_imgui_->IsInitialized()) {
+            current_imgui_->OnSwapchainRecreated(sc_count,
+                static_cast<vk::Format>(bootstrap.GetBackend().GetSurfaceFormat().format));
+        }
+    }
+
+    // Enable GPU stats
     const uint32_t frame_idx = bootstrap.GetSnapshot().frame_index;
     auto& cmd = backend.GetCommandBuffer(frame_idx);
     cmd.reset({});
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     if (gpu_stats_pool_) {
-        std::array<uint64_t, 7> gpu_stats{};
-        VkQueryPool pool = **gpu_stats_pool_;
-        VkDevice dev = *backend.GetDevice();
-        auto* fn = reinterpret_cast<PFN_vkGetQueryPoolResults>(
-            vkGetDeviceProcAddr(dev, "vkGetQueryPoolResults"));
-        if (fn) {
-            VkResult result = fn(dev, pool, 0, 1,
-                sizeof(gpu_stats), gpu_stats.data(), sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT);
-            if (result == VK_SUCCESS) {
-                LOGIFACE_LOG(trace, "GPU STATS: IA_vertices=" + std::to_string(gpu_stats[0]) +
-                             " IA_primitives=" + std::to_string(gpu_stats[1]) +
-                             " VS_invocations=" + std::to_string(gpu_stats[2]) +
-                             " clipping_invocations=" + std::to_string(gpu_stats[3]) +
-                             " clipping_primitives=" + std::to_string(gpu_stats[4]) +
-                             " FS_invocations=" + std::to_string(gpu_stats[5]) +
-                             " compute_invocations=" + std::to_string(gpu_stats[6]));
-            }
-        }
-
         cmd.resetQueryPool(**gpu_stats_pool_, 0, 1);
         cmd.beginQuery(**gpu_stats_pool_, 0, {});
     }
 
-    // Phase 1: CPU cull + upload + expand compute dispatch (before render graph)
+    // Phase 1: CPU gather + upload + descriptor writes (before render graph)
     if (current_scene_renderer_ && current_registry_) {
         const float aspect = static_cast<float>(current_width_) / static_cast<float>(current_height_);
         const glm::mat4 view = current_camera_->GetViewMatrix();
         const glm::mat4 proj = current_camera_->GetProjectionMatrix(aspect);
+        current_view_proj_ = proj * view;
 
+        // Bind actual depth to Hi-Z descriptor before hiz-gen pass executes
+        const auto& depth_view = backend.GetDepthImageView(image_index);
+        current_scene_renderer_->UpdateHizDepthBinding(frame_counter_, *depth_view);
+
+        // Initialize Hi-Z on first frame
+        current_scene_renderer_->InitializeHizFirstFrame(cmd);
+
+        // CPU gather + upload + descriptor writes for all passes
         current_scene_renderer_->PrepareCompute(cmd, *current_registry_,
-                                                *current_vertex_buffer_,
-                                                *current_index_buffer_,
                                                 view, proj,
                                                 current_width_, current_height_,
                                                 frame_counter_);
     }
 
-    // Phase 2: Render graph executes depth pre-pass + main pass + imgui
+    // Phase 2: Render graph executes all GPU passes in dependency order
     pipeline_->Execute(nullptr, cmd, image_index);
 
     if (gpu_stats_pool_) {
@@ -275,8 +338,6 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
 
     current_registry_ = nullptr;
     current_camera_ = nullptr;
-    current_vertex_buffer_ = nullptr;
-    current_index_buffer_ = nullptr;
     current_technique_mgr_ = nullptr;
     current_bindless_mgr_ = nullptr;
     current_scene_renderer_ = nullptr;

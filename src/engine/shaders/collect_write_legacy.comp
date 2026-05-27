@@ -1,0 +1,37 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+struct DrawIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer TechIntermediate {
+    uint data[];
+} inter;
+
+layout(std430, set = 0, binding = 1) buffer TechBuffer {
+    uint   counts[256];
+    uint   offsets[256];
+    DrawIndirectCommand cmds[];
+} tech;
+
+layout(push_constant) uniform PC {
+    uint elementCount;
+    uint pad0;
+    uint techniqueCount;
+    uint pad1;
+} pc;
+
+void main() {
+    for (uint t = 0; t < pc.techniqueCount; t++) {
+        uint cnt = inter.data[t * 2u + 1u];
+        uint startEntry = inter.data[t * 2u];
+        tech.counts[t] = cnt;
+        tech.offsets[t] = startEntry;
+        tech.cmds[t] = DrawIndirectCommand(cnt, 1u, startEntry, 0);
+    }
+}

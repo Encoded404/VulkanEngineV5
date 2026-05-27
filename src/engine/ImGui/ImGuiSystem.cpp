@@ -6,9 +6,9 @@ module;
 #include <imgui.h>
 #include <vulkan/vulkan.hpp>
 
-module VulkanEngine.ImGuiSystem;
+module VulkanEngine.ImGui;
 
-namespace VulkanEngine::ImGuiSystem {
+namespace VulkanEngine::ImGui {
 
 ImGuiSystem::ImGuiSystem(std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> backend)
     : backend_(std::move(backend)) {}

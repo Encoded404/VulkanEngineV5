@@ -4,21 +4,21 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module VulkanEngine.GpuResources.BlockBuffer;
+module VulkanEngine.GpuResources.BlockArray;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 
 namespace VulkanEngine::GpuResources {
 
-BlockBuffer::~BlockBuffer() {
+BlockArray::~BlockArray() {
     Shutdown();
 }
 
-BlockBuffer::BlockBuffer(BlockBuffer&&) noexcept = default;
-BlockBuffer& BlockBuffer::operator=(BlockBuffer&&) noexcept = default;
+BlockArray::BlockArray(BlockArray&&) noexcept = default;
+BlockArray& BlockArray::operator=(BlockArray&&) noexcept = default;
 
-bool BlockBuffer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend, const Config& cfg) {
+bool BlockArray::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend, const Config& cfg) {
     if (cfg.entry_size == 0) return false;
     if (cfg.entries_per_block == 0) return false;
     backend_ = &backend;
@@ -26,13 +26,13 @@ bool BlockBuffer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& bac
     return true;
 }
 
-void BlockBuffer::Shutdown() {
+void BlockArray::Shutdown() {
     blocks_.clear();
     mappings_.clear();
     backend_ = nullptr;
 }
 
-bool BlockBuffer::AddBlock() {
+bool BlockArray::AddBlock() {
     if (!backend_) return false;
 
     const uint64_t block_bytes = BlockSize();
@@ -56,7 +56,7 @@ bool BlockBuffer::AddBlock() {
     return true;
 }
 
-void* BlockBuffer::EnsureCapacity(uint32_t count) {
+void* BlockArray::EnsureCapacity(uint32_t count) {
     if (!backend_) return nullptr;
 
     const uint32_t needed_blocks = (count + cfg_.entries_per_block - 1) / cfg_.entries_per_block;
@@ -68,7 +68,7 @@ void* BlockBuffer::EnsureCapacity(uint32_t count) {
     return mappings_[0];
 }
 
-void* BlockBuffer::Get(uint32_t index) {
+void* BlockArray::Get(uint32_t index) {
     const uint32_t block_idx = index / cfg_.entries_per_block;
     const uint32_t local_idx = index % cfg_.entries_per_block;
 
@@ -78,7 +78,7 @@ void* BlockBuffer::Get(uint32_t index) {
     return static_cast<char*>(mappings_[block_idx]) + static_cast<uint64_t>(local_idx) * cfg_.entry_size;
 }
 
-vk::Buffer BlockBuffer::GetBlockBuffer(uint32_t block_index) const {
+vk::Buffer BlockArray::GetBlockArray(uint32_t block_index) const {
     if (block_index >= blocks_.size()) return VK_NULL_HANDLE;
     return *blocks_[block_index].GetBuffer();
 }

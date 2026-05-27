@@ -4,6 +4,7 @@ module;
 #include <future>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <stdexcept>
 #include <cstdint>
 #include <cstddef>
@@ -40,11 +41,12 @@ public:
 
             const auto& attrib = reader.GetAttrib();
             const auto& shapes = reader.GetShapes();
+            const auto& materials = reader.GetMaterials();
+
+            std::vector<std::string> material_infos;
 
             struct ObjVert {
-                // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-                int vi, ni, ti;
-                // NOLINTEND(misc-non-private-member-variables-in-classes)
+                int vi, ni, ti; // NOLINT(misc-non-private-member-variables-in-classes)
                 bool operator==(const ObjVert& o) const {
                     return vi == o.vi && ni == o.ni && ti == o.ti;
                 }
@@ -55,53 +57,93 @@ public:
                 }
             };
 
-            uint32_t base_index = 0;
             for (const auto& shape : shapes) {
-                std::unordered_map<ObjVert, uint32_t, ObjVertHash> vert_map;
-                size_t index_offset = 0;
+                if (shape.mesh.num_face_vertices.empty()) continue;
+
+                // Pre-compute per-face index offsets into shape.mesh.indices
+                std::vector<size_t> face_offsets(shape.mesh.num_face_vertices.size());
+                size_t running_offset = 0;
+                for (size_t i = 0; i < shape.mesh.num_face_vertices.size(); ++i) {
+                    face_offsets[i] = running_offset;
+                    running_offset += shape.mesh.num_face_vertices[i];
+                }
+
+                const bool has_materials = !shape.mesh.material_ids.empty();
+                int current_mat_id = has_materials ? shape.mesh.material_ids[0] : -1;
+                uint32_t group_start_face = 0;
 
                 for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
-                    const uint32_t fv = shape.mesh.num_face_vertices[f];
-                    for (uint32_t v = 0; v < fv; ++v) {
-                        const auto& idx = shape.mesh.indices[index_offset + v];
-                        const ObjVert key{idx.vertex_index, idx.normal_index, idx.texcoord_index};
-                        const auto it = vert_map.find(key);
-                        if (it == vert_map.end()) {
-                            const uint32_t new_idx = static_cast<uint32_t>(mesh->vertices.size());
-                            vert_map[key] = new_idx;
+                    const int face_mat_id = has_materials ? shape.mesh.material_ids[f] : -1;
+                    const bool last_face = (f == shape.mesh.num_face_vertices.size() - 1);
+                    const bool group_ended = (face_mat_id != current_mat_id);
 
-                            const float px = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 0] : 0.0f;
-                            const float py = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 1] : 0.0f;
-                            const float pz = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 2] : 0.0f;
-                            mesh->vertices.push_back({px, py, pz});
+                    if (group_ended || last_face) {
+                        const size_t group_end = (last_face && !group_ended) ? f + 1 : f;
 
-                            const float nx = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 0] : 0.0f;
-                            const float ny = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 1] : 0.0f;
-                            const float nz = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 2] : 0.0f;
-                            mesh->normals.push_back({nx, ny, nz});
+                        if (group_end > group_start_face) {
+                            std::unordered_map<ObjVert, uint32_t, ObjVertHash> vert_map;
+                            size_t face_offset = face_offsets[group_start_face];
 
-                            const float tu = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 0] : 0.0f;
-                            const float tv = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 1] : 0.0f;
-                            mesh->uvs.push_back({tu, tv});
+                            if (current_mat_id >= 0 && static_cast<size_t>(current_mat_id) < materials.size()) {
+                                material_infos.push_back(materials[current_mat_id].diffuse_texname);
+                            } else {
+                                material_infos.emplace_back();
+                            }
+
+                            for (size_t gf = group_start_face; gf < group_end; ++gf) {
+                                const uint32_t fv = shape.mesh.num_face_vertices[gf];
+                                for (uint32_t v = 0; v < fv; ++v) {
+                                    const auto& idx = shape.mesh.indices[face_offset + v];
+                                    const ObjVert key{idx.vertex_index, idx.normal_index, idx.texcoord_index};
+                                    const auto it = vert_map.find(key);
+                                    if (it == vert_map.end()) {
+                                        const uint32_t new_idx = static_cast<uint32_t>(mesh->vertices.size());
+                                        vert_map[key] = new_idx;
+
+                                        const float px = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 0] : 0.0f;
+                                        const float py = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 1] : 0.0f;
+                                        const float pz = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 2] : 0.0f;
+                                        mesh->vertices.push_back({px, py, pz});
+
+                                        const float nx = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 0] : 0.0f;
+                                        const float ny = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 1] : 0.0f;
+                                        const float nz = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 2] : 0.0f;
+                                        mesh->normals.push_back({nx, ny, nz});
+
+                                        const float tu = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 0] : 0.0f;
+                                        const float tv = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 1] : 0.0f;
+                                        mesh->uvs.push_back({tu, tv});
+                                    }
+                                    mesh->indices.push_back(vert_map[key]);
+                                }
+                                face_offset += static_cast<size_t>(fv);
+                            }
+
+                            const uint32_t submesh_start = mesh->subMeshes.empty()
+                                ? 0
+                                : mesh->subMeshes.back().index_start + mesh->subMeshes.back().index_count;
+                            const uint32_t submesh_count = static_cast<uint32_t>(mesh->indices.size()) - submesh_start;
+                            if (submesh_count > 0) {
+                                mesh->subMeshes.push_back(VulkanEngine::SubMesh{
+                                    .index_start = submesh_start,
+                                    .index_count = submesh_count,
+                                });
+                            }
                         }
-                        mesh->indices.push_back(vert_map[key]);
-                    }
-                    index_offset += static_cast<size_t>(fv);
-                }
 
-                const uint32_t submesh_count = static_cast<uint32_t>(mesh->indices.size()) - base_index;
-                if (submesh_count > 0) {
-                    mesh->subMeshes.push_back(VulkanEngine::SubMesh{
-                        .index_start = base_index,
-                        .index_count = submesh_count,
-                    });
+                        if (group_ended) {
+                            current_mat_id = face_mat_id;
+                            group_start_face = f;
+                        }
+                    }
                 }
-                base_index = static_cast<uint32_t>(mesh->indices.size());
             }
 
             if (mesh->vertices.empty()) {
                 throw std::runtime_error("ObjMeshAssembler: No vertices loaded from OBJ file");
             }
+
+            mesh->material_infos = std::move(material_infos);
 
             prom->set_value(mesh);
         } catch (...) {

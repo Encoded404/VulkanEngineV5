@@ -57,10 +57,10 @@ struct MeshGPUResources {
     uint32_t index_count = 0;
 };
 
-class PipelineManager {
+class GraphicsPipeline {
 public:
-    PipelineManager();
-    ~PipelineManager();
+    GraphicsPipeline();
+    ~GraphicsPipeline();
 
     void Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                     const std::vector<uint32_t>& vertex_spirv,

@@ -9,90 +9,90 @@ module VulkanBackend.Event;
 
 namespace VulkanEngine::Backend::Event {
 
-Event::Event(std::type_index type, EventCategory category, EventType event_type) noexcept
+EventBase::EventBase(std::type_index type, EventCategory category, EventType event_type) noexcept
     : type_(type), category_(category), event_type_(event_type) {}
 
-std::type_index Event::GetType() const noexcept {
+std::type_index EventBase::GetType() const noexcept {
     return type_;
 }
 
-EventCategory Event::GetCategory() const noexcept {
+EventCategory EventBase::GetCategory() const noexcept {
     return category_;
 }
 
-EventType Event::GetEventType() const noexcept {
+EventType EventBase::GetEventType() const noexcept {
     return event_type_;
 }
 
-std::unique_ptr<IEvent> Event::Clone() const {
+std::unique_ptr<IEvent> EventBase::Clone() const {
     return CloneEvent();
 }
 
 QuitEvent::QuitEvent()
-    : Event(typeid(QuitEvent), EventCategory::Platform, EventType::Quit) {}
+    : EventBase(typeid(QuitEvent), EventCategory::Platform, EventType::Quit) {}
 
 std::unique_ptr<IEvent> QuitEvent::CloneEvent() const {
     return std::make_unique<QuitEvent>(*this);
 }
 
 WindowResizedEvent::WindowResizedEvent(uint32_t width_value, uint32_t height_value)
-    : Event(typeid(WindowResizedEvent), EventCategory::Platform, EventType::WindowResized), width(width_value), height(height_value) {}
+    : EventBase(typeid(WindowResizedEvent), EventCategory::Platform, EventType::WindowResized), width(width_value), height(height_value) {}
 
 std::unique_ptr<IEvent> WindowResizedEvent::CloneEvent() const {
     return std::make_unique<WindowResizedEvent>(*this);
 }
 
 WindowMinimizedEvent::WindowMinimizedEvent()
-    : Event(typeid(WindowMinimizedEvent), EventCategory::Platform, EventType::WindowMinimized) {}
+    : EventBase(typeid(WindowMinimizedEvent), EventCategory::Platform, EventType::WindowMinimized) {}
 
 std::unique_ptr<IEvent> WindowMinimizedEvent::CloneEvent() const {
     return std::make_unique<WindowMinimizedEvent>(*this);
 }
 
 WindowRestoredEvent::WindowRestoredEvent()
-    : Event(typeid(WindowRestoredEvent), EventCategory::Platform, EventType::WindowRestored) {}
+    : EventBase(typeid(WindowRestoredEvent), EventCategory::Platform, EventType::WindowRestored) {}
 
 std::unique_ptr<IEvent> WindowRestoredEvent::CloneEvent() const {
     return std::make_unique<WindowRestoredEvent>(*this);
 }
 
 KeyDownEvent::KeyDownEvent(int32_t keycode_value, bool repeat_value)
-    : Event(typeid(KeyDownEvent), EventCategory::Input, EventType::KeyDown), keycode(keycode_value), repeat(repeat_value) {}
+    : EventBase(typeid(KeyDownEvent), EventCategory::Input, EventType::KeyDown), keycode(keycode_value), repeat(repeat_value) {}
 
 std::unique_ptr<IEvent> KeyDownEvent::CloneEvent() const {
     return std::make_unique<KeyDownEvent>(*this);
 }
 
 KeyUpEvent::KeyUpEvent(int32_t keycode_value)
-    : Event(typeid(KeyUpEvent), EventCategory::Input, EventType::KeyUp), keycode(keycode_value) {}
+    : EventBase(typeid(KeyUpEvent), EventCategory::Input, EventType::KeyUp), keycode(keycode_value) {}
 
 std::unique_ptr<IEvent> KeyUpEvent::CloneEvent() const {
     return std::make_unique<KeyUpEvent>(*this);
 }
 
 MouseButtonDownEvent::MouseButtonDownEvent(int32_t button_value, int32_t x_value, int32_t y_value)
-    : Event(typeid(MouseButtonDownEvent), EventCategory::Input, EventType::MouseButtonDown), button(button_value), x(x_value), y(y_value) {}
+    : EventBase(typeid(MouseButtonDownEvent), EventCategory::Input, EventType::MouseButtonDown), button(button_value), x(x_value), y(y_value) {}
 
 std::unique_ptr<IEvent> MouseButtonDownEvent::CloneEvent() const {
     return std::make_unique<MouseButtonDownEvent>(*this);
 }
 
 MouseButtonUpEvent::MouseButtonUpEvent(int32_t button_value, int32_t x_value, int32_t y_value)
-    : Event(typeid(MouseButtonUpEvent), EventCategory::Input, EventType::MouseButtonUp), button(button_value), x(x_value), y(y_value) {}
+    : EventBase(typeid(MouseButtonUpEvent), EventCategory::Input, EventType::MouseButtonUp), button(button_value), x(x_value), y(y_value) {}
 
 std::unique_ptr<IEvent> MouseButtonUpEvent::CloneEvent() const {
     return std::make_unique<MouseButtonUpEvent>(*this);
 }
 
 MouseMotionEvent::MouseMotionEvent(float x_value, float y_value, float delta_x_value, float delta_y_value)
-    : Event(typeid(MouseMotionEvent), EventCategory::Input, EventType::MouseMotion), x(x_value), y(y_value), delta_x(delta_x_value), delta_y(delta_y_value) {}
+    : EventBase(typeid(MouseMotionEvent), EventCategory::Input, EventType::MouseMotion), x(x_value), y(y_value), delta_x(delta_x_value), delta_y(delta_y_value) {}
 
 std::unique_ptr<IEvent> MouseMotionEvent::CloneEvent() const {
     return std::make_unique<MouseMotionEvent>(*this);
 }
 
 MouseWheelEvent::MouseWheelEvent(float x_value, float y_value)
-    : Event(typeid(MouseWheelEvent), EventCategory::Input, EventType::MouseWheel), x(x_value), y(y_value) {}
+    : EventBase(typeid(MouseWheelEvent), EventCategory::Input, EventType::MouseWheel), x(x_value), y(y_value) {}
 
 std::unique_ptr<IEvent> MouseWheelEvent::CloneEvent() const {
     return std::make_unique<MouseWheelEvent>(*this);

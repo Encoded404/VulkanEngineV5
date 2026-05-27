@@ -6,7 +6,6 @@ module;
 #include <string>
 #include <vector>
 #include <array>
-#include <memory>
 
 #include <vulkan/vulkan.hpp>
 
@@ -27,6 +26,9 @@ class TextureResource final : public Resource {
 public:
     explicit TextureResource(std::string id);
 
+    TextureResource(std::string id, uint32_t width, uint32_t height, vk::Format format,
+                    std::vector<std::byte> pixels);
+
     [[nodiscard]] uint32_t GetWidth() const noexcept;
     [[nodiscard]] uint32_t GetHeight() const noexcept;
     [[nodiscard]] uint32_t GetMipLevels() const noexcept;
@@ -36,17 +38,16 @@ public:
     [[nodiscard]] const std::vector<std::byte>& GetPixels() const noexcept;
     [[nodiscard]] bool HasPixels() const noexcept;
 
-    // Static factory method to create a checkerboard texture
-    [[nodiscard]] static std::shared_ptr<TextureResource> CreateCheckerboardTexture(std::string id, const CheckerboardConfig& config);
+
 
 protected:
     bool DoLoad() override;
     bool DoUnload() override;
     bool DoLoadFromBuffer(const FileLoader::ByteBuffer& buf) override;
-
-private:
     void Reset() noexcept;
 
+private:
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     uint32_t mip_levels_ = 0;
@@ -55,6 +56,7 @@ private:
     vk::Format vk_format_ = vk::Format::eUndefined;
     bool transcoded_ = false;
     std::vector<std::byte> pixels_{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
 }  // namespace VulkanEngine

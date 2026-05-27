@@ -8,14 +8,14 @@ module;
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <vulkan/vulkan_raii.hpp>
 
-module VulkanEngine.MeshRendererSystem;
+module VulkanEngine.MeshDrawRecorder;
 
 import VulkanBackend.Component;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshRenderer;
 import VulkanEngine.GpuResources;
 
-namespace VulkanEngine::MeshRendererSystem {
+namespace VulkanEngine::MeshDrawRecorder {
 
 namespace {
 
@@ -40,7 +40,7 @@ struct PushConstants {
 
 } // namespace
 
-void MeshRendererSystem::RecordAllMeshDraws(vk::CommandBuffer cmd,
+void MeshDrawRecorder::RecordAllMeshDraws(vk::CommandBuffer cmd,
                                             VulkanEngine::ComponentRegistry& registry,
                                             const MeshRenderObject& render_object,
                                             const glm::mat4& view_matrix,
@@ -83,4 +83,4 @@ void MeshRendererSystem::RecordAllMeshDraws(vk::CommandBuffer cmd,
     });
 }
 
-} // namespace VulkanEngine::MeshRendererSystem
+} // namespace VulkanEngine::MeshDrawRecorder

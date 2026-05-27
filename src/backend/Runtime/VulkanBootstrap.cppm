@@ -11,9 +11,9 @@ export import VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanEngine::Runtime {
 
-class IVulkanBootstrapBackend {
+class IVulkanBootstrap {
 public:
-    virtual ~IVulkanBootstrapBackend() = default;
+    virtual ~IVulkanBootstrap() = default;
 
     [[nodiscard]] virtual ComponentRegistry& GetComponentRegistry() = 0;
     [[nodiscard]] virtual const ComponentRegistry& GetComponentRegistry() const = 0;
@@ -54,17 +54,22 @@ public:
     [[nodiscard]] virtual bool AcquireNextImage(uint32_t frame_idx, uint32_t& out_image_index) = 0; // Modified
     [[nodiscard]] virtual bool Present(uint32_t frame_idx, uint32_t image_index, bool rendering_succeeded) = 0; // Modified
 
+    // DGC support
+    [[nodiscard]] virtual bool IsDgcAvailable() const = 0;
+    [[nodiscard]] virtual uint32_t GetMaxDgcSequenceCount() const = 0;
+    [[nodiscard]] virtual uint32_t GetMinDgcBufferOffsetAlignment() const = 0;
+
     virtual void Shutdown() = 0;
 };
 
 class VulkanBootstrap {
 public:
-    explicit VulkanBootstrap(std::shared_ptr<IVulkanBootstrapBackend> backend);
+    explicit VulkanBootstrap(std::shared_ptr<IVulkanBootstrap> backend);
 
     [[nodiscard]] bool Initialize(const VulkanBootstrapConfig& config);
     void Shutdown();
 
-    [[nodiscard]] VulkanBootstrapSnapshot BeginFrame();
+    [[nodiscard]] VulkanBootstrapState BeginFrame();
     void EndFrame();
 
     void NotifySwapchainOutOfDate();
@@ -75,17 +80,17 @@ public:
     [[nodiscard]] bool Present(uint32_t image_index, bool rendering_succeeded); // Modified
 
     // Direct access to backend for custom rendering
-    [[nodiscard]] IVulkanBootstrapBackend& GetBackend() { return *backend_; }
+    [[nodiscard]] IVulkanBootstrap& GetBackend() { return *backend_; }
 
     void NotifyDeviceLost();
 
     [[nodiscard]] bool IsInitialized() const;
-    [[nodiscard]] const VulkanBootstrapSnapshot& GetSnapshot() const;
+    [[nodiscard]] const VulkanBootstrapState& GetSnapshot() const;
 
 private:
-    std::shared_ptr<IVulkanBootstrapBackend> backend_{};
+    std::shared_ptr<IVulkanBootstrap> backend_{};
     VulkanBootstrapConfig config_{};
-    VulkanBootstrapSnapshot snapshot_{};
+    VulkanBootstrapState snapshot_{};
     BootstrapStatus pending_status_ = BootstrapStatus::Ok;
     bool initialized_ = false;
 };

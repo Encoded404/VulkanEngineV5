@@ -7,11 +7,13 @@ module;
 
 export module VulkanEngine.MaterialManager;
 
-export import VulkanEngine.MaterialId;
-export import VulkanEngine.TextureSlot;
-export import VulkanEngine.TechniqueId;
+export import VulkanEngine.MaterialManager.MaterialId;
+export import VulkanEngine.BindlessManager.TextureSlot;
+export import VulkanEngine.TechniqueManager.TechniqueId;
 
 export namespace VulkanEngine::MaterialManager {
+    using TechniqueManager::TechniqueId;
+    using BindlessManager::TextureSlot;
 
 struct MaterialDefinition {
     TechniqueId technique_id{0};

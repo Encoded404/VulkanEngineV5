@@ -39,14 +39,14 @@ public:
     [[nodiscard]] virtual std::unique_ptr<IEvent> Clone() const = 0;
 };
 
-class Event : public IEvent {
+class EventBase : public IEvent {
 public:
-    Event(std::type_index type, EventCategory category, EventType event_type) noexcept;
-    Event(const Event&) = default;
-    Event& operator=(const Event&) = default;
-    Event(Event&&) noexcept = default;
-    Event& operator=(Event&&) noexcept = default;
-    ~Event() override = default;
+    EventBase(std::type_index type, EventCategory category, EventType event_type) noexcept;
+    EventBase(const EventBase&) = default;
+    EventBase& operator=(const EventBase&) = default;
+    EventBase(EventBase&&) noexcept = default;
+    EventBase& operator=(EventBase&&) noexcept = default;
+    ~EventBase() override = default;
 
     [[nodiscard]] std::type_index GetType() const noexcept final;
     [[nodiscard]] EventCategory GetCategory() const noexcept final;
@@ -65,7 +65,7 @@ private:
 using EventPtr = std::unique_ptr<IEvent>;
 using EventList = std::vector<EventPtr>;
 
-class QuitEvent final : public Event {
+class QuitEvent final : public EventBase {
 public:
     QuitEvent();
 
@@ -75,7 +75,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class WindowResizedEvent final : public Event {
+class WindowResizedEvent final : public EventBase {
 public:
     WindowResizedEvent(uint32_t width, uint32_t height);
 
@@ -88,7 +88,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class WindowMinimizedEvent final : public Event {
+class WindowMinimizedEvent final : public EventBase {
 public:
     WindowMinimizedEvent();
 
@@ -98,7 +98,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class WindowRestoredEvent final : public Event {
+class WindowRestoredEvent final : public EventBase {
 public:
     WindowRestoredEvent();
 
@@ -108,7 +108,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class KeyDownEvent final : public Event {
+class KeyDownEvent final : public EventBase {
 public:
     KeyDownEvent(int32_t keycode, bool repeat = false);
 
@@ -121,7 +121,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class KeyUpEvent final : public Event {
+class KeyUpEvent final : public EventBase {
 public:
     explicit KeyUpEvent(int32_t keycode);
 
@@ -133,7 +133,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class MouseButtonDownEvent final : public Event {
+class MouseButtonDownEvent final : public EventBase {
 public:
     MouseButtonDownEvent(int32_t button, int32_t x, int32_t y);
 
@@ -147,7 +147,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class MouseButtonUpEvent final : public Event {
+class MouseButtonUpEvent final : public EventBase {
 public:
     MouseButtonUpEvent(int32_t button, int32_t x, int32_t y);
 
@@ -161,7 +161,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class MouseMotionEvent final : public Event {
+class MouseMotionEvent final : public EventBase {
 public:
     MouseMotionEvent(float x, float y, float delta_x, float delta_y);
 
@@ -176,7 +176,7 @@ protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
 };
 
-class MouseWheelEvent final : public Event {
+class MouseWheelEvent final : public EventBase {
 public:
     MouseWheelEvent(float x, float y);
 

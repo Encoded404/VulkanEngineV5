@@ -21,7 +21,7 @@ export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.GpuResources;
-export import VulkanEngine.GpuResources.BlockBuffer;
+export import VulkanEngine.GpuResources.BlockArray;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -34,6 +34,7 @@ public:
     static constexpr uint32_t BLOCK_ENTRIES = 256;
     static constexpr uint32_t MAX_BLOCKS = 1024;
     static constexpr uint32_t MAX_TECHNIQUES = 256;
+    static constexpr uint32_t DGC_MAX_SEQUENCES = 256;
 
     SceneRenderer() = default;
     ~SceneRenderer();
@@ -41,7 +42,7 @@ public:
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
                     uint32_t total_vertex_count,
                     uint32_t total_index_count);
@@ -86,6 +87,8 @@ public:
     void DispatchOcclusion(vk::CommandBuffer cmd,
                            uint32_t frame_index);
 
+    void DispatchCollect(vk::CommandBuffer cmd, uint32_t frame_index);
+
     void InitializeHizFirstFrame(vk::CommandBuffer cmd);
 
     void SetSubmeshes(const std::vector<VulkanEngine::SubMesh>& submeshes) { scene_submeshes_ = submeshes; }
@@ -102,20 +105,35 @@ public:
     }
     void UpdateHizDepthBinding(uint32_t frame_index, VkImageView depth_view);
 
+    void SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm);
+
     void DispatchExpand(vk::CommandBuffer cmd, uint32_t object_count,
                         const glm::mat4& view_proj, uint32_t frame_index);
 
-    void DispatchCollect(vk::CommandBuffer cmd, uint32_t frame_index);
+    // Buffer access for render graph
+    [[nodiscard]] VkBuffer GetTechniqueDrawCommandsBuffer(uint32_t frame_index) const {
+        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+        return static_cast<VkBuffer>(*fr.technique_draw_commands.GetBuffer());
+    }
+    [[nodiscard]] VkBuffer GetDgcSequenceBuffer(uint32_t frame_index) const {
+        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+        return static_cast<VkBuffer>(*fr.dgc_sequence_buffer.GetBuffer());
+    }
+    [[nodiscard]] VkBuffer GetDgcCountBuffer(uint32_t frame_index) const {
+        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+        return static_cast<VkBuffer>(*fr.dgc_count_buffer.GetBuffer());
+    }
+    [[nodiscard]] bool IsDgcAvailable() const { return dgc_available_; }
 
 private:
     struct FrameResources {
         // Block-based per-submesh buffers
-        VulkanEngine::GpuResources::BlockBuffer compact_dynamic{};
-        VulkanEngine::GpuResources::BlockBuffer compact_static{};
-        VulkanEngine::GpuResources::BlockBuffer bounding_spheres{};
-        VulkanEngine::GpuResources::BlockBuffer bounding_obb{};
-        VulkanEngine::GpuResources::BlockBuffer submesh_vertex_data{};
-        VulkanEngine::GpuResources::BlockBuffer submesh_cull{};
+        VulkanEngine::GpuResources::BlockArray compact_dynamic{};
+        VulkanEngine::GpuResources::BlockArray compact_static{};
+        VulkanEngine::GpuResources::BlockArray bounding_spheres{};
+        VulkanEngine::GpuResources::BlockArray bounding_obb{};
+        VulkanEngine::GpuResources::BlockArray submesh_vertex_data{};
+        VulkanEngine::GpuResources::BlockArray submesh_cull{};
 
         // Single buffers for indirection, draw commands
         VulkanEngine::GpuResources::GpuBuffer indirection_buffer{};
@@ -123,10 +141,18 @@ private:
         VulkanEngine::GpuResources::GpuBuffer draw_count_buffer{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
 
+        // DGC buffers (only used when DGC is available)
+        VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer dgc_sequence_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer dgc_count_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer dgc_preprocess_buffer{};
+        uint64_t dgc_preprocess_size = 0;
+
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet occlusion_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet collect_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet collect_write_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet depth_indirection_set = vk::raii::DescriptorSet(nullptr);
@@ -138,19 +164,20 @@ private:
         vk::raii::ImageView hiz_full_view = vk::raii::ImageView(nullptr);
     };
 
-    bool CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    bool CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
+    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                              const vk::PipelineRasterizationStateCreateInfo& rasterization);
-    bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    bool CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
-    bool CreateCollectPipeline(const VulkanEngine::Runtime::IVulkanBootstrapBackend& backend);
+    bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& backend);
+    bool CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
+    bool CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
+    bool CreateDegeneratePipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
 
 
     void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, uint32_t binding,
-                                     VulkanEngine::GpuResources::BlockBuffer& block_buf,
-                                     vk::DescriptorType desc_type);
+                                      VulkanEngine::GpuResources::BlockArray& block_buf,
+                                      vk::DescriptorType desc_type);
 
-    VulkanEngine::Runtime::IVulkanBootstrapBackend* backend_ = nullptr;
+    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
 
     // Set 1: SubmeshVertexData blocks
     std::unique_ptr<vk::raii::DescriptorSetLayout> submesh_vertex_layout_{};
@@ -178,11 +205,16 @@ private:
     std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> occlusion_pipeline_{};
 
-    // Set 6: Collect compute (cull blocks + indirections + draw cmds)
+    // Set 6: Collect count + compact (cull blocks + indirections + intermediate)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> collect_pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> collect_pipeline_{};
+    // Collect write shaders (use separate layout)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> collect_write_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_write_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> collect_write_pipeline_layout_{};
+    std::unique_ptr<vk::raii::Pipeline> collect_write_pipeline_{};
 
     std::unique_ptr<vk::raii::Sampler> depth_sampler_{};
     std::unique_ptr<vk::raii::Sampler> hiz_sampler_{};
@@ -209,6 +241,14 @@ private:
     std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
     vk::raii::DescriptorSet bindless_index_set_{nullptr};
+
+    // DGC objects (only created when DGC is available)
+    bool dgc_available_ = false;
+    uint32_t dgc_max_sequence_count_ = 0;
+    std::unique_ptr<vk::raii::IndirectCommandsLayoutEXT> dgc_commands_layout_{};
+    std::unique_ptr<vk::raii::IndirectExecutionSetEXT> dgc_execution_set_{};
+    vk::raii::PipelineLayout dgc_degenerate_layout_ = nullptr;
+    vk::raii::Pipeline dgc_degenerate_pipeline_ = nullptr;
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 

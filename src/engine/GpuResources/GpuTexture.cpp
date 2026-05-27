@@ -17,7 +17,7 @@ namespace VulkanEngine::GpuResources {
 
 namespace {
 
-void CreateBufferResource(const VulkanEngine::Runtime::IVulkanBootstrapBackend & backend,
+void CreateBufferResource(const VulkanEngine::Runtime::IVulkanBootstrap & backend,
                           uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
@@ -41,7 +41,7 @@ void CreateBufferResource(const VulkanEngine::Runtime::IVulkanBootstrapBackend &
 
 } // namespace
 
-GpuTexture GpuTexture::CreateFromPixels(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+GpuTexture GpuTexture::CreateFromPixels(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                         const uint8_t* pixels,
                                         uint32_t width,
                                         uint32_t height,

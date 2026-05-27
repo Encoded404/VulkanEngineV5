@@ -26,7 +26,7 @@ struct RuntimeFrameInfo {
     RuntimeStatus status = RuntimeStatus::Ok; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-class RuntimeShell {
+class FrameLoop {
 public:
     bool Initialize(const RuntimeConfig& config);
     void Shutdown();

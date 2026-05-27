@@ -35,8 +35,8 @@ struct ApplicationFrameState {
 };
 
 struct ApplicationContext {
-    VulkanEngine::Platform::SdlPlatformShell* platform = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Runtime::RuntimeShell* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanEngine::Platform::SdlPlatform* platform = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanEngine::Runtime::FrameLoop* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Runtime::VulkanBootstrap* bootstrap = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::InputSystem* input_system = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     SDL_Window* window = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -81,10 +81,10 @@ struct ApplicationHooks {
 
 // NOLINTBEGIN
 [[nodiscard]] int RunApplication(const ApplicationConfig& config, const ApplicationHooks& hooks) {
-    std::unique_ptr<VulkanEngine::Platform::SdlPlatformShell> platform{};
-    std::shared_ptr<VulkanEngine::Runtime::IVulkanBootstrapBackend> vk_backend{};
+    std::unique_ptr<VulkanEngine::Platform::SdlPlatform> platform{};
+    std::shared_ptr<VulkanEngine::Runtime::IVulkanBootstrap> vk_backend{};
     std::unique_ptr<VulkanEngine::Runtime::VulkanBootstrap> bootstrap{};
-    std::unique_ptr<VulkanEngine::Runtime::RuntimeShell> runtime{};
+    std::unique_ptr<VulkanEngine::Runtime::FrameLoop> runtime{};
     VulkanEngine::Input::InputSystem input_system{};
     ApplicationContext context{};
     bool platform_initialized = false;
@@ -137,7 +137,7 @@ struct ApplicationHooks {
         LOGIFACE_LOG(info, config.app_name + " started");
 
         const auto platform_backend = VulkanEngine::Platform::CreateSdlPlatformBackend();
-        platform = std::make_unique<VulkanEngine::Platform::SdlPlatformShell>(platform_backend);
+        platform = std::make_unique<VulkanEngine::Platform::SdlPlatform>(platform_backend);
 
         auto platform_config = config.platform_config;
         if (platform_config.window_title.empty()) {
@@ -166,7 +166,7 @@ struct ApplicationHooks {
         }
         bootstrap_initialized = true;
 
-        runtime = std::make_unique<VulkanEngine::Runtime::RuntimeShell>();
+        runtime = std::make_unique<VulkanEngine::Runtime::FrameLoop>();
         if (!runtime->Initialize(config.runtime_config)) {
             return fail("Runtime shell initialization failed");
         }

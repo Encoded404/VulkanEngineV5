@@ -25,7 +25,7 @@ SceneRenderer::~SceneRenderer() {
     Shutdown();
 }
 
-bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& be,
+bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                                 VulkanEngine::GpuResources::DeviceBufferHeap& vh,
                                 uint32_t tvc, uint32_t tic) {
     backend_ = &be;
@@ -33,6 +33,14 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
     LOGIFACE_LOG(info, "SR init: " + std::to_string(tvc) + "v " + std::to_string(tic) + "i");
     const uint32_t idxc = std::max(tic, 1u);
     total_index_count_ = idxc;
+
+    dgc_available_ = be.IsDgcAvailable();
+    if (dgc_available_) {
+        dgc_max_sequence_count_ = std::min(be.GetMaxDgcSequenceCount(), DGC_MAX_SEQUENCES);
+        LOGIFACE_LOG(info, "DGC available, max sequences: " + std::to_string(dgc_max_sequence_count_));
+    } else {
+        LOGIFACE_LOG(info, "DGC not available, using fallback path");
+    }
 
     // Set 1: SubmeshVertexData (block array, simple layout)
     {
@@ -222,12 +230,16 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
     // Set 5: Occlusion layout (5 bindings)
     {
         std::array<vk::DescriptorSetLayoutBinding, 5> bs{};
-        for (uint32_t i = 0; i < 4; ++i) {
+        for (uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = MAX_BLOCKS;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
+        bs[3].binding = 3;
+        bs[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        bs[3].descriptorCount = 1;
+        bs[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
         bs[4].binding = 4;
         bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[4].descriptorCount = MAX_BLOCKS;
@@ -240,11 +252,12 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
         pc.max_sets = FRAMES_IN_FLIGHT;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * MAX_BLOCKS * 4;
         pc.max_sampled_images = FRAMES_IN_FLIGHT;
+        pc.max_combined_image_samplers = FRAMES_IN_FLIGHT;
         occlusion_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         occlusion_pool_->SetDebugName(dev, "occlusion-pool");
     }
 
-    // Set 6: Collect layout (4 bindings)
+    // Set 6: Collect count + compact layout (4 bindings: cull blocks, full indir, compacted indir, intermediate)
     {
         std::array<vk::DescriptorSetLayoutBinding, 4> bs{};
         bs[0].binding = 0;
@@ -266,6 +279,39 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS + 3);
         collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_pool_->SetDebugName(dev, "collect-pool");
+    }
+
+    // Set 7: Collect write shader layout (varies by DGC availability)
+    {
+        if (dgc_available_) {
+            std::array<vk::DescriptorSetLayoutBinding, 3> bs{};
+            for (uint32_t i = 0; i < 3; ++i) {
+                bs[i].binding = i;
+                bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+                bs[i].descriptorCount = 1;
+                bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+            }
+            collect_write_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+                dev, vk::DescriptorSetLayoutCreateInfo{
+                    {}, static_cast<uint32_t>(bs.size()), bs.data() });
+        } else {
+            std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
+            for (uint32_t i = 0; i < 2; ++i) {
+                bs[i].binding = i;
+                bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+                bs[i].descriptorCount = 1;
+                bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+            }
+            collect_write_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+                dev, vk::DescriptorSetLayoutCreateInfo{
+                    {}, static_cast<uint32_t>(bs.size()), bs.data() });
+        }
+        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
+        GpuResources::DescriptorPoolConfig pc{};
+        pc.max_sets = FRAMES_IN_FLIGHT + 1;
+        pc.max_storage_buffers = FRAMES_IN_FLIGHT * 5;
+        collect_write_pool_ = GpuResources::DescriptorPool::Create(be, pc);
+        collect_write_pool_->SetDebugName(dev, "collect-write-pool");
     }
 
     // Empty set (placeholder for set 0 in depth pass)
@@ -299,7 +345,11 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
 
     if (!CreateHiZPipeline(be)) return false;
     if (!CreateOcclusionPipeline(be)) return false;
-    if (!CreateCollectPipeline(be)) return false;
+    if (!CreateCollectPipelines(be)) return false;
+
+    if (dgc_available_) {
+        if (!CreateDegeneratePipeline(be)) return false;
+    }
 
     // Per-frame ring resources
     {
@@ -308,17 +358,72 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
         const uint64_t technique_cmd_size =
             static_cast<uint64_t>(MAX_TECHNIQUES) *
             (4 + 4 + sizeof(VkDrawIndirectCommand));
+        const uint64_t intermediate_size =
+            static_cast<uint64_t>(MAX_TECHNIQUES) * 8u;
+        const uint64_t dgc_seq_size =
+            static_cast<uint64_t>(dgc_max_sequence_count_) * 20u;
 
         auto make_block_config = [](uint32_t entry_size, uint32_t entries_per_block,
                                      vk::BufferUsageFlags extra_usage,
                                      vk::MemoryPropertyFlags memory) {
-            GpuResources::BlockBuffer::Config c{};
+            GpuResources::BlockArray::Config c{};
             c.entry_size = entry_size;
             c.entries_per_block = entries_per_block;
             c.extra_usage = extra_usage;
             c.memory = memory;
             return c;
         };
+
+        auto* dev_dispatcher = dev.getDispatcher();
+        const VkDevice vk_dev = static_cast<VkDevice>(*dev);
+
+        if (dgc_available_) {
+            VkIndirectCommandsExecutionSetTokenEXT exec_set_token{};
+            exec_set_token.type = VK_INDIRECT_EXECUTION_SET_INFO_TYPE_PIPELINES_EXT;
+            exec_set_token.shaderStages = VK_SHADER_STAGE_VERTEX_BIT;
+
+            const uint32_t dgc_stride = 20;
+            std::array<VkIndirectCommandsLayoutTokenEXT, 2> dgc_tokens{};
+            dgc_tokens[0].sType = VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_TOKEN_EXT;
+            dgc_tokens[0].type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_EXECUTION_SET_EXT;
+            dgc_tokens[0].data.pExecutionSet = &exec_set_token;
+            dgc_tokens[0].offset = 0;
+            dgc_tokens[1].sType = VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_TOKEN_EXT;
+            dgc_tokens[1].type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_EXT;
+            dgc_tokens[1].data = {};
+            dgc_tokens[1].offset = 4;
+
+            VkIndirectCommandsLayoutCreateInfoEXT cmd_layout_ci{};
+            cmd_layout_ci.sType = VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_CREATE_INFO_EXT;
+            cmd_layout_ci.shaderStages = VK_SHADER_STAGE_VERTEX_BIT;
+            cmd_layout_ci.indirectStride = dgc_stride;
+            cmd_layout_ci.pipelineLayout = static_cast<VkPipelineLayout>(*dgc_degenerate_layout_);
+            cmd_layout_ci.tokenCount = 2;
+            cmd_layout_ci.pTokens = dgc_tokens.data();
+
+            VkIndirectCommandsLayoutEXT raw_layout{};
+            dev_dispatcher->vkCreateIndirectCommandsLayoutEXT(vk_dev, &cmd_layout_ci, nullptr, &raw_layout);
+            dgc_commands_layout_ = std::make_unique<vk::raii::IndirectCommandsLayoutEXT>(dev, raw_layout);
+            VulkanEngine::Utils::SetVulkanObjectName(dev, *dgc_commands_layout_, "dgc-commands-layout");
+
+            VkIndirectExecutionSetPipelineInfoEXT pipeline_info{};
+            pipeline_info.sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_PIPELINE_INFO_EXT;
+            pipeline_info.initialPipeline = static_cast<VkPipeline>(*dgc_degenerate_pipeline_);
+            pipeline_info.maxPipelineCount = dgc_max_sequence_count_;
+
+            VkIndirectExecutionSetInfoEXT exec_set_info{};
+            exec_set_info.pPipelineInfo = &pipeline_info;
+
+            VkIndirectExecutionSetCreateInfoEXT exec_set_ci{};
+            exec_set_ci.sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_CREATE_INFO_EXT;
+            exec_set_ci.type = VK_INDIRECT_EXECUTION_SET_INFO_TYPE_PIPELINES_EXT;
+            exec_set_ci.info = exec_set_info;
+
+            VkIndirectExecutionSetEXT raw_exec_set{};
+            dev_dispatcher->vkCreateIndirectExecutionSetEXT(vk_dev, &exec_set_ci, nullptr, &raw_exec_set);
+            dgc_execution_set_ = std::make_unique<vk::raii::IndirectExecutionSetEXT>(dev, raw_exec_set);
+            VulkanEngine::Utils::SetVulkanObjectName(dev, *dgc_execution_set_, "dgc-execution-set");
+        }
 
         for (auto& fr : frames_) {
             fr.compact_dynamic.Initialize(be,
@@ -372,6 +477,46 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
 
             VulkanEngine::Utils::SetVulkanObjectName(dev, fr.draw_count_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "draw-count-buffer");
 
+            fr.intermediate_buffer = GpuResources::GpuBuffer::Create(be,
+                intermediate_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.intermediate_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "intermediate-buffer");
+
+            if (dgc_available_) {
+                const vk::BufferUsageFlags dgc_usage =
+                    vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eIndirectBuffer |
+                    vk::BufferUsageFlagBits::eShaderDeviceAddress;
+                fr.dgc_sequence_buffer = GpuResources::GpuBuffer::Create(be,
+                    dgc_seq_size, dgc_usage,
+                    vk::MemoryPropertyFlagBits::eHostVisible |
+                        vk::MemoryPropertyFlagBits::eHostCoherent);
+                VulkanEngine::Utils::SetVulkanObjectName(dev, fr.dgc_sequence_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "dgc-sequence-buffer");
+                fr.dgc_count_buffer = GpuResources::GpuBuffer::Create(be,
+                    4, dgc_usage,
+                    vk::MemoryPropertyFlagBits::eHostVisible |
+                        vk::MemoryPropertyFlagBits::eHostCoherent);
+                VulkanEngine::Utils::SetVulkanObjectName(dev, fr.dgc_count_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "dgc-count-buffer");
+                VkGeneratedCommandsMemoryRequirementsInfoEXT mem_req_info{};
+                mem_req_info.sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_MEMORY_REQUIREMENTS_INFO_EXT;
+                mem_req_info.indirectExecutionSet = **dgc_execution_set_;
+                mem_req_info.indirectCommandsLayout = **dgc_commands_layout_;
+                mem_req_info.maxSequenceCount = dgc_max_sequence_count_;
+                mem_req_info.maxDrawCount = dgc_max_sequence_count_;
+                VkMemoryRequirements2 mem_req{};
+                mem_req.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+                dev_dispatcher->vkGetGeneratedCommandsMemoryRequirementsEXT(vk_dev, &mem_req_info, &mem_req);
+                fr.dgc_preprocess_size = mem_req.memoryRequirements.size;
+                fr.dgc_preprocess_buffer = GpuResources::GpuBuffer::Create(be,
+                    fr.dgc_preprocess_size,
+                    vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+                VulkanEngine::Utils::SetVulkanObjectName(dev, fr.dgc_preprocess_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "dgc-preprocess-buffer");
+            }
+
             fr.technique_draw_commands = GpuResources::GpuBuffer::Create(be,
                 technique_cmd_size,
                 vk::BufferUsageFlagBits::eStorageBuffer |
@@ -385,6 +530,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
             fr.expand_set = expand_pool_->Allocate(*expand_layout_);
             fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);
             fr.collect_set = collect_pool_->Allocate(*collect_layout_);
+            fr.collect_write_set = collect_write_pool_->Allocate(*collect_write_layout_);
             fr.submesh_vertex_set =
                 submesh_vertex_pool_->Allocate(*submesh_vertex_layout_);
             {
@@ -418,6 +564,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
             fr.expand_set.SetDebugName(dev, "expand-set");
             fr.occlusion_set.SetDebugName(dev, "occlusion-set");
             fr.collect_set.SetDebugName(dev, "collect-set");
+            fr.collect_write_set.SetDebugName(dev, "collect-write-set");
             fr.submesh_vertex_set.SetDebugName(dev, "submesh-vertex-set");
             fr.hiz_set.SetDebugName(dev, "hiz-set");
         }
@@ -547,7 +694,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& b
         hiz_mip_count_ = mip_levels;
     }
 
-    LOGIFACE_LOG(info, "SceneRenderer initialized (BlockBuffer + collect pipeline)");
+    LOGIFACE_LOG(info, "SceneRenderer initialized (DGC=" + std::to_string(dgc_available_) + ")");
     return true;
 }
 
@@ -565,6 +712,10 @@ void SceneRenderer::Shutdown() {
         fr.submesh_vertex_data.Shutdown();
         fr.submesh_cull.Shutdown();
     }
+    dgc_execution_set_.reset();
+    dgc_commands_layout_.reset();
+    dgc_degenerate_pipeline_ = nullptr;
+    dgc_degenerate_layout_ = nullptr;
     backend_ = nullptr;
 }
 
@@ -616,12 +767,12 @@ void SceneRenderer::UpdateIndexBufferArrayElement(uint32_t buffer_index,
 
 void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,
                                                  uint32_t binding,
-                                                 GpuResources::BlockBuffer& buf,
+                                                 GpuResources::BlockArray& buf,
                                                  vk::DescriptorType desc_type) {
     if (!backend_) return;
     auto& dev = backend_->GetDevice();
     for (uint32_t bi = 0; bi < buf.BlockCount(); ++bi) {
-        const vk::DescriptorBufferInfo bii(buf.GetBlockBuffer(bi), 0, buf.BlockSize());
+        const vk::DescriptorBufferInfo bii(buf.GetBlockArray(bi), 0, buf.BlockSize());
         vk::WriteDescriptorSet w{};
         w.dstSet = desc_set;
         w.dstBinding = binding;
@@ -646,6 +797,35 @@ void SceneRenderer::UpdateHizDepthBinding(uint32_t frame_index, VkImageView dept
     w.descriptorType = vk::DescriptorType::eSampledImage;
     w.pImageInfo = &depth_info;
     dev.updateDescriptorSets(w, nullptr);
+}
+
+void SceneRenderer::SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm) {
+    if (!dgc_available_ || !dgc_execution_set_) return;
+    const auto& dev = backend_->GetDevice();
+    const VkDevice vk_dev = static_cast<VkDevice>(*dev);
+    const VkIndirectExecutionSetEXT exec_set = **dgc_execution_set_;
+    auto* dispatcher = dev.getDispatcher();
+
+    tm.SetTechniqueCallback(
+        [exec_set, dispatcher, vk_dev](uint16_t id, VkPipeline pipeline, VkPipelineLayout) {
+            VkWriteIndirectExecutionSetPipelineEXT write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_INDIRECT_EXECUTION_SET_PIPELINE_EXT;
+            write.index = id;
+            write.pipeline = pipeline;
+            dispatcher->vkUpdateIndirectExecutionSetPipelineEXT(vk_dev, exec_set, 1, &write);
+        });
+
+    for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
+        auto* pm = tm.GetGraphicsPipeline(t);
+        if (!pm) continue;
+        auto* pl = pm->GetPipeline();
+        if (!pl) continue;
+        VkWriteIndirectExecutionSetPipelineEXT write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_INDIRECT_EXECUTION_SET_PIPELINE_EXT;
+        write.index = t;
+        write.pipeline = static_cast<VkPipeline>(**pl);
+        dispatcher->vkUpdateIndirectExecutionSetPipelineEXT(vk_dev, exec_set, 1, &write);
+    }
 }
 
 } // namespace VulkanEngine::SceneRenderer

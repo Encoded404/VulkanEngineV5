@@ -45,7 +45,7 @@ public:
 
 TEST(PlatformShellTest, InitializesAndShutsDownThroughBackend) {
     auto backend = std::make_shared<FakePlatformBackend>();
-    SdlPlatformShell shell(backend);
+    SdlPlatform shell(backend);
 
     ASSERT_TRUE(shell.Initialize(PlatformConfig{.window_title = "test", .window_width = 800, .window_height = 600}));
     EXPECT_TRUE(shell.IsInitialized());
@@ -58,7 +58,7 @@ TEST(PlatformShellTest, InitializesAndShutsDownThroughBackend) {
 
 TEST(PlatformShellTest, PollEventsUpdatesResizeAndQuitState) {
     auto backend = std::make_shared<FakePlatformBackend>();
-    SdlPlatformShell shell(backend);
+    SdlPlatform shell(backend);
 
     ASSERT_TRUE(shell.Initialize(PlatformConfig{}));
 
@@ -82,7 +82,7 @@ TEST(PlatformShellTest, ReportsBackendInitializationFailure) {
     auto backend = std::make_shared<FakePlatformBackend>();
     backend->initialize_result = false;
 
-    SdlPlatformShell shell(backend);
+    SdlPlatform shell(backend);
     EXPECT_FALSE(shell.Initialize(PlatformConfig{}));
     EXPECT_EQ(shell.GetState().status, PlatformStatus::BackendInitFailed);
 }

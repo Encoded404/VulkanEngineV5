@@ -71,13 +71,14 @@ target_sources(${ENGINE_TARGET} PRIVATE
     MeshRendererSystem/MeshRendererSystem.cpp
     StandardMeshPipeline/StandardMeshPipeline.cpp
     SceneLoader/SceneLoader.cpp
-    DefaultRenderer/DefaultRenderer.cpp
+    Renderer/Renderer.cpp
     TechniqueManager/TechniqueManager.cpp
     MaterialManager/MaterialManager.cpp
     SceneRenderer/SceneRenderer.cpp
     SceneRenderer/SceneRendererPipeline.cpp
     SceneRenderer/SceneRendererFrame.cpp
     BindlessManager/BindlessManager.cpp
+    Game/Game.cpp
 )
 
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -115,7 +116,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 MeshRendererSystem/MeshRendererSystem.cppm
                 StandardMeshPipeline/StandardMeshPipeline.cppm
                 SceneLoader/SceneLoader.cppm
-                DefaultRenderer/DefaultRenderer.cppm
+                Renderer/Renderer.cppm
                 TechniqueManager/TechniqueManager.cppm
                 TechniqueManager/TechniqueId.cppm
                 MaterialManager/MaterialManager.cppm
@@ -123,6 +124,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 SceneRenderer/SceneRenderer.cppm
                 BindlessManager/BindlessManager.cppm
                 BindlessManager/TextureSlot.cppm
+                Game/Game.cppm
         )
     endif()
 

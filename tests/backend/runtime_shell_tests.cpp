@@ -6,8 +6,8 @@ namespace {
 
 using namespace VulkanEngine::Runtime;
 
-TEST(RuntimeShellTest, ResizeAndOutOfDateStatusesAreReported) {
-    RuntimeShell runtime{};
+TEST(FrameLoopTest, ResizeAndOutOfDateStatusesAreReported) {
+    FrameLoop runtime{};
     ASSERT_TRUE(runtime.Initialize(RuntimeConfig{.frames_in_flight = 3}));
 
     runtime.NotifyWindowResized();
@@ -23,8 +23,8 @@ TEST(RuntimeShellTest, ResizeAndOutOfDateStatusesAreReported) {
     EXPECT_EQ(out_of_date.status, RuntimeStatus::SwapchainOutOfDate);
 }
 
-TEST(RuntimeShellTest, MinimizedStateBlocksNormalFrameStatus) {
-    RuntimeShell runtime{};
+TEST(FrameLoopTest, MinimizedStateBlocksNormalFrameStatus) {
+    FrameLoop runtime{};
     ASSERT_TRUE(runtime.Initialize(RuntimeConfig{}));
 
     runtime.NotifyWindowMinimized(true);
@@ -36,8 +36,8 @@ TEST(RuntimeShellTest, MinimizedStateBlocksNormalFrameStatus) {
     EXPECT_EQ(restored.status, RuntimeStatus::Ok);
 }
 
-TEST(RuntimeShellTest, ShutdownRequestIsObservable) {
-    RuntimeShell runtime{};
+TEST(FrameLoopTest, ShutdownRequestIsObservable) {
+    FrameLoop runtime{};
     ASSERT_TRUE(runtime.Initialize(RuntimeConfig{}));
 
     EXPECT_FALSE(runtime.ShouldShutdown());

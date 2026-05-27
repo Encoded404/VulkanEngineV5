@@ -1,0 +1,43 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+struct CullEntry {
+    uint indirOffset;
+    uint indexCount;
+    uint techniqueId;
+    uint pad;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer CullBuffer {
+    CullEntry data[];
+} cull[];
+
+struct IndirEntry { uint vertexId; uint submeshId; };
+layout(std430, set = 0, binding = 1) readonly buffer FullIndir { IndirEntry entries[]; } full;
+layout(std430, set = 0, binding = 2) buffer CompactIndir { IndirEntry entries[]; } comp;
+
+layout(std430, set = 0, binding = 3) buffer TechIntermediate {
+    uint data[];
+} inter;
+
+layout(push_constant) uniform PC {
+    uint elementCount;
+    uint pad0;
+    uint techniqueCount;
+    uint pass;
+} pc;
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.elementCount) return;
+
+    uint block = id / 256u;
+    uint elemIdx = id % 256u;
+
+    CullEntry e = cull[nonuniformEXT(block)].data[elemIdx];
+    if (e.indexCount == 0) return;
+
+    atomicAdd(inter.data[e.techniqueId * 2u + 1u], e.indexCount);
+}

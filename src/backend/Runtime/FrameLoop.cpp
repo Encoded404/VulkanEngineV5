@@ -6,7 +6,7 @@ module VulkanBackend.Runtime.FrameLoop;
 
 namespace VulkanEngine::Runtime {
 
-bool RuntimeShell::Initialize(const RuntimeConfig& config) {
+bool FrameLoop::Initialize(const RuntimeConfig& config) {
     if (initialized_) {
         return true;
     }
@@ -20,12 +20,12 @@ bool RuntimeShell::Initialize(const RuntimeConfig& config) {
     return true;
 }
 
-void RuntimeShell::Shutdown() {
+void FrameLoop::Shutdown() {
     initialized_ = false;
     pending_status_ = RuntimeStatus::ShutdownRequested;
 }
 
-RuntimeFrameInfo RuntimeShell::BeginFrame() {
+RuntimeFrameInfo FrameLoop::BeginFrame() {
     if (!initialized_) {
         return RuntimeFrameInfo{.status = RuntimeStatus::FatalError};
     }
@@ -49,7 +49,7 @@ RuntimeFrameInfo RuntimeShell::BeginFrame() {
     return frame_info;
 }
 
-void RuntimeShell::EndFrame() {
+void FrameLoop::EndFrame() {
     if (!initialized_) {
         return;
     }
@@ -57,31 +57,31 @@ void RuntimeShell::EndFrame() {
     ++frame_counter_;
 }
 
-void RuntimeShell::NotifyWindowResized() {
+void FrameLoop::NotifyWindowResized() {
     pending_status_ = RuntimeStatus::ResizePending;
 }
 
-void RuntimeShell::NotifySwapchainOutOfDate() {
+void FrameLoop::NotifySwapchainOutOfDate() {
     pending_status_ = RuntimeStatus::SwapchainOutOfDate;
 }
 
-void RuntimeShell::NotifySwapchainSuboptimal() {
+void FrameLoop::NotifySwapchainSuboptimal() {
     pending_status_ = RuntimeStatus::SwapchainSuboptimal;
 }
 
-void RuntimeShell::NotifyWindowMinimized(bool minimized) {
+void FrameLoop::NotifyWindowMinimized(bool minimized) {
     minimized_ = minimized;
 }
 
-void RuntimeShell::RequestShutdown() {
+void FrameLoop::RequestShutdown() {
     pending_status_ = RuntimeStatus::ShutdownRequested;
 }
 
-bool RuntimeShell::IsInitialized() const {
+bool FrameLoop::IsInitialized() const {
     return initialized_;
 }
 
-bool RuntimeShell::ShouldShutdown() const {
+bool FrameLoop::ShouldShutdown() const {
     return pending_status_ == RuntimeStatus::ShutdownRequested;
 }
 

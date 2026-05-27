@@ -54,9 +54,9 @@ public:
     virtual void SetEventProcessor(EventProcessor processor, void* user_data) = 0;
 };
 
-class SdlPlatformShell {
+class SdlPlatform {
 public:
-    explicit SdlPlatformShell(std::shared_ptr<IPlatformBackend> backend);
+    explicit SdlPlatform(std::shared_ptr<IPlatformBackend> backend);
 
     [[nodiscard]] bool Initialize(const PlatformConfig& config);
     void Shutdown();

@@ -7,7 +7,7 @@ module;
 
 #include <logging/logging.hpp>
 
-module VulkanEngine.DeviceBufferHeap;
+module VulkanEngine.GpuResources.DeviceBufferHeap;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
@@ -18,7 +18,7 @@ DeviceBufferHeap::~DeviceBufferHeap() {
     Shutdown();
 }
 
-bool DeviceBufferHeap::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+bool DeviceBufferHeap::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                    const HeapConfig& config,
                                    const std::string& debug_name) {
     backend_ = &backend;

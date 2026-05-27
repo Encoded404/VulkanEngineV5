@@ -20,7 +20,7 @@ namespace VulkanEngine::Runtime {
 
 namespace {
 
-class RaiiVulkanBootstrapBackend final : public IVulkanBootstrapBackend {
+class DefaultVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
     [[nodiscard]] ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
     [[nodiscard]] const ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
@@ -94,6 +94,10 @@ public:
     [[nodiscard]] vk::Format GetDepthFormat() const override { return swapchain_->GetDepthFormat(); }
     [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(uint32_t image_index) const override { return swapchain_->GetDepthImageView(image_index); }
     [[nodiscard]] const vk::raii::Image& GetDepthImage(uint32_t image_index) const override { return swapchain_->GetDepthImage(image_index); }
+
+    [[nodiscard]] bool IsDgcAvailable() const override { return device_->IsDgcAvailable(); }
+    [[nodiscard]] uint32_t GetMaxDgcSequenceCount() const override { return device_->GetMaxDgcSequenceCount(); }
+    [[nodiscard]] uint32_t GetMinDgcBufferOffsetAlignment() const override { return device_->GetMinDgcBufferOffsetAlignment(); }
 
     [[nodiscard]] bool AcquireNextImage(uint32_t frame_idx, uint32_t& out_image_index) override {
         LOGIFACE_LOG(trace, "entering AcquireNextImage with frame index " + std::to_string(frame_idx));
@@ -233,8 +237,8 @@ private:
 
 }  // namespace
 
-std::shared_ptr<IVulkanBootstrapBackend> CreateVulkanBootstrapBackend() {
-    return std::make_shared<RaiiVulkanBootstrapBackend>();
+std::shared_ptr<IVulkanBootstrap> CreateVulkanBootstrapBackend() {
+    return std::make_shared<DefaultVulkanBootstrapBackend>();
 }
 
 }  // namespace VulkanEngine::Runtime

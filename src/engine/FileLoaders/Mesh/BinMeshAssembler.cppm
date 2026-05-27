@@ -43,13 +43,13 @@ namespace {
     inline uint16_t ReadU16(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<uint16_t>(buffer, off, name); }
     inline uint8_t ReadU8(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<uint8_t>(buffer, off, name); }
 
-    void ReadVector3(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::Vector3& v, const std::string& prefix) {
+    void ReadVector3(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::MeshVertexVec3& v, const std::string& prefix) {
         v.x = ReadFloat(buffer, off, prefix + ".x");
         v.y = ReadFloat(buffer, off, prefix + ".y");
         v.z = ReadFloat(buffer, off, prefix + ".z");
     }
 
-    void ReadVector2(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::Vector2& v, const std::string& prefix) {
+    void ReadVector2(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::MeshVertexVec2& v, const std::string& prefix) {
         v.u = ReadFloat(buffer, off, prefix + ".u");
         v.v = ReadFloat(buffer, off, prefix + ".v");
     }

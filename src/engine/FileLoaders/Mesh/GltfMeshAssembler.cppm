@@ -7,7 +7,6 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
-#include <string>
 #include <FileLoader/FileLoader.hpp>
 #include <FileLoader/Types.hpp>
 #include <fastgltf/core.hpp>

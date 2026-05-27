@@ -7,7 +7,7 @@ module;
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
-export module VulkanEngine.DefaultRenderer;
+export module VulkanEngine.Renderer;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Component;
@@ -18,26 +18,26 @@ export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.GpuResources;
-export import VulkanEngine.ImGuiSystem;
+export import VulkanEngine.ImGui;
 
-export namespace VulkanEngine::DefaultRenderer {
+export namespace VulkanEngine::Renderer {
 
-struct DefaultRendererConfig {
+struct RendererConfig {
     bool enable_imgui = true;
     glm::vec4 clear_color{0.1f, 0.1f, 0.1f, 1.0f};
     vk::ClearDepthStencilValue clear_depth_stencil{1.0f, 0};
 };
 
-class DefaultRenderer {
+class Renderer {
 public:
-    DefaultRenderer() = default;
-    ~DefaultRenderer();
+    Renderer() = default;
+    ~Renderer();
 
-    DefaultRenderer(const DefaultRenderer&) = delete;
-    DefaultRenderer& operator=(const DefaultRenderer&) = delete;
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
 
     bool Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                    const DefaultRendererConfig& config);
+                    const RendererConfig& config);
 
     void Shutdown();
 
@@ -47,7 +47,7 @@ public:
                      VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                      VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
-                     VulkanEngine::ImGuiSystem::ImGuiSystem* imgui,
+                     VulkanEngine::ImGui::ImGuiSystem* imgui,
                      uint32_t image_index);
 
 private:
@@ -59,7 +59,7 @@ private:
     VulkanEngine::TechniqueManager::TechniqueManager* current_technique_mgr_ = nullptr;
     VulkanEngine::BindlessManager::BindlessManager* current_bindless_mgr_ = nullptr;
     VulkanEngine::SceneRenderer::SceneRenderer* current_scene_renderer_ = nullptr;
-    VulkanEngine::ImGuiSystem::ImGuiSystem* current_imgui_ = nullptr;
+    VulkanEngine::ImGui::ImGuiSystem* current_imgui_ = nullptr;
     vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};
     uint32_t current_width_ = 0;
     uint32_t current_height_ = 0;
@@ -80,4 +80,4 @@ private:
     std::unique_ptr<vk::raii::QueryPool> gpu_stats_pool_{};
 };
 
-} // namespace VulkanEngine::DefaultRenderer
+} // namespace VulkanEngine::Renderer

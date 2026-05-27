@@ -6,11 +6,11 @@ module;
 #include <string>
 #include <vulkan/vulkan.hpp>
 
-export module VulkanEngine.ImGuiSystem;
+export module VulkanEngine.ImGui;
 
 export import VulkanBackend.ImGui;
 
-export namespace VulkanEngine::ImGuiSystem {
+export namespace VulkanEngine::ImGui {
 
 struct ImGuiConfig {
     bool enabled = true;

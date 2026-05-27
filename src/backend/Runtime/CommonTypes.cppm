@@ -37,7 +37,7 @@ struct VulkanBootstrapConfig {
     SDL_Window* native_window_handle = nullptr;
 };
 
-struct VulkanBootstrapSnapshot {
+struct VulkanBootstrapState {
     bool instance_ready = false;
     bool device_ready = false;
     bool swapchain_ready = false;

@@ -16,9 +16,9 @@ export namespace VulkanEngine::ShaderLoader {
 class ShaderLoader {
 public:
     [[nodiscard]] static std::vector<uint32_t> LoadSpirv(const std::filesystem::path& path);
-    [[nodiscard]] static vk::raii::ShaderModule CreateModule(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    [[nodiscard]] static vk::raii::ShaderModule CreateModule(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                                              const std::filesystem::path& path);
-    [[nodiscard]] static vk::raii::ShaderModule CreateModuleFromSpirv(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    [[nodiscard]] static vk::raii::ShaderModule CreateModuleFromSpirv(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                                                       std::span<const uint32_t> spirv);
 };
 

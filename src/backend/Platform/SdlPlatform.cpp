@@ -11,10 +11,10 @@ import VulkanBackend.Event;
 
 namespace VulkanEngine::Platform {
 
-SdlPlatformShell::SdlPlatformShell(std::shared_ptr<IPlatformBackend> backend)
+SdlPlatform::SdlPlatform(std::shared_ptr<IPlatformBackend> backend)
     : backend_(std::move(backend)) {}
 
-bool SdlPlatformShell::Initialize(const PlatformConfig& config) {
+bool SdlPlatform::Initialize(const PlatformConfig& config) {
     if (!backend_) {
         state_.status = PlatformStatus::FatalError;
         return false;
@@ -42,7 +42,7 @@ bool SdlPlatformShell::Initialize(const PlatformConfig& config) {
     return true;
 }
 
-void SdlPlatformShell::Shutdown() {
+void SdlPlatform::Shutdown() {
     if (backend_ && state_.initialized) {
         backend_->Shutdown();
     }
@@ -50,7 +50,7 @@ void SdlPlatformShell::Shutdown() {
     state_ = PlatformState{};
 }
 
-VulkanEngine::Backend::Event::EventList SdlPlatformShell::PollEvents() {
+VulkanEngine::Backend::Event::EventList SdlPlatform::PollEvents() {
     if (!state_.initialized) {
         state_.status = PlatformStatus::NotInitialized;
         return {};
@@ -91,26 +91,26 @@ VulkanEngine::Backend::Event::EventList SdlPlatformShell::PollEvents() {
     return events;
 }
 
-const PlatformState& SdlPlatformShell::GetState() const {
+const PlatformState& SdlPlatform::GetState() const {
     return state_;
 }
 
-bool SdlPlatformShell::IsInitialized() const {
+bool SdlPlatform::IsInitialized() const {
     return state_.initialized;
 }
 
-bool SdlPlatformShell::ShouldQuit() const {
+bool SdlPlatform::ShouldQuit() const {
     return state_.quit_requested;
 }
 
-SDL_Window* SdlPlatformShell::GetNativeWindowHandle() const {
+SDL_Window* SdlPlatform::GetNativeWindowHandle() const {
     if (!backend_) {
         return nullptr;
     }
     return backend_->GetNativeWindowHandle();
 }
 
-IPlatformBackend& SdlPlatformShell::GetBackend() const {
+IPlatformBackend& SdlPlatform::GetBackend() const {
     return *backend_;
 }
 

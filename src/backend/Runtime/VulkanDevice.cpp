@@ -2,10 +2,16 @@ module;
 
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan.h>
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #include <vector>
-#include <array>
 #include <memory>
+#include <string>
+#include <logging/logging.hpp>
+
+#include <bitset>
 
 module VulkanBackend.Runtime.VulkanDevice;
 
@@ -56,6 +62,45 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
 
     frames_in_flight_ = frames_in_flight;
 
+    // Query DGC properties
+    {
+        VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props{};
+        dgc_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &dgc_props;
+        vkGetPhysicalDeviceProperties2(static_cast<VkPhysicalDevice>(**physical_device_), &props2);
+        if (dgc_props.maxIndirectSequenceCount >= 1 &&
+            dgc_props.maxIndirectCommandsTokenCount >= 2 &&
+            dgc_props.maxIndirectCommandsIndirectStride >= 20 &&
+            (dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding & VK_SHADER_STAGE_VERTEX_BIT)) {
+            dgc_available_ = true;
+            max_dgc_sequence_count_ = std::min(dgc_props.maxIndirectSequenceCount, 256u);
+        } else {
+            LOGIFACE_LOG(info, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
+                                            std::string("\nsupported = ") + std::bitset<32>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding).to_string() +
+                                            std::string("\nneeded    = ") + std::bitset<32>(VK_SHADER_STAGE_VERTEX_BIT).to_string());
+        }
+    }
+
+    // Check if DGC extension and its dependencies are available
+    bool has_dgc_extension = false;
+    bool has_maintenance5 = false;
+    if (dgc_available_) {
+        auto available_extensions = physical_device_->enumerateDeviceExtensionProperties();
+        for (const auto& ext : available_extensions) {
+            if (strcmp(ext.extensionName, VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME) == 0) {
+                has_dgc_extension = true;
+            }
+            if (strcmp(ext.extensionName, "VK_KHR_maintenance5") == 0) {
+                has_maintenance5 = true;
+            }
+        }
+        if (!has_dgc_extension || !has_maintenance5) {
+            dgc_available_ = false;
+        }
+    }
+
     try {
         constexpr float queue_priority = 1.0f;
         vk::DeviceQueueCreateInfo queue_info{};
@@ -63,7 +108,14 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         queue_info.queueCount = 1;
         queue_info.pQueuePriorities = &queue_priority;
 
-        constexpr std::array<const char*, 1> device_extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        std::vector<const char*> device_extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        if (dgc_available_) {
+            device_extensions.push_back("VK_KHR_maintenance5");
+            device_extensions.push_back(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME);
+        }
+
+        vk::PhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc_features{};
+        dgc_features.deviceGeneratedCommands = VK_TRUE;
 
         vk::PhysicalDeviceVulkan12Features vulkan12_features{};
         vulkan12_features.hostQueryReset = VK_TRUE;
@@ -83,6 +135,10 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         vulkan13_features.synchronization2 = VK_TRUE;
         vulkan12_features.pNext = &vulkan13_features;
 
+        if (dgc_available_) {
+            vulkan13_features.pNext = &dgc_features;
+        }
+
         vk::PhysicalDeviceFeatures2 core_features{};
         core_features.features.multiDrawIndirect = VK_TRUE;
         core_features.features.pipelineStatisticsQuery = VK_TRUE;
@@ -94,6 +150,11 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         device_info.pQueueCreateInfos = &queue_info;
         device_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
         device_info.ppEnabledExtensionNames = device_extensions.data();
+
+        // Mark DGC as unavailable if the extension was not enabled
+        if (!has_dgc_extension) {
+            dgc_available_ = false;
+        }
 
         device_ = std::make_unique<vk::raii::Device>(*physical_device_, device_info);
 

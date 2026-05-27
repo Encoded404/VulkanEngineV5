@@ -17,12 +17,18 @@ export import VulkanEngine.Mesh.MeshTypes;
 
 export namespace VulkanEngine::SceneLoader {
 
+struct MaterialDescriptor {
+    std::filesystem::path texture_path;
+    uint16_t technique_hint = 0;
+};
+
 struct LoadedMeshData {
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> uvs;
     std::vector<uint32_t> indices;
     std::vector<VulkanEngine::SubMesh> submeshes;
+    std::vector<MaterialDescriptor> submesh_materials;
 };
 
 struct MeshInfo {
@@ -42,7 +48,7 @@ struct CombinedScene {
     std::vector<VulkanEngine::SubMesh> submeshes{};
 };
 
-class SceneManager {
+class SceneLoader {
 public:
     [[nodiscard]] static LoadedMeshData CreateFallbackQuad();
 

@@ -9,7 +9,7 @@ module;
 
 #include <logging/logging.hpp>
 
-module VulkanEngine.StagingManager;
+module VulkanEngine.GpuResources.StagingManager;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
@@ -21,7 +21,7 @@ StagingManager::~StagingManager() {
     Shutdown();
 }
 
-bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                  uint64_t slot_size,
                                  uint32_t slot_count) {
     if (slot_count == 0 || slot_size == 0) return false;

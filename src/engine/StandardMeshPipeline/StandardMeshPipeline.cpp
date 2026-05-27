@@ -17,10 +17,10 @@ import VulkanEngine.GpuResources;
 
 namespace VulkanEngine::StandardMeshPipeline {
 
-PipelineManager::PipelineManager() = default;
-PipelineManager::~PipelineManager() = default;
+GraphicsPipeline::GraphicsPipeline() = default;
+GraphicsPipeline::~GraphicsPipeline() = default;
 
-void PipelineManager::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                   const std::vector<uint32_t>& vertex_spirv,
                                   const std::vector<uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
@@ -43,7 +43,7 @@ void PipelineManager::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
     CreatePipeline(bootstrap, vertex_spirv, fragment_spirv, config);
 }
 
-void PipelineManager::Shutdown() {
+void GraphicsPipeline::Shutdown() {
     if (bootstrap_) {
         bootstrap_->GetBackend().GetDevice().waitIdle();
     }
@@ -54,33 +54,33 @@ void PipelineManager::Shutdown() {
     bootstrap_ = nullptr;
 }
 
-vk::PipelineLayout* PipelineManager::GetPipelineLayout() {
+vk::PipelineLayout* GraphicsPipeline::GetPipelineLayout() {
     return pipeline_layout_ ? const_cast<vk::PipelineLayout*>(&**pipeline_layout_) : nullptr;
 }
 
-const vk::PipelineLayout* PipelineManager::GetPipelineLayout() const {
+const vk::PipelineLayout* GraphicsPipeline::GetPipelineLayout() const {
     return pipeline_layout_ ? &**pipeline_layout_ : nullptr;
 }
 
-vk::raii::Pipeline* PipelineManager::GetPipeline() {
+vk::raii::Pipeline* GraphicsPipeline::GetPipeline() {
     return pipeline_.get();
 }
 
-const vk::raii::Pipeline* PipelineManager::GetPipeline() const {
+const vk::raii::Pipeline* GraphicsPipeline::GetPipeline() const {
     return pipeline_.get();
 }
 
-vk::DescriptorSetLayout* PipelineManager::GetDescriptorSetLayout() {
+vk::DescriptorSetLayout* GraphicsPipeline::GetDescriptorSetLayout() {
     if (external_layout_) return external_layout_;
     return descriptor_set_layout_ ? const_cast<vk::DescriptorSetLayout*>(&**descriptor_set_layout_) : nullptr;
 }
 
-const vk::DescriptorSetLayout* PipelineManager::GetDescriptorSetLayout() const {
+const vk::DescriptorSetLayout* GraphicsPipeline::GetDescriptorSetLayout() const {
     if (external_layout_) return external_layout_;
     return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr;
 }
 
-void PipelineManager::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorSetLayout");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
@@ -96,7 +96,7 @@ void PipelineManager::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBoo
     LOGIFACE_LOG(trace, "leaving CreateDescriptorSetLayout successfully");
 }
 
-void PipelineManager::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorPool");
 
     VulkanEngine::GpuResources::DescriptorPoolConfig config{};
@@ -108,7 +108,7 @@ void PipelineManager::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstra
     LOGIFACE_LOG(trace, "leaving CreateDescriptorPool successfully");
 }
 
-void PipelineManager::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                       const std::vector<uint32_t>& vertex_spirv,
                                       const std::vector<uint32_t>& fragment_spirv,
                                       const PipelineConfig& config) {

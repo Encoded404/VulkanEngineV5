@@ -11,7 +11,7 @@ namespace {
 
 using namespace VulkanEngine::Runtime;
 
-class FakeVulkanBootstrapBackend final : public IVulkanBootstrapBackend {
+class FakeVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
     bool instance_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
     bool physical_device_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -67,6 +67,10 @@ public:
 
     [[nodiscard]] bool AcquireNextImage(uint32_t, uint32_t&) override { return true; }
     [[nodiscard]] bool Present(uint32_t, uint32_t, bool) override { return true; }
+
+    [[nodiscard]] bool IsDgcAvailable() const override { return false; }
+    [[nodiscard]] uint32_t GetMaxDgcSequenceCount() const override { return 0; }
+    [[nodiscard]] uint32_t GetMinDgcBufferOffsetAlignment() const override { return 0; }
 
     void Shutdown() override { shutdown_called = true; }
 

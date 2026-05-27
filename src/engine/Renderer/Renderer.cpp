@@ -11,7 +11,7 @@ module;
 #include <vulkan/vulkan.hpp>
 #include <logging/logging.hpp>
 
-module VulkanEngine.DefaultRenderer;
+module VulkanEngine.Renderer;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
@@ -22,16 +22,16 @@ import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.Components.Camera;
 import VulkanEngine.GpuResources;
-import VulkanEngine.ImGuiSystem;
+import VulkanEngine.ImGui;
 
-namespace VulkanEngine::DefaultRenderer {
+namespace VulkanEngine::Renderer {
 
-DefaultRenderer::~DefaultRenderer() {
+Renderer::~Renderer() {
     Shutdown();
 }
 
-bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                  const DefaultRendererConfig& config) {
+bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+                                  const RendererConfig& config) {
     bootstrap_ = &bootstrap;
 
     pipeline_ = std::make_unique<VulkanEngine::RenderPipeline::RenderPipeline>();
@@ -235,16 +235,16 @@ bool DefaultRenderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstr
         vkResetQueryPool(*device, **gpu_stats_pool_, 0, 1);
     }
 
-    LOGIFACE_LOG(info, "DefaultRenderer initialized with full render-graph pipeline");
+    LOGIFACE_LOG(info, "Renderer initialized with full render-graph pipeline");
     return true;
 }
 
-void DefaultRenderer::Shutdown() {
+void Renderer::Shutdown() {
     if (bootstrap_) {
         try {
             bootstrap_->GetBackend().GetDevice().waitIdle();
         } catch (const std::exception& err) {
-            LOGIFACE_LOG(error, "Error during DefaultRenderer shutdown: " + std::string(err.what()));
+            LOGIFACE_LOG(error, "Error during Renderer shutdown: " + std::string(err.what()));
         }
     }
     gpu_stats_pool_.reset();
@@ -255,13 +255,13 @@ void DefaultRenderer::Shutdown() {
     bootstrap_ = nullptr;
 }
 
-void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void Renderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                    VulkanEngine::ComponentRegistry& registry,
                                    const VulkanEngine::Components::Camera& camera,
                                    VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
                                    VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
-                                   VulkanEngine::ImGuiSystem::ImGuiSystem* imgui,
+                                   VulkanEngine::ImGui::ImGuiSystem* imgui,
                                    uint32_t image_index) {
     if (!pipeline_ || !pipeline_->IsCompiled()) return;
 
@@ -344,4 +344,4 @@ void DefaultRenderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootst
     current_imgui_ = nullptr;
 }
 
-} // namespace VulkanEngine::DefaultRenderer
+} // namespace VulkanEngine::Renderer

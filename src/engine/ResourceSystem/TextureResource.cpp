@@ -2,7 +2,6 @@ module;
 
 #include <cstddef>
 #include <filesystem>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,6 +19,13 @@ namespace VulkanEngine {
 TextureResource::TextureResource(std::string id)
     : Resource(std::move(id)) {
     Reset();
+}
+
+TextureResource::TextureResource(std::string id, uint32_t width, uint32_t height, vk::Format format,
+                                  std::vector<std::byte> pixels)
+    : Resource(std::move(id)), width_(width), height_(height), mip_levels_(1),
+      layer_count_(1), face_count_(1), vk_format_(format), pixels_(std::move(pixels)) {
+    loaded_ = !pixels_.empty();
 }
 
 uint32_t TextureResource::GetWidth() const noexcept { return width_; }
@@ -77,35 +83,6 @@ bool TextureResource::DoLoadFromBuffer(const FileLoader::ByteBuffer& buf) {
     pixels_ = std::move(decoded.pixels);
     transcoded_ = false;
     return true;
-}
-
-std::shared_ptr<TextureResource> TextureResource::CreateCheckerboardTexture(std::string id, const CheckerboardConfig& config) {
-    auto res = std::make_shared<TextureResource>(std::move(id));
-    res->width_ = config.size;
-    res->height_ = config.size;
-    res->mip_levels_ = 1;
-    res->layer_count_ = 1;
-    res->face_count_ = 1;
-    res->vk_format_ = vk::Format::eR8G8B8A8Unorm;
-    res->transcoded_ = false;
-
-    res->pixels_.resize(static_cast<std::size_t>(config.size) * config.size * 4);
-    const uint32_t square_size = config.size / config.squares;
-
-    for (uint32_t y = 0; y < config.size; ++y) {
-        for (uint32_t x = 0; x < config.size; ++x) {
-            const bool is_color1 = (((x / square_size) + (y / square_size)) % 2U) == 0U;
-            const auto& color = is_color1 ? config.color1 : config.color2;
-            const size_t idx = (static_cast<size_t>(y) * config.size + x) * 4;
-            res->pixels_[idx + 0] = static_cast<std::byte>(color[0]);
-            res->pixels_[idx + 1] = static_cast<std::byte>(color[1]);
-            res->pixels_[idx + 2] = static_cast<std::byte>(color[2]);
-            res->pixels_[idx + 3] = static_cast<std::byte>(color[3]);
-        }
-    }
-
-    res->loaded_ = true;
-    return res;
 }
 
 }  // namespace VulkanEngine

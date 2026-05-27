@@ -11,7 +11,7 @@ export namespace VulkanEngine::GpuResources {
 
 class GpuBuffer {
 public:
-    static GpuBuffer Create(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    static GpuBuffer Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                             uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,
@@ -28,6 +28,12 @@ public:
     [[nodiscard]] const vk::raii::DeviceMemory& GetMemory() const { return *memory_; }
     [[nodiscard]] uint64_t GetSize() const { return size_; }
     [[nodiscard]] bool IsValid() const { return buffer_ != nullptr; }
+    [[nodiscard]] VkDeviceAddress GetDeviceAddress(const vk::raii::Device& dev) const {
+        VkBufferDeviceAddressInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        info.buffer = static_cast<VkBuffer>(**buffer_);
+        return vkGetBufferDeviceAddress(static_cast<VkDevice>(*dev), &info);
+    }
 
 private:
     std::unique_ptr<vk::raii::Buffer> buffer_;

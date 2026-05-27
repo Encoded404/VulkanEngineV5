@@ -32,6 +32,10 @@ public:
 
     [[nodiscard]] uint32_t GetFramesInFlight() const { return frames_in_flight_; }
 
+    [[nodiscard]] bool IsDgcAvailable() const { return dgc_available_; }
+    [[nodiscard]] uint32_t GetMaxDgcSequenceCount() const { return max_dgc_sequence_count_; }
+    [[nodiscard]] uint32_t GetMinDgcBufferOffsetAlignment() const { return 4u; }
+
 private:
     std::unique_ptr<vk::raii::PhysicalDevice> physical_device_{};
     std::unique_ptr<vk::raii::Device> device_{};
@@ -45,6 +49,9 @@ private:
     std::vector<std::unique_ptr<vk::raii::Fence>> in_flight_fences_{};
 
     uint32_t frames_in_flight_ = 0;
+
+    bool dgc_available_ = false;
+    uint32_t max_dgc_sequence_count_ = 0;
 };
 
 } // namespace VulkanEngine::Runtime

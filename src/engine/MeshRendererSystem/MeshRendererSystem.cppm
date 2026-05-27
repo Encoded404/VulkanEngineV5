@@ -6,14 +6,14 @@ module;
 #include <cstdint>
 #include <vulkan/vulkan_raii.hpp>
 
-export module VulkanEngine.MeshRendererSystem;
+export module VulkanEngine.MeshDrawRecorder;
 
 export import VulkanBackend.Component;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshRenderer;
 export import VulkanEngine.GpuResources;
 
-export namespace VulkanEngine::MeshRendererSystem {
+export namespace VulkanEngine::MeshDrawRecorder {
 
 struct MeshRenderObject {
     const GpuResources::GpuBuffer* vertex_buffer = nullptr;
@@ -24,7 +24,7 @@ struct MeshRenderObject {
     uint32_t index_count = 0;
 };
 
-class MeshRendererSystem {
+class MeshDrawRecorder {
 public:
     void RecordAllMeshDraws(vk::CommandBuffer cmd,
                             VulkanEngine::ComponentRegistry& registry,
@@ -35,4 +35,4 @@ public:
                             uint32_t height);
 };
 
-} // namespace VulkanEngine::MeshRendererSystem
+} // namespace VulkanEngine::MeshDrawRecorder

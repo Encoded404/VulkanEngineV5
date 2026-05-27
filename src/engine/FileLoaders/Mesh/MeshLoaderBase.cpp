@@ -15,11 +15,11 @@ namespace VulkanEngine::FileLoaders::Mesh {
 
 namespace {
 
-void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
+void ComputeSubmeshBoundingVolumes(const std::vector<MeshVertexVec3>& vertices,
                                     const std::vector<uint32_t>& indices,
                                     SubMesh& sm) {
     // Gather positions for this submesh
-    std::vector<Vector3> positions;
+    std::vector<MeshVertexVec3> positions;
     positions.reserve(sm.index_count);
     for (uint32_t i = sm.index_start; i < sm.index_start + sm.index_count; ++i) {
         positions.push_back(vertices[indices[i]]);
@@ -28,13 +28,13 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
     if (positions.empty()) return;
 
     // ── Bounding sphere (Ritter's algorithm) ──
-    auto dist2 = [](const Vector3& a, const Vector3& b) {
+    auto dist2 = [](const MeshVertexVec3& a, const MeshVertexVec3& b) {
         const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
         return dx*dx + dy*dy + dz*dz;
     };
 
-    Vector3 p1 = positions[0];
-    Vector3 p2 = positions[0];
+    MeshVertexVec3 p1 = positions[0];
+    MeshVertexVec3 p2 = positions[0];
     for (const auto& v : positions) {
         if (dist2(v, p1) > dist2(p2, p1)) p2 = v;
     }
@@ -42,7 +42,7 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
         if (dist2(v, p2) > dist2(p1, p2)) p1 = v;
     }
 
-    Vector3 center;
+    MeshVertexVec3 center;
     center.x = (p1.x + p2.x) * 0.5f;
     center.y = (p1.y + p2.y) * 0.5f;
     center.z = (p1.z + p2.z) * 0.5f;
@@ -63,7 +63,7 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
     sm.sphere.radius = radius;
 
     // ── OBB centroid ──
-    Vector3 obb_center{};
+    MeshVertexVec3 obb_center{};
     for (const auto& v : positions) {
         obb_center.x += v.x;
         obb_center.y += v.y;
@@ -176,7 +176,7 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
         {a11, v01, v11, v21},
         {a22, v02, v12, v22}
     }};
-    std::sort(ev.begin(), ev.end(), [](const auto& a, const auto& b) { return a.val > b.val; });
+    std::ranges::sort(ev, [](const auto& a, const auto& b) { return a.val > b.val; });
 
     // Normalize eigenvectors
     for (auto& e : ev) {
@@ -185,7 +185,7 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
     }
 
     // Project positions onto axes to get exact extents
-    auto dot = [](const Vector3& a, float ex, float ey, float ez) {
+    auto dot = [](const MeshVertexVec3& a, float ex, float ey, float ez) {
         return a.x * ex + a.y * ey + a.z * ez;
     };
 
@@ -193,7 +193,7 @@ void ComputeSubmeshBoundingVolumes(const std::vector<Vector3>& vertices,
         out_min = std::numeric_limits<float>::max();
         out_max = -std::numeric_limits<float>::max();
         for (const auto& v : positions) {
-            Vector3 d;
+            MeshVertexVec3 d;
             d.x = v.x - obb_center.x;
             d.y = v.y - obb_center.y;
             d.z = v.z - obb_center.z;

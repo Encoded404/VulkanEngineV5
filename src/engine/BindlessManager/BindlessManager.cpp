@@ -19,7 +19,7 @@ BindlessManager::~BindlessManager() {
     Shutdown();
 }
 
-bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend) {
+bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend) {
     backend_ = &backend;
     const auto& device = backend.GetDevice();
 

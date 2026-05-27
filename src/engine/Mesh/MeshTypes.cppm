@@ -1,23 +1,27 @@
 module;
 
 #include <array>
+#include <string>
 #include <vector>
 #include <cstdint>
 
 export module VulkanEngine.Mesh.MeshTypes;
 
-export import VulkanEngine.TechniqueId;
-export import VulkanEngine.TextureSlot;
+export import VulkanEngine.MaterialManager.MaterialId;
+export import VulkanEngine.TechniqueManager.TechniqueId;
+export import VulkanEngine.BindlessManager.TextureSlot;
 
 export namespace VulkanEngine
 {
-    class Vector3
+    using MaterialManager::MaterialId;
+
+    class MeshVertexVec3
     {
     public:
         float x, y, z; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
-    class Vector2
+    class MeshVertexVec2
     {
     public:
         float u, v; //NOLINT(misc-non-private-member-variables-in-classes)
@@ -25,19 +29,19 @@ export namespace VulkanEngine
 
     struct BoundingSphere
     {
-        Vector3 center{};
+        MeshVertexVec3 center{};
         float radius{0.0f};
     };
 
     struct BoundingOBB
     {
-        Vector3 center{};
-        float _pad0{0.0f};
-        Vector3 axis_u{};
+        MeshVertexVec3 center{};
+        float pad0{0.0f};
+        MeshVertexVec3 axis_u{};
         float half_extent_u{0.0f};
-        Vector3 axis_v{};
+        MeshVertexVec3 axis_v{};
         float half_extent_v{0.0f};
-        Vector3 axis_w{};
+        MeshVertexVec3 axis_w{};
         float half_extent_w{0.0f};
     };
 
@@ -45,8 +49,7 @@ export namespace VulkanEngine
     {
         uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
-        TechniqueId technique_id{0}; //NOLINT(misc-non-private-member-variables-in-classes)
-        TextureSlot texture_slot{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        MaterialId material_id{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         BoundingSphere sphere{};
         BoundingOBB obb{};
     };
@@ -60,11 +63,12 @@ export namespace VulkanEngine
     class Mesh
     {
     public:
-        std::vector<Vector3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
-        std::vector<Vector3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
-        std::vector<Vector2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<MeshVertexVec3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<MeshVertexVec3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<MeshVertexVec2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<SubMesh> subMeshes; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<std::string> material_infos; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
     struct SkinnedMesh : public Mesh

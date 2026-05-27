@@ -12,7 +12,7 @@ module VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace VulkanEngine::Runtime {
 
-VulkanBootstrap::VulkanBootstrap(std::shared_ptr<IVulkanBootstrapBackend> backend)
+VulkanBootstrap::VulkanBootstrap(std::shared_ptr<IVulkanBootstrap> backend)
     : backend_(std::move(backend)) {}
 
 bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
@@ -26,7 +26,7 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
     config_.frames_in_flight = std::max(config_.frames_in_flight, 1u);
     config_.preferred_swapchain_image_count = std::max(config_.preferred_swapchain_image_count, 2u);
 
-    snapshot_ = VulkanBootstrapSnapshot{};
+    snapshot_ = VulkanBootstrapState{};
 
     if (!backend_->CreateInstance(config_)) {
         snapshot_.status = BootstrapStatus::InstanceCreationFailed;
@@ -75,16 +75,16 @@ void VulkanBootstrap::Shutdown() {
         backend_->Shutdown();
     }
 
-    snapshot_ = VulkanBootstrapSnapshot{};
+    snapshot_ = VulkanBootstrapState{};
     snapshot_.status = BootstrapStatus::NotInitialized;
     pending_status_ = BootstrapStatus::NotInitialized;
     initialized_ = false;
 }
 
-VulkanBootstrapSnapshot VulkanBootstrap::BeginFrame() {
+VulkanBootstrapState VulkanBootstrap::BeginFrame() {
     LOGIFACE_LOG(trace, "entering VulkanBootstrap::BeginFrame");
     if (!initialized_) {
-        VulkanBootstrapSnapshot snapshot{};
+        VulkanBootstrapState snapshot{};
         snapshot.status = BootstrapStatus::NotInitialized;
         return snapshot;
     }
@@ -164,7 +164,7 @@ bool VulkanBootstrap::IsInitialized() const {
     return initialized_;
 }
 
-const VulkanBootstrapSnapshot& VulkanBootstrap::GetSnapshot() const {
+const VulkanBootstrapState& VulkanBootstrap::GetSnapshot() const {
     return snapshot_;
 }
 

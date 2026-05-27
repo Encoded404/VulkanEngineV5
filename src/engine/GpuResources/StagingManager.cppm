@@ -6,7 +6,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module VulkanEngine.StagingManager;
+export module VulkanEngine.GpuResources.StagingManager;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuBuffer;
@@ -31,7 +31,7 @@ public:
     StagingManager(StagingManager&&) = delete;
     StagingManager& operator=(StagingManager&&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                     uint64_t slot_size = 64ULL << 20, // 64 MiB
                     uint32_t slot_count = 3);
     void Shutdown();
@@ -49,7 +49,7 @@ public:
     void WaitForAll();
 
     [[nodiscard]] bool IsValid() const { return !slots_.empty(); }
-    VulkanEngine::Runtime::IVulkanBootstrapBackend* GetBackend() { return backend_; }
+    VulkanEngine::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
 
 private:
     struct Slot {
@@ -63,7 +63,7 @@ private:
 
     Slot& AcquireSlot();
 
-    VulkanEngine::Runtime::IVulkanBootstrapBackend* backend_ = nullptr;
+    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
     std::unique_ptr<vk::raii::CommandPool> cmd_pool_;
     std::vector<Slot> slots_;
     uint64_t slot_size_ = 0;

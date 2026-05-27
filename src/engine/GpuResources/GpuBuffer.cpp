@@ -17,7 +17,7 @@ namespace VulkanEngine::GpuResources {
 
 namespace {
 
-void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                           uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
@@ -43,7 +43,7 @@ void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrapBackend& backen
 
 } // namespace
 
-GpuBuffer GpuBuffer::Create(VulkanEngine::Runtime::IVulkanBootstrapBackend& backend,
+GpuBuffer GpuBuffer::Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                             uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,

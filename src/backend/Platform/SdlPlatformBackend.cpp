@@ -10,6 +10,7 @@ module;
 module VulkanBackend.Platform.SdlPlatformBackend;
 
 import VulkanBackend.Event;
+import VulkanBackend.Utils.CallbackList;
 
 namespace VulkanEngine::Platform {
 
@@ -61,9 +62,8 @@ public:
         return window_ != nullptr;
     }
 
-    void SetEventProcessor(EventProcessor processor, void* user_data) override {
-        event_processor_ = processor;
-        event_processor_user_data_ = user_data;
+    Utils::CallbackList<void(void*)>& GetSdlEventProcessors() override {
+        return sdl_event_processors_;
     }
 
     [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
@@ -71,10 +71,8 @@ public:
 
         SDL_Event event{};
         while (SDL_PollEvent(&event)) {
-            if (event_processor_) {
-                event_processor_(event_processor_user_data_, &event);
-            }
-            
+            sdl_event_processors_.Call(&event);
+
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
@@ -138,8 +136,7 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     bool initialized_ = false;
-    EventProcessor event_processor_ = nullptr;
-    void* event_processor_user_data_ = nullptr;
+    Utils::CallbackList<void(void*)> sdl_event_processors_{};
 };
 
 }  // namespace
@@ -149,7 +146,6 @@ std::shared_ptr<IPlatformBackend> CreateSdlPlatformBackend() {
 }
 
 }  // namespace VulkanEngine::Platform
-
 
 
 

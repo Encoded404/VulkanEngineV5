@@ -8,6 +8,7 @@ module;
 export module VulkanBackend.Platform.SdlPlatform;
 
 import VulkanBackend.Event;
+import VulkanBackend.Utils.CallbackList;
 
 export namespace VulkanEngine::Platform {
 
@@ -49,9 +50,8 @@ public:
     [[nodiscard]] virtual bool CreateMainWindow(const PlatformConfig& config) = 0;
     [[nodiscard]] virtual VulkanEngine::Backend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
-    
-    using EventProcessor = void(*)(void* user_data, void* sdl_event);
-    virtual void SetEventProcessor(EventProcessor processor, void* user_data) = 0;
+
+    virtual Utils::CallbackList<void(void*)>& GetSdlEventProcessors() = 0;
 };
 
 class SdlPlatform {

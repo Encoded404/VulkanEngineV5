@@ -1,0 +1,658 @@
+module;
+
+#include <atomic>
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string_view>
+#include <tuple>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+export module VulkanBackend.Component;
+
+import VulkanBackend.Utils.ThreadPool;
+
+export namespace VulkanEngine {
+
+class Entity;
+
+// Component type ID system
+class ComponentTypeIDSystem {
+private:
+    inline static std::atomic_size_t next_type_id{0};
+
+public:
+    template<typename T>
+    [[nodiscard]] static std::size_t GetTypeID() {
+        static const std::size_t type_id = next_type_id.fetch_add(1, std::memory_order_relaxed);
+        return type_id;
+    }
+};
+
+// Compile-time field metadata for semi-ECS / SoA-backed component fields.
+template<typename T>
+struct FieldDescriptor {
+    using value_type = T;
+
+    std::string_view name{}; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+template<typename T>
+[[nodiscard]] constexpr FieldDescriptor<T> Field(std::string_view name) noexcept {
+    return FieldDescriptor<T>{name};
+}
+
+template<typename T>
+[[nodiscard]] constexpr FieldDescriptor<T> field(std::string_view name) noexcept { // NOLINT(readability-identifier-naming)
+    return Field<T>(name);
+}
+
+template<typename... Fields>
+struct FieldList {
+    using tuple_type = std::tuple<Fields...>;
+
+    static constexpr std::size_t size = sizeof...(Fields);
+
+    using field_tuple_type = tuple_type;
+
+    constexpr FieldList() = default;
+
+    constexpr explicit FieldList(Fields... descriptors)
+        : fields_(std::move(descriptors)...) {}
+
+    template<std::size_t Index>
+    using descriptor_type = std::tuple_element_t<Index, tuple_type>;
+
+    template<std::size_t Index>
+    using value_type = descriptor_type<Index>::value_type;
+
+    template<std::size_t Index>
+    [[nodiscard]] constexpr descriptor_type<Index>& Get() & noexcept {
+        return std::get<Index>(fields_);
+    }
+
+    template<std::size_t Index>
+    [[nodiscard]] constexpr const descriptor_type<Index>& Get() const & noexcept {
+        return std::get<Index>(fields_);
+    }
+
+private:
+    tuple_type fields_{};
+};
+
+template<typename... Fields>
+[[nodiscard]] constexpr auto MakeFields(Fields... descriptors) noexcept {
+    return FieldList<Fields...>{std::move(descriptors)...};
+}
+
+template<typename... Fields>
+[[nodiscard]] constexpr auto make_fields(Fields... descriptors) noexcept { // NOLINT(readability-identifier-naming)
+    return MakeFields(std::move(descriptors)...);
+}
+
+// Lightweight direct-access handle to SoA storage.
+// This is intentionally pointer-like so `component.position = value;` stays cheap.
+template<typename T>
+class FieldHandle {
+public:
+    using value_type = T;
+
+private:
+    value_type* ptr_ = nullptr;
+
+public:
+    constexpr FieldHandle() noexcept = default;
+
+    constexpr explicit FieldHandle(value_type& value) noexcept
+        : ptr_(std::addressof(value)) {}
+
+    constexpr explicit FieldHandle(value_type* value) noexcept
+        : ptr_(value) {}
+
+    constexpr void Bind(value_type& value) noexcept {
+        ptr_ = std::addressof(value);
+    }
+
+    constexpr void Bind(value_type* value) noexcept {
+        ptr_ = value;
+    }
+
+    constexpr void Reset() noexcept {
+        ptr_ = nullptr;
+    }
+
+    [[nodiscard]] constexpr value_type* Get() noexcept {
+        return ptr_;
+    }
+
+    [[nodiscard]] constexpr const value_type* Get() const noexcept {
+        return ptr_;
+    }
+
+    [[nodiscard]] constexpr explicit operator bool() const noexcept {
+        return ptr_ != nullptr;
+    }
+
+    [[nodiscard]] constexpr value_type& operator*() noexcept {
+        return *ptr_;
+    }
+
+    [[nodiscard]] constexpr const value_type& operator*() const noexcept {
+        return *ptr_;
+    }
+
+    [[nodiscard]] constexpr value_type* operator->() noexcept {
+        return ptr_;
+    }
+
+    [[nodiscard]] constexpr const value_type* operator->() const noexcept {
+        return ptr_;
+    }
+
+    constexpr operator value_type&() noexcept {
+        return *ptr_;
+    }
+
+    constexpr operator const value_type&() const noexcept {
+        return *ptr_;
+    }
+
+    template<typename U>
+    requires std::is_assignable_v<value_type&, U&&>
+    constexpr FieldHandle& operator=(U&& value) {
+        *ptr_ = std::forward<U>(value);
+        return *this;
+    }
+};
+
+// Packed field storage for SoA-backed component fields.
+// Swap-delete keeps the data compact and updates the bound handles.
+template<typename T>
+class PackedFieldStorage {
+public:
+    using value_type = T;
+    using size_type = std::size_t;
+
+    [[nodiscard]] size_type Size() const noexcept {
+        return values_.size();
+    }
+
+    [[nodiscard]] bool Empty() const noexcept {
+        return values_.empty();
+    }
+
+    void Reserve(size_type capacity) {
+        values_.reserve(capacity);
+        bindings_.reserve(capacity);
+    }
+
+    [[nodiscard]] value_type& operator[](size_type index) noexcept {
+        return values_[index];
+    }
+
+    [[nodiscard]] const value_type& operator[](size_type index) const noexcept {
+        return values_[index];
+    }
+
+    template<typename... Args>
+    value_type& Emplace(FieldHandle<value_type>& handle, Args&&... args) {
+        const auto* previous_data = values_.data();
+        values_.emplace_back(std::forward<Args>(args)...);
+        bindings_.push_back(&handle);
+
+        if (values_.data() != previous_data) {
+            RebindAll();
+        } else {
+            handle.Bind(values_.back());
+        }
+
+        return values_.back();
+    }
+
+    void RemoveSwapDelete(size_type index) {
+        if (index >= values_.size()) {
+            throw std::out_of_range("PackedFieldStorage::RemoveSwapDelete index out of range");
+        }
+
+        const size_type last = values_.size() - 1;
+        auto* removed_handle = bindings_[index];
+
+        if (index != last) {
+            std::swap(values_[index], values_[last]);
+            std::swap(bindings_[index], bindings_[last]);
+
+            if (bindings_[index] != nullptr) {
+                bindings_[index]->Bind(values_[index]);
+            }
+        }
+
+        if (removed_handle != nullptr) {
+            removed_handle->Reset();
+        }
+
+        values_.pop_back();
+        bindings_.pop_back();
+    }
+
+    void Clear() noexcept {
+        for (auto* handle : bindings_) {
+            if (handle != nullptr) {
+                handle->Reset();
+            }
+        }
+
+        values_.clear();
+        bindings_.clear();
+    }
+
+private:
+    void RebindAll() noexcept {
+        for (size_type i = 0; i < bindings_.size(); ++i) {
+            if (bindings_[i] != nullptr) {
+                bindings_[i]->Bind(values_[i]);
+            }
+        }
+    }
+
+    std::vector<value_type> values_;
+    std::vector<FieldHandle<value_type>*> bindings_;
+};
+
+// SoA storage type builder: given a component with GetFields() + GetFieldHandles(),
+// builds std::tuple<PackedFieldStorage<U>...>. Opt-in via GetFieldHandles().
+template<typename T, typename = void>
+struct SoAFieldStorageBuilder {
+    static constexpr bool enabled = false;
+    using fields_type = std::tuple<>;
+    static constexpr std::size_t field_count = 0;
+};
+
+template<typename T>
+struct SoAFieldStorageBuilder<T, std::void_t<decltype(T::GetFields()), decltype(std::declval<T&>().GetFieldHandles())>> {
+    static constexpr bool enabled = true;
+
+    template<typename U> struct ToStorage;
+    template<typename U> struct ToStorage<FieldDescriptor<U>> { using type = PackedFieldStorage<U>; };
+
+    template<typename... Ds> struct Build;
+    template<typename... Ds> struct Build<std::tuple<Ds...>> {
+        using type = std::tuple<typename ToStorage<Ds>::type...>;
+    };
+
+    using fields_type = typename Build<typename decltype(T::GetFields())::field_tuple_type>::type;
+    static constexpr std::size_t field_count = std::tuple_size_v<fields_type>;
+};
+
+class Component {
+protected:
+    Entity* owner_ = nullptr; //NOLINT(misc-non-private-member-variables-in-classes)
+
+public:
+    virtual ~Component() = default;
+
+    virtual void Initialize() {}
+    virtual void Update(float delta_time) {}
+    virtual void Render() {}
+
+    void SetOwner(Entity* entity) { owner_ = entity; }
+    [[nodiscard]] Entity* GetOwner() const { return owner_; }
+};
+
+class Entity {
+public:
+    using ComponentMap = std::unordered_map<std::size_t, Component*>;
+    using EntityId = std::size_t;
+
+    explicit Entity(EntityId id) noexcept
+        : id_(id) {}
+
+    [[nodiscard]] EntityId GetId() const noexcept {
+        return id_;
+    }
+
+    template<typename T>
+    [[nodiscard]] T* GetComponent() const {
+        const auto it = components_.find(ComponentTypeIDSystem::GetTypeID<T>());
+        if (it == components_.end()) {
+            return nullptr;
+        }
+        return static_cast<T*>(it->second);
+    }
+
+    template<typename T>
+    [[nodiscard]] bool HasComponent() const {
+        return GetComponent<T>() != nullptr;
+    }
+
+private:
+    friend class ComponentRegistry;
+
+    void AttachComponent(std::size_t type_id, Component& component) {
+        components_[type_id] = &component;
+    }
+
+    void DetachComponent(std::size_t type_id) {
+        components_.erase(type_id);
+    }
+
+    EntityId id_ = 0;
+    ComponentMap components_{};
+};
+
+class ComponentRegistry {
+private:
+    struct IComponentPool {
+        virtual ~IComponentPool() = default;
+        virtual void InitializeAll() = 0;
+        virtual void ForEachComponent(const std::function<void(Component&)>& fn) = 0;
+        virtual void CollectAll(std::vector<Component*>& out_components) = 0;
+        virtual void CollectAllShared(std::vector<std::shared_ptr<Component>>& out_components) = 0;
+        virtual void Clear() = 0;
+    };
+
+    template<typename T>
+    class ComponentPool final : public IComponentPool {
+        using SoABuilder = SoAFieldStorageBuilder<T>;
+        static constexpr bool kSoA = SoABuilder::enabled;
+        static constexpr std::size_t kFieldCount = kSoA ? SoABuilder::field_count : 0;
+        using SoAFields = typename SoABuilder::fields_type;
+
+    public:
+        template<typename... Args>
+        T& Emplace(Entity& owner, Args&&... args) {
+            if constexpr (kSoA) {
+                return EmplaceSoA(owner);
+            } else {
+                return EmplaceAoS(owner, std::forward<Args>(args)...);
+            }
+        }
+
+        template<typename Fn>
+        void ForEach(Fn&& fn) {
+            if constexpr (kSoA) {
+                for (auto& p : soa_proxies_) {
+                    fn(*p);
+                }
+            } else {
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        fn(*entry.component);
+                    }
+                }
+            }
+        }
+
+        [[nodiscard]] std::vector<T*> GetAll() {
+            if constexpr (kSoA) {
+                std::vector<T*> out;
+                out.reserve(soa_proxies_.size());
+                for (auto& p : soa_proxies_) {
+                    out.push_back(p.get());
+                }
+                return out;
+            } else {
+                std::vector<T*> out{};
+                out.reserve(aos_entries_.size());
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        out.push_back(entry.component.get());
+                    }
+                }
+                return out;
+            }
+        }
+
+        void InitializeAll() override {
+            if constexpr (kSoA) {
+                for (auto& p : soa_proxies_) {
+                    if (p) p->Initialize();
+                }
+            } else {
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        entry.component->Initialize();
+                    }
+                }
+            }
+        }
+
+        void ForEachComponent(const std::function<void(Component&)>& fn) override {
+            if constexpr (kSoA) {
+                for (auto& p : soa_proxies_) {
+                    if (p) fn(*p);
+                }
+            } else {
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        fn(*entry.component);
+                    }
+                }
+            }
+        }
+
+        void CollectAll(std::vector<Component*>& out_components) override {
+            if constexpr (kSoA) {
+                out_components.reserve(out_components.size() + soa_proxies_.size());
+                for (auto& p : soa_proxies_) {
+                    out_components.push_back(p.get());
+                }
+            } else {
+                out_components.reserve(out_components.size() + aos_entries_.size());
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        out_components.push_back(entry.component.get());
+                    }
+                }
+            }
+        }
+
+        void CollectAllShared(std::vector<std::shared_ptr<Component>>& out_components) override {
+            if constexpr (kSoA) {
+                out_components.reserve(out_components.size() + soa_proxies_.size());
+                for (auto& p : soa_proxies_) {
+                    out_components.emplace_back(p.get(), [](Component*) {});
+                }
+            } else {
+                out_components.reserve(out_components.size() + aos_entries_.size());
+                for (auto& entry : aos_entries_) {
+                    if (entry.component) {
+                        out_components.push_back(entry.component);
+                    }
+                }
+            }
+        }
+
+        void Clear() override {
+            if constexpr (kSoA) {
+                for (auto & soa_owner : soa_owners_) {
+                    if (soa_owner != nullptr) {
+                        soa_owner->DetachComponent(TypeId());
+                    }
+                }
+                ClearSoAFields();
+                soa_proxies_.clear();
+                soa_owners_.clear();
+            } else {
+                for (auto& entry : aos_entries_) {
+                    if (entry.owner != nullptr) {
+                        entry.owner->DetachComponent(TypeId());
+                    }
+                    if (entry.component) {
+                        entry.component->SetOwner(nullptr);
+                    }
+                }
+                aos_entries_.clear();
+            }
+        }
+
+    private:
+        // --- SoA path ---
+        T& EmplaceSoA(Entity& owner) {
+            soa_owners_.push_back(&owner);
+            auto proxy = std::make_unique<T>();
+            proxy->SetOwner(&owner);
+
+            auto handles = proxy->GetFieldHandles();
+            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                (std::get<Is>(soa_fields_).Emplace(std::get<Is>(handles)), ...);
+            }(std::make_index_sequence<kFieldCount>{});
+
+            auto& ref = *proxy;
+            soa_proxies_.push_back(std::move(proxy));
+            owner.AttachComponent(TypeId(), ref);
+            return ref;
+        }
+
+        void ClearSoAFields() {
+            if constexpr (kSoA) {
+                [this]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    (std::get<Is>(soa_fields_).Clear(), ...);
+                }(std::make_index_sequence<kFieldCount>{});
+            }
+        }
+
+        // --- AoS path ---
+        template<typename... Args>
+        T& EmplaceAoS(Entity& owner, Args&&... args) {
+            if (owner.HasComponent<T>()) {
+                throw std::logic_error("Entity already owns this component type");
+            }
+
+            auto component = std::make_shared<T>(std::forward<Args>(args)...);
+            component->SetOwner(&owner);
+            auto& component_ref = *component;
+            aos_entries_.push_back(AoSEntry{&owner, component});
+            owner.AttachComponent(TypeId(), component_ref);
+            return component_ref;
+        }
+
+        // --- Common ---
+        [[nodiscard]] static std::size_t TypeId() {
+            static const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
+            return type_id;
+        }
+
+        // AoS storage
+        struct AoSEntry {
+            Entity* owner = nullptr;
+            std::shared_ptr<T> component{};
+        };
+        std::vector<AoSEntry> aos_entries_{};
+
+        // SoA storage
+        [[no_unique_address]] SoAFields soa_fields_{};
+        std::vector<std::unique_ptr<T>> soa_proxies_{};
+        std::vector<Entity*> soa_owners_{};
+    };
+
+    template<typename T>
+    [[nodiscard]] ComponentPool<T>* GetPool() {
+        const auto type_id = ComponentTypeIDSystem::GetTypeID<T>();
+        const auto it = pools_.find(type_id);
+        if (it == pools_.end()) {
+            return nullptr;
+        }
+        return static_cast<ComponentPool<T>*>(it->second.get());
+    }
+
+    template<typename T>
+    [[nodiscard]] ComponentPool<T>& GetOrCreatePool() {
+        const auto type_id = ComponentTypeIDSystem::GetTypeID<T>();
+        const auto it = pools_.find(type_id);
+        if (it != pools_.end()) {
+            return *static_cast<ComponentPool<T>*>(it->second.get());
+        }
+
+        auto pool = std::make_unique<ComponentPool<T>>();
+        auto& pool_ref = *pool;
+        pools_[type_id] = std::move(pool);
+        return pool_ref;
+    }
+
+    [[nodiscard]] std::vector<Component*> GatherAllComponents() {
+        std::vector<Component*> components{};
+        for (auto& [_, pool] : pools_) {
+            pool->CollectAll(components);
+        }
+        return components;
+    }
+
+    std::unordered_map<std::size_t, std::unique_ptr<IComponentPool>> pools_{};
+    std::vector<std::unique_ptr<Entity>> entities_{};
+    Entity::EntityId next_entity_id_ = 0;
+    mutable std::mutex mutex_{};
+    ThreadPool thread_pool_{};
+
+public:
+    [[nodiscard]] Entity& CreateEntity() {
+        const std::scoped_lock lock(mutex_);
+        entities_.push_back(std::make_unique<Entity>(next_entity_id_++));
+        return *entities_.back();
+    }
+
+    template<typename T, typename... Args>
+    T& AddComponent(Entity& owner, Args&&... args) {
+        const std::scoped_lock lock(mutex_);
+        auto& pool = GetOrCreatePool<T>();
+        return pool.Emplace(owner, std::forward<Args>(args)...);
+    }
+
+    template<typename T>
+    [[nodiscard]] std::vector<T*> GetAll() {
+        const std::scoped_lock lock(mutex_);
+        auto* pool = GetPool<T>();
+        return pool != nullptr ? pool->GetAll() : std::vector<T*>{};
+    }
+
+    template<typename T, typename Fn>
+    void ForEach(Fn&& fn) {
+        const std::scoped_lock lock(mutex_);
+        auto* pool = GetPool<T>();
+        if (pool != nullptr) {
+            pool->ForEach(std::forward<Fn>(fn));
+        }
+    }
+
+    void InitializeAllComponents() {
+        const std::scoped_lock lock(mutex_);
+        for (auto& [_, pool] : pools_) {
+            pool->InitializeAll();
+        }
+    }
+
+    void UpdateAllComponentsAsync(float delta_time) {
+        std::vector<std::shared_ptr<Component>> components;
+        {
+            const std::scoped_lock lock(mutex_);
+            for (auto& [_, pool] : pools_) {
+                pool->CollectAllShared(components);
+            }
+        }
+
+        if (components.empty()) {
+            return;
+        }
+
+        const size_t component_count = components.size();
+        thread_pool_.ParallelFor(component_count,
+            [delta_time, components = std::move(components)](const std::size_t index) mutable {
+                components[index]->Update(delta_time);
+            });
+    }
+
+    void Clear() {
+        const std::scoped_lock lock(mutex_);
+        for (auto& [_, pool] : pools_) {
+            pool->Clear();
+        }
+        pools_.clear();
+        entities_.clear();
+    }
+};
+
+} // namespace VulkanEngine

@@ -1,12 +1,13 @@
 module;
 
-#include <memory>
 #include <filesystem>
 
 export module App.Game;
 
 export import VulkanEngine.Game;
-export import App.Components.DemoInputComponent;
+import VulkanBackend.Utils.CallbackList;
+export import App.Components.SimpleControllerComponent;
+export import App.Components.TransformControlComponent;
 
 export namespace App::Game {
 
@@ -40,11 +41,18 @@ private:
     RenderMode render_mode_;
     VulkanEngine::Application::ApplicationHooks hooks_{};
 
+    VulkanEngine::Utils::ScopedHandle<bool(VulkanEngine::Application::ApplicationContext&)> setup_token_{};
+    VulkanEngine::Utils::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> pre_input_token_{};
+    VulkanEngine::Utils::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_update_token_{};
+    VulkanEngine::Utils::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_render_token_{};
+    VulkanEngine::Utils::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
+
     std::filesystem::path exe_dir_{};
     std::filesystem::path model_path_{};
     std::filesystem::path texture_path_{};
 
     VulkanEngine::Game::GameEngine engine_game_{};
+    VulkanEngine::Utils::ScopedHandle<void()> imgui_draw_handle_{};
 };
 
 } // namespace App::Game

@@ -57,7 +57,7 @@ set_source_files_properties(
 )
 
 target_sources(${BACKEND_TARGET} PRIVATE
-    Event/Event.cpp
+    Event.cpp
     Platform/SdlPlatform.cpp
     Platform/SdlPlatformBackend.cpp
     RenderGraph/RenderGraph.cpp
@@ -75,7 +75,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     Utils/PipelineUtils.cpp
     Utils/Timer.cpp
     Utils/VulkanDebugUtils.cpp
-    ImGui/ImGuiBackend.cpp
+    ImGuiBackend.cpp
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -83,8 +83,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            Component/Component.cppm
-            Event/Event.cppm
+            Component.cppm
+            Event.cppm
             Platform/SdlPlatform.cppm
             Platform/SdlPlatformBackend.cppm
             RenderGraph/RenderGraph.cppm
@@ -102,8 +102,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Utils/PipelineUtils.cppm
             Utils/Timer.cppm
             Utils/ThreadPool.cppm
+            Utils/CallbackList.cppm
             Utils/VulkanDebugUtils.cppm
-            ImGui/ImGuiBackend.cppm
+            ImGuiBackend.cppm
     )
 endif()
 

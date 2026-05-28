@@ -8,6 +8,7 @@
 
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
+import VulkanBackend.Utils.CallbackList;
 
 namespace {
 
@@ -40,7 +41,11 @@ public:
         return nullptr;
     }
 
-    void SetEventProcessor(EventProcessor, void*) override {}
+    VulkanEngine::Utils::CallbackList<void(void*)>& GetSdlEventProcessors() override {
+        return sdl_event_processors_;
+    }
+
+    VulkanEngine::Utils::CallbackList<void(void*)> sdl_event_processors_{};
 };
 
 TEST(PlatformShellTest, InitializesAndShutsDownThroughBackend) {

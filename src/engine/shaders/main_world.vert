@@ -16,9 +16,14 @@ layout(std430, set = 1, binding = 0) readonly buffer VertBuffer {
     VertEntry data[];
 } sv[];
 
-// Raw vertex buffers: interleaved pos3 + nrm3 + tex2 as raw uints
+struct Vertex {
+    float px, py, pz;
+    float nx, ny, nz;
+    float u, v;
+};
+
 layout(std430, set = 2, binding = 0) readonly buffer VertexBuffer {
-    uint d[];
+    Vertex vertices[];
 } vb[];
 
 // Indirection entry: maps a draw call index to a vertex + submesh
@@ -38,22 +43,10 @@ void main() {
     uint submeshId = e.sid;
     uint block = submeshId / 256u;
     uint elemIdx = submeshId % 256u;
-    uint vertBase = vertIdx * 8u;
-
-    vec3 p = vec3(
-        uintBitsToFloat(vb[bufIdx].d[vertBase]),
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 1u]),
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 2u])
-    );
-    vec3 n = vec3(
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 3u]),
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 4u]),
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 5u])
-    );
-    vec2 t = vec2(
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 6u]),
-        uintBitsToFloat(vb[bufIdx].d[vertBase + 7u])
-    );
+    Vertex v = vb[bufIdx].vertices[vertIdx];
+    vec3 p = vec3(v.px, v.py, v.pz);
+    vec3 n = vec3(v.nx, v.ny, v.nz);
+    vec2 t = vec2(v.u, v.v);
 
     VertEntry s = sv[nonuniformEXT(block)].data[elemIdx];
     outM = s.textureSlot;

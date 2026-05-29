@@ -75,9 +75,16 @@ function(_ve_parse_shader_variants VARIANT_FILE OUT_NAMES OUT_DEFINES)
 endfunction()
 
 # Function to compile shaders automatically
+# Optional SUBDIR places output in ${CMAKE_BINARY_DIR}/shaders/<SUBDIR>
+# (shared across all configs). Without SUBDIR, uses CMAKE_CURRENT_BINARY_DIR.
 function(compile_shaders TARGET_NAME)
+    cmake_parse_arguments(ARG "" "SUBDIR" "" ${ARGN})
     set(SHADER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-    set(SHADER_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+    if(ARG_SUBDIR)
+        set(SHADER_BINARY_DIR "${CMAKE_BINARY_DIR}/shaders/${ARG_SUBDIR}")
+    else()
+        set(SHADER_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+    endif()
     
     file(GLOB_RECURSE GLSL_SOURCE_FILES
         "${SHADER_SOURCE_DIR}/*.frag"

@@ -82,10 +82,9 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     }
 
     // 3. Create a custom material for the viking room
-    const auto main_tech = VulkanEngine::TechniqueManager::TechniqueId{engine_game_.GetMainTechniqueId()};
     const uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
     const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialManager::Get().RegisterMaterial({
-        .technique_id = main_tech,
+        .technique_id = engine_game_.GetMainTechniqueId(),
         .texture_slot = VulkanEngine::BindlessManager::TextureSlot{static_cast<uint16_t>(tex_slot)}
     });
 

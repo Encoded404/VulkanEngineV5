@@ -4,6 +4,26 @@ target_sources(${APP_TARGET} PRIVATE
     Game.cpp
 )
 
+include(ShaderUtils)
+compile_shaders(${APP_TARGET}_shaders SUBDIR "app")
+
+# Generate C++ module files with #embed for each compiled shader
+include(ShaderModuleGen)
+set(_shader_gen_dir "${CMAKE_BINARY_DIR}/shaders/app")
+generate_shader_modules(${APP_TARGET}_shader_modules
+    NAMESPACE "App"
+    OUTPUT_DIR ${_shader_gen_dir}
+)
+add_dependencies(${APP_TARGET} ${APP_TARGET}_shader_modules)
+get_target_property(_gen_shader_mods ${APP_TARGET}_shader_modules GENERATED_SHADER_MODULES)
+
+# #embed is a Clang extension in C++20 mode; suppress the warning for generated shader modules
+if(_gen_shader_mods)
+    set_source_files_properties(${_gen_shader_mods} PROPERTIES
+        COMPILE_OPTIONS "-Wno-c23-extensions"
+    )
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_sources(${APP_TARGET} PUBLIC
         FILE_SET CXX_MODULES
@@ -13,6 +33,15 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Components/TransformControlComponent.cppm
             Game.cppm
     )
+
+    # Register generated shader module files
+    if(_gen_shader_mods)
+        target_sources(${APP_TARGET} PUBLIC
+            FILE_SET CXX_MODULES
+            BASE_DIRS ${_shader_gen_dir}
+            FILES ${_gen_shader_mods}
+        )
+    endif()
 endif()
 
 target_link_libraries(${APP_TARGET} PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
@@ -78,9 +107,6 @@ configure_app_asset_copy(${APP_TARGET}
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/textures"
     DEST_SUBDIR "textures"
 )
-
-include(ShaderUtils)
-compile_shaders(${APP_TARGET}_shaders)
 
 get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
 get_target_property(_app_shader_dir ${APP_TARGET}_shaders SHADER_OUTPUT_DIR)

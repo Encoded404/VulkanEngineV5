@@ -81,6 +81,33 @@ target_sources(${ENGINE_TARGET} PRIVATE
     core/Game.cpp
 )
 
+include(ShaderUtils)
+compile_shaders(${ENGINE_TARGET}_shaders SUBDIR "engine")
+target_link_shaders(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
+
+# Expose SHADER_DIR to dependent targets (e.g. the app)
+get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
+target_compile_definitions(${ENGINE_TARGET} PUBLIC
+    SHADER_DIR="$<$<CONFIG:Debug>:${_engine_shader_dir}>$<$<CONFIG:Release>:${_engine_shader_dir}>$<$<CONFIG:RelWithDebInfo>:${_engine_shader_dir}>$<$<CONFIG:MinSizeRel>:${_engine_shader_dir}>"
+)
+
+# Generate C++ module files with #embed for each compiled shader
+include(ShaderModuleGen)
+set(_shader_gen_dir "${CMAKE_BINARY_DIR}/shaders/engine")
+generate_shader_modules(${ENGINE_TARGET}_shader_modules
+    NAMESPACE "Engine"
+    OUTPUT_DIR ${_shader_gen_dir}
+)
+add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shader_modules)
+get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shader_modules GENERATED_SHADER_MODULES)
+
+# #embed is a Clang extension in C++20 mode; suppress the warning for generated shader modules
+if(_gen_shader_mods)
+    set_source_files_properties(${_gen_shader_mods} PROPERTIES
+        COMPILE_OPTIONS "-Wno-c23-extensions"
+    )
+endif()
+
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         target_sources(${ENGINE_TARGET} PUBLIC
             FILE_SET CXX_MODULES
@@ -126,19 +153,17 @@ target_sources(${ENGINE_TARGET} PRIVATE
                 rendering/BindlessManager/TextureSlot.cppm
                 core/Game.cppm
         )
+    # Register generated shader module files
+    if(_gen_shader_mods)
+        target_sources(${ENGINE_TARGET} PUBLIC
+            FILE_SET CXX_MODULES
+            BASE_DIRS ${_shader_gen_dir}
+            FILES ${_gen_shader_mods}
+        )
     endif()
+endif()
 
 if(COMMAND enable_target_clang_tidy)
     enable_target_clang_tidy(${ENGINE_TARGET})
 endif()
-
-include(ShaderUtils)
-compile_shaders(${ENGINE_TARGET}_shaders)
-target_link_shaders(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
-
-# Expose SHADER_DIR to dependent targets (e.g. the app)
-get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
-target_compile_definitions(${ENGINE_TARGET} PUBLIC
-    SHADER_DIR="$<$<CONFIG:Debug>:${_engine_shader_dir}>$<$<CONFIG:Release>:${_engine_shader_dir}>$<$<CONFIG:RelWithDebInfo>:${_engine_shader_dir}>$<$<CONFIG:MinSizeRel>:${_engine_shader_dir}>"
-)
 

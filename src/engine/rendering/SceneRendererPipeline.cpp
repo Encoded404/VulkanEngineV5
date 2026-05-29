@@ -72,7 +72,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap&
     depth_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanEngine::Utils::SetVulkanObjectName(dev, *depth_pipeline_layout_, "depth-prepass-pipeline-layout");
     auto vspv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(
-        std::filesystem::path(SHADER_DIR) / "depth_world.vert.spv");
+        std::filesystem::path(SHADER_DIR) / "depth_indir.vert.spv");
     auto fspv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(
         std::filesystem::path(SHADER_DIR) / "depth_prepass.frag.spv");
     if (vspv.empty() || fspv.empty()) {
@@ -172,9 +172,9 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkan
     occlusion_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanEngine::Utils::SetVulkanObjectName(dev, *occlusion_pipeline_layout_, "occlusion-pipeline-layout");
     auto spv = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(
-        std::filesystem::path(SHADER_DIR) / "occlusion_sort.comp.spv");
+        std::filesystem::path(SHADER_DIR) / "occlusion_cull.comp.spv");
     if (spv.empty()) {
-        LOGIFACE_LOG(error, "Failed to load occlusion_sort");
+        LOGIFACE_LOG(error, "Failed to load occlusion_cull");
         return false;
     }
     const vk::ShaderModuleCreateInfo mi({}, spv.size() * sizeof(uint32_t), spv.data());

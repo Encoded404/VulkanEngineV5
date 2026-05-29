@@ -34,7 +34,7 @@ export namespace VulkanEngine::Game {
 
 struct GameConfig {
     std::filesystem::path shader_dir;
-    std::string vertex_shader_file = "main_world.vert.spv";
+    std::string vertex_shader_file = "main_indir.vert.spv";
     std::string fragment_shader_file = "standard_mesh.frag.spv";
     StandardMeshPipeline::PipelineConfig pipeline_config{
         .depth_test_enable = true,
@@ -79,7 +79,8 @@ public:
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap_; }
     GpuResources::StagingManager& GetStagingManager() { return staging_mgr_; }
     const SceneLoader::CombinedScene& GetCombinedScene() { return combined_scene_; }
-    uint16_t GetMainTechniqueId() const { return main_technique_id_; }
+    uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
+    VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
 
 private:

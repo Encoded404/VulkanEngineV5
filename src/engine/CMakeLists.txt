@@ -83,7 +83,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
 
 include(ShaderUtils)
 compile_shaders(${ENGINE_TARGET}_shaders SUBDIR "engine")
-target_link_shaders(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
 
 # Expose SHADER_DIR to dependent targets (e.g. the app)
 get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
@@ -98,6 +97,7 @@ generate_shader_modules(${ENGINE_TARGET}_shader_modules
     NAMESPACE "Engine"
     OUTPUT_DIR ${_shader_gen_dir}
 )
+add_dependencies(${ENGINE_TARGET}_shader_modules ${ENGINE_TARGET}_shaders)
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shader_modules)
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shader_modules GENERATED_SHADER_MODULES)
 

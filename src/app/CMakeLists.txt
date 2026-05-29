@@ -14,6 +14,7 @@ generate_shader_modules(${APP_TARGET}_shader_modules
     NAMESPACE "App"
     OUTPUT_DIR ${_shader_gen_dir}
 )
+add_dependencies(${APP_TARGET}_shader_modules ${APP_TARGET}_shaders)
 add_dependencies(${APP_TARGET} ${APP_TARGET}_shader_modules)
 get_target_property(_gen_shader_mods ${APP_TARGET}_shader_modules GENERATED_SHADER_MODULES)
 
@@ -100,5 +101,3 @@ configure_app_asset_copy(${APP_TARGET}
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/textures"
     DEST_SUBDIR "textures"
 )
-
-

@@ -1,15 +1,15 @@
 module;
 
 #include <memory>
-#include <string>
 #include <vector>
-#include <filesystem>
 #include <cstdint>
 
 #include <vulkan/vulkan.hpp>
 #include <logging/logging.hpp>
 
 module VulkanEngine.Game;
+
+import Shaders.Engine;
 
 namespace VulkanEngine::Game {
 
@@ -27,10 +27,12 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     missing_texture_ = DefaultTextureFactory::DefaultTextureFactory::CreateCheckerboard(resource_manager_);
     fallback_handle_ = ResourceHandle<TextureResource>("checkerboard_default", &resource_manager_);
 
-    vert_spv_holder_ = ShaderLoader::ShaderLoader::LoadSpirv(
-        config.shader_dir / config.vertex_shader_file);
-    frag_spv_holder_ = ShaderLoader::ShaderLoader::LoadSpirv(
-        config.shader_dir / config.fragment_shader_file);
+    vert_spv_holder_ = std::vector<std::uint32_t>{
+        Shaders::Engine::MainIndirVert::GetSpirvWords().begin(),
+        Shaders::Engine::MainIndirVert::GetSpirvWords().end()};
+    frag_spv_holder_ = std::vector<std::uint32_t>{
+        Shaders::Engine::StandardMeshFrag::GetSpirvWords().begin(),
+        Shaders::Engine::StandardMeshFrag::GetSpirvWords().end()};
 
     bindless_mgr_ = std::make_unique<BindlessManager::BindlessManager>();
     if (!bindless_mgr_->Initialize(backend)) {
@@ -70,7 +72,9 @@ uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& 
     return 0;
 }
 
-bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx) {
+bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
+                              std::span<const std::uint32_t> vert_override,
+                              std::span<const std::uint32_t> frag_override) {
     auto& backend = ctx.bootstrap->GetBackend();
 
     constexpr uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
@@ -81,13 +85,23 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     }
 
     technique_mgr_ = std::make_unique<TechniqueManager::TechniqueManager>();
-    main_technique_id_ = technique_mgr_->RegisterTechnique(
-        *ctx.bootstrap, vert_spv_holder_, frag_spv_holder_,
-        config_.pipeline_config,
+    {
+        auto resolve_spv = [](const std::span<const std::uint32_t>& override_spv,
+                              const std::vector<std::uint32_t>& default_spv) {
+            if (!override_spv.empty()) {
+                return std::vector<std::uint32_t>{override_spv.begin(), override_spv.end()};
+            }
+            return default_spv;
+        };
+        auto vert = resolve_spv(vert_override, vert_spv_holder_);
+        auto frag = resolve_spv(frag_override, frag_spv_holder_);
+        main_technique_id_ = technique_mgr_->RegisterTechnique(
+            *ctx.bootstrap, vert, frag, config_.pipeline_config,
         bindless_mgr_->GetLayout(),
         scene_renderer_->GetSubmeshVertexDataLayout(),
         scene_renderer_->GetRawVertexLayout(),
         scene_renderer_->GetIndirectionLayout());
+    }
 
     scene_renderer_->SetupTechniqueDgcCallback(*technique_mgr_);
 

@@ -101,13 +101,6 @@ generate_shader_modules(${ENGINE_TARGET}_shader_modules
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shader_modules)
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shader_modules GENERATED_SHADER_MODULES)
 
-# #embed is a Clang extension in C++20 mode; suppress the warning for generated shader modules
-if(_gen_shader_mods)
-    set_source_files_properties(${_gen_shader_mods} PROPERTIES
-        COMPILE_OPTIONS "-Wno-c23-extensions"
-    )
-endif()
-
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         target_sources(${ENGINE_TARGET} PUBLIC
             FILE_SET CXX_MODULES

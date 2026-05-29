@@ -80,7 +80,7 @@ bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend
         slots_.push_back(std::move(slot));
     }
 
-    LOGIFACE_LOG(info, "StagingManager initialized: " + std::to_string(slot_count) +
+    LOGIFACE_LOG(debug, "StagingManager initialized: " + std::to_string(slot_count) +
                  " slots x " + std::to_string(slot_size / (1024ull * 1024)) + " MB");
     return true;
 }

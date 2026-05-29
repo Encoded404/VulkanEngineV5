@@ -290,7 +290,7 @@ CombinedScene SceneLoader::UploadCombined(
         return scene;
     }
 
-    LOGIFACE_LOG(info, "UploadCombined: " + std::to_string(scene.meshes.size()) + " meshes, " +
+    LOGIFACE_LOG(debug, "UploadCombined: " + std::to_string(scene.meshes.size()) + " meshes, " +
                  std::to_string(all_vertices.size()) + " vertices, " +
                  std::to_string(all_indices.size()) + " indices");
 

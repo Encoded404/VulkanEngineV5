@@ -28,7 +28,7 @@ bool DeviceBufferHeap::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backe
         config_.default_alignment = 256ULL;
     }
 
-    LOGIFACE_LOG(info, "DeviceBufferHeap '" + debug_name_ + "' initialized: block_size=" +
+    LOGIFACE_LOG(debug, "DeviceBufferHeap '" + debug_name_ + "' initialized: block_size=" +
                  std::to_string(config_.block_size / (1024ULL * 1024ULL)) + " MB");
     return true;
 }
@@ -64,7 +64,7 @@ uint32_t DeviceBufferHeap::AddBlock() {
 
     blocks_.push_back(std::move(block));
 
-    LOGIFACE_LOG(info, "DeviceBufferHeap '" + debug_name_ + "': added block " + std::to_string(index) +
+    LOGIFACE_LOG(debug, "DeviceBufferHeap '" + debug_name_ + "': added block " + std::to_string(index) +
                  " (" + std::to_string(config_.block_size / (1024ULL * 1024ULL)) + " MB)");
     return index;
 }

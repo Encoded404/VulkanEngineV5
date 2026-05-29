@@ -77,7 +77,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
             dgc_available_ = true;
             max_dgc_sequence_count_ = std::min(dgc_props.maxIndirectSequenceCount, 256u);
         } else {
-            LOGIFACE_LOG(info, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
+            LOGIFACE_LOG(debug, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
                                             std::string("\nsupported = ") + std::bitset<32>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding).to_string() +
                                             std::string("\nneeded    = ") + std::bitset<32>(VK_SHADER_STAGE_VERTEX_BIT).to_string());
         }

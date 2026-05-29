@@ -4,6 +4,7 @@
 # For each .glsl shader source in CMAKE_CURRENT_SOURCE_DIR, produces a .cppm
 # with module name Shaders.<Namespace>.<PascalCaseName> and a struct with a
 # CreateModule() convenience method.
+# Also generates a unified module Shaders.<Namespace> that re-exports all.
 #
 # Usage:
 #   include(ShaderModuleGen)
@@ -81,8 +82,6 @@ module;
 
 export module ${MODULE_NAME};
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
-
 export namespace Shaders::${ARG_NAMESPACE} {
     struct ${CLASS_NAME} {
         [[nodiscard]] static std::span<const std::uint32_t> GetSpirvWords() noexcept {
@@ -95,11 +94,11 @@ export namespace Shaders::${ARG_NAMESPACE} {
         }
 
         [[nodiscard]] static vk::raii::ShaderModule
-        CreateModule(VulkanEngine::Runtime::IVulkanBootstrap& backend) {
+        CreateModule(vk::raii::Device const& device) {
             auto const words = GetSpirvWords();
             vk::ShaderModuleCreateInfo const info({},
                 words.size() * sizeof(std::uint32_t), words.data());
-            return vk::raii::ShaderModule(backend.GetDevice(), info);
+            return vk::raii::ShaderModule(device, info);
         }
     };
 }
@@ -110,7 +109,25 @@ export namespace Shaders::${ARG_NAMESPACE} {
         list(APPEND MODULE_NAMES "${MODULE_NAME}")
     endforeach()
 
+    # Generate unified parent module that re-exports all individual shader modules.
+    # e.g.  import Shaders.Engine;  imports everything in one statement.
+    set(UNIFIED_MODULE_NAME "Shaders.${ARG_NAMESPACE}")
+    set(UNIFIED_MODULE_FILE "${ARG_OUTPUT_DIR}/__shaders_module__.cppm")
+    set(UNIFIED_CONTENT "// Auto-generated. Do not edit.\n// Re-exports all shader modules under Shaders.${ARG_NAMESPACE}\n\n")
+    set(UNIFIED_CONTENT "${UNIFIED_CONTENT}export module ${UNIFIED_MODULE_NAME};\n\n")
+    foreach(MN ${MODULE_NAMES})
+        set(UNIFIED_CONTENT "${UNIFIED_CONTENT}export import ${MN};\n")
+    endforeach()
+    file(WRITE "${UNIFIED_MODULE_FILE}" "${UNIFIED_CONTENT}")
+    list(APPEND GENERATED_FILES "${UNIFIED_MODULE_FILE}")
+    list(APPEND MODULE_NAMES "${UNIFIED_MODULE_NAME}")
+
     add_custom_target(${TARGET} DEPENDS ${GENERATED_FILES})
+
+    # #embed is a Clang extension in C++20 mode; suppress for all generated files
+    set_source_files_properties(${GENERATED_FILES} PROPERTIES
+        COMPILE_OPTIONS "-Wno-c23-extensions"
+    )
 
     set_target_properties(${TARGET} PROPERTIES
         GENERATED_SHADER_MODULES "${GENERATED_FILES}"

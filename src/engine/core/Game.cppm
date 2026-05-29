@@ -1,10 +1,9 @@
 module;
 
 #include <memory>
-#include <filesystem>
+#include <span>
 #include <vector>
 #include <cstdint>
-#include <string>
 
 export module VulkanEngine.Game;
 
@@ -33,9 +32,6 @@ import VulkanBackend.Utils.CallbackList;
 export namespace VulkanEngine::Game {
 
 struct GameConfig {
-    std::filesystem::path shader_dir;
-    std::string vertex_shader_file = "main_indir.vert.spv";
-    std::string fragment_shader_file = "standard_mesh.frag.spv";
     StandardMeshPipeline::PipelineConfig pipeline_config{
         .depth_test_enable = true,
         .depth_write_enable = true,
@@ -57,7 +53,9 @@ public:
 
     uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path);
 
-    bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx);
+    bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
+                      std::span<const std::uint32_t> vert_override = {},
+                      std::span<const std::uint32_t> frag_override = {});
 
     const SceneLoader::CombinedScene& UploadScene(
         VulkanEngine::Application::ApplicationContext& ctx,

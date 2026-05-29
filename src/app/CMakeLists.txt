@@ -17,13 +17,6 @@ generate_shader_modules(${APP_TARGET}_shader_modules
 add_dependencies(${APP_TARGET} ${APP_TARGET}_shader_modules)
 get_target_property(_gen_shader_mods ${APP_TARGET}_shader_modules GENERATED_SHADER_MODULES)
 
-# #embed is a Clang extension in C++20 mode; suppress the warning for generated shader modules
-if(_gen_shader_mods)
-    set_source_files_properties(${_gen_shader_mods} PROPERTIES
-        COMPILE_OPTIONS "-Wno-c23-extensions"
-    )
-endif()
-
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_sources(${APP_TARGET} PUBLIC
         FILE_SET CXX_MODULES
@@ -108,9 +101,4 @@ configure_app_asset_copy(${APP_TARGET}
     DEST_SUBDIR "textures"
 )
 
-get_target_property(_engine_shader_dir ${ENGINE_TARGET}_shaders SHADER_OUTPUT_DIR)
-get_target_property(_app_shader_dir ${APP_TARGET}_shaders SHADER_OUTPUT_DIR)
-add_custom_command(TARGET ${APP_TARGET} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${_app_shader_dir} ${_engine_shader_dir}
-    COMMENT "Copying app shaders to engine shader output directory"
-)
+

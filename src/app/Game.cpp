@@ -4,9 +4,7 @@ module;
 #define GLM_FORCE_RADIANS
 #include <glm/vec4.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
-#include <string>
 #include <utility>
-#include <vector>
 #include <filesystem>
 
 #include <SDL3/SDL_keycode.h>
@@ -18,6 +16,8 @@ module App.Game;
 import VulkanEngine.Game;
 import App.Components.SimpleControllerComponent;
 import App.Components.TransformControlComponent;
+import Shaders.Engine;
+import Shaders.App;
 
 namespace App::Game {
 
@@ -56,28 +56,27 @@ DemoGame::~DemoGame() = default;
 bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
     VulkanEngine::Game::GameConfig config{};
-    config.shader_dir = SHADER_DIR;
     config.enable_imgui = true;
     config.renderer_config.clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
-
-    switch (render_mode_) {
-        case RenderMode::Normals:
-            config.fragment_shader_file = "normals.frag.spv";
-            break;
-        case RenderMode::NoTextures:
-            config.fragment_shader_file = "solid.frag.spv";
-            break;
-        default:
-            config.fragment_shader_file = "standard_mesh.frag.spv";
-            break;
-    }
 
     if (!engine_game_.Setup(ctx, config)) {
         return false;
     }
 
-    // 2. Init renderer, technique, and fallback material
-    if (!engine_game_.InitRenderer(ctx)) {
+    // 2. Select fragment shader and init renderer
+    std::span<const std::uint32_t> frag_spv;
+    switch (render_mode_) {
+        case RenderMode::Normals:
+            frag_spv = Shaders::App::NormalsFrag::GetSpirvWords();
+            break;
+        case RenderMode::NoTextures:
+            frag_spv = Shaders::App::SolidFrag::GetSpirvWords();
+            break;
+        default:
+            frag_spv = Shaders::Engine::StandardMeshFrag::GetSpirvWords();
+            break;
+    }
+    if (!engine_game_.InitRenderer(ctx, {}, frag_spv)) {
         return false;
     }
 

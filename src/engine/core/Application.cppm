@@ -99,28 +99,28 @@ struct ApplicationHooks {
         if (setup_completed) {
             hooks.on_shutdown.Call(context);
             const double current = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: app hooks " + std::to_string(current - prev) + " ms");
+            LOGIFACE_LOG(debug, "shutdown: app hooks " + std::to_string(current - prev) + " ms");
             prev = current;
             setup_completed = false;
         }
         if (runtime_initialized && runtime) {
             runtime->Shutdown();
             const double current = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: runtime " + std::to_string(current - prev) + " ms");
+            LOGIFACE_LOG(debug, "shutdown: runtime " + std::to_string(current - prev) + " ms");
             prev = current;
             runtime_initialized = false;
         }
         if (bootstrap_initialized && bootstrap) {
             bootstrap->Shutdown();
             const double current = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: bootstrap " + std::to_string(current - prev) + " ms");
+            LOGIFACE_LOG(debug, "shutdown: bootstrap " + std::to_string(current - prev) + " ms");
             prev = current;
             bootstrap_initialized = false;
         }
         if (platform_initialized && platform) {
             platform->Shutdown();
             const double current = t.ElapsedMs();
-            LOGIFACE_LOG(info, "shutdown: platform " + std::to_string(current - prev) + " ms");
+            LOGIFACE_LOG(debug, "shutdown: platform " + std::to_string(current - prev) + " ms");
             prev = current;
             platform_initialized = false;
         }

@@ -95,7 +95,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     descriptor_set_ = std::move(sets[0]);
     VulkanEngine::Utils::SetVulkanObjectName(device, descriptor_set_, "bindless-descriptor-set");
 
-    LOGIFACE_LOG(info, "BindlessManager initialized with unbounded texture array");
+    LOGIFACE_LOG(debug, "BindlessManager initialized with unbounded texture array");
     return true;
 }
 

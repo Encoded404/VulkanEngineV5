@@ -7,6 +7,7 @@ Checks: >-
   readability-identifier-naming,
   clang-analyzer-*,
   -clang-analyzer-core.UndefinedBinaryOperatorResult,
+  -clang-analyzer-core.uninitialized.UndefReturn,
   bugprone-*,
   misc-*,
 
@@ -21,6 +22,7 @@ Checks: >-
   -performance-enum-size,
   -bugprone-unchecked-optional-access,
 # as for bugprone-unchecked-optional-access sadly, this is a buggy and unstable mess that doesnt really work, and chrashes occasionally, so its disabled
+# for clang-analyzer-core.uninitialized.UndefReturn its almost the same story, vulkan headers have problems with it
 #  -misc-non-private-member-variables-in-classes,
 #  -modernize-avoid-c-arrays,
 

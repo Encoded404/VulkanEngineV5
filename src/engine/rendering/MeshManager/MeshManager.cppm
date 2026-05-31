@@ -1,5 +1,6 @@
 module;
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -25,8 +26,8 @@ public:
         VulkanEngine::GpuResources::HeapAllocation index_allocation{};
         uint32_t vertex_buffer_index = 0;
         uint32_t index_buffer_index = 0;
-        VulkanEngine::GpuResources::HeapAllocation streamed_vertex_alloc[MAX_FRAMES_IN_FLIGHT]{};
-        VulkanEngine::GpuResources::HeapAllocation streamed_index_alloc[MAX_FRAMES_IN_FLIGHT]{};
+        std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_vertex_alloc{};
+        std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_index_alloc{};
         std::vector<SubMesh> sub_meshes;
     };
 

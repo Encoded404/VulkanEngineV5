@@ -2,7 +2,6 @@ module;
 
 #include <cstdint>
 #include <vector>
-#include <filesystem>
 #include <unordered_set>
 
 export module VulkanEngine.MeshRegistry;

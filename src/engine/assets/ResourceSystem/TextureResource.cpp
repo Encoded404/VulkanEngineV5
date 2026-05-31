@@ -16,16 +16,19 @@ import VulkanEngine.FileLoaders.TextureLoaders;
 
 namespace VulkanEngine {
 
-TextureResource::TextureResource(std::string id)
+TextureResource::TextureResource(ResourceId id)
     : Resource(std::move(id)) {
     Reset();
 }
 
-TextureResource::TextureResource(std::string id, uint32_t width, uint32_t height, vk::Format format,
+TextureResource::TextureResource(ResourceId id, uint32_t width, uint32_t height, vk::Format format,
                                   std::vector<std::byte> pixels)
     : Resource(std::move(id)), width_(width), height_(height), mip_levels_(1),
       layer_count_(1), face_count_(1), vk_format_(format), pixels_(std::move(pixels)) {
     loaded_ = !pixels_.empty();
+    if (loaded_) {
+        alpha_analysis_ = VulkanEngine::FileLoaders::Textures::AnalyzeAlpha(pixels_);
+    }
 }
 
 uint32_t TextureResource::GetWidth() const noexcept { return width_; }
@@ -36,9 +39,10 @@ uint32_t TextureResource::GetFaceCount() const noexcept { return face_count_; }
 vk::Format TextureResource::GetVkFormat() const noexcept { return vk_format_; }
 const std::vector<std::byte>& TextureResource::GetPixels() const noexcept { return pixels_; }
 bool TextureResource::HasPixels() const noexcept { return !pixels_.empty(); }
+const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& TextureResource::GetAlphaAnalysis() const noexcept { return alpha_analysis_; }
 
 bool TextureResource::DoLoad() {
-    LOGIFACE_LOG(error, "TextureResource '" + GetId() + "' cannot be loaded without file buffer data");
+    LOGIFACE_LOG(error, "TextureResource '" + GetId().value + "' cannot be loaded without file buffer data");
     return false;
 }
 
@@ -55,6 +59,7 @@ void TextureResource::Reset() noexcept {
     face_count_ = 0;
     vk_format_ = vk::Format::eUndefined;
     transcoded_ = false;
+    alpha_analysis_ = {};
     pixels_.clear();
 }
 
@@ -62,15 +67,15 @@ bool TextureResource::DoLoadFromBuffer(const FileLoader::ByteBuffer& buf) {
     Reset();
 
     if (buf.empty()) {
-        LOGIFACE_LOG(warn, "TextureResource: empty buffer for resource '" + GetId() + "'");
+        LOGIFACE_LOG(warn, "TextureResource: empty buffer for resource '" + GetId().value + "'");
         return false;
     }
 
     VulkanEngine::FileLoaders::Textures::TextureData decoded{};
     std::string error_message{};
 
-    if (!VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer(GetId(), buf, decoded, &error_message)) {
-        LOGIFACE_LOG(warn, "TextureResource: failed to load texture resource '" + GetId() + "'" + (error_message.empty() ? std::string{} : ": " + error_message));
+    if (!VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer(GetId().value, buf, decoded, &error_message)) {
+        LOGIFACE_LOG(warn, "TextureResource: failed to load texture resource '" + GetId().value + "'" + (error_message.empty() ? std::string{} : ": " + error_message));
         return false;
     }
 
@@ -80,6 +85,7 @@ bool TextureResource::DoLoadFromBuffer(const FileLoader::ByteBuffer& buf) {
     layer_count_ = decoded.layer_count;
     face_count_ = decoded.face_count;
     vk_format_ = decoded.vk_format;
+    alpha_analysis_ = decoded.alpha_analysis;
     pixels_ = std::move(decoded.pixels);
     transcoded_ = false;
     return true;

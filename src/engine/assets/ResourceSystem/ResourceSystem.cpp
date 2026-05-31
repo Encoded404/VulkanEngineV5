@@ -9,9 +9,9 @@ module;
 
 module VulkanEngine.ResourceSystem;
 namespace VulkanEngine {
-    Resource::Resource(std::string id) : resourceId_(std::move(id)) {}
+    Resource::Resource(ResourceId id) : resourceId_(std::move(id)) {}
 
-    const std::string& Resource::GetId() const {
+    const ResourceId& Resource::GetId() const {
         return resourceId_;
     }
 
@@ -38,17 +38,17 @@ namespace VulkanEngine {
         return false;
     }
 
-    void ResourceManager::Release(const std::string& resource_id) {
+    void ResourceManager::Release(const ResourceId& resource_id) {
         std::unique_lock<std::shared_mutex> const wlock(mutex_);
         for (auto &[type_index, unordered_map] : refCounts_) {
             auto& map = unordered_map;
-            auto it = map.find(resource_id);
+            auto it = map.find(resource_id.value);
             if (it != map.end()) {
                 it->second.refCount--;
                 if (it->second.refCount <= 0) {
                     auto res_type_it = resources_.find(type_index);
                     if (res_type_it != resources_.end()) {
-                        auto r_it = res_type_it->second.find(resource_id);
+                        auto r_it = res_type_it->second.find(resource_id.value);
                         if (r_it != res_type_it->second.end()) {
                             r_it->second->Unload();
                             res_type_it->second.erase(r_it);

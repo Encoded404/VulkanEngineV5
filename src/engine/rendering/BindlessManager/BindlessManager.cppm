@@ -11,6 +11,7 @@ export module VulkanEngine.BindlessManager;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
+import VulkanEngine.ResourceSystem;
 
 export namespace VulkanEngine::BindlessManager {
 
@@ -25,7 +26,8 @@ public:
     bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend);
     void Shutdown();
 
-    [[nodiscard]] uint32_t AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const std::string* id);
+    [[nodiscard]] uint32_t AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id);
+    [[nodiscard]] const VulkanEngine::ResourceId* GetTextureId(uint32_t slot) const;
 
     [[nodiscard]] vk::DescriptorSetLayout* GetLayout();
     [[nodiscard]] vk::DescriptorSet GetDescriptorSet() const;
@@ -39,6 +41,7 @@ private:
     std::unique_ptr<vk::raii::DescriptorPool> pool_{};
     vk::raii::DescriptorSet descriptor_set_{nullptr};
     std::vector<VulkanEngine::GpuResources::GpuTexture> textures_{}; // keep alive
+    std::vector<VulkanEngine::ResourceId> texture_ids_{};
     uint32_t next_slot_ = 0;
 };
 

@@ -73,6 +73,13 @@ else()
 	message(FATAL_ERROR "Missing FileLoader at ${FILELOADER_PATH}; provide the repo there or set FILELOADER_PATH to another directory.")
 endif()
 
+# ----------------------------
+# Slang/SPIR-V Compiler Helper
+# ----------------------------
+message("finding SlangSpriVCompilerHelper")
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper" SlangSpriVCompilerHelper)
+
 option(CLANG_TIDY_ENABLED "Enable Clang-Tidy static analysis" ON)
 option(SYSTEM_VULKAN "Use system Vulkan loader instead of vcpkg's" ON)
 # disable Clang-Tidy if not using Clang or GCC

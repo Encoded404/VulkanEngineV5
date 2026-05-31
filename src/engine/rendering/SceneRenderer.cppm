@@ -140,6 +140,8 @@ private:
         VulkanEngine::GpuResources::GpuBuffer compacted_indirection_buffer{};
         VulkanEngine::GpuResources::GpuBuffer draw_count_buffer{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
+        VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer tech_offsets_buffer{};
 
         // DGC buffers (only used when DGC is available)
         VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};

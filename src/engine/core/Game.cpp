@@ -9,7 +9,8 @@ module;
 
 module VulkanEngine.Game;
 
-import Shaders.Engine;
+import Shaders.Engine.MainIndirVert;
+import Shaders.Engine.StandardMeshFrag;
 
 namespace VulkanEngine::Game {
 
@@ -25,7 +26,7 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     auto& backend = ctx.bootstrap->GetBackend();
 
     missing_texture_ = DefaultTextureFactory::DefaultTextureFactory::CreateCheckerboard(resource_manager_);
-    fallback_handle_ = ResourceHandle<TextureResource>("checkerboard_default", &resource_manager_);
+    fallback_handle_ = ResourceHandle<TextureResource>(ResourceId{"checkerboard_default"}, &resource_manager_);
 
     vert_spv_holder_ = std::vector<std::uint32_t>{
         Shaders::Engine::MainIndirVert::GetSpirvWords().begin(),
@@ -56,9 +57,9 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
         reinterpret_cast<const uint8_t*>(tex->GetPixels().data()),
         tex->GetWidth(), tex->GetHeight());
     if (gpu_tex.IsValid()) {
-        return bindless_mgr_->AllocateTextureSlot(std::move(gpu_tex), &tex->GetId());
+        return bindless_mgr_->AllocateTextureSlot(std::move(gpu_tex), tex->GetId());
     }
-    LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId() + ", using fallback");
+    LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId().value + ", using fallback");
     return 0;
 }
 
@@ -112,7 +113,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     MaterialManager::MaterialDefinition fallback_def{};
     fallback_def.technique_id = TechniqueManager::TechniqueId{main_technique_id_};
     fallback_def.texture_slot = BindlessManager::TextureSlot{static_cast<uint16_t>(fallback_slot)};
-    [[maybe_unused]] const auto fallback_mat_id = MaterialManager::MaterialManager::Get().RegisterMaterial(fallback_def);
+    fallback_def.blend_mode = MaterialManager::BlendMode::Opaque;
+    [[maybe_unused]] const auto fallback_mat_id = MaterialManager::MaterialManager::Get().RegisterMaterial(fallback_def, resource_manager_, *bindless_mgr_);
 
     renderer_ = std::make_unique<Renderer::Renderer>();
     renderer_->Initialize(*ctx.bootstrap, config_.renderer_config);

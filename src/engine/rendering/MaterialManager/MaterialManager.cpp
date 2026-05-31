@@ -1,7 +1,11 @@
 module;
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
+
+#include <logging/logging.hpp>
 
 module VulkanEngine.MaterialManager;
 
@@ -22,12 +26,26 @@ void MaterialManager::Shutdown() {
     inst.materials_.clear();
 }
 
-MaterialId MaterialManager::RegisterMaterial(const MaterialDefinition& def) {
+MaterialId MaterialManager::RegisterMaterial(const MaterialDefinition& def,
+                                              VulkanEngine::ResourceManager& resource_mgr,
+                                              VulkanEngine::BindlessManager::BindlessManager& bindless_mgr) {
     const auto id = static_cast<uint16_t>(materials_.size());
     materials_.push_back(MaterialEntry{def});
+    constexpr std::array<std::string_view, 3> blend_names{std::string_view{"Opaque"}, std::string_view{"Cutout"}, std::string_view{"Transparent"}};
+    const auto blend_idx = static_cast<size_t>(def.blend_mode);
+    const auto blend_name = blend_idx < 3 ? blend_names[blend_idx] : std::string_view{"Unknown"};
     LOGIFACE_LOG(debug, "Registered material ID " + std::to_string(id) + ": technique_id=" +
                  std::to_string(def.technique_id.value) + " texture_slot=" +
-                 std::to_string(def.texture_slot.value));
+                 std::to_string(def.texture_slot.value) + " blend_mode=" + std::string(blend_name));
+
+    const auto* rid = bindless_mgr.GetTextureId(def.texture_slot.value);
+    if (rid != nullptr) {
+        auto* tex = resource_mgr.GetResource<VulkanEngine::TextureResource>(*rid);
+        if (tex != nullptr) {
+            ValidateTextureBlendMode(tex->GetAlphaAnalysis(), def.blend_mode, rid->value);
+        }
+    }
+
     return MaterialId{id};
 }
 
@@ -41,6 +59,37 @@ void MaterialManager::UpdateMaterialTextureSlot(MaterialId id, TextureSlot slot)
 
 void MaterialManager::UpdateMaterialTechnique(MaterialId id, TechniqueId tech_id) {
     materials_[id.value].def.technique_id = tech_id;
+}
+
+void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& alpha,
+                               BlendMode mode,
+                               std::string_view texture_name) {
+    const std::string name(texture_name);
+
+    if (mode == BlendMode::Opaque) {
+        if (alpha.hasFractionalAlpha) {
+            LOGIFACE_LOG(warn, "Warning: texture '" + name + "' contains fractional alpha, "
+                         "recommended blend mode is Transparent but current mode is Opaque");
+        }
+        if (alpha.hasZeroAlpha) {
+            LOGIFACE_LOG(warn, "Warning: texture '" + name + "' has zero-alpha pixels, "
+                         "may render incorrectly with Opaque blend mode");
+        }
+    } else if (mode == BlendMode::Cutout) {
+        if (alpha.opaqueCoverage >= 1.0f) {
+            LOGIFACE_LOG(warn, "Warning: texture '" + name + "' is fully opaque, "
+                         "Cutout blend mode has no effect (use Opaque)");
+        }
+        if (alpha.hasFractionalAlpha) {
+            LOGIFACE_LOG(warn, "Warning: texture '" + name + "' contains fractional alpha, "
+                         "recommended blend mode is Transparent but current mode is Cutout");
+        }
+    } else if (mode == BlendMode::Transparent) {
+        if (alpha.opaqueCoverage >= 1.0f) {
+            LOGIFACE_LOG(warn, "Warning: texture '" + name + "' is fully opaque, "
+                         "Transparent blend mode is unnecessary (use Opaque)");
+        }
+    }
 }
 
 } // namespace VulkanEngine::MaterialManager

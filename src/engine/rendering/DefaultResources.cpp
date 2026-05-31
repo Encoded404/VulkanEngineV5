@@ -31,7 +31,7 @@ std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateChec
     }
 
     return std::make_shared<VulkanEngine::TextureResource>(
-        "checkerboard_default", config.size, config.size,
+        VulkanEngine::ResourceId{"checkerboard_default"}, config.size, config.size,
         vk::Format::eR8G8B8A8Unorm, std::move(pixels));
 }
 

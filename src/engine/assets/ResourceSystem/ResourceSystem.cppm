@@ -20,16 +20,24 @@ module;
 export module VulkanEngine.ResourceSystem;
 
 export namespace VulkanEngine {
+
+struct ResourceId {
+    std::string value{}; //NOLINT(misc-non-private-member-variables-in-classes)
+
+    bool empty() const noexcept { return value.empty(); }
+    bool operator==(const ResourceId&) const = default;
+};
+
     class Resource {
     protected: // Changed from private to protected
-        std::string resourceId_; //NOLINT(misc-non-private-member-variables-in-classes)
+        ResourceId resourceId_; //NOLINT(misc-non-private-member-variables-in-classes)
         bool loaded_ = false; //NOLINT(misc-non-private-member-variables-in-classes)
 
     public:
-        explicit Resource(std::string id);
+        explicit Resource(ResourceId id);
         virtual ~Resource() = default;
 
-        [[nodiscard]] const std::string& GetId() const;
+        [[nodiscard]] const ResourceId& GetId() const;
         [[nodiscard]] bool IsLoaded() const;
 
         bool Load();
@@ -47,18 +55,18 @@ export namespace VulkanEngine {
     template<typename T>
     class ResourceHandle {
     private:
-        std::string resourceId_;
+        ResourceId resourceId_;
         ResourceManager* resourceManager_;
 
     public:
         ResourceHandle() : resourceManager_(nullptr) {}
 
-        ResourceHandle(std::string id, ResourceManager* manager)
+        ResourceHandle(ResourceId id, ResourceManager* manager)
             : resourceId_(std::move(id)), resourceManager_(manager) {}
 
         T* Get() const;
         [[nodiscard]] bool IsValid() const;
-        [[nodiscard]] const std::string& GetId() const { return resourceId_; }
+        [[nodiscard]] const ResourceId& GetId() const { return resourceId_; }
 
         T* operator->() const { return Get(); }
         T& operator*() const { return *Get(); }
@@ -98,19 +106,19 @@ export namespace VulkanEngine {
         };
 
         template<typename T>
-        ResourceHandle<T> LoadFromFile(const std::filesystem::path& path, LoadSpeed speed = LoadSpeed::Normal, std::string resource_id = {}) {
+        ResourceHandle<T> LoadFromFile(const std::filesystem::path& path, LoadSpeed speed = LoadSpeed::Normal, ResourceId resource_id = {}) {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
             auto type_idx = std::type_index(typeid(T));
 
-            resource_id = resource_id.empty() ? path.string() : resource_id;
+            if (resource_id.empty()) resource_id = ResourceId{path.string()};
 
             {
                 const std::shared_lock<std::shared_mutex> rlock(mutex_);
                 auto type_it = resources_.find(type_idx);
                 if (type_it != resources_.end()) {
-                    auto it = type_it->second.find(resource_id);
+                    auto it = type_it->second.find(resource_id.value);
                     if (it != type_it->second.end()) {
-                        ++refCounts_[type_idx][resource_id].refCount;
+                        ++refCounts_[type_idx][resource_id.value].refCount;
                         return ResourceHandle<T>(resource_id, this);
                     }
                 }
@@ -123,7 +131,7 @@ export namespace VulkanEngine {
                     const std::shared_lock<std::shared_mutex> rlock(mutex_);
                     auto in_prog_type_it = inProgress_.find(type_idx);
                     if (in_prog_type_it != inProgress_.end()) {
-                        auto fut_it = in_prog_type_it->second.find(resource_id);
+                        auto fut_it = in_prog_type_it->second.find(resource_id.value);
                         if (fut_it != in_prog_type_it->second.end()) {
                             entry_copy = fut_it->second;
                             found = true;
@@ -132,19 +140,19 @@ export namespace VulkanEngine {
                 }
 
                 if (found) {
-                    try { if (entry_copy.setReadRate) entry_copy.setReadRate(0); } catch(...) {LOGIFACE_LOG(warn, "Failed to set read rate to 0 for resource '" + resource_id + "'");}
+                    try { if (entry_copy.setReadRate) entry_copy.setReadRate(0); } catch(...) {LOGIFACE_LOG(warn, "Failed to set read rate to 0 for resource '" + resource_id.value + "'");}
 
                     {
                         const std::unique_lock<std::shared_mutex> wlock(mutex_);
-                        refCounts_[type_idx][resource_id];
-                        ++refCounts_[type_idx][resource_id].refCount;
+                        refCounts_[type_idx][resource_id.value];
+                        ++refCounts_[type_idx][resource_id.value].refCount;
                     }
 
                     try {
                         auto out_fut = std::any_cast<std::shared_future<ResourceHandle<T>>>(entry_copy.outwardFuture);
                         return out_fut.get();
                     } catch (...) {
-                        LOGIFACE_LOG(warn, "Failed to retrieve shared load result for resource '" + resource_id + "'");
+                        LOGIFACE_LOG(warn, "Failed to retrieve shared load result for resource '" + resource_id.value + "'");
                         return ResourceHandle<T>();
                     }
                 }
@@ -160,8 +168,8 @@ export namespace VulkanEngine {
 
             using ByteBuffer = FileLoader::ByteBuffer;
             struct Asm : FileLoader::IAssembler<T, FileLoader::AssemblyMode::FullBuffer> {
-                std::string id; //NOLINT(misc-non-private-member-variables-in-classes)
-                explicit Asm(std::string i) : id(std::move(i)) {}
+                ResourceId id; //NOLINT(misc-non-private-member-variables-in-classes)
+                explicit Asm(ResourceId i) : id(std::move(i)) {}
                 std::future<std::shared_ptr<T>> AssembleFromFullBuffer(std::shared_ptr<ByteBuffer> buffer) override {
                     auto prom = std::make_shared<std::promise<std::shared_ptr<T>>>();
                     try {
@@ -197,9 +205,9 @@ export namespace VulkanEngine {
 
             {
                 const std::unique_lock<std::shared_mutex> wlock(mutex_);
-                inProgress_[type_idx][resource_id] = entry;
-                refCounts_[type_idx][resource_id];
-                refCounts_[type_idx][resource_id].refCount = 1;
+                inProgress_[type_idx][resource_id.value] = entry;
+                refCounts_[type_idx][resource_id.value];
+                refCounts_[type_idx][resource_id.value].refCount = 1;
             }
 
             std::shared_future<std::shared_ptr<T>> internal_fut = handle_box->GetFuture();
@@ -210,10 +218,10 @@ export namespace VulkanEngine {
                 std::unique_lock<std::shared_mutex> const wlock(mutex_);
                 auto it = inProgress_.find(type_idx);
                 if (it != inProgress_.end()) {
-                    it->second.erase(resource_id);
+                    it->second.erase(resource_id.value);
                     if (it->second.empty()) inProgress_.erase(it);
                 }
-                refCounts_[type_idx].erase(resource_id);
+                refCounts_[type_idx].erase(resource_id.value);
                 out_promise->set_value(ResourceHandle<T>());
                 return ResourceHandle<T>();
             }
@@ -222,21 +230,21 @@ export namespace VulkanEngine {
                 std::unique_lock<std::shared_mutex> const wlock(mutex_);
                 auto it = inProgress_.find(type_idx);
                 if (it != inProgress_.end()) {
-                    it->second.erase(resource_id);
+                    it->second.erase(resource_id.value);
                     if (it->second.empty()) inProgress_.erase(it);
                 }
-                refCounts_[type_idx].erase(resource_id);
+                refCounts_[type_idx].erase(resource_id.value);
                 out_promise->set_value(ResourceHandle<T>());
                 return ResourceHandle<T>();
             }
 
             {
                 std::unique_lock<std::shared_mutex> const wlock(mutex_);
-                resources_[type_idx][resource_id] = res_ptr;
-                refCounts_[type_idx][resource_id].resource = res_ptr;
+                resources_[type_idx][resource_id.value] = res_ptr;
+                refCounts_[type_idx][resource_id.value].resource = res_ptr;
                 auto it = inProgress_.find(type_idx);
                 if (it != inProgress_.end()) {
-                    it->second.erase(resource_id);
+                    it->second.erase(resource_id.value);
                     if (it->second.empty()) inProgress_.erase(it);
                 }
             }
@@ -245,18 +253,18 @@ export namespace VulkanEngine {
         }
 
         template<typename T>
-        std::shared_future<ResourceHandle<T>> LoadFromFileAsync(const std::filesystem::path& path, LoadSpeed speed = LoadSpeed::Normal, std::string resource_id = {}) {
+        std::shared_future<ResourceHandle<T>> LoadFromFileAsync(const std::filesystem::path& path, LoadSpeed speed = LoadSpeed::Normal, ResourceId resource_id = {}) {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
             auto type_idx = std::type_index(typeid(T));
 
-            resource_id = resource_id.empty() ? path.string() : resource_id;
+            if (resource_id.empty()) resource_id = ResourceId{path.string()};
 
             InProgressEntry entry_copy;
             bool entry_found = false;
             {
                 std::shared_lock<std::shared_mutex> const rlock(mutex_);
                 if (auto type_it = resources_.find(type_idx); type_it != resources_.end()) {
-                    if (auto it = type_it->second.find(resource_id); it != type_it->second.end()) {
+                    if (auto it = type_it->second.find(resource_id.value); it != type_it->second.end()) {
                         std::promise<ResourceHandle<T>> p;
                         p.set_value(ResourceHandle<T>(resource_id, this));
                         return p.get_future().share();
@@ -264,7 +272,7 @@ export namespace VulkanEngine {
                 }
 
                 if (auto in_prog_type_it = inProgress_.find(type_idx); in_prog_type_it != inProgress_.end()) {
-                    if (auto fut_it = in_prog_type_it->second.find(resource_id); fut_it != in_prog_type_it->second.end()) {
+                    if (auto fut_it = in_prog_type_it->second.find(resource_id.value); fut_it != in_prog_type_it->second.end()) {
                         entry_copy = fut_it->second;
                         entry_found = true;
                     }
@@ -274,14 +282,14 @@ export namespace VulkanEngine {
             if (entry_found) {
                 {
                     std::unique_lock<std::shared_mutex> const wlock(mutex_);
-                    refCounts_[type_idx][resource_id];
-                    ++refCounts_[type_idx][resource_id].refCount;
+                    refCounts_[type_idx][resource_id.value];
+                    ++refCounts_[type_idx][resource_id.value].refCount;
                 }
 
                 try {
                     return std::any_cast<std::shared_future<ResourceHandle<T>>>(entry_copy.outwardFuture);
                 } catch (...) {
-                    LOGIFACE_LOG(warn, "Failed to retrieve shared load result for resource '" + resource_id + "' in async load");
+                    LOGIFACE_LOG(warn, "Failed to retrieve shared load result for resource '" + resource_id.value + "' in async load");
                 }
             }
 
@@ -295,8 +303,8 @@ export namespace VulkanEngine {
 
             using ByteBuffer = FileLoader::ByteBuffer;
             struct Asm : FileLoader::IAssembler<T, FileLoader::AssemblyMode::FullBuffer> {
-                std::string id; //NOLINT(misc-non-private-member-variables-in-classes)
-                explicit Asm(std::string i) : id(std::move(i)) {}
+                ResourceId id; //NOLINT(misc-non-private-member-variables-in-classes)
+                explicit Asm(ResourceId i) : id(std::move(i)) {}
                 std::future<std::shared_ptr<T>> AssembleFromFullBuffer(std::shared_ptr<ByteBuffer> buffer) override {
                     auto prom = std::make_shared<std::promise<std::shared_ptr<T>>>();
                     try {
@@ -332,9 +340,9 @@ export namespace VulkanEngine {
 
             {
                 std::unique_lock<std::shared_mutex> const wlock(mutex_);
-                inProgress_[type_idx][resource_id] = entry;
-                refCounts_[type_idx][resource_id];
-                refCounts_[type_idx][resource_id].refCount = 1;
+                inProgress_[type_idx][resource_id.value] = entry;
+                refCounts_[type_idx][resource_id.value];
+                refCounts_[type_idx][resource_id.value].refCount = 1;
             }
 
             std::thread([this, type_idx, resource_id, internal_fut, out_promise]() mutable {
@@ -344,21 +352,21 @@ export namespace VulkanEngine {
                         std::unique_lock<std::shared_mutex> const wlock(mutex_);
                         auto it = inProgress_.find(type_idx);
                         if (it != inProgress_.end()) {
-                            it->second.erase(resource_id);
+                            it->second.erase(resource_id.value);
                             if (it->second.empty()) inProgress_.erase(it);
                         }
-                        refCounts_[type_idx].erase(resource_id);
+                        refCounts_[type_idx].erase(resource_id.value);
                         out_promise->set_value(ResourceHandle<T>());
                         return;
                     }
 
                     {
                         std::unique_lock<std::shared_mutex> const wlock(mutex_);
-                        resources_[type_idx][resource_id] = res_ptr;
-                        refCounts_[type_idx][resource_id].resource = res_ptr;
+                        resources_[type_idx][resource_id.value] = res_ptr;
+                        refCounts_[type_idx][resource_id.value].resource = res_ptr;
                         auto it = inProgress_.find(type_idx);
                         if (it != inProgress_.end()) {
-                            it->second.erase(resource_id);
+                            it->second.erase(resource_id.value);
                             if (it->second.empty()) inProgress_.erase(it);
                         }
                     }
@@ -366,10 +374,10 @@ export namespace VulkanEngine {
                 } catch (...) {
                     std::unique_lock<std::shared_mutex> const wlock(mutex_);
                     if (auto it = inProgress_.find(type_idx); it != inProgress_.end()) {
-                        it->second.erase(resource_id);
+                        it->second.erase(resource_id.value);
                         if (it->second.empty()) inProgress_.erase(it);
                     }
-                    refCounts_[type_idx].erase(resource_id);
+                    refCounts_[type_idx].erase(resource_id.value);
                     out_promise->set_exception(std::current_exception());
                 }
             }).detach();
@@ -378,30 +386,30 @@ export namespace VulkanEngine {
         }
 
         template<typename T>
-        T* GetResource(const std::string& resource_id) {
+        T* GetResource(const ResourceId& resource_id) {
             const auto type_idx = std::type_index(typeid(T));
             std::shared_lock<std::shared_mutex> const rlock(mutex_);
 
             const auto type_it = resources_.find(type_idx);
             if (type_it == resources_.end()) return nullptr;
 
-            if (const auto it = type_it->second.find(resource_id); it != type_it->second.end()) return static_cast<T*>(it->second.get());
+            if (const auto it = type_it->second.find(resource_id.value); it != type_it->second.end()) return static_cast<T*>(it->second.get());
 
             return nullptr;
         }
 
         template<typename T>
-        bool HasResource(const std::string& resource_id) {
+        bool HasResource(const ResourceId& resource_id) {
             auto type_idx = std::type_index(typeid(T));
             std::shared_lock<std::shared_mutex> const rlock(mutex_);
 
             auto type_it = resources_.find(type_idx);
             if (type_it == resources_.end()) return false;
 
-            return type_it->second.contains(resource_id);
+            return type_it->second.contains(resource_id.value);
         }
 
-        void Release(const std::string& resource_id);
+        void Release(const ResourceId& resource_id);
 
         void UnloadAll();
     };

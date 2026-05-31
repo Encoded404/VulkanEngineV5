@@ -16,12 +16,13 @@ module App.Game;
 import VulkanEngine.Game;
 import App.Components.SimpleControllerComponent;
 import App.Components.TransformControlComponent;
-import Shaders.Engine;
-import Shaders.App;
+import Shaders.Engine.StandardMeshFrag;
+import Shaders.App.NormalsFrag;
+import Shaders.App.SolidFrag;
 
 namespace App::Game {
 
-DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
+GraphGame::GraphGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
                    std::filesystem::path model_path,
                    std::filesystem::path texture_path)
     : render_mode_(render_mode)
@@ -51,9 +52,9 @@ DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& ex
     });
 }
 
-DemoGame::~DemoGame() = default;
+GraphGame::~GraphGame() = default;
 
-bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
+bool GraphGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
     VulkanEngine::Game::GameConfig config{};
     config.enable_imgui = true;
@@ -82,10 +83,13 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // 3. Create a custom material for the viking room
     const uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
+    constexpr auto viking_blend = VulkanEngine::MaterialManager::BlendMode::Transparent;
+
     const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialManager::Get().RegisterMaterial({
         .technique_id = engine_game_.GetMainTechniqueId(),
-        .texture_slot = VulkanEngine::BindlessManager::TextureSlot{static_cast<uint16_t>(tex_slot)}
-    });
+        .texture_slot = VulkanEngine::BindlessManager::TextureSlot{static_cast<uint16_t>(tex_slot)},
+        .blend_mode = viking_blend
+    }, engine_game_.GetResourceManager(), engine_game_.GetBindlessManager());
 
     // 4. Load meshes explicitly with material bindings
     std::vector<VulkanEngine::SceneLoader::LoadedMeshData> meshes;
@@ -174,26 +178,26 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     return true;
 }
 
-void DemoGame::OnPreInput(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
+void GraphGame::OnPreInput(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
 }
 
-bool DemoGame::ShouldFilterMouseInput() {
+bool GraphGame::ShouldFilterMouseInput() {
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-bool DemoGame::ShouldFilterKeyboardInput() {
+bool GraphGame::ShouldFilterKeyboardInput() {
     return ImGui::GetIO().WantCaptureKeyboard;
 }
 
-void DemoGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+void GraphGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.FrameUpdate(ctx);
 }
 
-void DemoGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
+void GraphGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.FrameRender(ctx);
 }
 
-void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
+void GraphGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
     imgui_draw_handle_ = {};
     engine_game_.Shutdown();
 }

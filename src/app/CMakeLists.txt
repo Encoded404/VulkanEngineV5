@@ -4,19 +4,22 @@ target_sources(${APP_TARGET} PRIVATE
     Game.cpp
 )
 
-include(ShaderUtils)
-compile_shaders(${APP_TARGET}_shaders SUBDIR "app")
-
-# Generate C++ module files with #embed for each compiled shader
-include(ShaderModuleGen)
-set(_shader_gen_dir "${CMAKE_BINARY_DIR}/shaders/app")
-generate_shader_modules(${APP_TARGET}_shader_modules
-    NAMESPACE "App"
-    OUTPUT_DIR ${_shader_gen_dir}
+# Compile slang shaders to SPIR-V + generate C++20 modules with #embed
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
+include(SlangSpirVCompiler)
+set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/app")
+add_slang_shaders(
+    TARGET      ${APP_TARGET}_shaders
+    OUTPUT_DIR  ${_shader_gen_dir}
+    NAMESPACE   App
+    SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    COMPILER    slang-spirv-compiler
+    SHADERS
+        NormalsFrag  normals.slang  fragment main
+        SolidFrag    solid.slang    fragment main
 )
-add_dependencies(${APP_TARGET}_shader_modules ${APP_TARGET}_shaders)
-add_dependencies(${APP_TARGET} ${APP_TARGET}_shader_modules)
-get_target_property(_gen_shader_mods ${APP_TARGET}_shader_modules GENERATED_SHADER_MODULES)
+add_dependencies(${APP_TARGET} ${APP_TARGET}_shaders)
+get_target_property(_gen_shader_mods ${APP_TARGET}_shaders SLANG_CPPM_FILES)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_sources(${APP_TARGET} PUBLIC
@@ -28,7 +31,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Game.cppm
     )
 
-    # Register generated shader module files
+    # Register generated slang shader module files
     if(_gen_shader_mods)
         target_sources(${APP_TARGET} PUBLIC
             FILE_SET CXX_MODULES
@@ -38,7 +41,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     endif()
 endif()
 
-target_link_libraries(${APP_TARGET} PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
+target_link_libraries(${APP_TARGET} PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET} slang_shared_reflection)
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS stacktrace_basic)

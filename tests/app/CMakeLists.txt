@@ -9,6 +9,7 @@ add_executable(app_tests
 target_link_libraries(app_tests PRIVATE
   ${ENGINE_TARGET}
   ${BACKEND_TARGET}
+  slang_shared_reflection
   SDL3::SDL3
   Boost::stacktrace_basic
   CLI11::CLI11
@@ -26,17 +27,17 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   )
 
   # Register app shader modules needed by Game.cpp
-  # (engine shader modules are inherited via PUBLIC FILE_SET on VulkanEngine)
-  file(GLOB APP_SHADER_MODULES "${CMAKE_BINARY_DIR}/shaders/app/*.cppm")
-  if(APP_SHADER_MODULES)
+  # (engine shader modules + ShaderReflection inherited via PUBLIC on VulkanEngine)
+  get_target_property(_app_cppm VulkanApp_shaders SLANG_CPPM_FILES)
+  if(_app_cppm)
     target_sources(app_tests PRIVATE
       FILE_SET CXX_MODULES
-      BASE_DIRS "${CMAKE_BINARY_DIR}/shaders/app"
-      FILES ${APP_SHADER_MODULES}
+      BASE_DIRS "${CMAKE_BINARY_DIR}/generated/shaders/app"
+      FILES ${_app_cppm}
     )
   endif()
 endif()
 
 # Ensure .spv files are built before test compilation
-add_dependencies(app_tests VulkanEngine_shaders)
+add_dependencies(app_tests VulkanEngine_shaders VulkanApp_shaders)
 setup_test_target(app_tests)

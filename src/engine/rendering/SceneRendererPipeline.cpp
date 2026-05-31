@@ -12,7 +12,16 @@ module;
 
 module VulkanEngine.SceneRenderer;
 
-import Shaders.Engine;
+import Shaders.Engine.ExpandComp;
+import Shaders.Engine.DepthIndirVert;
+import Shaders.Engine.DepthPrepassFrag;
+import Shaders.Engine.HizGenComp;
+import Shaders.Engine.OcclusionCullComp;
+import Shaders.Engine.CollectCountCompactComp;
+import Shaders.Engine.CollectWriteDgcComp;
+import Shaders.Engine.CollectWriteLegacyComp;
+import Shaders.Engine.DegenerateVert;
+import Shaders.Engine.DegenerateFrag;
 import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::SceneRenderer {

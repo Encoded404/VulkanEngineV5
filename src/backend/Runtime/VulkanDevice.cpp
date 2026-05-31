@@ -117,6 +117,9 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         vk::PhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc_features{};
         dgc_features.deviceGeneratedCommands = VK_TRUE;
 
+        vk::PhysicalDeviceVulkan11Features vulkan11_features{};
+        vulkan11_features.shaderDrawParameters = VK_TRUE;
+
         vk::PhysicalDeviceVulkan12Features vulkan12_features{};
         vulkan12_features.hostQueryReset = VK_TRUE;
         vulkan12_features.descriptorIndexing = VK_TRUE;
@@ -139,10 +142,12 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
             vulkan13_features.pNext = &dgc_features;
         }
 
+        vulkan11_features.pNext = &vulkan12_features;
+
         vk::PhysicalDeviceFeatures2 core_features{};
         core_features.features.multiDrawIndirect = VK_TRUE;
         core_features.features.pipelineStatisticsQuery = VK_TRUE;
-        core_features.pNext = &vulkan12_features;
+        core_features.pNext = &vulkan11_features;
 
         vk::DeviceCreateInfo device_info{};
         device_info.pNext = &core_features;

@@ -294,8 +294,8 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 dev, vk::DescriptorSetLayoutCreateInfo{
                     {}, static_cast<uint32_t>(bs.size()), bs.data() });
         } else {
-            std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
-            for (uint32_t i = 0; i < 2; ++i) {
+            std::array<vk::DescriptorSetLayoutBinding, 4> bs{};
+            for (uint32_t i = 0; i < 4; ++i) {
                 bs[i].binding = i;
                 bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
                 bs[i].descriptorCount = 1;
@@ -355,8 +355,11 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         const uint64_t max_indirection_size =
             static_cast<uint64_t>(idxc) * 8u;
         const uint64_t technique_cmd_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) *
-            (4 + 4 + sizeof(VkDrawIndirectCommand));
+            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(VkDrawIndirectCommand);
+        constexpr uint64_t tech_counts_size =
+            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(uint32_t);
+        constexpr uint64_t tech_offsets_size =
+            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(uint32_t);
         const uint64_t intermediate_size =
             static_cast<uint64_t>(MAX_TECHNIQUES) * 8u;
         const uint64_t dgc_seq_size =
@@ -525,6 +528,22 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostCoherent);
 
             VulkanEngine::Utils::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "technique-draw-cmds");
+
+            fr.tech_counts_buffer = GpuResources::GpuBuffer::Create(be,
+                tech_counts_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.tech_counts_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "tech-counts");
+
+            fr.tech_offsets_buffer = GpuResources::GpuBuffer::Create(be,
+                tech_offsets_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.tech_offsets_buffer.GetBuffer(), VK_OBJECT_TYPE_BUFFER, "tech-offsets");
 
             fr.expand_set = expand_pool_->Allocate(*expand_layout_);
             fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);

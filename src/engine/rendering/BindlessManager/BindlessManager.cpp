@@ -106,17 +106,25 @@ void BindlessManager::Shutdown() {
     layout_.reset();
     backend_ = nullptr;
     next_slot_ = 0;
+    texture_ids_.clear();
 }
 
-uint32_t BindlessManager::AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const std::string* id) {
+uint32_t BindlessManager::AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id) {
     const uint32_t slot = next_slot_++;
     if (slot >= textures_.size()) {
         textures_.resize(slot + 1);
+        texture_ids_.resize(slot + 1);
     }
     textures_[slot] = std::move(texture);
+    texture_ids_[slot] = id;
     UpdateSlot(slot, textures_[slot]);
-    LOGIFACE_LOG(debug, "Allocated bindless texture slot " + std::to_string(slot) + " for texture '" + *id + "'");
+    LOGIFACE_LOG(debug, "Allocated bindless texture slot " + std::to_string(slot) + " for texture '" + id.value + "'");
     return slot;
+}
+
+const VulkanEngine::ResourceId* BindlessManager::GetTextureId(uint32_t slot) const {
+    if (slot < texture_ids_.size()) return &texture_ids_[slot];
+    return nullptr;
 }
 
 void BindlessManager::UpdateSlot(uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {

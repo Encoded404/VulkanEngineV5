@@ -5,3 +5,6 @@
 [submodule "external/cppFileLoader"]
 	path = external/cppFileLoader
 	url = https://github.com/Encoded404/cppFileLoader
+[submodule "external/SlangSpriVCompilerHelper"]
+	path = external/SlangSpriVCompilerHelper
+	url = https://github.com/Encoded404/SlangSpirVCompilerHelper

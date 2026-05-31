@@ -68,6 +68,7 @@ public:
     void FrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void Shutdown();
 
+    ResourceManager& GetResourceManager() { return resource_manager_; }
     BindlessManager::BindlessManager& GetBindlessManager() { return *bindless_mgr_; }
     SceneRenderer::SceneRenderer& GetSceneRenderer() { return *scene_renderer_; }
     TechniqueManager::TechniqueManager& GetTechniqueManager() { return *technique_mgr_; }

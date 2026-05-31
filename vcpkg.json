@@ -32,6 +32,7 @@
         {
             "name": "imgui",
             "features": [ "vulkan-binding", "sdl3-binding" ]
-        }
+        },
+        "shader-slang"
     ]
 }

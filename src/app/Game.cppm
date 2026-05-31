@@ -17,15 +17,15 @@ enum class RenderMode : uint8_t {
     NoTextures
 };
 
-class DemoGame {
+class GraphGame {
 public:
-    DemoGame(RenderMode render_mode, const std::filesystem::path& executable_path,
+    GraphGame(RenderMode render_mode, const std::filesystem::path& executable_path,
              const std::filesystem::path model_path = {},
              const std::filesystem::path texture_path = {});
-    ~DemoGame();
+    ~GraphGame();
 
-    DemoGame(const DemoGame&) = delete;
-    DemoGame& operator=(const DemoGame&) = delete;
+    GraphGame(const GraphGame&) = delete;
+    GraphGame& operator=(const GraphGame&) = delete;
 
     [[nodiscard]] const VulkanEngine::Application::ApplicationHooks& GetHooks() const { return hooks_; }
 

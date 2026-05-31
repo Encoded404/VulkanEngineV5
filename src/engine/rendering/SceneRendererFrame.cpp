@@ -246,6 +246,22 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         }
     }
 
+    // Zero tech counts and offsets buffers (legacy fallback path)
+    {
+        auto* p = fr.tech_counts_buffer.Map(0, fr.tech_counts_buffer.GetSize());
+        if (p) {
+            std::memset(p, 0, fr.tech_counts_buffer.GetSize());
+            fr.tech_counts_buffer.Unmap();
+        }
+    }
+    {
+        auto* p = fr.tech_offsets_buffer.Map(0, fr.tech_offsets_buffer.GetSize());
+        if (p) {
+            std::memset(p, 0, fr.tech_offsets_buffer.GetSize());
+            fr.tech_offsets_buffer.Unmap();
+        }
+    }
+
     WriteBlocks(fr.expand_set.GetHandle(), 0, fr.compact_dynamic,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBlocks(fr.expand_set.GetHandle(), 1, fr.compact_static,
@@ -407,7 +423,6 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout, 0, ds, {});
 
             const VkDeviceSize draw_cmd_offset =
-                static_cast<VkDeviceSize>(MAX_TECHNIQUES) * 2u * sizeof(uint32_t) +
                 static_cast<VkDeviceSize>(t) * sizeof(VkDrawIndirectCommand);
             cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
                               draw_cmd_offset, 1, sizeof(VkDrawIndirectCommand));
@@ -561,15 +576,39 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
             dev.updateDescriptorSets(w2, nullptr);
         }
     } else {
-        const vk::DescriptorBufferInfo cmd_bi(
-            *fr.technique_draw_commands.GetBuffer(), 0, fr.technique_draw_commands.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_write_set.GetHandle();
-        w.dstBinding = 1;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &cmd_bi;
-        dev.updateDescriptorSets(w, nullptr);
+        {
+            const vk::DescriptorBufferInfo cnt_bi(
+                *fr.tech_counts_buffer.GetBuffer(), 0, fr.tech_counts_buffer.GetSize());
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.collect_write_set.GetHandle();
+            w.dstBinding = 1;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer;
+            w.pBufferInfo = &cnt_bi;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+        {
+            const vk::DescriptorBufferInfo off_bi(
+                *fr.tech_offsets_buffer.GetBuffer(), 0, fr.tech_offsets_buffer.GetSize());
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.collect_write_set.GetHandle();
+            w.dstBinding = 2;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer;
+            w.pBufferInfo = &off_bi;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+        {
+            const vk::DescriptorBufferInfo cmd_bi(
+                *fr.technique_draw_commands.GetBuffer(), 0, fr.technique_draw_commands.GetSize());
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.collect_write_set.GetHandle();
+            w.dstBinding = 3;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer;
+            w.pBufferInfo = &cmd_bi;
+            dev.updateDescriptorSets(w, nullptr);
+        }
     }
 
     // Pass 0: count visible indices per technique

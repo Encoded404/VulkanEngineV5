@@ -161,6 +161,12 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaKtx2) {
     const auto expected = Make2x2RgbaPixels();
     ExpectPixelsNear(texture->GetPixels(), expected, 0);
 
+    const auto& alpha = texture->GetAlphaAnalysis();
+    EXPECT_TRUE(alpha.hasAlphaChannel);
+    EXPECT_FALSE(alpha.hasFractionalAlpha);
+    EXPECT_FALSE(alpha.hasZeroAlpha);
+    EXPECT_FLOAT_EQ(alpha.opaqueCoverage, 1.0f);
+
     manager.Release(handle.GetId());
 }
 
@@ -184,6 +190,12 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaPng) {
 
     const auto expected = Make2x2RgbaPixels();
     ExpectPixelsNear(texture->GetPixels(), expected, 0);
+
+    const auto& alpha = texture->GetAlphaAnalysis();
+    EXPECT_TRUE(alpha.hasAlphaChannel);
+    EXPECT_FALSE(alpha.hasFractionalAlpha);
+    EXPECT_FALSE(alpha.hasZeroAlpha);
+    EXPECT_FLOAT_EQ(alpha.opaqueCoverage, 1.0f);
 
     manager.Release(handle.GetId());
 }
@@ -214,6 +226,11 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaJpeg) {
         64, 128, 224, 255,
     };
     ExpectPixelsNear(texture->GetPixels(), expected, 20);
+
+    const auto& alpha = texture->GetAlphaAnalysis();
+    EXPECT_TRUE(alpha.hasAlphaChannel);
+    EXPECT_FALSE(alpha.hasZeroAlpha);
+    EXPECT_FLOAT_EQ(alpha.opaqueCoverage, 1.0f);
 
     manager.Release(handle.GetId());
 }

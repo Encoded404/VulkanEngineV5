@@ -151,17 +151,23 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
 
     if (texture1->glFormat == kGlRgba || texture1->glInternalformat == kGlRgba8) {
         out.vk_format = vk::Format::eR8G8B8A8Unorm;
-        return CopyBaseLevelBytes(texture, out, 4U, false, false, error_message);
+        if (!CopyBaseLevelBytes(texture, out, 4U, false, false, error_message)) return false;
+        out.alpha_analysis = AnalyzeAlpha(out.pixels);
+        return true;
     }
 
     if (texture1->glFormat == kGlBgra || texture1->glInternalformat == kGlBgra8Ext) {
         out.vk_format = vk::Format::eR8G8B8A8Unorm;
-        return CopyBaseLevelBytes(texture, out, 4U, true, false, error_message);
+        if (!CopyBaseLevelBytes(texture, out, 4U, true, false, error_message)) return false;
+        out.alpha_analysis = AnalyzeAlpha(out.pixels);
+        return true;
     }
 
     if (texture1->glFormat == kGlRgb || texture1->glInternalformat == kGlRgb8) {
         out.vk_format = vk::Format::eR8G8B8A8Unorm;
-        return CopyBaseLevelBytes(texture, out, 3U, false, true, error_message);
+        if (!CopyBaseLevelBytes(texture, out, 3U, false, true, error_message)) return false;
+        out.alpha_analysis = AnalyzeAlpha(out.pixels);
+        return true;
     }
 
     if (error_message != nullptr) {
@@ -188,22 +194,30 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
             return false;
         }
         out.vk_format = vk::Format::eR8G8B8A8Unorm;
-        return CopyBaseLevelBytes(texture, out, 4U, false, false, error_message);
+        if (!CopyBaseLevelBytes(texture, out, 4U, false, false, error_message)) return false;
+        out.alpha_analysis = AnalyzeAlpha(out.pixels);
+        return true;
     }
 
     switch (static_cast<vk::Format>(texture2->vkFormat)) {
         case vk::Format::eR8G8B8A8Unorm:
         case vk::Format::eR8G8B8A8Srgb:
             out.vk_format = vk::Format::eR8G8B8A8Unorm;
-            return CopyBaseLevelBytes(texture, out, 4U, false, false, error_message);
+            if (!CopyBaseLevelBytes(texture, out, 4U, false, false, error_message)) return false;
+            out.alpha_analysis = AnalyzeAlpha(out.pixels);
+            return true;
         case vk::Format::eB8G8R8A8Unorm:
         case vk::Format::eB8G8R8A8Srgb:
             out.vk_format = vk::Format::eR8G8B8A8Unorm;
-            return CopyBaseLevelBytes(texture, out, 4U, true, false, error_message);
+            if (!CopyBaseLevelBytes(texture, out, 4U, true, false, error_message)) return false;
+            out.alpha_analysis = AnalyzeAlpha(out.pixels);
+            return true;
         case vk::Format::eR8G8B8Unorm:
         case vk::Format::eR8G8B8Srgb:
             out.vk_format = vk::Format::eR8G8B8A8Unorm;
-            return CopyBaseLevelBytes(texture, out, 3U, false, true, error_message);
+            if (!CopyBaseLevelBytes(texture, out, 3U, false, true, error_message)) return false;
+            out.alpha_analysis = AnalyzeAlpha(out.pixels);
+            return true;
         default:
             if (error_message != nullptr) {
                 *error_message = "Unsupported KTX2 vkFormat for RGBA upload";
@@ -261,6 +275,26 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
 }
 
 }  // namespace
+
+AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels) {
+    AlphaAnalysis result{};
+    if (pixels.empty() || pixels.size() < 4) return result;
+
+    const size_t pixel_count = pixels.size() / 4;
+    result.hasAlphaChannel = true;
+
+    size_t opaque_count = 0;
+
+    for (size_t i = 0; i < pixel_count; ++i) {
+        const auto alpha = static_cast<uint8_t>(pixels[i * 4 + 3]);
+        if (alpha > 0 && alpha < 255) result.hasFractionalAlpha = true;
+        if (alpha == 0) result.hasZeroAlpha = true;
+        if (alpha >= 254) ++opaque_count;
+    }
+
+    result.opaqueCoverage = static_cast<float>(opaque_count) / static_cast<float>(pixel_count);
+    return result;
+}
 
 [[nodiscard]] bool LoadKtxTextureFromBuffer(const std::filesystem::path& path,
                                             const FileLoader::ByteBuffer& buffer,
@@ -348,6 +382,7 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
     out.pixels.resize(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height) * 4U);
     std::memcpy(out.pixels.data(), pixels, out.pixels.size());
     stbi_image_free(pixels);
+    out.alpha_analysis = AnalyzeAlpha(out.pixels);
     return true;
 }
 

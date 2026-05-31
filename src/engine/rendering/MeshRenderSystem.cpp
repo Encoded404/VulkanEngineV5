@@ -115,8 +115,20 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     auto frame_blocks = renderer.GetFrameBlockArrays(frame_index);
     auto& scene_submeshes = renderer.GetSubmeshes();
 
-    frame_blocks.compact_dynamic->EnsureCapacity(total_submeshes);
-    frame_blocks.compact_static->EnsureCapacity(total_submeshes);
+    {
+        const uint32_t blk_pre = frame_blocks.compact_dynamic->BlockCount();
+        frame_blocks.compact_dynamic->EnsureCapacity(total_submeshes);
+        LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic EnsureCapacity(" + std::to_string(total_submeshes) +
+                     ") blocks " + std::to_string(blk_pre) + " -> " +
+                     std::to_string(frame_blocks.compact_dynamic->BlockCount()));
+    }
+    {
+        const uint32_t blk_pre = frame_blocks.compact_static->BlockCount();
+        frame_blocks.compact_static->EnsureCapacity(total_submeshes);
+        LOGIFACE_LOG(trace, "ProcessFrame: compact_static EnsureCapacity(" + std::to_string(total_submeshes) +
+                     ") blocks " + std::to_string(blk_pre) + " -> " +
+                     std::to_string(frame_blocks.compact_static->BlockCount()));
+    }
     frame_blocks.bounding_spheres->EnsureCapacity(total_submeshes);
     frame_blocks.bounding_obb->EnsureCapacity(total_submeshes);
 
@@ -231,6 +243,12 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
         const glm::quat rot = e.transform ? e.transform->rotation : glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
 
+        LOGIFACE_LOG(trace, "ProcessFrame: dynamic mesh transform pos=(" +
+                     std::to_string(pos.x) + "," + std::to_string(pos.y) + "," + std::to_string(pos.z) +
+                     ") scale=(" + std::to_string(scale.x) + "," + std::to_string(scale.y) + "," + std::to_string(scale.z) +
+                     ") rot=(" + std::to_string(rot.x) + "," + std::to_string(rot.y) + "," + std::to_string(rot.z) + "," + std::to_string(rot.w) +
+                     ")");
+
         for (uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {
             const uint32_t si = e.dyn_mesh->first_submesh + s;
             const auto& sms = gpu_info->sub_meshes;
@@ -239,9 +257,17 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             {
                 auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci));
                 if (d) {
+                    LOGIFACE_LOG(trace, "ProcessFrame: writing compact_dynamic[" + std::to_string(ci) +
+                                 "] pos=(" + std::to_string(pos.x) + "," + std::to_string(pos.y) + "," + std::to_string(pos.z) +
+                                 ") scale=(" + std::to_string(scale.x) + "," + std::to_string(scale.y) + "," + std::to_string(scale.z) +
+                                 ") rot=(" + std::to_string(rot.x) + "," + std::to_string(rot.y) + "," + std::to_string(rot.z) + "," + std::to_string(rot.w) +
+                                 ")");
                     d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
                     d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
                     d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
+                    LOGIFACE_LOG(trace, "ProcessFrame: written compact_dynamic[" + std::to_string(ci) +
+                                 "] verify px=" + std::to_string(d->px) + " py=" + std::to_string(d->py) +
+                                 " sx=" + std::to_string(d->sx) + " rx=" + std::to_string(d->rx));
                 } else {
                     LOGIFACE_LOG(warn, "ProcessFrame: compact_dynamic->Get(" + std::to_string(ci) + ") returned null");
                 }
@@ -250,7 +276,17 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             {
                 auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci));
                 if (s2) {
-                    s2->index_start_packed = (index_buf_slot << 24) | (index_offset + sm.index_start);
+                    const uint32_t packed_index = (index_buf_slot << 24) | (index_offset + sm.index_start);
+                    const uint32_t packed_vertex = (vertex_buf_slot << 24) | base_vertex;
+                    LOGIFACE_LOG(trace, "ProcessFrame: writing compact_static[" + std::to_string(ci) +
+                                 "] index_buf_slot=" + std::to_string(index_buf_slot) +
+                                 " index_offset=" + std::to_string(index_offset) +
+                                 " sm.index_start=" + std::to_string(sm.index_start) +
+                                 " packed_index=0x" + std::to_string(packed_index) +
+                                 " vertex_buf_slot=" + std::to_string(vertex_buf_slot) +
+                                 " base_vertex=" + std::to_string(base_vertex) +
+                                 " packed_vertex=0x" + std::to_string(packed_vertex));
+                    s2->index_start_packed = packed_index;
                     s2->index_range = sm.index_count;
                     {
                         const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
@@ -258,7 +294,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                             (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
                             mat_def.technique_id.value;
                     }
-                    s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
+                    s2->vertex_info = packed_vertex;
                 } else {
                     LOGIFACE_LOG(warn, "ProcessFrame: compact_static->Get(" + std::to_string(ci) + ") returned null");
                 }
@@ -296,18 +332,37 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     const uint32_t dyn_idx_block_count = mesh_mgr.GetDynamicIndexBlockCount(fif);
 
     for (uint32_t bi = 0; bi < dyn_vtx_block_count; ++bi) {
+        const vk::Buffer vbuf = mesh_mgr.GetDynamicVertexBuffer(fif, bi);
+        LOGIFACE_LOG(trace, "ProcessFrame: update bindless_vertex_set frame=" +
+                     std::to_string(frame_index) + " slot=" + std::to_string(static_vtx_count + bi));
         renderer.UpdateVertexBufferArrayElement(
             frame_index,
             static_vtx_count + bi,
-            mesh_mgr.GetDynamicVertexBuffer(fif, bi),
+            vbuf,
             mesh_mgr.GetDynamicVertexBlockSize(fif));
     }
     for (uint32_t bi = 0; bi < dyn_idx_block_count; ++bi) {
+        const vk::Buffer ibuf = mesh_mgr.GetDynamicIndexBuffer(fif, bi);
+        LOGIFACE_LOG(trace, "ProcessFrame: update bindless_index_set frame=" +
+                     std::to_string(frame_index) + " slot=" + std::to_string(static_idx_count + bi));
         renderer.UpdateIndexBufferArrayElement(
             frame_index,
             static_idx_count + bi,
-            mesh_mgr.GetDynamicIndexBuffer(fif, bi),
+            ibuf,
             mesh_mgr.GetDynamicIndexBlockSize(fif));
+    }
+
+    // Verify compact_dynamic content from mapped memory
+    if (ci > 0) {
+        for (uint32_t vi = 0; vi < std::min(ci, 4u); ++vi) {
+            auto* d = static_cast<const DynamicEntry*>(frame_blocks.compact_dynamic->Get(vi));
+            if (d) {
+                LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic verify[" + std::to_string(vi) +
+                             "] px=" + std::to_string(d->px) + " py=" + std::to_string(d->py) + " pz=" + std::to_string(d->pz) +
+                             " sx=" + std::to_string(d->sx) + " sy=" + std::to_string(d->sy) + " sz=" + std::to_string(d->sz) +
+                             " rx=" + std::to_string(d->rx) + " ry=" + std::to_string(d->ry) + " rz=" + std::to_string(d->rz) + " rw=" + std::to_string(d->rw));
+            }
+        }
     }
 
     LOGIFACE_LOG(trace, "ProcessFrame: fif=" + std::to_string(fif) +

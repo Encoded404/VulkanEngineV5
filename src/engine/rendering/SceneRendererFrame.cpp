@@ -109,6 +109,11 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         }
     }
 
+    LOGIFACE_LOG(trace, "PrepareCompute: binding compact_dynamic blocks=" +
+                 std::to_string(fr.compact_dynamic.BlockCount()) +
+                 " compact_static blocks=" + std::to_string(fr.compact_static.BlockCount()) +
+                 " total=" + std::to_string(total));
+
     WriteBlocks(fr.expand_set.GetHandle(), 0, fr.compact_dynamic,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBlocks(fr.expand_set.GetHandle(), 1, fr.compact_static,

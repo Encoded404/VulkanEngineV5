@@ -138,7 +138,19 @@ MeshManager::Handle MeshManager::RegisterStreamed(
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
     const uint64_t index_bytes = initial_data.indices.size() * sizeof(uint32_t);
 
-    if (vertex_bytes == 0 || index_bytes == 0) return handle;
+    if (vertex_bytes == 0 || index_bytes == 0) {
+        LOGIFACE_LOG(warn, "RegisterStreamed: empty mesh data (" +
+                     std::to_string(initial_data.vertices.size()) + " verts, " +
+                     std::to_string(initial_data.indices.size()) + " idxs)");
+        return handle;
+    }
+
+    LOGIFACE_LOG(trace, "RegisterStreamed: " + std::to_string(initial_data.vertices.size()) +
+                 " verts (" + std::to_string(vertex_bytes) + " bytes), " +
+                 std::to_string(initial_data.indices.size()) + " idxs (" +
+                 std::to_string(index_bytes) + " bytes), " +
+                 std::to_string(initial_data.sub_meshes.size()) + " submeshes, " +
+                 std::to_string(frames_in_flight_) + " FIFs");
 
     constexpr uint64_t alignment = 256ULL;
 
@@ -175,6 +187,14 @@ MeshManager::Handle MeshManager::RegisterStreamed(
                          std::to_string(fif));
             return handle;
         }
+
+        LOGIFACE_LOG(trace, "RegisterStreamed: FIF " + std::to_string(fif) +
+                     " vtx_alloc buf_idx=" + std::to_string(vtx_alloc.buffer_index) +
+                     " offset=" + std::to_string(vtx_alloc.offset) +
+                     " size=" + std::to_string(vtx_alloc.size) +
+                     " idx_alloc buf_idx=" + std::to_string(idx_alloc.buffer_index) +
+                     " offset=" + std::to_string(idx_alloc.offset) +
+                     " size=" + std::to_string(idx_alloc.size));
 
         void* vptr = dynamic_vertex_heaps_[fif].MapBuffer(
             vtx_alloc.buffer_index, vtx_alloc.offset);
@@ -232,6 +252,15 @@ void MeshManager::UpdateStreamed(Handle handle,
     const uint64_t vertex_bytes = data.vertices.size() *
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
     const uint64_t index_bytes = data.indices.size() * sizeof(uint32_t);
+
+    LOGIFACE_LOG(trace, "UpdateStreamed: handle=" + std::to_string(handle.id) +
+                 " fif=" + std::to_string(fif) +
+                 " vtx buf_idx=" + std::to_string(vtx_alloc.buffer_index) +
+                 " offset=" + std::to_string(vtx_alloc.offset) +
+                 " bytes=" + std::to_string(vertex_bytes) +
+                 " idx buf_idx=" + std::to_string(idx_alloc.buffer_index) +
+                 " offset=" + std::to_string(idx_alloc.offset) +
+                 " bytes=" + std::to_string(index_bytes));
 
     void* vptr = dynamic_vertex_heaps_[fif].MapBuffer(
         vtx_alloc.buffer_index, vtx_alloc.offset);

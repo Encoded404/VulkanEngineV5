@@ -64,7 +64,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             dyn_ents.push_back({ transform, &dm });
         });
 
-    LOGIFACE_LOG(debug, "ProcessFrame: collected " + std::to_string(static_ents.size()) +
+    LOGIFACE_LOG(trace, "ProcessFrame: collected " + std::to_string(static_ents.size()) +
                  " static and " + std::to_string(dyn_ents.size()) + " dynamic entities");
 
     // --- Phase 3: Request GPU residency for static meshes ---
@@ -310,7 +310,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             mesh_mgr.GetDynamicIndexBlockSize(fif));
     }
 
-    LOGIFACE_LOG(debug, "ProcessFrame: fif=" + std::to_string(fif) +
+    LOGIFACE_LOG(trace, "ProcessFrame: fif=" + std::to_string(fif) +
                  " static_vtx=" + std::to_string(static_vtx_count) +
                  " static_idx=" + std::to_string(static_idx_count) +
                  " dyn_vtx_blocks=" + std::to_string(dyn_vtx_block_count) +

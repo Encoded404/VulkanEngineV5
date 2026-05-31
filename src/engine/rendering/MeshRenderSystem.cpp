@@ -72,11 +72,19 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         total_submeshes += info->submesh_count;
     }
 
-    for (auto& e : dyn_ents) {
-        if (e.dyn_mesh->submesh_count > 0) {
-            total_submeshes += e.dyn_mesh->submesh_count;
-        } else {
-            total_submeshes += 1;
+    {
+        const uint32_t dyn_fif = frame_index % 3;
+        for (auto& e : dyn_ents) {
+            const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
+            if (!gpu_info ||
+                !gpu_info->streamed_vertex_alloc[dyn_fif].IsValid() ||
+                !gpu_info->streamed_index_alloc[dyn_fif].IsValid()) continue;
+
+            if (e.dyn_mesh->submesh_count > 0) {
+                total_submeshes += e.dyn_mesh->submesh_count;
+            } else {
+                total_submeshes += 1;
+            }
         }
     }
 

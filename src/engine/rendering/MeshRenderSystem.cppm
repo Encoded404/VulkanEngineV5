@@ -18,7 +18,6 @@ export import VulkanEngine.MeshRegistry;
 export import VulkanEngine.MeshManager;
 export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
-export import VulkanEngine.GpuResources.HostRingPool;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.MaterialManager;
 export import VulkanEngine.BindlessManager;
@@ -32,8 +31,6 @@ public:
     MeshRenderSystem(const MeshRenderSystem&) = delete;
     MeshRenderSystem& operator=(const MeshRenderSystem&) = delete;
 
-    static constexpr uint32_t STREAMED_VERTEX_SLOT = 48;
-    static constexpr uint32_t STREAMED_INDEX_SLOT = 48;
     static constexpr uint32_t EVICTION_TIMEOUT_FRAMES = 120;
     static constexpr uint32_t MAX_GATHER = 65536;
 

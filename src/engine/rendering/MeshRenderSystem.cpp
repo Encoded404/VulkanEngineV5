@@ -21,7 +21,6 @@ import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshManager;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
-import VulkanEngine.GpuResources.HostRingPool;
 import VulkanEngine.MaterialManager;
 import VulkanEngine.BindlessManager;
 
@@ -178,16 +177,25 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     }
 
     // Write dynamic mesh entries
+    const uint32_t static_vtx_count = vtx_heap.GetBufferCount();
+    const uint32_t static_idx_count = idx_heap.GetBufferCount();
+    const uint32_t fif = frame_index % 3;
+
     for (auto& e : dyn_ents) {
         const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
         if (!gpu_info) continue;
 
-        const uint32_t vertex_buf_slot = STREAMED_VERTEX_SLOT;
+        const auto& vtx_alloc = gpu_info->streamed_vertex_alloc[fif];
+        const auto& idx_alloc = gpu_info->streamed_index_alloc[fif];
+
+        if (!vtx_alloc.IsValid() || !idx_alloc.IsValid()) continue;
+
+        const uint32_t vertex_buf_slot = static_vtx_count + vtx_alloc.buffer_index;
         const uint32_t base_vertex = static_cast<uint32_t>(
-            gpu_info->vertex_allocation.offset / sizeof(StandardMeshPipeline::Vertex));
-        const uint32_t index_buf_slot = STREAMED_INDEX_SLOT;
-        const uint32_t index_ring_offset = static_cast<uint32_t>(
-            gpu_info->index_allocation.offset / sizeof(uint32_t));
+            vtx_alloc.offset / sizeof(StandardMeshPipeline::Vertex));
+        const uint32_t index_buf_slot = static_idx_count + idx_alloc.buffer_index;
+        const uint32_t index_offset = static_cast<uint32_t>(
+            idx_alloc.offset / sizeof(uint32_t));
 
         const auto pos = e.transform ? e.transform->position : glm::vec3(0);
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
@@ -205,7 +213,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             }
 
             if (auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci))) {
-                s2->index_start_packed = (index_buf_slot << 24) | (index_ring_offset + sm.index_start);
+                s2->index_start_packed = (index_buf_slot << 24) | (index_offset + sm.index_start);
                 s2->index_range = sm.index_count;
                 {
                     const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
@@ -237,16 +245,23 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // Set entity count on renderer so subsequent passes know how many entries to process
     renderer.SetCurrentEntityCount(total_submeshes);
 
-    // --- Phase 6: Update ring buffer descriptors for streamed meshes ---
-    if (!dyn_ents.empty()) {
+    // --- Phase 6: Update dynamic block descriptors for this frame ---
+    const uint32_t dyn_vtx_block_count = mesh_mgr.GetDynamicVertexBlockCount(fif);
+    const uint32_t dyn_idx_block_count = mesh_mgr.GetDynamicIndexBlockCount(fif);
+
+    for (uint32_t bi = 0; bi < dyn_vtx_block_count; ++bi) {
         renderer.UpdateVertexBufferArrayElement(
-            STREAMED_VERTEX_SLOT,
-            mesh_mgr.GetStreamedVertexBuffer(frame_index),
-            mesh_mgr.GetStreamedVertexBufferSize());
+            frame_index,
+            static_vtx_count + bi,
+            mesh_mgr.GetDynamicVertexBuffer(fif, bi),
+            mesh_mgr.GetDynamicVertexBlockSize(fif));
+    }
+    for (uint32_t bi = 0; bi < dyn_idx_block_count; ++bi) {
         renderer.UpdateIndexBufferArrayElement(
-            STREAMED_INDEX_SLOT,
-            mesh_mgr.GetStreamedIndexBuffer(frame_index),
-            mesh_mgr.GetStreamedIndexBufferSize());
+            frame_index,
+            static_idx_count + bi,
+            mesh_mgr.GetDynamicIndexBuffer(fif, bi),
+            mesh_mgr.GetDynamicIndexBlockSize(fif));
     }
 
     // --- Phase 7: Advance CPU-side lifecycle ---

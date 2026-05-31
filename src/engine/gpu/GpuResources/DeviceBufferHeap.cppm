@@ -17,6 +17,7 @@ export namespace VulkanEngine::GpuResources {
 
 struct HeapConfig {
     uint64_t block_size = 128ULL << 20; // 128 MiB
+    vk::MemoryPropertyFlags memory_flags = vk::MemoryPropertyFlagBits::eDeviceLocal;
     vk::BufferUsageFlags extra_usage = {};
     uint64_t default_alignment = 256ULL; // this is the minimum byte alignment for sub-allocations on the heap, older gpu's usually have 256 bytes, while newer have 16-64
 };
@@ -45,9 +46,12 @@ public:
                     const HeapConfig& config = {},
                     const std::string& debug_name = "unnamed");
     void Shutdown();
+    void Reset();
 
     HeapAllocation Allocate(uint64_t size, uint64_t alignment = 0);
     void Free(HeapAllocation& alloc);
+
+    [[nodiscard]] void* MapBuffer(uint32_t block_index, uint64_t offset);
 
     [[nodiscard]] vk::Buffer GetBuffer(uint32_t index) const;
     [[nodiscard]] uint32_t GetBufferCount() const { return static_cast<uint32_t>(blocks_.size()); }
@@ -61,6 +65,7 @@ private:
         VulkanEngine::GpuResources::GpuBuffer buffer;
         uint64_t size;
         TlsfAllocator allocator;
+        void* mapped_ptr = nullptr;
     };
 
     uint32_t AddBlock();

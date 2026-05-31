@@ -48,15 +48,27 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     if (!index_heap_.Initialize(backend, heap_config, "index")) return false;
     if (!staging_mgr_.Initialize(backend)) return false;
 
-    GpuResources::HostRingPool::Config ring_config{};
-    ring_config.vertex_buffer_size = 16ULL << 20;
-    ring_config.index_buffer_size = 8ULL << 20;
-    ring_config.frames_in_flight = 3;
-    if (!mesh_ring_pool_.Initialize(backend, ring_config)) return false;
+    {
+        GpuResources::HeapConfig dynamic_heap_config{};
+        dynamic_heap_config.block_size = 32ULL << 20;
+        dynamic_heap_config.memory_flags =
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent;
+
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT_DYN; ++i) {
+            if (!dynamic_vertex_heaps_[i].Initialize(backend, dynamic_heap_config,
+                "dynamic_vertex_fifo" + std::to_string(i))) return false;
+            if (!dynamic_index_heaps_[i].Initialize(backend, dynamic_heap_config,
+                "dynamic_index_fifo" + std::to_string(i))) return false;
+        }
+    }
 
     mesh_manager_ = std::make_unique<MeshManager>();
     if (!mesh_manager_->Initialize(backend, &vertex_heap_, &index_heap_,
-                                   &staging_mgr_, &mesh_ring_pool_)) {
+                                   &staging_mgr_,
+                                   dynamic_vertex_heaps_.data(),
+                                   dynamic_index_heaps_.data(),
+                                   FRAMES_IN_FLIGHT_DYN)) {
         return false;
     }
 
@@ -214,10 +226,10 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
 
         result.push_back(uploaded);
 
-        // Update SceneRenderer descriptors for new heap blocks
+        // Update SceneRenderer descriptors for new heap blocks (all frames)
         if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
             if (info->vertex_allocation.buffer_index < vertex_heap_.GetBufferCount()) {
-                scene_renderer_->UpdateVertexBufferArrayElement(
+                scene_renderer_->UpdateAllFrameVertexBufferArrayElements(
                     info->vertex_allocation.buffer_index,
                     vertex_heap_.GetBuffer(info->vertex_allocation.buffer_index),
                     vertex_heap_.GetConfig().block_size);
@@ -225,7 +237,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         }
         if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
             if (info->index_allocation.buffer_index < index_heap_.GetBufferCount()) {
-                scene_renderer_->UpdateIndexBufferArrayElement(
+                scene_renderer_->UpdateAllFrameIndexBufferArrayElements(
                     info->index_allocation.buffer_index,
                     index_heap_.GetBuffer(info->index_allocation.buffer_index),
                     index_heap_.GetConfig().block_size);
@@ -323,7 +335,8 @@ void GameEngine::Shutdown() {
         mesh_manager_->Shutdown();
         mesh_manager_.reset();
     }
-    mesh_ring_pool_.Shutdown();
+    for (auto& heap : dynamic_vertex_heaps_) heap.Shutdown();
+    for (auto& heap : dynamic_index_heaps_) heap.Shutdown();
     staging_mgr_.Shutdown();
     vertex_heap_.Shutdown();
     index_heap_.Shutdown();

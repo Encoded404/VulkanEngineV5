@@ -245,6 +245,28 @@ uint64_t TlsfAllocator::Allocate(uint64_t size, uint64_t alignment) {
     return aligned;
 }
 
+void TlsfAllocator::Reset() {
+    nodes_.clear();
+    node_pool_head_ = -1;
+    heads_.fill(UINT32_MAX);
+    fl_bitmap_ = 0;
+    sl_bitmaps_.fill(0);
+    phys_head_ = UINT32_MAX;
+    free_size_ = total_size_;
+
+    const uint32_t node_idx = AllocNode();
+    if (node_idx != UINT32_MAX) {
+        TlsfFreeNode& root = nodes_[node_idx];
+        root.offset = 0;
+        root.size = total_size_;
+        root.prev_phys = UINT32_MAX;
+        root.next_phys = UINT32_MAX;
+        root.prev_free = UINT32_MAX;
+        root.next_free = UINT32_MAX;
+        InsertIntoFreeLists(node_idx);
+    }
+}
+
 bool TlsfAllocator::Free(uint64_t offset, uint64_t size) {
     if (offset + size > total_size_ || size == 0) return false;
 

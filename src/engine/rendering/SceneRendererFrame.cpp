@@ -172,7 +172,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, uint32_t w, uint32_t h, 
     const std::array<vk::DescriptorSet, 4> ds{
         empty_sets_[fi % FRAMES_IN_FLIGHT].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*bindless_vertex_set_),
+        static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
         *fr.depth_indirection_set
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
@@ -212,7 +212,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     const std::array<vk::DescriptorSet, 4> ds{
         bm.GetDescriptorSet(),
         fr.submesh_vertex_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*bindless_vertex_set_),
+        static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
         *fr.indirection_raw_set
     };
 
@@ -284,7 +284,7 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, uint32_t cnt,
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *expand_pipeline_);
     const std::array<vk::DescriptorSet, 2> ds{
         fr.expand_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*bindless_index_set_)
+        static_cast<vk::DescriptorSet>(*fr.bindless_index_set)
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *expand_pipeline_layout_,
                              0, ds, {});

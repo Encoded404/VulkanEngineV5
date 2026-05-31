@@ -34,6 +34,8 @@ import VulkanEngine.MeshRenderSystem;
 
 export namespace VulkanEngine::Game {
 
+constexpr uint32_t FRAMES_IN_FLIGHT_DYN = 3;
+
 struct GameConfig {
     StandardMeshPipeline::PipelineConfig pipeline_config{
         .depth_test_enable = true,
@@ -91,6 +93,8 @@ public:
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap_; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap_; }
     GpuResources::StagingManager& GetStagingManager() { return staging_mgr_; }
+    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN>& GetDynamicVertexHeaps() { return dynamic_vertex_heaps_; }
+    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN>& GetDynamicIndexHeaps() { return dynamic_index_heaps_; }
     MeshManager& GetMeshManager() { return *mesh_manager_; }
     MeshRegistry& GetMeshRegistry() { return mesh_registry_; }
     MeshRenderSystem& GetMeshRenderSystem() { return mesh_render_system_; }
@@ -112,7 +116,8 @@ private:
     GpuResources::DeviceBufferHeap vertex_heap_;
     GpuResources::DeviceBufferHeap index_heap_;
     GpuResources::StagingManager staging_mgr_;
-    GpuResources::HostRingPool mesh_ring_pool_;
+    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN> dynamic_vertex_heaps_;
+    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN> dynamic_index_heaps_;
     std::unique_ptr<MeshManager> mesh_manager_;
     MeshRegistry mesh_registry_;
     MeshRenderSystem mesh_render_system_;

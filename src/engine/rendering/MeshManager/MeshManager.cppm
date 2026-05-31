@@ -7,7 +7,6 @@ export module VulkanEngine.MeshManager;
 
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
 export import VulkanEngine.GpuResources.StagingManager;
-export import VulkanEngine.GpuResources.HostRingPool;
 export import VulkanEngine.GpuResources.MeshData;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.Mesh.MeshTypes;
@@ -17,6 +16,7 @@ export namespace VulkanEngine {
 class MeshManager {
 public:
     static constexpr uint32_t INVALID_HANDLE = UINT32_MAX;
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
     enum class Strategy : uint8_t { Persistent, Streamed };
 
@@ -25,6 +25,8 @@ public:
         VulkanEngine::GpuResources::HeapAllocation index_allocation{};
         uint32_t vertex_buffer_index = 0;
         uint32_t index_buffer_index = 0;
+        VulkanEngine::GpuResources::HeapAllocation streamed_vertex_alloc[MAX_FRAMES_IN_FLIGHT]{};
+        VulkanEngine::GpuResources::HeapAllocation streamed_index_alloc[MAX_FRAMES_IN_FLIGHT]{};
         std::vector<SubMesh> sub_meshes;
     };
 
@@ -47,37 +49,30 @@ public:
                     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                     VulkanEngine::GpuResources::StagingManager* staging_mgr,
-                    VulkanEngine::GpuResources::HostRingPool* ring_pool);
+                    VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
+                    VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
+                    uint32_t frames_in_flight);
     void Shutdown();
 
-    // Persistent upload via staging to a device-local heap.
-    // Blocks until the transfer completes on the GPU.
     Handle UploadPersistent(const VulkanEngine::GpuResources::MeshData& data);
 
-    // Register a mesh for per-frame streaming via host-visible ring buffers.
-    // The initial data is written to all ring slots to avoid uninitialized reads.
     Handle RegisterStreamed(const VulkanEngine::GpuResources::MeshData& initial_data);
 
-    // Update a streamed mesh's data for the given frame index.
-    // Copies vertex and index data into the current ring slot.
     void UpdateStreamed(Handle handle, const VulkanEngine::GpuResources::MeshData& data,
                         uint32_t frame_index);
 
-    // Schedule a mesh for deferred deletion. The GPU resources are freed
-    // after FRAMES_IN_FLIGHT frames have passed since the last EndFrame.
     void Remove(Handle handle);
 
-    // Advance frame index, drain the deferred-free queue.
     void EndFrame(uint32_t frame_index);
 
-    // Query GPU info for descriptor updates.
     [[nodiscard]] const GpuMeshInfo* GetMeshInfo(Handle handle) const;
 
-    // Access the streamed mesh ring buffers for descriptor updates.
-    [[nodiscard]] vk::Buffer GetStreamedVertexBuffer(uint32_t frame_index) const;
-    [[nodiscard]] vk::Buffer GetStreamedIndexBuffer(uint32_t frame_index) const;
-    [[nodiscard]] uint64_t GetStreamedVertexBufferSize() const;
-    [[nodiscard]] uint64_t GetStreamedIndexBufferSize() const;
+    [[nodiscard]] vk::Buffer GetDynamicVertexBuffer(uint32_t fif_index, uint32_t buffer_index) const;
+    [[nodiscard]] vk::Buffer GetDynamicIndexBuffer(uint32_t fif_index, uint32_t buffer_index) const;
+    [[nodiscard]] uint64_t GetDynamicVertexBlockSize(uint32_t fif_index) const;
+    [[nodiscard]] uint64_t GetDynamicIndexBlockSize(uint32_t fif_index) const;
+    [[nodiscard]] uint32_t GetDynamicVertexBlockCount(uint32_t fif_index) const;
+    [[nodiscard]] uint32_t GetDynamicIndexBlockCount(uint32_t fif_index) const;
 
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
@@ -85,8 +80,6 @@ private:
     struct MeshEntry {
         Strategy strategy = Strategy::Persistent;
         GpuMeshInfo info{};
-        // For streamed meshes only: fixed-offset handle in the ring pool
-        VulkanEngine::GpuResources::HostRingPool::StreamedMeshHandle stream_handle{};
     };
 
     struct DeferredFree {
@@ -99,7 +92,8 @@ private:
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
     VulkanEngine::GpuResources::StagingManager* staging_mgr_ = nullptr;
-    VulkanEngine::GpuResources::HostRingPool* ring_pool_ = nullptr;
+    VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps_ = nullptr;
+    VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps_ = nullptr;
 
     std::vector<MeshEntry> entries_;
     std::vector<uint32_t> free_handles_;

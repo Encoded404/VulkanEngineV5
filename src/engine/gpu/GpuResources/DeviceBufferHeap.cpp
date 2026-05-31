@@ -33,9 +33,30 @@ bool DeviceBufferHeap::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backe
     return true;
 }
 
+void DeviceBufferHeap::Reset() {
+    for (auto& block : blocks_) {
+        block.allocator.Reset();
+    }
+}
+
 void DeviceBufferHeap::Shutdown() {
+    for (auto& block : blocks_) {
+        if (block.mapped_ptr) {
+            block.buffer.Unmap();
+            block.mapped_ptr = nullptr;
+        }
+    }
     blocks_.clear();
     backend_ = nullptr;
+}
+
+void* DeviceBufferHeap::MapBuffer(uint32_t block_index, uint64_t offset) {
+    if (block_index >= blocks_.size()) return nullptr;
+    auto& block = blocks_[block_index];
+    if (block.mapped_ptr) {
+        return static_cast<char*>(block.mapped_ptr) + offset;
+    }
+    return nullptr;
 }
 
 uint32_t DeviceBufferHeap::AddBlock() {
@@ -50,7 +71,7 @@ uint32_t DeviceBufferHeap::AddBlock() {
 
     GpuBuffer buffer = GpuBuffer::Create(
         *backend_, config_.block_size, usage,
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
+        config_.memory_flags);
 
     if (!buffer.IsValid()) {
         LOGIFACE_LOG(error, "DeviceBufferHeap: failed to allocate block " + std::to_string(index));
@@ -61,6 +82,11 @@ uint32_t DeviceBufferHeap::AddBlock() {
     block.buffer = std::move(buffer);
     block.size = config_.block_size;
     block.allocator.Initialize(config_.block_size);
+    block.mapped_ptr = nullptr;
+
+    if (config_.memory_flags & vk::MemoryPropertyFlagBits::eHostVisible) {
+        block.mapped_ptr = block.buffer.Map(0, block.size);
+    }
 
     blocks_.push_back(std::move(block));
 

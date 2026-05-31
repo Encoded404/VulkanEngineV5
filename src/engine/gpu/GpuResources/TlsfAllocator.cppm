@@ -26,6 +26,8 @@ public:
     // Frees a previously allocated region. Returns false if corrupt.
     bool Free(uint64_t offset, uint64_t size);
 
+    void Reset();
+
     [[nodiscard]] uint64_t GetTotalSize() const { return total_size_; }
     [[nodiscard]] uint64_t GetFreeSize() const { return free_size_; }
     [[nodiscard]] uint64_t GetUsedSize() const { return total_size_ - free_size_; }

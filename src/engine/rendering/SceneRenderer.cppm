@@ -52,8 +52,10 @@ public:
     [[nodiscard]] vk::DescriptorSetLayout* GetRawVertexLayout() const;
     [[nodiscard]] vk::DescriptorSetLayout* GetIndirectionLayout() const;
 
-    void UpdateVertexBufferArrayElement(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
-    void UpdateIndexBufferArrayElement(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
+    void UpdateVertexBufferArrayElement(uint32_t frame_index, uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
+    void UpdateIndexBufferArrayElement(uint32_t frame_index, uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
+    void UpdateAllFrameVertexBufferArrayElements(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
+    void UpdateAllFrameIndexBufferArrayElements(uint32_t buffer_index, vk::Buffer buffer, uint64_t size);
 
     void PrepareCompute(vk::CommandBuffer cmd,
                         VulkanEngine::ComponentRegistry& registry,
@@ -168,6 +170,8 @@ private:
         VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet depth_indirection_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet bindless_vertex_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet bindless_index_set = vk::raii::DescriptorSet(nullptr);
         VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
 
         vk::raii::Image hiz_image = vk::raii::Image(nullptr);
@@ -198,7 +202,6 @@ private:
     // Set 2: Bindless vertex buffer array
     std::unique_ptr<vk::raii::DescriptorSetLayout> raw_vertex_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> raw_vertex_pool_;
-    vk::raii::DescriptorSet bindless_vertex_set_{nullptr};
 
     // Set 3: Indirection buffer (depth uses dedicated set, main uses indirection_raw_set)
     std::unique_ptr<vk::raii::DescriptorSetLayout> indirection_layout_{};
@@ -252,7 +255,6 @@ private:
     // Bindless index buffer array (used by expand at set 5)
     std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
-    vk::raii::DescriptorSet bindless_index_set_{nullptr};
 
     // DGC objects (only created when DGC is available)
     bool dgc_available_ = false;

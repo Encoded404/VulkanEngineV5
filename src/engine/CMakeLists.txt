@@ -69,7 +69,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
     gpu/GpuResources/StagingManager.cpp
     gpu/GpuResources/DeviceBufferHeap.cpp
     gpu/GpuResources/TlsfAllocator.cpp
-    gpu/GpuResources/HostRingPool.cpp
     assets/ShaderLoader.cpp
     rendering/DefaultResources.cpp
     rendering/MeshManager/MeshManager.cpp
@@ -151,7 +150,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         gpu/GpuResources/StagingManager.cppm
         gpu/GpuResources/DeviceBufferHeap.cppm
         gpu/GpuResources/TlsfAllocator.cppm
-        gpu/GpuResources/HostRingPool.cppm
         gpu/GpuResources/MeshData.cppm
         assets/ShaderLoader.cppm
         rendering/DefaultResources.cppm

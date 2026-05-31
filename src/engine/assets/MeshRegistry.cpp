@@ -103,15 +103,15 @@ void MeshRegistry::RequestGpuResidency(uint32_t mesh_id, MeshManager& mgr,
     all_submeshes.insert(all_submeshes.end(), adjusted.begin(), adjusted.end());
     renderer.SetSubmeshes(all_submeshes);
 
-    // Update descriptor arrays if new heap block was allocated
+    // Update descriptor arrays if new heap block was allocated (all frames)
     if (gpu_info->vertex_allocation.buffer_index < vtx_heap.GetBufferCount()) {
-        renderer.UpdateVertexBufferArrayElement(
+        renderer.UpdateAllFrameVertexBufferArrayElements(
             gpu_info->vertex_allocation.buffer_index,
             vtx_heap.GetBuffer(gpu_info->vertex_allocation.buffer_index),
             vtx_heap.GetConfig().block_size);
     }
     if (gpu_info->index_allocation.buffer_index < idx_heap.GetBufferCount()) {
-        renderer.UpdateIndexBufferArrayElement(
+        renderer.UpdateAllFrameIndexBufferArrayElements(
             gpu_info->index_allocation.buffer_index,
             idx_heap.GetBuffer(gpu_info->index_allocation.buffer_index),
             idx_heap.GetConfig().block_size);

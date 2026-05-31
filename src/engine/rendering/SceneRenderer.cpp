@@ -59,7 +59,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
     }
 
-    // Set 2: Vertex buffers (bindless, update-after-bind)
+    // Set 2: Vertex buffers (bindless, update-after-bind) - per-frame
     {
         std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
         bs[0].binding = 0;
@@ -81,19 +81,19 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         VulkanEngine::Utils::SetVulkanObjectName(dev, *raw_vertex_layout_, "raw-vertex-layout");
 
         const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, MAX_VERTEX_BUFFERS
+            vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_VERTEX_BUFFERS
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                         vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = 1;
+        pool_ci.maxSets = FRAMES_IN_FLIGHT;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         raw_vertex_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
         VulkanEngine::Utils::SetVulkanObjectName(dev, *raw_vertex_pool_, "raw-vertex-pool");
 
-        {
-            const uint32_t var_desc_count = 1;
+        for (auto& fr : frames_) {
+            const uint32_t var_desc_count = MAX_VERTEX_BUFFERS;
             vk::DescriptorSetVariableDescriptorCountAllocateInfo var_desc{};
             var_desc.descriptorSetCount = 1;
             var_desc.pDescriptorCounts = &var_desc_count;
@@ -103,20 +103,30 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             alloc_ci.descriptorSetCount = 1;
             alloc_ci.pSetLayouts = &**raw_vertex_layout_;
             auto sets = dev.allocateDescriptorSets(alloc_ci);
-            bindless_vertex_set_ = std::move(sets[0]);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, bindless_vertex_set_, "bindless-vertex-set");
+            fr.bindless_vertex_set = std::move(sets[0]);
         }
 
-        for (uint32_t bi = 0; bi < vh.GetBufferCount(); ++bi) {
-            const vk::DescriptorBufferInfo bii(vh.GetBuffer(bi), 0, VK_WHOLE_SIZE);
-            vk::WriteDescriptorSet w{};
-            w.dstSet = *bindless_vertex_set_;
-            w.dstBinding = 0;
-            w.dstArrayElement = bi;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w.pBufferInfo = &bii;
-            dev.updateDescriptorSets(w, nullptr);
+        VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[0].bindless_vertex_set, "bindless-vertex-frame-0");
+        if constexpr (FRAMES_IN_FLIGHT > 1) {
+            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[1].bindless_vertex_set, "bindless-vertex-frame-1");
+        }
+        if constexpr (FRAMES_IN_FLIGHT > 2) {
+            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[2].bindless_vertex_set, "bindless-vertex-frame-2");
+        }
+
+        // Write initial static blocks into ALL frame vertex sets
+        for (auto& fr : frames_) {
+            for (uint32_t bi = 0; bi < vh.GetBufferCount(); ++bi) {
+                const vk::DescriptorBufferInfo bii(vh.GetBuffer(bi), 0, VK_WHOLE_SIZE);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = *fr.bindless_vertex_set;
+                w.dstBinding = 0;
+                w.dstArrayElement = bi;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bii;
+                dev.updateDescriptorSets(w, nullptr);
+            }
         }
     }
 
@@ -151,7 +161,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         VulkanEngine::Utils::SetVulkanObjectName(dev, *indirection_raw_pool_, "indirection-raw-pool");
     }
 
-    // Index buffer array (bindless, update-after-bind) for expand
+    // Index buffer array (bindless, update-after-bind) for expand - per-frame
     {
         std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
         bs[0].binding = 0;
@@ -173,19 +183,19 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         VulkanEngine::Utils::SetVulkanObjectName(dev, *bindless_index_layout_, "bindless-index-layout");
 
         const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, MAX_INDEX_BUFFERS
+            vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_INDEX_BUFFERS
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                         vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = 1;
+        pool_ci.maxSets = FRAMES_IN_FLIGHT;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         bindless_index_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
         VulkanEngine::Utils::SetVulkanObjectName(dev, *bindless_index_pool_, "bindless-index-pool");
 
-        {
-            const uint32_t var_desc_count = 1;
+        for (auto& fr : frames_) {
+            const uint32_t var_desc_count = MAX_INDEX_BUFFERS;
             vk::DescriptorSetVariableDescriptorCountAllocateInfo var_desc{};
             var_desc.descriptorSetCount = 1;
             var_desc.pDescriptorCounts = &var_desc_count;
@@ -195,8 +205,15 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             alloc_ci.descriptorSetCount = 1;
             alloc_ci.pSetLayouts = &**bindless_index_layout_;
             auto sets = dev.allocateDescriptorSets(alloc_ci);
-            bindless_index_set_ = std::move(sets[0]);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, bindless_index_set_, "bindless-index-set");
+            fr.bindless_index_set = std::move(sets[0]);
+        }
+
+        VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[0].bindless_index_set, "bindless-index-frame-0");
+        if constexpr (FRAMES_IN_FLIGHT > 1) {
+            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[1].bindless_index_set, "bindless-index-frame-1");
+        }
+        if constexpr (FRAMES_IN_FLIGHT > 2) {
+            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[2].bindless_index_set, "bindless-index-frame-2");
         }
     }
 
@@ -755,12 +772,14 @@ vk::DescriptorSetLayout* SceneRenderer::GetIndirectionLayout() const {
         : nullptr;
 }
 
-void SceneRenderer::UpdateVertexBufferArrayElement(uint32_t buffer_index,
+void SceneRenderer::UpdateVertexBufferArrayElement(uint32_t frame_index,
+                                                     uint32_t buffer_index,
                                                      vk::Buffer buffer,
                                                      uint64_t size) {
+    const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
-    w.dstSet = *bindless_vertex_set_;
+    w.dstSet = *fr.bindless_vertex_set;
     w.dstBinding = 0;
     w.dstArrayElement = buffer_index;
     w.descriptorCount = 1;
@@ -769,18 +788,36 @@ void SceneRenderer::UpdateVertexBufferArrayElement(uint32_t buffer_index,
     backend_->GetDevice().updateDescriptorSets(w, nullptr);
 }
 
-void SceneRenderer::UpdateIndexBufferArrayElement(uint32_t buffer_index,
+void SceneRenderer::UpdateIndexBufferArrayElement(uint32_t frame_index,
+                                                    uint32_t buffer_index,
                                                     vk::Buffer buffer,
                                                     uint64_t size) {
+    const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
-    w.dstSet = *bindless_index_set_;
+    w.dstSet = *fr.bindless_index_set;
     w.dstBinding = 0;
     w.dstArrayElement = buffer_index;
     w.descriptorCount = 1;
     w.descriptorType = vk::DescriptorType::eStorageBuffer;
     w.pBufferInfo = &bii;
     backend_->GetDevice().updateDescriptorSets(w, nullptr);
+}
+
+void SceneRenderer::UpdateAllFrameVertexBufferArrayElements(uint32_t buffer_index,
+                                                              vk::Buffer buffer,
+                                                              uint64_t size) {
+    for (uint32_t fi = 0; fi < FRAMES_IN_FLIGHT; ++fi) {
+        UpdateVertexBufferArrayElement(fi, buffer_index, buffer, size);
+    }
+}
+
+void SceneRenderer::UpdateAllFrameIndexBufferArrayElements(uint32_t buffer_index,
+                                                             vk::Buffer buffer,
+                                                             uint64_t size) {
+    for (uint32_t fi = 0; fi < FRAMES_IN_FLIGHT; ++fi) {
+        UpdateIndexBufferArrayElement(fi, buffer_index, buffer, size);
+    }
 }
 
 void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,

@@ -1,3 +1,4 @@
+// Per-instance dynamic data buffer entry: world-space transform for one submesh
 struct DynEntry {
     float3 pos;
     float pad0;
@@ -7,26 +8,26 @@ struct DynEntry {
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<DynEntry> dyn[];
+StructuredBuffer<DynEntry> dynamicInstances[];
 
 struct StaticEntry {
-    uint indexStart;
+    uint indexStart;       // packed: hi 8 = indexBufSlot, lo 24 = indexOffset
     uint indexRange;
-    uint techniqueTexture;
-    uint pad;
+    uint techniqueTexSlot;
+    uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
 };
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<StaticEntry> st[];
+StructuredBuffer<StaticEntry> staticMeshes[];
 
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
-    uint textureSlot;
+    uint texSlot;
 };
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<VertEntry> vtx[];
+RWStructuredBuffer<VertEntry> vertexConstants[];
 
 struct CullEntry {
     uint indirOffset;
@@ -36,7 +37,7 @@ struct CullEntry {
 };
 
 [[vk::binding(3, 0)]]
-RWStructuredBuffer<CullEntry> cull[];
+RWStructuredBuffer<CullEntry> cullEntries[];
 
 struct IndirEntry {
     uint vertexId;
@@ -44,10 +45,10 @@ struct IndirEntry {
 };
 
 [[vk::binding(4, 0)]]
-RWStructuredBuffer<IndirEntry> indir;
+RWStructuredBuffer<IndirEntry> indirectDraws;
 
 [[vk::binding(5, 0)]]
-globallycoherent RWStructuredBuffer<uint> dc;
+globallycoherent RWStructuredBuffer<uint> drawCounter;
 
 struct ExpandPC {
     float4x4 vp;
@@ -57,61 +58,64 @@ struct ExpandPC {
 };
 
 [[vk::push_constant]]
-ConstantBuffer<ExpandPC> pc;
+ConstantBuffer<ExpandPC> pushConstant;
 
 [[vk::binding(0, 1)]]
-StructuredBuffer<uint> idx[];
+StructuredBuffer<uint> indexBuffers[];
 
-float4x4 modelMat(float3 p, float4 r, float3 s) {
-    float x = r.x, y = r.y, z = r.z, w = r.w;
+float4x4 modelMat(float3 pos, float4 rot, float3 scale) {
+    float x = rot.x, y = rot.y, z = rot.z, w = rot.w;
     float xx = x * x, yy = y * y, zz = z * z;
     float xy = x * y, xz = x * z, xw = x * w;
     float yz = y * z, yw = y * w, zw = z * w;
 
     return float4x4(
-        (1.0 - 2.0 * (yy + zz)) * s.x, 2.0 * (xy + zw) * s.x,      2.0 * (xz - yw) * s.x,      0.0,
-        2.0 * (xy - zw) * s.y,          (1.0 - 2.0 * (xx + zz)) * s.y, 2.0 * (yz + xw) * s.y,      0.0,
-        2.0 * (xz + yw) * s.z,           2.0 * (yz - xw) * s.z,        (1.0 - 2.0 * (xx + yy)) * s.z, 0.0,
-        p.x,                             p.y,                          p.z,                         1.0
+        (1.0 - 2.0 * (yy + zz)) * scale.x, 2.0 * (xy + zw) * scale.x,      2.0 * (xz - yw) * scale.x,      0.0,
+        2.0 * (xy - zw) * scale.y,          (1.0 - 2.0 * (xx + zz)) * scale.y, 2.0 * (yz + xw) * scale.y,      0.0,
+        2.0 * (xz + yw) * scale.z,           2.0 * (yz - xw) * scale.z,        (1.0 - 2.0 * (xx + yy)) * scale.z, 0.0,
+        pos.x,                             pos.y,                          pos.z,                         1.0
     );
 }
 
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint id = dispatchThreadId.x;
-    if (id >= pc.objectCount) return;
+    uint id = dispatchThreadId.x; // submesh index
+    if (id >= pushConstant.objectCount) return;
 
-    uint block = id / 256u;
-    uint elemIdx = id % 256u;
+    uint block = id / 256u;    // which storage buffer block (max 256 submeshes per block)
+    uint elemIndex = id % 256u; // index within that block
 
-    float3 p = dyn[NonUniformResourceIndex(block)][elemIdx].pos;
-    float3 s = dyn[NonUniformResourceIndex(block)][elemIdx].scale;
-    float4 r = dyn[NonUniformResourceIndex(block)][elemIdx].rot;
+    float3 position = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].pos;
+    float3 scale = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].scale;
+    float4 rotation = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].rot;
 
-    uint indexRange = st[NonUniformResourceIndex(block)][elemIdx].indexRange;
-    uint techniqueTexture = st[NonUniformResourceIndex(block)][elemIdx].techniqueTexture;
-    uint textureSlot = techniqueTexture >> 16;
+    uint indexRange = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexRange;
+    uint techniqueTexSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].techniqueTexSlot;
+    uint texSlot = techniqueTexSlot >> 16;
 
-    float maxScaleVal = max(abs(s.x), max(abs(s.y), abs(s.z)));
-    float4x4 mvp = mul(modelMat(p, r, s), pc.vp);
+    float maxScaleVal = max(abs(scale.x), max(abs(scale.y), abs(scale.z)));
+    float4x4 mvp = mul(modelMat(position, rotation, scale), pushConstant.vp);
 
-    vtx[NonUniformResourceIndex(block)][elemIdx].MVP = mvp;
-    vtx[NonUniformResourceIndex(block)][elemIdx].maxScale = maxScaleVal;
-    vtx[NonUniformResourceIndex(block)][elemIdx].textureSlot = textureSlot;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].MVP = mvp;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].maxScale = maxScaleVal;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].texSlot = texSlot;
 
-    uint offsetBase;
-    InterlockedAdd(dc[0], indexRange, offsetBase);
+    uint drawOffset;
+    InterlockedAdd(drawCounter[0], indexRange, drawOffset); // allocate range in the indirect draw buffer
 
-    cull[NonUniformResourceIndex(block)][elemIdx].indirOffset = offsetBase;
-    cull[NonUniformResourceIndex(block)][elemIdx].indexCount = indexRange;
-    cull[NonUniformResourceIndex(block)][elemIdx].techniqueId = techniqueTexture & 0xFFFFu;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].indirOffset = drawOffset;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techniqueTexSlot & 0xFFFFu;
 
-    uint idxBlock = st[NonUniformResourceIndex(block)][elemIdx].indexStart >> 24;
-    uint idxOffset = st[NonUniformResourceIndex(block)][elemIdx].indexStart & 0xFFFFFFu;
+    uint indexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart >> 24;
+    uint indexOffset  = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart & 0xFFFFFFu;
+    uint vertexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo >> 24;
+    uint baseVertex    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo & 0xFFFFFFu;
 
     for (uint i = 0; i < indexRange; i++) {
-        indir[offsetBase + i].vertexId = idx[idxBlock][idxOffset + i];
-        indir[offsetBase + i].submeshId = id;
+        uint rawIndex = indexBuffers[indexBufSlot][indexOffset + i];
+        indirectDraws[drawOffset + i].vertexId = (vertexBufSlot << 24) | (rawIndex + baseVertex);
+        indirectDraws[drawOffset + i].submeshId = id;
     }
 }

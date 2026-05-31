@@ -16,6 +16,8 @@ export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.MaterialManager.MaterialId;
 
+import VulkanEngine.GpuResources.MeshData;
+
 export namespace VulkanEngine::SceneLoader {
 
 using MaterialManager::MaterialId;
@@ -81,6 +83,13 @@ public:
         VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
         VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
         const std::vector<LoadedMeshData>& meshes);
+
+    [[nodiscard]] static VulkanEngine::GpuResources::MeshData LoadMeshData(
+        const std::filesystem::path& file_path,
+        const std::vector<MaterialId>* material_bindings = nullptr);
+
+    [[nodiscard]] static VulkanEngine::GpuResources::MeshData ToMeshData(
+        const LoadedMeshData& loaded);
 };
 
 }

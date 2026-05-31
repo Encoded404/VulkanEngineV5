@@ -1,3 +1,4 @@
+// Two-pass compaction: count visible entries per technique, then scatter them into a packed buffer.
 struct CullEntry {
     uint indirOffset;
     uint indexCount;
@@ -14,10 +15,10 @@ struct IndirEntry {
 };
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<IndirEntry> full;
+StructuredBuffer<IndirEntry> fullIndirect;
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<IndirEntry> comp;
+RWStructuredBuffer<IndirEntry> compactedIndirect;
 
 [[vk::binding(3, 0)]]
 RWStructuredBuffer<uint> inter;
@@ -32,26 +33,29 @@ struct CollectPC {
 [[vk::push_constant]]
 ConstantBuffer<CollectPC> pc;
 
-groupshared uint s_off[256];
+groupshared uint sharedOffsets[256];
 
+// pass 0: count visible index ranges per technique (accumulates into inter[])
 void passCount(uint id) {
     if (id >= pc.elementCount) return;
 
     uint block = id / 256u;
     uint elemIdx = id % 256u;
 
-    CullEntry e = cull[NonUniformResourceIndex(block)][elemIdx];
-    if (e.indexCount == 0) return;
+    CullEntry entry = cull[NonUniformResourceIndex(block)][elemIdx];
+    if (entry.indexCount == 0) return;
 
-    InterlockedAdd(inter[e.techniqueId * 2u + 1u], e.indexCount);
+    InterlockedAdd(inter[entry.techniqueId * 2u + 1u], entry.indexCount);
 }
 
+// pass 1: compute per-technique offsets, then scatter visible entries into the compacted buffer
 void passCompact(uint id, uint localIdx) {
+    // thread 0 builds prefix-sum offsets per technique from the counts gathered in pass 0
     if (localIdx == 0) {
         uint offset = 0;
         for (uint t = 0; t < min(pc.techniqueCount, 256u); t++) {
             uint cnt = inter[t * 2u + 1u];
-            s_off[t] = offset;
+            sharedOffsets[t] = offset;
             offset += cnt;
         }
     }
@@ -59,7 +63,7 @@ void passCompact(uint id, uint localIdx) {
 
     if (id == 0) {
         for (uint t = 0; t < min(pc.techniqueCount, 256u); t++) {
-            inter[t * 2u] = s_off[t];
+            inter[t * 2u] = sharedOffsets[t];
             inter[t * 2u + 1u] = 0;
         }
     }
@@ -70,15 +74,15 @@ void passCompact(uint id, uint localIdx) {
     uint block = id / 256u;
     uint elemIdx = id % 256u;
 
-    CullEntry e = cull[NonUniformResourceIndex(block)][elemIdx];
-    if (e.indexCount == 0) return;
+    CullEntry entry = cull[NonUniformResourceIndex(block)][elemIdx];
+    if (entry.indexCount == 0) return;
 
-    uint techOffset;
-    InterlockedAdd(inter[e.techniqueId * 2u + 1u], e.indexCount, techOffset);
-    uint destOffset = s_off[e.techniqueId] + techOffset;
+    uint techniqueOffset;
+    InterlockedAdd(inter[entry.techniqueId * 2u + 1u], entry.indexCount, techniqueOffset);
+    uint destOffset = sharedOffsets[entry.techniqueId] + techniqueOffset;
 
-    for (uint i = 0; i < e.indexCount; i++) {
-        comp[destOffset + i] = full[e.indirOffset + i];
+    for (uint i = 0; i < entry.indexCount; i++) {
+        compactedIndirect[destOffset + i] = fullIndirect[entry.indirOffset + i];
     }
 }
 

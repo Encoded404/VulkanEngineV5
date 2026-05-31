@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <unordered_set>
 
 #include <vulkan/vulkan.hpp>
 #include <logging/logging.hpp>
@@ -11,6 +12,7 @@ module VulkanEngine.Game;
 
 import Shaders.Engine.MainIndirVert;
 import Shaders.Engine.StandardMeshFrag;
+import VulkanEngine.MeshManager;
 
 namespace VulkanEngine::Game {
 
@@ -45,6 +47,18 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     if (!vertex_heap_.Initialize(backend, heap_config, "vertex")) return false;
     if (!index_heap_.Initialize(backend, heap_config, "index")) return false;
     if (!staging_mgr_.Initialize(backend)) return false;
+
+    GpuResources::HostRingPool::Config ring_config{};
+    ring_config.vertex_buffer_size = 16ULL << 20;
+    ring_config.index_buffer_size = 8ULL << 20;
+    ring_config.frames_in_flight = 3;
+    if (!mesh_ring_pool_.Initialize(backend, ring_config)) return false;
+
+    mesh_manager_ = std::make_unique<MeshManager>();
+    if (!mesh_manager_->Initialize(backend, &vertex_heap_, &index_heap_,
+                                   &staging_mgr_, &mesh_ring_pool_)) {
+        return false;
+    }
 
     initialized_ = true;
     return true;
@@ -152,33 +166,92 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     return true;
 }
 
-const SceneLoader::CombinedScene& GameEngine::UploadScene(
-    VulkanEngine::Application::ApplicationContext& ctx,
-    const std::vector<SceneLoader::LoadedMeshData>& meshes) {
-    combined_scene_ = SceneLoader::SceneLoader::UploadCombined(
-        *ctx.bootstrap, staging_mgr_, vertex_heap_, index_heap_, meshes);
+std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
+    VulkanEngine::Application::ApplicationContext& /*ctx*/,
+    const std::vector<VulkanEngine::GpuResources::MeshData>& meshes) {
+    std::vector<UploadedMesh> result;
 
-    if (combined_scene_.vertex_allocation.IsValid() && combined_scene_.index_allocation.IsValid()) {
-        scene_valid_ = true;
+    if (!mesh_manager_) return result;
 
-        scene_renderer_->SetSubmeshes(combined_scene_.submeshes);
+    std::vector<VulkanEngine::SubMesh> all_submeshes;
+    std::unordered_set<uint32_t> vertex_buffers_updated;
+    std::unordered_set<uint32_t> index_buffers_updated;
 
-        if (combined_scene_.vertex_allocation.buffer_index < vertex_heap_.GetBufferCount()) {
-            scene_renderer_->UpdateVertexBufferArrayElement(
-                combined_scene_.vertex_allocation.buffer_index,
-                vertex_heap_.GetBuffer(combined_scene_.vertex_allocation.buffer_index),
-                vertex_heap_.GetConfig().block_size);
+    for (const auto& mesh_data : meshes) {
+        auto handle = mesh_manager_->UploadPersistent(mesh_data);
+        if (!handle.IsValid()) {
+            LOGIFACE_LOG(error, "UploadScene: failed to upload mesh");
+            continue;
         }
 
-        if (combined_scene_.index_allocation.buffer_index < index_heap_.GetBufferCount()) {
-            scene_renderer_->UpdateIndexBufferArrayElement(
-                combined_scene_.index_allocation.buffer_index,
-                index_heap_.GetBuffer(combined_scene_.index_allocation.buffer_index),
-                index_heap_.GetConfig().block_size);
+        const auto* info = mesh_manager_->GetMeshInfo(handle);
+        if (!info) continue;
+
+        const uint32_t index_offset = static_cast<uint32_t>(
+            info->index_allocation.offset / sizeof(uint32_t));
+
+        UploadedMesh uploaded{};
+        uploaded.first_submesh = static_cast<uint32_t>(all_submeshes.size());
+        uploaded.submesh_count = static_cast<uint32_t>(info->sub_meshes.size());
+        uploaded.vertex_buffer_index = info->vertex_allocation.buffer_index;
+        uploaded.index_buffer_index = info->index_allocation.buffer_index;
+
+        if (info->sub_meshes.empty()) {
+            const uint32_t total_indices = static_cast<uint32_t>(
+                info->index_allocation.size / sizeof(uint32_t));
+            SubMesh default_sm{};
+            default_sm.index_start = index_offset;
+            default_sm.index_count = total_indices;
+            all_submeshes.push_back(default_sm);
+            uploaded.submesh_count = 1;
+        } else {
+            for (const auto& sm : info->sub_meshes) {
+                auto adjusted = sm;
+                adjusted.index_start += index_offset;
+                all_submeshes.push_back(adjusted);
+            }
+        }
+
+        result.push_back(uploaded);
+
+        // Update SceneRenderer descriptors for new heap blocks
+        if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
+            if (info->vertex_allocation.buffer_index < vertex_heap_.GetBufferCount()) {
+                scene_renderer_->UpdateVertexBufferArrayElement(
+                    info->vertex_allocation.buffer_index,
+                    vertex_heap_.GetBuffer(info->vertex_allocation.buffer_index),
+                    vertex_heap_.GetConfig().block_size);
+            }
+        }
+        if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
+            if (info->index_allocation.buffer_index < index_heap_.GetBufferCount()) {
+                scene_renderer_->UpdateIndexBufferArrayElement(
+                    info->index_allocation.buffer_index,
+                    index_heap_.GetBuffer(info->index_allocation.buffer_index),
+                    index_heap_.GetConfig().block_size);
+            }
         }
     }
 
-    return combined_scene_;
+    scene_renderer_->SetSubmeshes(all_submeshes);
+    scene_valid_ = true;
+
+    return result;
+}
+
+std::vector<GameEngine::UploadedMesh> GameEngine::UploadSceneFromFiles(
+    VulkanEngine::Application::ApplicationContext& ctx,
+    const std::vector<std::filesystem::path>& file_paths,
+    const std::vector<SceneLoader::MaterialId>* material_bindings) {
+    std::vector<VulkanEngine::GpuResources::MeshData> mesh_data_list;
+    mesh_data_list.reserve(file_paths.size());
+
+    for (const auto& path : file_paths) {
+        auto md = SceneLoader::SceneLoader::LoadMeshData(path, material_bindings);
+        mesh_data_list.push_back(std::move(md));
+    }
+
+    return UploadScene(ctx, mesh_data_list);
 }
 
 Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
@@ -190,10 +263,26 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
 
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     ctx.bootstrap->GetBackend().GetComponentRegistry().UpdateAllComponentsAsync(ctx.frame.delta_time);
+
+    if (mesh_manager_ && scene_valid_) {
+        const uint32_t frame_index = ctx.frame.image_index % 3;
+        mesh_render_system_.ProcessFrame(
+            ctx.bootstrap->GetBackend().GetComponentRegistry(),
+            mesh_registry_,
+            *mesh_manager_,
+            *scene_renderer_,
+            vertex_heap_,
+            index_heap_,
+            frame_index);
+    }
 }
 
 void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
     if (!renderer_ || !camera_ || !scene_valid_) return;
+
+    if (mesh_manager_) {
+        mesh_manager_->EndFrame(ctx.frame.image_index % 3);
+    }
 
     renderer_->RenderFrame(*ctx.bootstrap,
                            ctx.bootstrap->GetBackend().GetComponentRegistry(),
@@ -229,6 +318,12 @@ void GameEngine::Shutdown() {
         scene_renderer_->Shutdown();
         scene_renderer_.reset();
     }
+    mesh_registry_.Shutdown();
+    if (mesh_manager_) {
+        mesh_manager_->Shutdown();
+        mesh_manager_.reset();
+    }
+    mesh_ring_pool_.Shutdown();
     staging_mgr_.Shutdown();
     vertex_heap_.Shutdown();
     index_heap_.Shutdown();
@@ -242,7 +337,6 @@ void GameEngine::Shutdown() {
         technique_mgr_.reset();
     }
     if (scene_valid_) {
-        combined_scene_.meshes.clear();
         scene_valid_ = false;
     }
 

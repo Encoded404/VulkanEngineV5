@@ -14,6 +14,7 @@ module;
 module App.Game;
 
 import VulkanEngine.Game;
+import VulkanEngine.GpuResources.MeshData;
 import App.Components.SimpleControllerComponent;
 import App.Components.TransformControlComponent;
 import Shaders.Engine.StandardMeshFrag;
@@ -22,7 +23,7 @@ import Shaders.App.SolidFrag;
 
 namespace App::Game {
 
-GraphGame::GraphGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
+DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
                    std::filesystem::path model_path,
                    std::filesystem::path texture_path)
     : render_mode_(render_mode)
@@ -52,9 +53,9 @@ GraphGame::GraphGame(const RenderMode render_mode, const std::filesystem::path& 
     });
 }
 
-GraphGame::~GraphGame() = default;
+DemoGame::~DemoGame() = default;
 
-bool GraphGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
+bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
     VulkanEngine::Game::GameConfig config{};
     config.enable_imgui = true;
@@ -91,55 +92,46 @@ bool GraphGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         .blend_mode = viking_blend
     }, engine_game_.GetResourceManager(), engine_game_.GetBindlessManager());
 
-    // 4. Load meshes explicitly with material bindings
-    std::vector<VulkanEngine::SceneLoader::LoadedMeshData> meshes;
+    // 4. Load meshes and register with MeshRegistry
     const std::vector<VulkanEngine::SceneLoader::MaterialId> viking_bindings = {viking_mat_id};
 
-    auto viking_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshFromFilePath(
+    auto viking_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshData(
         exe_dir_ / "models" / "viking_room.obj", &viking_bindings);
-    meshes.push_back(std::move(viking_mesh));
-
-    auto monkey_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshFromFilePath(
+    auto monkey_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshData(
         exe_dir_ / "models" / "simple-monkey.bin", nullptr);
-    meshes.push_back(std::move(monkey_mesh));
 
-    // 5. Upload scene to GPU
-    const auto& scene = engine_game_.UploadScene(ctx, meshes);
+    auto& mesh_registry = engine_game_.GetMeshRegistry();
+    const uint32_t viking_id = mesh_registry.Register(viking_mesh);
+    const uint32_t monkey_id = mesh_registry.Register(monkey_mesh);
 
-    // 6. Create camera
+    // Mark scene as valid so rendering begins
+    engine_game_.MarkSceneValid();
+
+    // 5. Create camera
     auto& backend = ctx.bootstrap->GetBackend();
     engine_game_.CreateCamera(backend.GetComponentRegistry());
 
-    // 7. Create game entities
-    for (size_t i = 0; i < scene.meshes.size(); ++i) {
+    // 6. Create game entities with simplified MeshReference
+    {
         auto& entity = backend.GetComponentRegistry().CreateEntity();
         backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::Transform>(entity);
-
         auto& mesh_ref = backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::MeshReference>(entity);
-        mesh_ref.first_submesh = scene.meshes[i].first_submesh_index;
-        mesh_ref.submesh_count = scene.meshes[i].submesh_count;
-        mesh_ref.index_buffer_index = static_cast<uint8_t>(scene.index_allocation.buffer_index);
+        mesh_ref.loaded_mesh_id = viking_id;
 
-        if (i == 0) {
-            auto& debug_comp = backend.GetComponentRegistry().AddComponent<App::Components::TransformControlComponent>(entity);
-            debug_comp.position = glm::vec3{0.0f, 0.0f, 0.0f};
-            auto* mesh_ref_comp = entity.GetComponent<VulkanEngine::Components::MeshReference>();
-            if (mesh_ref_comp && mesh_ref_comp->submesh_count > 0) {
-                const auto& sm = scene.submeshes[mesh_ref_comp->first_submesh];
-                debug_comp.material_id = sm.material_id;
-                if (debug_comp.material_id.has_value()) {
-                    auto& mat_def = VulkanEngine::MaterialManager::MaterialManager::Get().GetMaterial(debug_comp.material_id.value());
-                    debug_comp.texture_slot = mat_def.texture_slot.value;
-                }
-            }
-        } else if (i == 1) {
-            backend.GetComponentRegistry().AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
-        }
+        auto& debug_comp = backend.GetComponentRegistry().AddComponent<App::Components::TransformControlComponent>(entity);
+        debug_comp.position = glm::vec3{0.0f, 0.0f, 0.0f};
+    }
+    {
+        auto& entity = backend.GetComponentRegistry().CreateEntity();
+        backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::Transform>(entity);
+        auto& mesh_ref = backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::MeshReference>(entity);
+        mesh_ref.loaded_mesh_id = monkey_id;
+        backend.GetComponentRegistry().AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
     }
 
     backend.GetComponentRegistry().InitializeAllComponents();
 
-    // 9. Register ImGui debug UI
+    // 7. Register ImGui debug UI
     auto* imgui = engine_game_.GetImGuiSystem();
     if (imgui) {
         imgui_draw_handle_ = imgui->draw_callbacks.Register([&registry = backend.GetComponentRegistry()]() {
@@ -171,33 +163,33 @@ bool GraphGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         });
     }
 
-    // 9. Bind quit action
+    // 8. Bind quit action
     ctx.quit_action_handle = ctx.input_system->BindAction("quit",
         VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
 
     return true;
 }
 
-void GraphGame::OnPreInput(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
+void DemoGame::OnPreInput(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
 }
 
-bool GraphGame::ShouldFilterMouseInput() {
+bool DemoGame::ShouldFilterMouseInput() {
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-bool GraphGame::ShouldFilterKeyboardInput() {
+bool DemoGame::ShouldFilterKeyboardInput() {
     return ImGui::GetIO().WantCaptureKeyboard;
 }
 
-void GraphGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+void DemoGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.FrameUpdate(ctx);
 }
 
-void GraphGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
+void DemoGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.FrameRender(ctx);
 }
 
-void GraphGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
+void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
     imgui_draw_handle_ = {};
     engine_game_.Shutdown();
 }

@@ -25,9 +25,12 @@ export import VulkanEngine.ShaderLoader;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.Application;
 export import VulkanEngine.Input;
-export import VulkanBackend.ImGui;
+
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanBackend.Utils.CallbackList;
+import VulkanEngine.MeshManager;
+import VulkanEngine.MeshRegistry;
+import VulkanEngine.MeshRenderSystem;
 
 export namespace VulkanEngine::Game {
 
@@ -57,9 +60,20 @@ public:
                       std::span<const std::uint32_t> vert_override = {},
                       std::span<const std::uint32_t> frag_override = {});
 
-    const SceneLoader::CombinedScene& UploadScene(
+    struct UploadedMesh {
+        uint32_t first_submesh = 0;
+        uint32_t submesh_count = 0;
+        uint8_t vertex_buffer_index = 0;
+        uint8_t index_buffer_index = 0;
+    };
+
+    std::vector<UploadedMesh> UploadScene(
         VulkanEngine::Application::ApplicationContext& ctx,
-        const std::vector<SceneLoader::LoadedMeshData>& meshes);
+        const std::vector<VulkanEngine::GpuResources::MeshData>& meshes);
+    std::vector<UploadedMesh> UploadSceneFromFiles(
+        VulkanEngine::Application::ApplicationContext& ctx,
+        const std::vector<std::filesystem::path>& file_paths,
+        const std::vector<SceneLoader::MaterialId>* material_bindings = nullptr);
 
     Components::Camera& CreateCamera(ComponentRegistry& registry);
     Components::Camera* GetCamera() { return camera_; }
@@ -77,10 +91,13 @@ public:
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap_; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap_; }
     GpuResources::StagingManager& GetStagingManager() { return staging_mgr_; }
-    const SceneLoader::CombinedScene& GetCombinedScene() { return combined_scene_; }
+    MeshManager& GetMeshManager() { return *mesh_manager_; }
+    MeshRegistry& GetMeshRegistry() { return mesh_registry_; }
+    MeshRenderSystem& GetMeshRenderSystem() { return mesh_render_system_; }
     uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
+    void MarkSceneValid() { scene_valid_ = true; }
 
 private:
     uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
@@ -95,8 +112,11 @@ private:
     GpuResources::DeviceBufferHeap vertex_heap_;
     GpuResources::DeviceBufferHeap index_heap_;
     GpuResources::StagingManager staging_mgr_;
+    GpuResources::HostRingPool mesh_ring_pool_;
+    std::unique_ptr<MeshManager> mesh_manager_;
+    MeshRegistry mesh_registry_;
+    MeshRenderSystem mesh_render_system_;
 
-    SceneLoader::CombinedScene combined_scene_;
     bool scene_valid_ = false;
 
     ResourceManager resource_manager_;

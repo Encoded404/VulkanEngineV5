@@ -11,6 +11,8 @@ export module VulkanEngine.GpuResources.DeviceBufferHeap;
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuBuffer;
 
+import VulkanEngine.GpuResources.TlsfAllocator;
+
 export namespace VulkanEngine::GpuResources {
 
 struct HeapConfig {
@@ -55,15 +57,10 @@ public:
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
 private:
-    struct FreeBlock {
-        uint64_t offset;
-        uint64_t size;
-    };
-
     struct Block {
         VulkanEngine::GpuResources::GpuBuffer buffer;
         uint64_t size;
-        std::vector<FreeBlock> free_list;
+        TlsfAllocator allocator;
     };
 
     uint32_t AddBlock();

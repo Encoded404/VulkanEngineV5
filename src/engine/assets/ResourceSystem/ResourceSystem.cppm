@@ -24,7 +24,7 @@ export namespace VulkanEngine {
 struct ResourceId {
     std::string value{}; //NOLINT(misc-non-private-member-variables-in-classes)
 
-    bool empty() const noexcept { return value.empty(); }
+    [[nodiscard]] bool Empty() const noexcept { return value.empty(); }
     bool operator==(const ResourceId&) const = default;
 };
 
@@ -110,7 +110,7 @@ struct ResourceId {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
             auto type_idx = std::type_index(typeid(T));
 
-            if (resource_id.empty()) resource_id = ResourceId{path.string()};
+            if (resource_id.Empty()) resource_id = ResourceId{path.string()};
 
             {
                 const std::shared_lock<std::shared_mutex> rlock(mutex_);
@@ -257,7 +257,7 @@ struct ResourceId {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
             auto type_idx = std::type_index(typeid(T));
 
-            if (resource_id.empty()) resource_id = ResourceId{path.string()};
+            if (resource_id.Empty()) resource_id = ResourceId{path.string()};
 
             InProgressEntry entry_copy;
             bool entry_found = false;

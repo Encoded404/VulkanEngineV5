@@ -68,11 +68,17 @@ target_sources(${ENGINE_TARGET} PRIVATE
     gpu/GpuResources/GpuDescriptorSet.cpp
     gpu/GpuResources/StagingManager.cpp
     gpu/GpuResources/DeviceBufferHeap.cpp
+    gpu/GpuResources/TlsfAllocator.cpp
+    gpu/GpuResources/HostRingPool.cpp
     assets/ShaderLoader.cpp
     rendering/DefaultResources.cpp
+    rendering/MeshManager/MeshManager.cpp
     rendering/MeshRendererSystem.cpp
+    rendering/MeshRenderSystem.cpp
     rendering/StandardMeshPipeline.cpp
     assets/SceneLoader.cpp
+    assets/MeshRegistry.cpp
+    platform/Components/DynamicMesh.cpp
     rendering/Renderer.cpp
     rendering/TechniqueManager/TechniqueManager.cpp
     rendering/MaterialManager/MaterialManager.cpp
@@ -128,6 +134,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             platform/Components/MeshRenderer.cppm
             platform/Components/Camera.cppm
             platform/Components/MeshReference.cppm
+            platform/Components/DynamicMesh.cppm
             assets/FileLoaders/Mesh/BinMeshAssembler.cppm
             assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm
@@ -136,18 +143,24 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Textures/TextureLoaders.cppm
             platform/ImGuiSystem.cppm
             rendering/RenderPipeline.cppm
-            gpu/GpuResources/GpuResources.cppm
-            gpu/GpuResources/GpuBuffer.cppm
-            gpu/GpuResources/BlockBuffer.cppm
-            gpu/GpuResources/GpuTexture.cppm
-            gpu/GpuResources/GpuDescriptorSet.cppm
-            gpu/GpuResources/StagingManager.cppm
-            gpu/GpuResources/DeviceBufferHeap.cppm
-            assets/ShaderLoader.cppm
-            rendering/DefaultResources.cppm
+        gpu/GpuResources/GpuResources.cppm
+        gpu/GpuResources/GpuBuffer.cppm
+        gpu/GpuResources/BlockBuffer.cppm
+        gpu/GpuResources/GpuTexture.cppm
+        gpu/GpuResources/GpuDescriptorSet.cppm
+        gpu/GpuResources/StagingManager.cppm
+        gpu/GpuResources/DeviceBufferHeap.cppm
+        gpu/GpuResources/TlsfAllocator.cppm
+        gpu/GpuResources/HostRingPool.cppm
+        gpu/GpuResources/MeshData.cppm
+        assets/ShaderLoader.cppm
+        rendering/DefaultResources.cppm
+        rendering/MeshManager/MeshManager.cppm
             rendering/MeshRendererSystem.cppm
+            rendering/MeshRenderSystem.cppm
             rendering/StandardMeshPipeline.cppm
             assets/SceneLoader.cppm
+            assets/MeshRegistry.cppm
             rendering/Renderer.cppm
             rendering/TechniqueManager/TechniqueManager.cppm
             rendering/TechniqueManager/TechniqueId.cppm

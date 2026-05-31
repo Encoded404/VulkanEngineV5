@@ -92,8 +92,18 @@ public:
     void InitializeHizFirstFrame(vk::CommandBuffer cmd);
 
     void SetSubmeshes(const std::vector<VulkanEngine::SubMesh>& submeshes) { scene_submeshes_ = submeshes; }
+    [[nodiscard]] const std::vector<VulkanEngine::SubMesh>& GetSubmeshes() const { return scene_submeshes_; }
+
+    struct FrameBlockArrays {
+        VulkanEngine::GpuResources::BlockArray* compact_dynamic;
+        VulkanEngine::GpuResources::BlockArray* compact_static;
+        VulkanEngine::GpuResources::BlockArray* bounding_spheres;
+        VulkanEngine::GpuResources::BlockArray* bounding_obb;
+    };
+    [[nodiscard]] FrameBlockArrays GetFrameBlockArrays(uint32_t frame_index);
 
     [[nodiscard]] uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
+    void SetCurrentEntityCount(uint32_t count) { current_entity_count_ = count; }
 
     [[nodiscard]] VkImage GetHizImage(uint32_t frame_index) const {
         const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];

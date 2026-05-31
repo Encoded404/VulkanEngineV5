@@ -2,6 +2,7 @@
 #define STRIDE (1 << BATCH_LEVELS)
 #define HALF (STRIDE >> 1)
 
+// Generates two Hi-Z mip levels per dispatch by 4x4 → 2x2 → 1x1 reduction (max-depth).
 [[vk::binding(0, 0)]]
 Texture2D<float> depthTexture;
 [[vk::binding(1, 0)]]
@@ -23,19 +24,19 @@ ConstantBuffer<HiZPC> pc;
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     int2 srcSize = int2(pc.srcWidth, pc.srcHeight);
-    int2 pos = int2(dispatchThreadId.xy);
-    int2 coord = pos * STRIDE;
+    int2 threadPos = int2(dispatchThreadId.xy);
+    int2 coord = threadPos * STRIDE;
 
     if (coord.x < srcSize.x && coord.y < srcSize.y) {
-        float d[STRIDE][STRIDE];
+        float depthValues[STRIDE][STRIDE];
 
         for (int y = 0; y < STRIDE; y++) {
             for (int x = 0; x < STRIDE; x++) {
-                int2 c = min(coord + int2(x, y), srcSize - 1);
+                int2 clampedCoord = min(coord + int2(x, y), srcSize - 1);
                 if (pc.baseLevel == 0)
-                    d[y][x] = depthTexture.Load(int3(c, 0)).r;
+                    depthValues[y][x] = depthTexture.Load(int3(clampedCoord, 0)).r;
                 else
-                    d[y][x] = hizLevels[pc.baseLevel - 1][c];
+                    depthValues[y][x] = hizLevels[pc.baseLevel - 1][clampedCoord];
             }
         }
 
@@ -43,28 +44,30 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
             ? max(int2(1, 1), (srcSize + 1) / 2)
             : max(int2(1, 1), srcSize >> 1);
 
+        // first reduction: 4x4 -> 2x2 (writes dstLevel)
         {
-            uint dstLvl = pc.baseLevel;
+            uint dstLevel = pc.baseLevel;
             for (int y = 0; y < HALF; y++) {
                 for (int x = 0; x < HALF; x++) {
-                    float v = max(
-                        max(d[y * 2][x * 2], d[y * 2 + 1][x * 2]),
-                        max(d[y * 2][x * 2 + 1], d[y * 2 + 1][x * 2 + 1])
+                    float reducedDepth = max(
+                        max(depthValues[y * 2][x * 2], depthValues[y * 2 + 1][x * 2]),
+                        max(depthValues[y * 2][x * 2 + 1], depthValues[y * 2 + 1][x * 2 + 1])
                     );
-                    int2 wPos = pos * HALF + int2(x, y);
-                    if (dstLvl < pc.baseLevel + pc.totalLevels && wPos.x < lvl0Size.x && wPos.y < lvl0Size.y)
-                        hizLevels[dstLvl][wPos] = v;
-                    d[y][x] = v;
+                    int2 writePos = threadPos * HALF + int2(x, y);
+                    if (dstLevel < pc.baseLevel + pc.totalLevels && writePos.x < lvl0Size.x && writePos.y < lvl0Size.y)
+                        hizLevels[dstLevel][writePos] = reducedDepth;
+                    depthValues[y][x] = reducedDepth;
                 }
             }
         }
 
+        // second reduction: 2x2 -> 1x1 (writes dstLevel + 1)
         {
-            uint dstLvl = pc.baseLevel + 1;
+            uint dstLevel = pc.baseLevel + 1;
             int2 lvl1Size = max(int2(1, 1), lvl0Size >> 1);
-            float v = max(max(d[0][0], d[1][0]), max(d[0][1], d[1][1]));
-            if (dstLvl < pc.baseLevel + pc.totalLevels && pos.x < lvl1Size.x && pos.y < lvl1Size.y)
-                hizLevels[dstLvl][pos] = v;
+            float reducedDepth = max(max(depthValues[0][0], depthValues[1][0]), max(depthValues[0][1], depthValues[1][1]));
+            if (dstLevel < pc.baseLevel + pc.totalLevels && threadPos.x < lvl1Size.x && threadPos.y < lvl1Size.y)
+                hizLevels[dstLevel][threadPos] = reducedDepth;
         }
     }
 }

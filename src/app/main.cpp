@@ -31,7 +31,7 @@ int main(int argc, char* const argv[]) {
     CLI11_PARSE(app, argc, argv);
 
     const std::filesystem::path executable_path = std::filesystem::absolute(std::filesystem::path(argv[0]));
-    auto game = std::make_unique<App::Game::GraphGame>(render_mode, executable_path,
+    auto game = std::make_unique<App::Game::DemoGame>(render_mode, executable_path,
         model_path.empty() ? std::filesystem::path{} : std::filesystem::path{model_path},
         texture_path.empty() ? std::filesystem::path{} : std::filesystem::path{texture_path});
 

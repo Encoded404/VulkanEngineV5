@@ -8,16 +8,19 @@ module VulkanEngine.TechniqueManager;
 
 import VulkanEngine.StandardMeshPipeline;
 
+
+namespace {
+    std::vector<uint32_t> ResolveSpv(const std::vector<uint32_t>& override_spv,
+                                              const std::vector<uint32_t>& default_spv) {
+        if (!override_spv.empty()) return override_spv;
+        return default_spv;
+    }
+}
+
 namespace VulkanEngine::TechniqueManager {
 
 TechniqueManager::~TechniqueManager() {
     Shutdown();
-}
-
-static std::vector<uint32_t> ResolveSpv(const std::vector<uint32_t>& override_spv,
-                                          const std::vector<uint32_t>& default_spv) {
-    if (!override_spv.empty()) return override_spv;
-    return default_spv;
 }
 
 uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,

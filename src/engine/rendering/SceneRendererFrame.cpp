@@ -26,17 +26,12 @@ import VulkanEngine.MaterialManager;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
-        struct DrawEntity {
-            const VulkanEngine::Components::Transform* t = nullptr;
-            const VulkanEngine::Components::MeshReference* m = nullptr;
-        };
         struct ExpandPC { glm::mat4 vp; uint32_t cnt; uint32_t p0; uint32_t p1; };
         struct HiZPC { uint32_t bl; uint32_t sw; uint32_t sh; uint32_t tc; };
         struct OccPC { uint32_t cnt; uint32_t refineLevel; uint32_t hizWidth; uint32_t hizHeight; };
         struct CollectPC { uint32_t cnt; uint32_t p0; uint32_t mt; uint32_t pass; };
         struct WritePC { uint32_t cnt; uint32_t p0; uint32_t techniqueCount; uint32_t p1; };
         static constexpr uint32_t HIZ_BATCH = 2;
-        static constexpr uint32_t MAX_GATHER = 65536;
 
         static void WriteBlocks(vk::DescriptorSet ds, uint32_t binding,
                                 GpuResources::BlockArray& buf,
@@ -58,39 +53,14 @@ namespace VulkanEngine::SceneRenderer {
     } // anonymous namespace
 
 void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
-                                    VulkanEngine::ComponentRegistry& reg,
+                                    VulkanEngine::ComponentRegistry& /*reg*/,
                                     const glm::mat4& /*vm*/, const glm::mat4& /*pm*/,
                                     uint32_t, uint32_t, uint32_t fi) {
     const uint32_t f = fi % FRAMES_IN_FLIGHT;
     auto& fr = frames_[f];
     const auto& dev = backend_->GetDevice();
 
-    std::vector<DrawEntity> ents;
-    ents.reserve(MAX_GATHER);
-    reg.ForEach<VulkanEngine::Components::MeshReference>(
-        [&](VulkanEngine::Components::MeshReference& mr) {
-            if (ents.size() >= MAX_GATHER) return;
-            auto* owner = mr.GetOwner();
-            if (!owner) return;
-            auto* transform = owner->GetComponent<VulkanEngine::Components::Transform>();
-            if (!transform) return;
-            ents.push_back({ transform, &mr });
-        });
-
-    uint32_t total = 0;
-    for (auto& e : ents) {
-        total += (e.m ? e.m->submesh_count : 0);
-    }
-    if (total == 0) {
-        total = static_cast<uint32_t>(ents.size());
-    }
-    current_entity_count_ = total;
-    if (!total) {
-        LOGIFACE_LOG(warn, "PrepareCompute: no entities found with MeshReference component");
-    } else {
-        LOGIFACE_LOG(trace, "PrepareCompute: entities=" + std::to_string(ents.size()) +
-                     " total_submeshes=" + std::to_string(total) + " frame=" + std::to_string(fi));
-    }
+    const uint32_t total = current_entity_count_;
 
     fr.compact_dynamic.EnsureCapacity(total);
     fr.compact_static.EnsureCapacity(total);
@@ -98,132 +68,6 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     fr.bounding_obb.EnsureCapacity(total);
     fr.submesh_vertex_data.EnsureCapacity(total);
     fr.submesh_cull.EnsureCapacity(total);
-
-    uint32_t ci = 0;
-    for (auto& e : ents) {
-        const auto pos = e.t ? e.t->position : glm::vec3(0);
-        const auto scale = e.t ? e.t->scale : glm::vec3(1);
-        const glm::quat rot = e.t ? e.t->rotation : glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
-        if (e.m && e.m->submesh_count) {
-            for (uint32_t s = 0; s < e.m->submesh_count; ++s) {
-                const uint32_t si = e.m->first_submesh + s;
-                const auto sm = (si < scene_submeshes_.size())
-                    ? scene_submeshes_[si]
-                    : VulkanEngine::SubMesh{};
-
-                struct DynamicEntry {
-                    float px, py, pz, pad0;
-                    float sx, sy, sz, pad1;
-                    float rx, ry, rz, rw;
-                };
-                if (auto* d = static_cast<DynamicEntry*>(fr.compact_dynamic.Get(ci))) {
-                    d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
-                    d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
-                    d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
-                }
-
-                struct StaticEntry {
-                    uint32_t index_start_packed;
-                    uint32_t index_range;
-                    uint32_t technique_texture;
-                    uint32_t pad;
-                };
-                if (auto* s = static_cast<StaticEntry*>(fr.compact_static.Get(ci))) {
-                    s->index_start_packed =
-                        (static_cast<uint32_t>(e.m->index_buffer_index) << 24) |
-                        sm.index_start;
-                    s->index_range = sm.index_count;
-                    {
-                        const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                        s->technique_texture =
-                            (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
-                            mat_def.technique_id.value;
-                    }
-                    s->pad = 0;
-                }
-                LOGIFACE_LOG(trace, "  submesh[ci=" + std::to_string(ci) +
-                             "]: idx_buf=" + std::to_string(e.m->index_buffer_index) +
-                             " idx_start=" + std::to_string(sm.index_start) +
-                             " idx_count=" + std::to_string(sm.index_count) +
-                             " mat_id=" + std::to_string(sm.material_id.value) +
-                             " mat_def.texture_slot.value=" + std::to_string(MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id).texture_slot.value) +
-                             " mat_def.technique_id.value=" + std::to_string(MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id).technique_id.value) +
-                             " technique_texture=" + std::to_string(
-                                 static_cast<const StaticEntry*>(fr.compact_static.Get(ci))->technique_texture));
-
-                {
-                    auto* sp = static_cast<glm::vec4*>(fr.bounding_spheres.Get(ci));
-                    if (sp) {
-                        sp->x = sm.sphere.center.x;
-                        sp->y = sm.sphere.center.y;
-                        sp->z = sm.sphere.center.z;
-                        sp->w = sm.sphere.radius;
-                    }
-                }
-                {
-                    struct OBBGPUEntry {
-                        float cx, cy, cz, pad0;
-                        float ux, uy, uz, hu;
-                        float vx, vy, vz, hv;
-                        float wx, wy, wz, hw;
-                    };
-                    if (auto* ob = static_cast<OBBGPUEntry*>(fr.bounding_obb.Get(ci))) {
-                        ob->cx = sm.obb.center.x; ob->cy = sm.obb.center.y; ob->cz = sm.obb.center.z; ob->pad0 = 0;
-                        ob->ux = sm.obb.axis_u.x; ob->uy = sm.obb.axis_u.y; ob->uz = sm.obb.axis_u.z; ob->hu = sm.obb.half_extent_u;
-                        ob->vx = sm.obb.axis_v.x; ob->vy = sm.obb.axis_v.y; ob->vz = sm.obb.axis_v.z; ob->hv = sm.obb.half_extent_v;
-                        ob->wx = sm.obb.axis_w.x; ob->wy = sm.obb.axis_w.y; ob->wz = sm.obb.axis_w.z; ob->hw = sm.obb.half_extent_w;
-                    }
-                }
-                ++ci;
-            }
-        } else {
-            struct DynamicEntry {
-                float px, py, pz, pad0;
-                float sx, sy, sz, pad1;
-                float rx, ry, rz, rw;
-            };
-            if (auto* d = static_cast<DynamicEntry*>(fr.compact_dynamic.Get(ci))) {
-                d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
-                d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
-                d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
-            }
-
-            struct StaticEntry {
-                uint32_t index_start_packed;
-                uint32_t index_range;
-                uint32_t technique_texture;
-                uint32_t pad;
-            };
-            if (auto* s = static_cast<StaticEntry*>(fr.compact_static.Get(ci))) {
-                s->index_start_packed = 0;
-                s->index_range = 0;
-                s->technique_texture = 0;
-                s->pad = 0;
-            }
-
-            {
-                auto* sp = static_cast<glm::vec4*>(fr.bounding_spheres.Get(ci));
-                if (sp) {
-                    *sp = glm::vec4(0, 0, 0, 1.0f);
-                }
-            }
-            {
-                struct OBBGPUEntry {
-                    float cx, cy, cz, pad0;
-                    float ux, uy, uz, hu;
-                    float vx, vy, vz, hv;
-                    float wx, wy, wz, hw;
-                };
-                if (auto* ob = static_cast<OBBGPUEntry*>(fr.bounding_obb.Get(ci))) {
-                    ob->cx = 0; ob->cy = 0; ob->cz = 0; ob->pad0 = 0;
-                    ob->ux = 1; ob->uy = 0; ob->uz = 0; ob->hu = 1;
-                    ob->vx = 0; ob->vy = 1; ob->vz = 0; ob->hv = 1;
-                    ob->wx = 0; ob->wy = 0; ob->wz = 1; ob->hw = 1;
-                }
-            }
-            ++ci;
-        }
-    }
 
     VkDrawIndirectCommand zero_cmd{ 0, 1, 0, 0 };
     fr.draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));

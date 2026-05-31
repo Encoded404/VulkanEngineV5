@@ -60,7 +60,7 @@ uint32_t DeviceBufferHeap::AddBlock() {
     Block block;
     block.buffer = std::move(buffer);
     block.size = config_.block_size;
-    block.free_list.push_back({0, config_.block_size});
+    block.allocator.Initialize(config_.block_size);
 
     blocks_.push_back(std::move(block));
 
@@ -73,39 +73,14 @@ HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, uint64_t alignment) {
     if (size == 0) return {};
     if (alignment == 0) alignment = config_.default_alignment;
 
-    // Try each existing block
     for (uint32_t bi = 0; bi < static_cast<uint32_t>(blocks_.size()); ++bi) {
         auto& block = blocks_[bi];
-        for (auto fi = block.free_list.begin(); fi != block.free_list.end(); ++fi) {
-            uint64_t aligned = fi->offset;
-            const uint64_t mod = fi->offset % alignment;
-            if (mod != 0) aligned += alignment - mod;
-
-            if (aligned + size > fi->offset + fi->size) continue;
-
+        const uint64_t offset = block.allocator.Allocate(size, alignment);
+        if (offset != UINT64_MAX) {
             HeapAllocation alloc{};
             alloc.buffer_index = bi;
-            alloc.offset = aligned;
+            alloc.offset = offset;
             alloc.size = size;
-
-            const uint64_t free_end = fi->offset + fi->size;
-            const uint64_t alloc_end = aligned + size;
-
-            if (aligned == fi->offset && size == fi->size) {
-                block.free_list.erase(fi);
-            } else if (aligned == fi->offset) {
-                fi->offset = alloc_end;
-                fi->size = free_end - alloc_end;
-            } else if (alloc_end == free_end) {
-                fi->size = aligned - fi->offset;
-            } else {
-                // Hole in the middle: split
-                const uint64_t before_size = aligned - fi->offset;
-                fi->offset = alloc_end;
-                fi->size = free_end - alloc_end;
-                block.free_list.insert(fi, {aligned - before_size, before_size});
-            }
-
             return alloc;
         }
     }
@@ -115,20 +90,13 @@ HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, uint64_t alignment) {
     if (new_bi == UINT32_MAX) return {};
 
     auto& new_block = blocks_[new_bi];
+    const uint64_t offset = new_block.allocator.Allocate(size, alignment);
+    if (offset == UINT64_MAX) return {};
 
-    constexpr uint64_t aligned = 0ULL;
     HeapAllocation alloc{};
     alloc.buffer_index = new_bi;
-    alloc.offset = aligned;
+    alloc.offset = offset;
     alloc.size = size;
-
-    if (size == new_block.size) {
-        new_block.free_list.clear();
-    } else {
-        new_block.free_list[0].offset = size;
-        new_block.free_list[0].size = new_block.size - size;
-    }
-
     return alloc;
 }
 
@@ -136,49 +104,7 @@ void DeviceBufferHeap::Free(HeapAllocation& alloc) {
     if (alloc.buffer_index >= blocks_.size()) return;
 
     auto& block = blocks_[alloc.buffer_index];
-    auto& fl = block.free_list;
-
-    // Insert sorted by offset, merging adjacent
-    FreeBlock new_free{alloc.offset, alloc.size};
-    bool merged = false;
-
-    for (auto fi = fl.begin(); fi != fl.end(); ++fi) {
-        // Check if adjacent before
-        if (fi->offset + fi->size == new_free.offset) {
-            fi->size += new_free.size;
-            new_free = *fi;
-            fl.erase(fi);
-            merged = true;
-            break;
-        }
-        // Check if adjacent after
-        if (new_free.offset + new_free.size == fi->offset) {
-            new_free.size += fi->size;
-            fl.erase(fi);
-            merged = true;
-            break;
-        }
-    }
-
-    if (!merged) {
-        fl.push_back(new_free);
-    } else {
-        // Try merging again with remaining neighbors (one more pass)
-        for (auto &[offset, size] : fl) {
-            if (offset + size == new_free.offset) {
-                size += new_free.size;
-                alloc = {};
-                return;
-            }
-            if (new_free.offset + new_free.size == offset) {
-                offset = new_free.offset;
-                size += new_free.size;
-                alloc = {};
-                return;
-            }
-        }
-        fl.push_back(new_free);
-    }
+    block.allocator.Free(alloc.offset, alloc.size);
 
     alloc = {};
 }

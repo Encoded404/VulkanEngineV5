@@ -1,11 +1,12 @@
+// Per-submesh transform constants written by the expand pass
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
-    uint textureSlot;
+    uint texSlot;
 };
 
 [[vk::binding(0, 1)]]
-StructuredBuffer<VertEntry> sv[];
+StructuredBuffer<VertEntry> submeshInfo[];
 
 struct Vertex {
     float px, py, pz;
@@ -14,7 +15,7 @@ struct Vertex {
 };
 
 [[vk::binding(0, 2)]]
-StructuredBuffer<Vertex> vb[];
+StructuredBuffer<Vertex> vertexBuffers[];
 
 struct IndirEntry {
     uint vid;
@@ -22,7 +23,7 @@ struct IndirEntry {
 };
 
 [[vk::binding(0, 3)]]
-StructuredBuffer<IndirEntry> ib;
+StructuredBuffer<IndirEntry> indirectBuffer;
 
 struct VSOutput {
     [[vk::location(0)]] float3 outN : TEXCOORD0;
@@ -33,22 +34,23 @@ struct VSOutput {
 
 [shader("vertex")]
 VSOutput main(uint vertexId : SV_VertexID) {
+    // vertexId indexes into indirectBuffer which maps to (vertexBuffer, submesh) pairs
     VSOutput result;
-    IndirEntry e = ib[vertexId];
-    uint bufIdx = e.vid >> 24;
-    uint vertIdx = e.vid & 0xFFFFFFu;
-    uint submeshId = e.sid;
+    IndirEntry entry = indirectBuffer[vertexId];
+    uint bufferIndex = entry.vid >> 24;
+    uint vertexIndex = entry.vid & 0xFFFFFFu;
+    uint submeshId = entry.sid;
     uint block = submeshId / 256u;
-    uint elemIdx = submeshId % 256u;
-    Vertex v = vb[bufIdx][vertIdx];
-    float3 p = float3(v.px, v.py, v.pz);
-    float3 n = float3(v.nx, v.ny, v.nz);
-    float2 t = float2(v.u, v.v);
+    uint elemIndex = submeshId % 256u;
+    Vertex vert = vertexBuffers[bufferIndex][vertexIndex];
+    float3 p = float3(vert.px, vert.py, vert.pz);
+    float3 n = float3(vert.nx, vert.ny, vert.nz);
+    float2 t = float2(vert.u, vert.v);
 
-    VertEntry s = sv[NonUniformResourceIndex(block)][elemIdx];
-    result.outM = s.textureSlot;
+    VertEntry info = submeshInfo[NonUniformResourceIndex(block)][elemIndex];
+    result.outM = info.texSlot;
     result.outN = n;
     result.outT = t;
-    result.position = mul(float4(p, 1.0), s.MVP);
+    result.position = mul(float4(p, 1.0), info.MVP);
     return result;
 }

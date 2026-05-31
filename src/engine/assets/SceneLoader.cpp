@@ -16,6 +16,7 @@ module VulkanEngine.SceneLoader;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.GpuResources;
+import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.StandardMeshPipeline;
 
 namespace VulkanEngine::SceneLoader {
@@ -329,4 +330,20 @@ CombinedScene SceneLoader::UploadCombined(
     return scene;
 }
 
+VulkanEngine::GpuResources::MeshData SceneLoader::LoadMeshData(
+    const std::filesystem::path& file_path,
+    const std::vector<MaterialId>* material_bindings) {
+    auto loaded = LoadMeshFromFilePath(file_path, material_bindings);
+    return ToMeshData(loaded);
 }
+
+VulkanEngine::GpuResources::MeshData SceneLoader::ToMeshData(
+    const LoadedMeshData& loaded) {
+    VulkanEngine::GpuResources::MeshData result{};
+    result.vertices = ConvertToVertices(loaded);
+    result.indices = loaded.indices;
+    result.sub_meshes = loaded.submeshes;
+    return result;
+}
+
+} // namespace VulkanEngine::SceneLoader

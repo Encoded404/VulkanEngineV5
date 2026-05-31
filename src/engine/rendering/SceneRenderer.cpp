@@ -817,6 +817,16 @@ void SceneRenderer::UpdateHizDepthBinding(uint32_t frame_index, VkImageView dept
     dev.updateDescriptorSets(w, nullptr);
 }
 
+SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(uint32_t frame_index) {
+    auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    return {
+        &fr.compact_dynamic,
+        &fr.compact_static,
+        &fr.bounding_spheres,
+        &fr.bounding_obb
+    };
+}
+
 void SceneRenderer::SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm) {
     if (!dgc_available_ || !dgc_execution_set_) return;
     const auto& dev = backend_->GetDevice();

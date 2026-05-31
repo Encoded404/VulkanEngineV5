@@ -3,6 +3,8 @@ module;
 #include <cstdint>
 #include <vector>
 
+#include <logging/logging.hpp>
+
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>          // NOLINT(misc-include-cleaner)
@@ -50,11 +52,20 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         [&](Components::DynamicMesh& dm) {
             if (dyn_ents.size() >= MAX_GATHER) return;
             auto* owner = dm.GetOwner();
-            if (!owner) return;
+            if (!owner) {
+                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no owner, skipping");
+                return;
+            }
             auto* transform = owner->GetComponent<Components::Transform>();
-            if (!transform) return;
+            if (!transform) {
+                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no Transform component, skipping");
+                return;
+            }
             dyn_ents.push_back({ transform, &dm });
         });
+
+    LOGIFACE_LOG(debug, "ProcessFrame: collected " + std::to_string(static_ents.size()) +
+                 " static and " + std::to_string(dyn_ents.size()) + " dynamic entities");
 
     // --- Phase 3: Request GPU residency for static meshes ---
     for (auto& e : static_ents) {
@@ -76,9 +87,16 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const uint32_t dyn_fif = frame_index % 3;
         for (auto& e : dyn_ents) {
             const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
-            if (!gpu_info ||
-                !gpu_info->streamed_vertex_alloc[dyn_fif].IsValid() ||
-                !gpu_info->streamed_index_alloc[dyn_fif].IsValid()) continue;
+            if (!gpu_info) {
+                LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh gpu_handle invalid, skipping in count");
+                continue;
+            }
+            if (!gpu_info->streamed_vertex_alloc[dyn_fif].IsValid() ||
+                !gpu_info->streamed_index_alloc[dyn_fif].IsValid()) {
+                LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh FIF " + std::to_string(dyn_fif) +
+                             " streamed alloc invalid, skipping in count");
+                continue;
+            }
 
             if (e.dyn_mesh->submesh_count > 0) {
                 total_submeshes += e.dyn_mesh->submesh_count;
@@ -188,12 +206,19 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     for (auto& e : dyn_ents) {
         const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
-        if (!gpu_info) continue;
+        if (!gpu_info) {
+            LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh gpu_handle invalid, skipping write");
+            continue;
+        }
 
         const auto& vtx_alloc = gpu_info->streamed_vertex_alloc[fif];
         const auto& idx_alloc = gpu_info->streamed_index_alloc[fif];
 
-        if (!vtx_alloc.IsValid() || !idx_alloc.IsValid()) continue;
+        if (!vtx_alloc.IsValid() || !idx_alloc.IsValid()) {
+            LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh FIF " + std::to_string(fif) +
+                         " streamed alloc invalid, skipping write");
+            continue;
+        }
 
         const uint32_t vertex_buf_slot = static_vtx_count + vtx_alloc.buffer_index;
         const uint32_t base_vertex = static_cast<uint32_t>(
@@ -211,36 +236,52 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             const auto& sms = gpu_info->sub_meshes;
             const auto sm = (si < sms.size()) ? sms[si] : SubMesh{};
 
-            if (auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci))) {
-                d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
-                d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
-                d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
-            }
-
-            if (auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci))) {
-                s2->index_start_packed = (index_buf_slot << 24) | (index_offset + sm.index_start);
-                s2->index_range = sm.index_count;
-                {
-                    const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                    s2->technique_texture =
-                        (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
-                        mat_def.technique_id.value;
+            {
+                auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci));
+                if (d) {
+                    d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
+                    d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
+                    d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
+                } else {
+                    LOGIFACE_LOG(warn, "ProcessFrame: compact_dynamic->Get(" + std::to_string(ci) + ") returned null");
                 }
-                s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
             }
 
-            if (auto* sp = static_cast<glm::vec4*>(frame_blocks.bounding_spheres->Get(ci))) {
-                sp->x = sm.sphere.center.x;
-                sp->y = sm.sphere.center.y;
-                sp->z = sm.sphere.center.z;
-                sp->w = sm.sphere.radius;
+            {
+                auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci));
+                if (s2) {
+                    s2->index_start_packed = (index_buf_slot << 24) | (index_offset + sm.index_start);
+                    s2->index_range = sm.index_count;
+                    {
+                        const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
+                        s2->technique_texture =
+                            (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
+                            mat_def.technique_id.value;
+                    }
+                    s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
+                } else {
+                    LOGIFACE_LOG(warn, "ProcessFrame: compact_static->Get(" + std::to_string(ci) + ") returned null");
+                }
             }
 
-            if (auto* ob = static_cast<OBBGPUEntry*>(frame_blocks.bounding_obb->Get(ci))) {
-                ob->cx = sm.obb.center.x; ob->cy = sm.obb.center.y; ob->cz = sm.obb.center.z; ob->pad0 = 0;
-                ob->ux = sm.obb.axis_u.x; ob->uy = sm.obb.axis_u.y; ob->uz = sm.obb.axis_u.z; ob->hu = sm.obb.half_extent_u;
-                ob->vx = sm.obb.axis_v.x; ob->vy = sm.obb.axis_v.y; ob->vz = sm.obb.axis_v.z; ob->hv = sm.obb.half_extent_v;
-                ob->wx = sm.obb.axis_w.x; ob->wy = sm.obb.axis_w.y; ob->wz = sm.obb.axis_w.z; ob->hw = sm.obb.half_extent_w;
+            {
+                auto* sp = static_cast<glm::vec4*>(frame_blocks.bounding_spheres->Get(ci));
+                if (sp) {
+                    sp->x = sm.sphere.center.x;
+                    sp->y = sm.sphere.center.y;
+                    sp->z = sm.sphere.center.z;
+                    sp->w = sm.sphere.radius;
+                }
+            }
+
+            {
+                auto* ob = static_cast<OBBGPUEntry*>(frame_blocks.bounding_obb->Get(ci));
+                if (ob) {
+                    ob->cx = sm.obb.center.x; ob->cy = sm.obb.center.y; ob->cz = sm.obb.center.z; ob->pad0 = 0;
+                    ob->ux = sm.obb.axis_u.x; ob->uy = sm.obb.axis_u.y; ob->uz = sm.obb.axis_u.z; ob->hu = sm.obb.half_extent_u;
+                    ob->vx = sm.obb.axis_v.x; ob->vy = sm.obb.axis_v.y; ob->vz = sm.obb.axis_v.z; ob->hv = sm.obb.half_extent_v;
+                    ob->wx = sm.obb.axis_w.x; ob->wy = sm.obb.axis_w.y; ob->wz = sm.obb.axis_w.z; ob->hw = sm.obb.half_extent_w;
+                }
             }
 
             ++ci;
@@ -268,6 +309,14 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             mesh_mgr.GetDynamicIndexBuffer(fif, bi),
             mesh_mgr.GetDynamicIndexBlockSize(fif));
     }
+
+    LOGIFACE_LOG(debug, "ProcessFrame: fif=" + std::to_string(fif) +
+                 " static_vtx=" + std::to_string(static_vtx_count) +
+                 " static_idx=" + std::to_string(static_idx_count) +
+                 " dyn_vtx_blocks=" + std::to_string(dyn_vtx_block_count) +
+                 " dyn_idx_blocks=" + std::to_string(dyn_idx_block_count) +
+                 " ents=" + std::to_string(total_submeshes) +
+                 " ci=" + std::to_string(ci));
 
     // --- Phase 7: Advance CPU-side lifecycle ---
     // NOTE: MeshManager::EndFrame is called in FrameRender (after rendering)

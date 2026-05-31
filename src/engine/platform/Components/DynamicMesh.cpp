@@ -2,6 +2,8 @@ module;
 
 #include <cstdint>
 
+#include <logging/logging.hpp>
+
 module VulkanEngine.Components.DynamicMesh;
 
 import VulkanEngine.MeshManager;
@@ -16,6 +18,8 @@ void DynamicMesh::SetupStreamed(MeshManager& mgr, const GpuResources::MeshData& 
         first_submesh = 0;
         submesh_count = static_cast<uint32_t>(initial.sub_meshes.empty()
             ? 1 : initial.sub_meshes.size());
+    } else {
+        LOGIFACE_LOG(warn, "DynamicMesh::SetupStreamed: RegisterStreamed returned invalid handle");
     }
 }
 

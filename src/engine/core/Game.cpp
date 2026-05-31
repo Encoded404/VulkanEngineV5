@@ -276,7 +276,16 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     ctx.bootstrap->GetBackend().GetComponentRegistry().UpdateAllComponentsAsync(ctx.frame.delta_time);
 
-    if (mesh_manager_ && scene_valid_) {
+    if (!mesh_manager_) {
+        LOGIFACE_LOG(warn, "Game::FrameUpdate: mesh_manager_ is null, skipping ProcessFrame");
+        return;
+    }
+    if (!scene_valid_) {
+        LOGIFACE_LOG(warn, "Game::FrameUpdate: scene_valid_ is false, skipping ProcessFrame");
+        return;
+    }
+
+    {
         const uint32_t frame_index = ctx.frame.image_index % 3;
         mesh_render_system_.ProcessFrame(
             ctx.bootstrap->GetBackend().GetComponentRegistry(),
@@ -290,7 +299,18 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
 }
 
 void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
-    if (!renderer_ || !camera_ || !scene_valid_) return;
+    if (!renderer_) {
+        LOGIFACE_LOG(warn, "Game::FrameRender: renderer_ is null, skipping");
+        return;
+    }
+    if (!camera_) {
+        LOGIFACE_LOG(warn, "Game::FrameRender: camera_ is null, skipping");
+        return;
+    }
+    if (!scene_valid_) {
+        LOGIFACE_LOG(debug, "Game::FrameRender: scene_valid_ is false, skipping");
+        return;
+    }
 
     if (mesh_manager_) {
         mesh_manager_->EndFrame(ctx.frame.image_index % 3);

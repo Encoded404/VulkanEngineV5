@@ -61,6 +61,9 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     const auto& dev = backend_->GetDevice();
 
     const uint32_t total = current_entity_count_;
+    if (total == 0) {
+        LOGIFACE_LOG(debug, "PrepareCompute: current_entity_count_ is 0, no work to do");
+    }
 
     fr.compact_dynamic.EnsureCapacity(total);
     fr.compact_static.EnsureCapacity(total);
@@ -162,7 +165,14 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 
 void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, uint32_t w, uint32_t h, uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!current_entity_count_ || !depth_pipeline_) return;
+    if (!depth_pipeline_) {
+        LOGIFACE_LOG(warn, "DepthPrepass: depth_pipeline_ is null, skipping");
+        return;
+    }
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DepthPrepass: current_entity_count_ is 0, skipping");
+        return;
+    }
     LOGIFACE_LOG(trace, "DepthPrepass: submesh_count=" + std::to_string(current_entity_count_) +
                  " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
     cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
@@ -187,7 +197,11 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                             VulkanEngine::BindlessManager::BindlessManager& bm,
                             const glm::mat4&, const glm::mat4&,
                             uint32_t w, uint32_t h, uint32_t fi) {
-    if (!w || !h || !current_entity_count_) return;
+    if (!w || !h) return;
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "Render: current_entity_count_ is 0, skipping");
+        return;
+    }
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     const auto& dev = backend_->GetDevice();
 
@@ -228,7 +242,10 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                 break;
             }
         }
-        if (!shared_layout) return;
+        if (!shared_layout) {
+            LOGIFACE_LOG(warn, "RenderMain: DGC mode but no technique has a pipeline layout");
+            return;
+        }
 
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shared_layout,
                                  0, ds, {});
@@ -279,7 +296,10 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, uint32_t cnt,
                                     const glm::mat4& vp, uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!cnt) return;
+    if (!cnt) {
+        LOGIFACE_LOG(debug, "DispatchExpand: cnt is 0, skipping");
+        return;
+    }
     LOGIFACE_LOG(trace, "DispatchExpand: submeshes=" + std::to_string(cnt));
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *expand_pipeline_);
     const std::array<vk::DescriptorSet, 2> ds{
@@ -297,8 +317,20 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, uint32_t cnt,
 void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, uint32_t w, uint32_t h,
                                     uint32_t fi, uint32_t) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!current_entity_count_ || !fr.hiz_set.IsValid()) return;
-    if (w != depth_width_ || h != depth_height_) return;
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DispatchHiZGen: current_entity_count_ is 0, skipping");
+        return;
+    }
+    if (!fr.hiz_set.IsValid()) {
+        LOGIFACE_LOG(debug, "DispatchHiZGen: hiz_set invalid, skipping");
+        return;
+    }
+    if (w != depth_width_ || h != depth_height_) {
+        LOGIFACE_LOG(debug, "DispatchHiZGen: dimensions changed (" + std::to_string(w) + "x" +
+                     std::to_string(h) + " != " + std::to_string(depth_width_) + "x" +
+                     std::to_string(depth_height_) + "), skipping");
+        return;
+    }
     LOGIFACE_LOG(trace, "DispatchHiZGen: " + std::to_string(w) + "x" + std::to_string(h) +
                  " mips=" + std::to_string(hiz_mip_count_));
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *hiz_pipeline_);
@@ -324,7 +356,14 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, uint32_t w, uint32_t h
 
 void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!current_entity_count_ || !fr.occlusion_set.IsValid()) return;
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DispatchOcclusion: current_entity_count_ is 0, skipping");
+        return;
+    }
+    if (!fr.occlusion_set.IsValid()) {
+        LOGIFACE_LOG(debug, "DispatchOcclusion: occlusion_set invalid, skipping");
+        return;
+    }
     LOGIFACE_LOG(trace, "DispatchOcclusion: submeshes=" + std::to_string(current_entity_count_));
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *occlusion_pipeline_);
@@ -341,7 +380,10 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, uint32_t fi) {
 
 void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!current_entity_count_) return;
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DispatchCollect: current_entity_count_ is 0, skipping");
+        return;
+    }
     const auto& dev = backend_->GetDevice();
     LOGIFACE_LOG(trace, "DispatchCollect: submeshes=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(MAX_TECHNIQUES));

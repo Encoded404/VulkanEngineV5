@@ -777,6 +777,11 @@ void SceneRenderer::UpdateVertexBufferArrayElement(uint32_t frame_index,
                                                      vk::Buffer buffer,
                                                      uint64_t size) {
     const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    if (!buffer) {
+        LOGIFACE_LOG(warn, "UpdateVertexBufferArrayElement: null buffer for slot " +
+                     std::to_string(buffer_index));
+        return;
+    }
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
     w.dstSet = *fr.bindless_vertex_set;
@@ -793,6 +798,11 @@ void SceneRenderer::UpdateIndexBufferArrayElement(uint32_t frame_index,
                                                     vk::Buffer buffer,
                                                     uint64_t size) {
     const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    if (!buffer) {
+        LOGIFACE_LOG(warn, "UpdateIndexBufferArrayElement: null buffer for slot " +
+                     std::to_string(buffer_index));
+        return;
+    }
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
     w.dstSet = *fr.bindless_index_set;

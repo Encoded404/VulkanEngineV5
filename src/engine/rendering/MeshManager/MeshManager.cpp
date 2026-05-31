@@ -205,16 +205,29 @@ MeshManager::Handle MeshManager::RegisterStreamed(
 void MeshManager::UpdateStreamed(Handle handle,
                                   const VulkanEngine::GpuResources::MeshData& data,
                                   uint32_t frame_index) {
-    if (!handle.IsValid() || handle.id >= entries_.size()) return;
+    if (!handle.IsValid() || handle.id >= entries_.size()) {
+        LOGIFACE_LOG(debug, "UpdateStreamed: invalid handle (id=" +
+                     std::to_string(handle.id) + "), skipping");
+        return;
+    }
 
     const auto& entry = entries_[handle.id];
-    if (entry.strategy != Strategy::Streamed) return;
+    if (entry.strategy != Strategy::Streamed) {
+        LOGIFACE_LOG(debug, "UpdateStreamed: handle " + std::to_string(handle.id) +
+                     " is not Streamed, skipping");
+        return;
+    }
 
     const uint32_t fif = frame_index % frames_in_flight_;
     const auto& vtx_alloc = entry.info.streamed_vertex_alloc[fif];
     const auto& idx_alloc = entry.info.streamed_index_alloc[fif];
 
-    if (!vtx_alloc.IsValid() || !idx_alloc.IsValid()) return;
+    if (!vtx_alloc.IsValid() || !idx_alloc.IsValid()) {
+        LOGIFACE_LOG(debug, "UpdateStreamed: FIF " + std::to_string(fif) +
+                     " streamed alloc invalid for handle " + std::to_string(handle.id) +
+                     ", skipping");
+        return;
+    }
 
     const uint64_t vertex_bytes = data.vertices.size() *
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
@@ -222,11 +235,21 @@ void MeshManager::UpdateStreamed(Handle handle,
 
     void* vptr = dynamic_vertex_heaps_[fif].MapBuffer(
         vtx_alloc.buffer_index, vtx_alloc.offset);
+    if (!vptr) {
+        LOGIFACE_LOG(warn, "UpdateStreamed: MapBuffer returned null for vertex heap " +
+                     std::to_string(fif) + " block " + std::to_string(vtx_alloc.buffer_index));
+    } else {
+        std::memcpy(vptr, data.vertices.data(), vertex_bytes);
+    }
+
     void* iptr = dynamic_index_heaps_[fif].MapBuffer(
         idx_alloc.buffer_index, idx_alloc.offset);
-
-    if (vptr) std::memcpy(vptr, data.vertices.data(), vertex_bytes);
-    if (iptr) std::memcpy(iptr, data.indices.data(), index_bytes);
+    if (!iptr) {
+        LOGIFACE_LOG(warn, "UpdateStreamed: MapBuffer returned null for index heap " +
+                     std::to_string(fif) + " block " + std::to_string(idx_alloc.buffer_index));
+    } else {
+        std::memcpy(iptr, data.indices.data(), index_bytes);
+    }
 }
 
 void MeshManager::Remove(Handle handle) {

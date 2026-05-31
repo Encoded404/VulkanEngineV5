@@ -64,7 +64,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float3 sphereCenter = sphereData.xyz;
     float localRadius = sphereData.w;
 
-    float4 clipPos = mul(mvp, float4(sphereCenter, 1.0));
+    float4 clipPos = mul(float4(sphereCenter, 1.0), mvp);
     if (clipPos.w <= 0.0) {
         cull[NonUniformResourceIndex(block)][elemIdx].indexCount = 0;
         return;
@@ -108,7 +108,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     for (int sv = -1; sv <= 1; sv += 2) {
     for (int sw = -1; sw <= 1; sw += 2) {
         float3 localPos = c + u * hu * float(su) + v * hv * float(sv) + w * hw * float(sw);
-        float4 cp = mul(mvp, float4(localPos, 1.0));
+        float4 cp = mul(float4(localPos, 1.0), mvp);
         if (cp.w <= 0.0) continue;
 
         float3 ndcCorner = cp.xyz / cp.w;

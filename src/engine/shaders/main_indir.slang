@@ -49,6 +49,6 @@ VSOutput main(uint vertexId : SV_VertexID) {
     result.outM = s.textureSlot;
     result.outN = n;
     result.outT = t;
-    result.position = mul(s.MVP, float4(p, 1.0));
+    result.position = mul(float4(p, 1.0), s.MVP);
     return result;
 }

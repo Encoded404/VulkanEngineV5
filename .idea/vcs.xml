@@ -2,7 +2,9 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/external/SlangSpriVCompilerHelper" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/external/cppFileLoader" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/external/cppFileLoader/external/cppLoggingInterface" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/external/cppLoggingInterface" vcs="Git" />
   </component>
 </project>

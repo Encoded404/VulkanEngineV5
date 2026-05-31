@@ -94,7 +94,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint textureSlot = techniqueTexture >> 16;
 
     float maxScaleVal = max(abs(s.x), max(abs(s.y), abs(s.z)));
-    float4x4 mvp = mul(pc.vp, modelMat(p, r, s));
+    float4x4 mvp = mul(modelMat(p, r, s), pc.vp);
 
     vtx[NonUniformResourceIndex(block)][elemIdx].MVP = mvp;
     vtx[NonUniformResourceIndex(block)][elemIdx].maxScale = maxScaleVal;

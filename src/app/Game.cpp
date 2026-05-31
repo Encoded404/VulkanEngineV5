@@ -129,8 +129,6 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         backend.GetComponentRegistry().AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
     }
 
-    backend.GetComponentRegistry().InitializeAllComponents();
-
     // 7. Register ImGui debug UI
     auto* imgui = engine_game_.GetImGuiSystem();
     if (imgui) {

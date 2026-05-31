@@ -299,8 +299,19 @@ public:
     virtual void Update(float delta_time) {}
     virtual void Render() {}
 
+    void DispatchUpdate(float delta_time) {
+        if (!initialized_) {
+            Initialize();
+            initialized_ = true;
+        }
+        Update(delta_time);
+    }
+
     void SetOwner(Entity* entity) { owner_ = entity; }
     [[nodiscard]] Entity* GetOwner() const { return owner_; }
+
+private:
+    bool initialized_ = false;
 };
 
 class Entity {
@@ -348,7 +359,6 @@ class ComponentRegistry {
 private:
     struct IComponentPool {
         virtual ~IComponentPool() = default;
-        virtual void InitializeAll() = 0;
         virtual void ForEachComponent(const std::function<void(Component&)>& fn) = 0;
         virtual void CollectAll(std::vector<Component*>& out_components) = 0;
         virtual void CollectAllShared(std::vector<std::shared_ptr<Component>>& out_components) = 0;
@@ -404,20 +414,6 @@ private:
                     }
                 }
                 return out;
-            }
-        }
-
-        void InitializeAll() override {
-            if constexpr (kSoA) {
-                for (auto& p : soa_proxies_) {
-                    if (p) p->Initialize();
-                }
-            } else {
-                for (auto& entry : aos_entries_) {
-                    if (entry.component) {
-                        entry.component->Initialize();
-                    }
-                }
             }
         }
 
@@ -618,13 +614,6 @@ public:
         }
     }
 
-    void InitializeAllComponents() {
-        const std::scoped_lock lock(mutex_);
-        for (auto& [_, pool] : pools_) {
-            pool->InitializeAll();
-        }
-    }
-
     void UpdateAllComponentsAsync(float delta_time) {
         std::vector<std::shared_ptr<Component>> components;
         {
@@ -641,7 +630,7 @@ public:
         const size_t component_count = components.size();
         thread_pool_.ParallelFor(component_count,
             [delta_time, components = std::move(components)](const std::size_t index) mutable {
-                components[index]->Update(delta_time);
+                components[index]->DispatchUpdate(delta_time);
             });
     }
 

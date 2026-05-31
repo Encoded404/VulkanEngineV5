@@ -168,10 +168,10 @@ TEST(ComponentSystemTest, RegistryInitializesAndUpdatesComponentsAsync) {
     auto& entity = registry.CreateEntity();
     auto& component = registry.AddComponent<RegistryProbeComponent>(entity);
 
-    registry.InitializeAllComponents();
-    EXPECT_TRUE(component.WasInitialized());
+    EXPECT_FALSE(component.WasInitialized());
 
     registry.UpdateAllComponentsAsync(0.25f);
+    EXPECT_TRUE(component.WasInitialized());
     EXPECT_TRUE(component.WasUpdated());
     EXPECT_FLOAT_EQ(component.GetLastDeltaTime(), 0.25f);
 }

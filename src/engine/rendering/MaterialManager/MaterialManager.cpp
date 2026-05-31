@@ -31,12 +31,13 @@ MaterialId MaterialManager::RegisterMaterial(const MaterialDefinition& def,
                                               VulkanEngine::BindlessManager::BindlessManager& bindless_mgr) {
     const auto id = static_cast<uint16_t>(materials_.size());
     materials_.push_back(MaterialEntry{def});
-    constexpr std::array<std::string_view, 3> blend_names{std::string_view{"Opaque"}, std::string_view{"Cutout"}, std::string_view{"Transparent"}};
-    const auto blend_idx = static_cast<size_t>(def.blend_mode);
-    const auto blend_name = blend_idx < 3 ? blend_names[blend_idx] : std::string_view{"Unknown"};
     LOGIFACE_LOG(debug, "Registered material ID " + std::to_string(id) + ": technique_id=" +
-                 std::to_string(def.technique_id.value) + " texture_slot=" +
-                 std::to_string(def.texture_slot.value) + " blend_mode=" + std::string(blend_name));
+                std::to_string(def.texture_slot.value) + " blend_mode=" + std::string(
+                    static_cast<size_t>(def.blend_mode) == 0 ? std::string_view{"Opaque"} :
+                    static_cast<size_t>(def.blend_mode) == 1 ? std::string_view{"Cutout"} :
+                    static_cast<size_t>(def.blend_mode) == 2 ? std::string_view{"Transparent"} :
+                    std::string_view{"Unknown"})
+               );
 
     const auto* rid = bindless_mgr.GetTextureId(def.texture_slot.value);
     if (rid != nullptr) {

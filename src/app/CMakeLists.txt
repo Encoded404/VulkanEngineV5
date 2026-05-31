@@ -8,12 +8,15 @@ target_sources(${APP_TARGET} PRIVATE
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
 include(SlangSpirVCompiler)
 set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/app")
+set(_shader_opt_level
+    "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 add_slang_shaders(
     TARGET      ${APP_TARGET}_shaders
     OUTPUT_DIR  ${_shader_gen_dir}
     NAMESPACE   App
     SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
     COMPILER    slang-spirv-compiler
+    OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         NormalsFrag  normals.slang  fragment main
         SolidFrag    solid.slang    fragment main
@@ -75,6 +78,8 @@ if(CMAKE_CONFIGURATION_TYPES)
     target_compile_options(${APP_TARGET} PRIVATE
         "$<$<CONFIG:Debug>:-g>"
         "$<$<CONFIG:Debug>:-O0>"
+        "$<$<CONFIG:RelWithDebInfo>:-g>"
+        "$<$<CONFIG:RelWithDebInfo>:-O2>"
         "$<$<CONFIG:Release>:-O3>"
     )
 endif()

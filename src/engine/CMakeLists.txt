@@ -42,6 +42,8 @@ if(CMAKE_CONFIGURATION_TYPES)
     target_compile_options(${ENGINE_TARGET} PRIVATE
         "$<$<CONFIG:Debug>:-g>"
         "$<$<CONFIG:Debug>:-O0>"
+        "$<$<CONFIG:RelWithDebInfo>:-g>"
+        "$<$<CONFIG:RelWithDebInfo>:-O2>"
         "$<$<CONFIG:Release>:-O3>"
     )
 endif()
@@ -85,12 +87,15 @@ target_sources(${ENGINE_TARGET} PRIVATE
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
 include(SlangSpirVCompiler)
 set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine")
+set(_shader_opt_level
+    "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 add_slang_shaders(
     TARGET      ${ENGINE_TARGET}_shaders
     OUTPUT_DIR  ${_shader_gen_dir}
     NAMESPACE   Engine
     SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
     COMPILER    slang-spirv-compiler
+    OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         ExpandComp              expand.slang              compute  main
         OcclusionCullComp       occlusion_cull.slang       compute  main

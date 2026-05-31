@@ -10,6 +10,8 @@ set(TEST_COMPILE_OPTS
 set(TEST_COMPILE_OPTS_DEBUG
   "$<$<CONFIG:Debug>:-g>"
   "$<$<CONFIG:Debug>:-O0>"
+  "$<$<CONFIG:RelWithDebInfo>:-g>"
+  "$<$<CONFIG:RelWithDebInfo>:-O2>"
   "$<$<CONFIG:Release>:-O3>"
 )
 

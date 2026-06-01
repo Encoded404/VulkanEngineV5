@@ -102,9 +102,9 @@ public:
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
     void MarkSceneValid() { scene_valid_ = true; }
+    uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
 
 private:
-    uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
 
     std::unique_ptr<BindlessManager::BindlessManager> bindless_mgr_;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer_;

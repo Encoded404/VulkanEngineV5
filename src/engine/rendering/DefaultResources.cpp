@@ -43,4 +43,18 @@ std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateWhit
     return CreateCheckerboard(manager, white_config);
 }
 
+std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateSolidColorTexture(
+    VulkanEngine::ResourceManager&  /*manager*/,
+    const std::array<uint8_t, 4>& color) {
+    std::vector<std::byte> pixels(4);
+    pixels[0] = static_cast<std::byte>(color[0]);
+    pixels[1] = static_cast<std::byte>(color[1]);
+    pixels[2] = static_cast<std::byte>(color[2]);
+    pixels[3] = static_cast<std::byte>(color[3]);
+
+    return std::make_shared<VulkanEngine::TextureResource>(
+        VulkanEngine::ResourceId{"solid_color"}, 1, 1,
+        vk::Format::eR8G8B8A8Unorm, std::move(pixels));
+}
+
 } // namespace VulkanEngine::DefaultTextureFactory

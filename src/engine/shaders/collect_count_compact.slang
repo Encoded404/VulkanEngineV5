@@ -6,6 +6,11 @@ struct CullEntry {
     uint pad;
 };
 
+struct TechniqueResult {
+    uint offset;
+    uint count;
+};
+
 [[vk::binding(0, 0)]]
 StructuredBuffer<CullEntry> cull[];
 
@@ -21,7 +26,7 @@ StructuredBuffer<IndirEntry> fullIndirect;
 RWStructuredBuffer<IndirEntry> compactedIndirect;
 
 [[vk::binding(3, 0)]]
-RWStructuredBuffer<uint> inter;
+RWStructuredBuffer<TechniqueResult> inter;
 
 struct CollectPC {
     uint elementCount;
@@ -35,7 +40,6 @@ ConstantBuffer<CollectPC> pc;
 
 groupshared uint sharedOffsets[256];
 
-// pass 0: count visible index ranges per technique (accumulates into inter[])
 void passCount(uint id) {
     if (id >= pc.elementCount) return;
 
@@ -45,16 +49,14 @@ void passCount(uint id) {
     CullEntry entry = cull[NonUniformResourceIndex(block)][elemIdx];
     if (entry.indexCount == 0) return;
 
-    InterlockedAdd(inter[entry.techniqueId * 2u + 1u], entry.indexCount);
+    InterlockedAdd(inter[entry.techniqueId].count, entry.indexCount);
 }
 
-// pass 1: compute per-technique offsets, then scatter visible entries into the compacted buffer
 void passCompact(uint id, uint localIdx) {
-    // thread 0 builds prefix-sum offsets per technique from the counts gathered in pass 0
     if (localIdx == 0) {
         uint offset = 0;
         for (uint t = 0; t < min(pc.techniqueCount, 256u); t++) {
-            uint cnt = inter[t * 2u + 1u];
+            uint cnt = inter[t].count;
             sharedOffsets[t] = offset;
             offset += cnt;
         }
@@ -63,8 +65,8 @@ void passCompact(uint id, uint localIdx) {
 
     if (id == 0) {
         for (uint t = 0; t < min(pc.techniqueCount, 256u); t++) {
-            inter[t * 2u] = sharedOffsets[t];
-            inter[t * 2u + 1u] = 0;
+            inter[t].offset = sharedOffsets[t];
+            inter[t].count = 0;
         }
     }
     AllMemoryBarrierWithGroupSync();
@@ -78,7 +80,7 @@ void passCompact(uint id, uint localIdx) {
     if (entry.indexCount == 0) return;
 
     uint techniqueOffset;
-    InterlockedAdd(inter[entry.techniqueId * 2u + 1u], entry.indexCount, techniqueOffset);
+    InterlockedAdd(inter[entry.techniqueId].count, entry.indexCount, techniqueOffset);
     uint destOffset = sharedOffsets[entry.techniqueId] + techniqueOffset;
 
     for (uint i = 0; i < entry.indexCount; i++) {

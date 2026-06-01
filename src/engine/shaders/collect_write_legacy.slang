@@ -1,4 +1,8 @@
-// Packs per-technique counts/offsets from the compaction pass into legacy indirect draw commands.
+struct TechniqueResult {
+    uint offset;
+    uint count;
+};
+
 struct DrawIndirectCommand {
     uint indexCount;
     uint instanceCount;
@@ -7,7 +11,7 @@ struct DrawIndirectCommand {
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<uint> intermediateResults;
+StructuredBuffer<TechniqueResult> intermediateResults;
 
 [[vk::binding(1, 0)]]
 RWStructuredBuffer<uint> tech_counts;
@@ -32,8 +36,8 @@ ConstantBuffer<WritePC> pc;
 [shader("compute")]
 void main() {
     for (uint t = 0; t < pc.techniqueCount; t++) {
-        uint count = intermediateResults[t * 2u + 1u];
-        uint entryOffset = intermediateResults[t * 2u];
+        uint count = intermediateResults[t].count;
+        uint entryOffset = intermediateResults[t].offset;
         tech_counts[t] = count;
         tech_offsets[t] = entryOffset;
         tech_cmds[t] = DrawIndirectCommand(count, 1u, entryOffset, 0);

@@ -138,6 +138,7 @@ public:
     [[nodiscard]] bool IsDgcAvailable() const { return dgc_available_; }
 
 private:
+    struct TechniqueResult { uint32_t offset; uint32_t count; };
     struct FrameResources {
         // Block-based per-submesh buffers
         VulkanEngine::GpuResources::BlockArray compact_dynamic{};

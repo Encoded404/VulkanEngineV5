@@ -1,6 +1,10 @@
-// Packs per-technique counts/offsets into DGC (Device-Generated Command) sequences.
+struct TechniqueResult {
+    uint offset;
+    uint count;
+};
+
 [[vk::binding(0, 0)]]
-StructuredBuffer<uint> intermediateResults;
+StructuredBuffer<TechniqueResult> intermediateResults;
 
 [[vk::binding(1, 0)]]
 RWStructuredBuffer<uint> dgc_seq;
@@ -23,9 +27,9 @@ ConstantBuffer<WritePC> pc;
 void main() {
     uint packedCommandIdx = 0;
     for (uint t = 0; t < pc.techniqueCount; t++) {
-        uint count = intermediateResults[t * 2u + 1u];
+        uint count = intermediateResults[t].count;
         if (count == 0) continue;
-        uint startEntry = intermediateResults[t * 2u];
+        uint startEntry = intermediateResults[t].offset;
         uint seqOffset = packedCommandIdx * 5u;
         dgc_seq[seqOffset + 0u] = t;
         dgc_seq[seqOffset + 1u] = count;

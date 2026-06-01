@@ -378,7 +378,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         constexpr uint64_t tech_offsets_size =
             static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(uint32_t);
         const uint64_t intermediate_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * 8u;
+            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(TechniqueResult);
         const uint64_t dgc_seq_size =
             static_cast<uint64_t>(dgc_max_sequence_count_) * 20u;
 

@@ -9,9 +9,11 @@ export module VulkanEngine.Components.Camera;
 
 export import VulkanBackend.Component;
 
+import std;
+
 export namespace VulkanEngine::Components {
 
-enum class ProjectionMode : uint8_t {
+enum class ProjectionMode : std::uint8_t {
     Perspective,
     Orthographic
 };
@@ -50,7 +52,7 @@ public:
             VulkanEngine::field<float>("orthographic_size"),
             VulkanEngine::field<float>("near_plane"),
             VulkanEngine::field<float>("far_plane"),
-            VulkanEngine::field<uint8_t>("projection_mode")
+            VulkanEngine::field<std::uint8_t>("projection_mode")
         );
     }
 };

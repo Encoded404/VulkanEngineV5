@@ -1,11 +1,11 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.TechniqueManager;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Utils.CallbackList;
@@ -14,8 +14,8 @@ export import VulkanEngine.StandardMeshPipeline;
 export namespace VulkanEngine::TechniqueManager {
 
 struct ShaderOverride {
-    std::vector<uint32_t> vertex_spv;
-    std::vector<uint32_t> fragment_spv;
+    std::vector<std::uint32_t> vertex_spv;
+    std::vector<std::uint32_t> fragment_spv;
 };
 
 class TechniqueManager {
@@ -26,18 +26,18 @@ public:
     TechniqueManager(const TechniqueManager&) = delete;
     TechniqueManager& operator=(const TechniqueManager&) = delete;
 
-    Utils::CallbackList<void(uint16_t id, VkPipeline pipeline, VkPipelineLayout layout)> on_technique_changed; // NOLINT(misc-non-private-member-variables-in-classes)
+    Utils::CallbackList<void(std::uint16_t id, vk::Pipeline pipeline, vk::PipelineLayout layout)> on_technique_changed; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    [[nodiscard]] uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                              const std::vector<uint32_t>& vert_spv,
-                                              const std::vector<uint32_t>& frag_spv,
+    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+                                              const std::vector<std::uint32_t>& vert_spv,
+                                              const std::vector<std::uint32_t>& frag_spv,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config = {},
                                               vk::DescriptorSetLayout* bindless_layout = nullptr,
                                               vk::DescriptorSetLayout* object_data_layout = nullptr,
                                               vk::DescriptorSetLayout* raw_vertex_layout = nullptr,
                                               vk::DescriptorSetLayout* indirection_layout = nullptr);
 
-    [[nodiscard]] uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                               const ShaderOverride& override,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config = {},
                                               vk::DescriptorSetLayout* bindless_layout = nullptr,
@@ -45,9 +45,9 @@ public:
                                               vk::DescriptorSetLayout* raw_vertex_layout = nullptr,
                                               vk::DescriptorSetLayout* indirection_layout = nullptr);
 
-    [[nodiscard]] VulkanEngine::StandardMeshPipeline::GraphicsPipeline* GetGraphicsPipeline(uint16_t technique_id);
+    [[nodiscard]] VulkanEngine::StandardMeshPipeline::GraphicsPipeline* GetGraphicsPipeline(std::uint16_t technique_id);
 
-    [[nodiscard]] uint16_t GetTechniqueCount() const { return static_cast<uint16_t>(techniques_.size()); }
+    [[nodiscard]] std::uint16_t GetTechniqueCount() const { return static_cast<std::uint16_t>(techniques_.size()); }
 
     void Shutdown();
 
@@ -57,8 +57,8 @@ private:
     };
 
     std::vector<Technique> techniques_{};
-    std::vector<uint32_t> default_vert_spv_{};
-    std::vector<uint32_t> default_frag_spv_{};
+    std::vector<std::uint32_t> default_vert_spv_{};
+    std::vector<std::uint32_t> default_frag_spv_{};
     bool has_defaults_ = false;
 };
 

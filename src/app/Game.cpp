@@ -9,9 +9,10 @@ module;
 
 #include <SDL3/SDL_keycode.h>
 #include <imgui.h>
-#include <vulkan/vulkan.hpp>
 
 module App.Game;
+
+import vulkan_hpp;
 
 import VulkanEngine.Game;
 import VulkanEngine.GpuResources.MeshData;

@@ -1,14 +1,13 @@
 module;
 
-#include <cstdint>
-#include <vector>
-#include <cstring>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.MeshManager;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources.DeviceBufferHeap;

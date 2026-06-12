@@ -1,32 +1,35 @@
 module;
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
 
 export module VulkanEngine.GpuResources.DeviceBufferHeap;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuBuffer;
 
 import VulkanEngine.GpuResources.TlsfAllocator;
 
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
+
 export namespace VulkanEngine::GpuResources {
 
 struct HeapConfig {
-    uint64_t block_size = 128ULL << 20; // 128 MiB
+    std::uint64_t block_size = 128ULL << 20; // 128 MiB
     vk::MemoryPropertyFlags memory_flags = vk::MemoryPropertyFlagBits::eDeviceLocal;
     vk::BufferUsageFlags extra_usage = {};
-    uint64_t default_alignment = 256ULL; // this is the minimum byte alignment for sub-allocations on the heap, older gpu's usually have 256 bytes, while newer have 16-64
+    std::uint64_t default_alignment = 256ULL; // this is the minimum byte alignment for sub-allocations on the heap, older gpu's usually have 256 bytes, while newer have 16-64
 };
 
 struct HeapAllocation {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-    uint32_t buffer_index = UINT32_MAX;
-    uint64_t offset = 0;
-    uint64_t size = 0;
+    std::uint32_t buffer_index = UINT32_MAX;
+    std::uint64_t offset = 0;
+    std::uint64_t size = 0;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsValid() const { return buffer_index != UINT32_MAX; }
@@ -48,13 +51,13 @@ public:
     void Shutdown();
     void Reset();
 
-    HeapAllocation Allocate(uint64_t size, uint64_t alignment = 0);
+    HeapAllocation Allocate(std::uint64_t size, std::uint64_t alignment = 0);
     void Free(HeapAllocation& alloc);
 
-    [[nodiscard]] void* MapBuffer(uint32_t block_index, uint64_t offset);
+    [[nodiscard]] void* MapBuffer(std::uint32_t block_index, std::uint64_t offset);
 
-    [[nodiscard]] vk::Buffer GetBuffer(uint32_t index) const;
-    [[nodiscard]] uint32_t GetBufferCount() const { return static_cast<uint32_t>(blocks_.size()); }
+    [[nodiscard]] vk::Buffer GetBuffer(std::uint32_t index) const;
+    [[nodiscard]] std::uint32_t GetBufferCount() const { return static_cast<std::uint32_t>(blocks_.size()); }
     [[nodiscard]] const HeapConfig& GetConfig() const { return config_; }
     [[nodiscard]] const std::string& GetDebugName() const { return debug_name_; }
     VulkanEngine::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
@@ -63,12 +66,12 @@ public:
 private:
     struct Block {
         VulkanEngine::GpuResources::GpuBuffer buffer;
-        uint64_t size;
+        std::uint64_t size;
         TlsfAllocator allocator;
         void* mapped_ptr = nullptr;
     };
 
-    uint32_t AddBlock();
+    std::uint32_t AddBlock();
 
     VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
     std::vector<Block> blocks_;

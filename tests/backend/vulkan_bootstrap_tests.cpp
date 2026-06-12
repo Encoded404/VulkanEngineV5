@@ -3,8 +3,8 @@
 #include <memory>
 #include <cstdint>
 #include <vector>
-#include <vulkan/vulkan_raii.hpp>
 
+import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace {

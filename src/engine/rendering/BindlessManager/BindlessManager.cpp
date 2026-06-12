@@ -1,13 +1,13 @@
 module;
 
-#include <cstdint>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.BindlessManager;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
@@ -128,7 +128,7 @@ const VulkanEngine::ResourceId* BindlessManager::GetTextureId(uint32_t slot) con
 }
 
 void BindlessManager::UpdateSlot(uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {
-    if (!backend_ || descriptor_set_ == nullptr) return;
+    if (!backend_ || *descriptor_set_ == nullptr) return;
 
     vk::DescriptorImageInfo image_info{};
     image_info.sampler = *texture.GetSampler();

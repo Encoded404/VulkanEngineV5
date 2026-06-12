@@ -1,11 +1,11 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-#include <string>
-#include <cstdint>
-#include <type_traits>
-
 export module VulkanBackend.Utils.VulkanDebugUtils;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export namespace VulkanEngine::Utils {
 
@@ -14,33 +14,30 @@ export namespace VulkanEngine::Utils {
 // its implicit conversion to the raw Vk* handle.
 template<typename HandleType>
 void SetVulkanObjectName(const vk::raii::Device& dev, const HandleType& obj, const std::string& name) {
-    auto* fn = dev.getDispatcher()->vkSetDebugUtilsObjectNameEXT;
-    if (!fn) return;
-
-    VkDebugUtilsObjectNameInfoEXT info{};
-    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
-    info.objectType = static_cast<VkObjectType>(HandleType::objectType);
-    info.objectHandle = reinterpret_cast<uint64_t>(static_cast<typename HandleType::CType>(*obj));
+    vk::DebugUtilsObjectNameInfoEXT info{};
+    info.sType = vk::StructureType::eDebugUtilsObjectNameInfoEXT;
+    info.objectType = static_cast<vk::ObjectType>(HandleType::objectType);
+    info.objectHandle = reinterpret_cast<std::uint64_t>(static_cast<typename HandleType::CType>(*obj));
     info.pObjectName = name.c_str();
-    fn(static_cast<VkDevice>(*dev), &info);
+    dev.setDebugUtilsObjectNameEXT(info);
 }
 
 // Non-RAII handles — explicit type.
 template<typename HandleType>
-void SetVulkanObjectName(const vk::raii::Device& dev, const HandleType& obj, VkObjectType type, const std::string& name) {
+void SetVulkanObjectName(const vk::raii::Device& dev, const HandleType& obj, vk::ObjectType type, const std::string& name) {
     auto* fn = dev.getDispatcher()->vkSetDebugUtilsObjectNameEXT;
     if (!fn) return;
 
-    VkDebugUtilsObjectNameInfoEXT info{};
-    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    vk::DebugUtilsObjectNameInfoEXT info{};
+    info.sType = vk::StructureType::eDebugUtilsObjectNameInfoEXT;
     info.objectType = type;
     if constexpr (std::is_pointer_v<HandleType>) {
-        info.objectHandle = reinterpret_cast<uint64_t>(obj);
+        info.objectHandle = reinterpret_cast<std::uint64_t>(obj);
     } else {
-        info.objectHandle = reinterpret_cast<uint64_t>(static_cast<VkBuffer>(*obj));
+        info.objectHandle = reinterpret_cast<std::uint64_t>(static_cast<typename HandleType::CType>(*obj));
     }
     info.pObjectName = name.c_str();
-    fn(static_cast<VkDevice>(*dev), &info);
+    dev.setDebugUtilsObjectNameEXT(info);
 }
 
 }

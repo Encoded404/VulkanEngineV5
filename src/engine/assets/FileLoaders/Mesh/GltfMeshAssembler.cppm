@@ -1,19 +1,15 @@
 module;
 
-#include <memory>
-#include <future>
-#include <vector>
-#include <cstddef>
-#include <filesystem>
-#include <fstream>
-#include <stdexcept>
-#include <FileLoader/FileLoader.hpp>
-#include <FileLoader/Types.hpp>
-#include <fastgltf/core.hpp>
-#include <fastgltf/types.hpp>
-
 export module VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 
+import std;
+
+// fastgltf is imported as a C++20 module. With FASTGLTF_USE_STD_MODULE=ON
+// (applied via the vcpkg overlay port), it uses import std; internally,
+// avoiding clang bug LLVM #138558.
+import fastgltf;
+
+import FileLoader;
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
 

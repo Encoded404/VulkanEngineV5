@@ -8,6 +8,8 @@ module;
 
 module VulkanEngine.Input;
 
+import std;
+
 namespace VulkanEngine::Input {
 
 namespace {

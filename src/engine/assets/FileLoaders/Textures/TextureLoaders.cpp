@@ -1,15 +1,6 @@
 module;
 
-#include <algorithm>
-#include <array>
-#include <cctype>
-#include <cstring>
-#include <filesystem>
-#include <memory>
-#include <string>
-
 #include <ktx.h>
-#include <vulkan/vulkan_raii.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -17,6 +8,10 @@ module;
 #include <FileLoader/Types.hpp>
 
 module VulkanEngine.FileLoaders.TextureLoaders;
+
+import std;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::FileLoaders::Textures {
 

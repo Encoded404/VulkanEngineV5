@@ -1,22 +1,19 @@
 module;
 
-#include <cstdint>
-#include <functional>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-
 export module VulkanEngine.Input;
+
+import std;
 
 import VulkanBackend.Event;
 import VulkanBackend.Utils.CallbackList;
 
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
+
 export namespace VulkanEngine::Input {
 
 struct ActionHandle {
-    uint32_t id = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t id = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
     
     [[nodiscard]] bool operator==(const ActionHandle& other) const = default;
     [[nodiscard]] bool operator<(const ActionHandle& other) const { return id < other.id; }
@@ -27,7 +24,7 @@ struct ActionHandle {
 template <>
 struct std::hash<VulkanEngine::Input::ActionHandle> {
     std::size_t operator()(const VulkanEngine::Input::ActionHandle& handle) const noexcept {
-        return std::hash<uint32_t>{}(handle.id);
+        return std::hash<std::uint32_t>{}(handle.id);
     }
 };
 
@@ -43,12 +40,12 @@ struct ActionState {
 };
 
 struct RawInputState {
-    std::unordered_set<int32_t> held_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::unordered_set<int32_t> pressed_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::unordered_set<int32_t> released_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::unordered_set<int32_t> held_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::unordered_set<int32_t> pressed_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::unordered_set<int32_t> released_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> held_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> pressed_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> released_keys{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> held_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> pressed_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_set<std::int32_t> released_mouse_buttons{}; // NOLINT(misc-non-private-member-variables-in-classes)
     float mouse_x = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float mouse_y = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float mouse_delta_x = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -57,17 +54,17 @@ struct RawInputState {
     float wheel_y = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-enum class BindingType : uint8_t {
+enum class BindingType : std::uint8_t {
     Key,
     MouseButton
 };
 
 struct InputBinding {
     BindingType type = BindingType::Key; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t code = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t code = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    [[nodiscard]] static InputBinding Key(int32_t keycode);
-    [[nodiscard]] static InputBinding MouseButton(int32_t button);
+    [[nodiscard]] static InputBinding Key(std::int32_t keycode);
+    [[nodiscard]] static InputBinding MouseButton(std::int32_t button);
 };
 
 class InputSystem {
@@ -107,7 +104,7 @@ private:
     std::unordered_map<ActionHandle, ActionState> action_states_{};
     std::unordered_map<ActionHandle, std::string> action_names_{};
     std::unordered_map<ActionHandle, ActionCallbacks> action_callbacks_{};
-    uint32_t next_action_id_ = 0;
+    std::uint32_t next_action_id_ = 0;
 };
 
 }  // namespace VulkanEngine::Input

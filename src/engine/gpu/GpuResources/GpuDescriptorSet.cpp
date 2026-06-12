@@ -1,16 +1,13 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-#include <stdexcept>
-#include <exception>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.GpuDescriptorSet;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
@@ -185,14 +182,13 @@ void GpuDescriptorSet::Destroy() {
 
 void GpuDescriptorSet::SetDebugName(const vk::raii::Device& dev, const std::string& name) const {
     if (!descriptor_set_) return;
-    auto* fn = dev.getDispatcher()->vkSetDebugUtilsObjectNameEXT;
-    if (!fn) return;
-    VkDebugUtilsObjectNameInfoEXT info{};
-    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
-    info.objectType = VK_OBJECT_TYPE_DESCRIPTOR_SET;
-    info.objectHandle = reinterpret_cast<uint64_t>(static_cast<VkDescriptorSet>(descriptor_set_));
+
+    vk::DebugUtilsObjectNameInfoEXT info{};
+    info.sType = vk::StructureType::eDebugUtilsObjectNameInfoEXT;
+    info.objectType = vk::ObjectType::eDescriptorSet;
+    info.objectHandle = reinterpret_cast<uint64_t>(static_cast<vk::DescriptorSet::CType>(descriptor_set_));
     info.pObjectName = name.c_str();
-    fn(static_cast<VkDevice>(*dev), &info);
+    dev.setDebugUtilsObjectNameEXT(info);
 }
 
 GpuDescriptorSet GpuDescriptorSet::Create(
@@ -307,7 +303,7 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
 }
 
 void GpuDescriptorSet::UpdateBinding(uint32_t binding,
-                                     VkImageView image_view,
+                                     vk::ImageView image_view,
                                      vk::DescriptorType type,
                                      vk::ImageLayout layout) const {
     if (!backend_ || !descriptor_set_ || !image_view) {
@@ -330,7 +326,7 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
 }
 
 void GpuDescriptorSet::UpdateBinding(uint32_t binding,
-                                     VkSampler sampler) const {
+                                     vk::Sampler sampler) const {
     if (!backend_ || !descriptor_set_ || !sampler) {
         return;
     }

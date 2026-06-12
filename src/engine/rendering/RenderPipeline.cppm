@@ -1,14 +1,11 @@
 module;
 
-#include <functional>
-#include <optional>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.RenderPipeline;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.RenderGraph;
 export import VulkanBackend.Runtime.VulkanBootstrap;
@@ -33,8 +30,8 @@ struct RenderPipelinePassDesc {
 struct TransientImageDesc {
     std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout initial_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout final_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -54,8 +51,8 @@ public:
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name);
     VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc);
 
-    using ImageResolver = std::function<vk::Image(uint32_t image_index)>;
-    using ImageViewResolver = std::function<vk::ImageView(uint32_t image_index)>;
+    using ImageResolver = std::function<vk::Image(std::uint32_t image_index)>;
+    using ImageViewResolver = std::function<vk::ImageView(std::uint32_t image_index)>;
     void RegisterResourceResolver(const std::string& name,
                                   ImageResolver resolve_image,
                                   ImageViewResolver resolve_image_view,
@@ -70,7 +67,7 @@ public:
     bool SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state);
 
     void Compile();
-    void Execute(const void* user_data, vk::CommandBuffer command_buffer, uint32_t image_index);
+    void Execute(const void* user_data, vk::CommandBuffer command_buffer, std::uint32_t image_index);
 
     [[nodiscard]] bool IsCompiled() const { return compiled_; }
     [[nodiscard]] const VulkanEngine::RenderGraph::CompiledRenderGraph& GetCompiledGraph() const { return compiled_graph_; }
@@ -78,13 +75,13 @@ public:
 private:
     void AllocateTransients();
     void DeallocateTransients();
-    void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, uint32_t image_index);
+    void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index);
 
     VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
 
-    std::unordered_map<uint32_t, TransientImageDesc> transient_image_descs_{};
+    std::unordered_map<std::uint32_t, TransientImageDesc> transient_image_descs_{};
     std::vector<vk::raii::Image> transient_images_{};
     std::vector<vk::raii::DeviceMemory> transient_memories_{};
     std::vector<vk::raii::ImageView> transient_image_views_{};
@@ -99,8 +96,8 @@ private:
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
 
-    uint32_t backbuffer_resource_index_ = 0;
-    uint32_t depth_buffer_resource_index_ = 0;
+    std::uint32_t backbuffer_resource_index_ = 0;
+    std::uint32_t depth_buffer_resource_index_ = 0;
     std::vector<bool> swapchain_image_presented_{};
     std::vector<bool> swapchain_depth_initialized_{};
 

@@ -1,19 +1,17 @@
 module;
 
-#include <chrono>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <iostream>
-#include <string>
-#include <string_view>
-#include <thread>
-
 #include <SDL3/SDL_video.h>
-#include <boost/stacktrace.hpp> // NOLINT(misc-include-cleaner)
-#include <logging/logging.hpp>
+
+// logging_macros.hpp has no <memory> include, safe in GMF.
+#include <logging/logging_macros.hpp>
 
 export module VulkanEngine.Application;
+
+import std;
+import logiface;
+
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
 
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
@@ -30,7 +28,7 @@ export namespace VulkanEngine::Application {
 
 struct ApplicationFrameState {
     VulkanEngine::Runtime::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     float delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     bool render_success = true; // NOLINT(misc-non-private-member-variables-in-classes)
 };
@@ -44,7 +42,7 @@ struct ApplicationContext {
     const VulkanEngine::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationConfig {
@@ -53,8 +51,8 @@ struct ApplicationConfig {
     VulkanEngine::Platform::PlatformConfig platform_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Runtime::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Runtime::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationHooks {
@@ -279,7 +277,7 @@ struct ApplicationHooks {
         return 0;
     } catch (const std::exception& ex) {
         LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
-        const auto trace = boost::stacktrace::stacktrace::from_current_exception();
+        const auto trace = std::stacktrace::from_current_exception();
         std::cerr << "\nStacktrace:\n" << trace << '\n';
         cleanup();
         return 1;

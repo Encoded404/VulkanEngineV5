@@ -1,21 +1,18 @@
 module;
 
-#include <memory>
-#include <future>
-#include <vector>
-#include <string>
-#include <unordered_map>
-#include <stdexcept>
-#include <cstdint>
-#include <cstddef>
-#include <filesystem>
-#include <fstream>
-#include <FileLoader/FileLoader.hpp>
 #include <FileLoader/Types.hpp>
+
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
 export module VulkanEngine.FileLoaders.Mesh.ObjMeshAssembler;
+
+import std;
+
+// NOTE: in module purview to avoid clang bug (LLVM #138558):
+// #include <memory> in global module fragment conflicts with import std;
+#include <FileLoader/FileLoader.hpp>
+#include <logging/logging.hpp>
 
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
@@ -70,7 +67,7 @@ public:
 
                 const bool has_materials = !shape.mesh.material_ids.empty();
                 int current_mat_id = has_materials ? shape.mesh.material_ids[0] : -1;
-                uint32_t group_start_face = 0;
+                std::uint32_t group_start_face = 0;
 
                 for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
                     const int face_mat_id = has_materials ? shape.mesh.material_ids[f] : -1;
@@ -81,10 +78,10 @@ public:
                         const size_t group_end = (last_face && !group_ended) ? f + 1 : f;
 
                         if (group_end > group_start_face) {
-                            std::unordered_map<ObjVert, uint32_t, ObjVertHash> vert_map;
+                            std::unordered_map<ObjVert, std::uint32_t, ObjVertHash> vert_map;
                             size_t face_offset = face_offsets[group_start_face];
 
-                            const uint16_t raw_mat_id = static_cast<uint16_t>(std::max(0, current_mat_id));
+                            const std::uint16_t raw_mat_id = static_cast<std::uint16_t>(std::max(0, current_mat_id));
                             VulkanEngine::MaterialId mat_id{0};
                             if (material_bindings_ && raw_mat_id < material_bindings_->size()) {
                                 LOGIFACE_LOG(debug, "ObjMeshAssembler: Mapping OBJ material ID " + std::to_string(raw_mat_id) +
@@ -93,13 +90,13 @@ public:
                             }
 
                             for (size_t gf = group_start_face; gf < group_end; ++gf) {
-                                const uint32_t fv = shape.mesh.num_face_vertices[gf];
-                                for (uint32_t v = 0; v < fv; ++v) {
+                                const std::uint32_t fv = shape.mesh.num_face_vertices[gf];
+                                for (std::uint32_t v = 0; v < fv; ++v) {
                                     const auto& idx = shape.mesh.indices[face_offset + v];
                                     const ObjVert key{idx.vertex_index, idx.normal_index, idx.texcoord_index};
                                     const auto it = vert_map.find(key);
                                     if (it == vert_map.end()) {
-                                        const uint32_t new_idx = static_cast<uint32_t>(mesh->vertices.size());
+                                        const std::uint32_t new_idx = static_cast<std::uint32_t>(mesh->vertices.size());
                                         vert_map[key] = new_idx;
 
                                         const float px = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 0] : 0.0f;
@@ -121,10 +118,10 @@ public:
                                 face_offset += static_cast<size_t>(fv);
                             }
 
-                            const uint32_t submesh_start = mesh->subMeshes.empty()
+                            const std::uint32_t submesh_start = mesh->subMeshes.empty()
                                 ? 0
                                 : mesh->subMeshes.back().index_start + mesh->subMeshes.back().index_count;
-                            const uint32_t submesh_count = static_cast<uint32_t>(mesh->indices.size()) - submesh_start;
+                            const std::uint32_t submesh_count = static_cast<std::uint32_t>(mesh->indices.size()) - submesh_start;
                             if (submesh_count > 0) {
                                 mesh->subMeshes.push_back(VulkanEngine::SubMesh{
                                     .index_start = submesh_start,

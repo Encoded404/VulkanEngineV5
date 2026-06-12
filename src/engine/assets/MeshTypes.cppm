@@ -1,10 +1,8 @@
 module;
 
-#include <array>
-#include <vector>
-#include <cstdint>
-
 export module VulkanEngine.Mesh.MeshTypes;
+
+import std;
 
 export import VulkanEngine.MaterialManager.MaterialId;
 export import VulkanEngine.TechniqueManager.TechniqueId;
@@ -46,8 +44,8 @@ export namespace VulkanEngine
 
     struct SubMesh
     {
-        uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
-        uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         MaterialId material_id{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         BoundingSphere sphere{};
         BoundingOBB obb{};
@@ -55,8 +53,8 @@ export namespace VulkanEngine
 
     struct BoneWeight
     {
-        std::array<uint16_t, 4> bone_indices{}; //NOLINT(misc-non-private-member-variables-in-classes)
-        std::array<uint8_t, 4> weights{}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<std::uint16_t, 4> bone_indices{}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<std::uint8_t, 4> weights{}; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
     class Mesh
@@ -65,7 +63,7 @@ export namespace VulkanEngine
         std::vector<MeshVertexVec3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<MeshVertexVec3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<MeshVertexVec2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
-        std::vector<uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<std::uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<SubMesh> subMeshes; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 

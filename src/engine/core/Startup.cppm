@@ -1,12 +1,13 @@
 module;
 
-#include <memory>
-#include <string_view>
-
-#include <logging/logging.hpp>
-#include <logging/ConsoleLogger.hpp>
+// logging_macros.hpp has no <memory> include, safe in GMF.
+#include <logging/logging_macros.hpp>
 
 export module VulkanEngine.Startup;
+
+import std;
+import logiface;
+import logiface.ConsoleLogger;
 
 export namespace VulkanEngine::Startup {
 
@@ -21,9 +22,10 @@ export namespace VulkanEngine::Startup {
 }
 
 void InitializeLogger(Logiface::Level level) {
-    static std::shared_ptr<Logiface::ConsoleLogger> app_logger = std::make_shared<Logiface::ConsoleLogger>(); // NOLINT(misc-const-correctness)
-    app_logger->SetLevel(level);
-    Logiface::SetLogger(app_logger);
+    // Logger is a singleton with static lifetime — raw pointer is fine.
+    static Logiface::ConsoleLogger app_logger; // NOLINT(misc-const-correctness)
+    app_logger.SetLevel(level);
+    Logiface::SetLogger(&app_logger);
 }
 
 void InitializeLogger(std::string_view level) {

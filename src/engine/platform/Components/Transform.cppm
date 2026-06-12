@@ -7,6 +7,8 @@ module;
 
 export module VulkanEngine.Components.Transform;
 
+import std;
+
 import VulkanBackend.Component;
 
 export namespace VulkanEngine::Components {

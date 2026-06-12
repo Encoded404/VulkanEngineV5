@@ -1,11 +1,10 @@
 module;
 
-#include <memory>
-#include <span>
-#include <vector>
-#include <cstdint>
-
 export module VulkanEngine.Game;
+
+import std;
+
+import vulkan_hpp;
 
 export import VulkanEngine.Renderer;
 export import VulkanEngine.SceneLoader;
@@ -34,7 +33,7 @@ import VulkanEngine.MeshRenderSystem;
 
 export namespace VulkanEngine::Game {
 
-constexpr uint32_t FRAMES_IN_FLIGHT_DYN = 3;
+constexpr std::uint32_t FRAMES_IN_FLIGHT_DYN = 3;
 
 struct GameConfig {
     StandardMeshPipeline::PipelineConfig pipeline_config{
@@ -43,7 +42,7 @@ struct GameConfig {
         .depth_compare_op = vk::CompareOp::eLessOrEqual
     };
     Renderer::RendererConfig renderer_config{};
-    uint64_t geometry_buffer_size_mb = 128;
+    std::uint64_t geometry_buffer_size_mb = 128;
     bool enable_imgui = true;
 };
 
@@ -56,17 +55,17 @@ public:
 
     bool Setup(VulkanEngine::Application::ApplicationContext& ctx, const GameConfig& config);
 
-    uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path);
+    std::uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path);
 
     bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
                       std::span<const std::uint32_t> vert_override = {},
                       std::span<const std::uint32_t> frag_override = {});
 
     struct UploadedMesh {
-        uint32_t first_submesh = 0;
-        uint32_t submesh_count = 0;
-        uint8_t vertex_buffer_index = 0;
-        uint8_t index_buffer_index = 0;
+        std::uint32_t first_submesh = 0;
+        std::uint32_t submesh_count = 0;
+        std::uint8_t vertex_buffer_index = 0;
+        std::uint8_t index_buffer_index = 0;
     };
 
     std::vector<UploadedMesh> UploadScene(
@@ -98,11 +97,11 @@ public:
     MeshManager& GetMeshManager() { return *mesh_manager_; }
     MeshRegistry& GetMeshRegistry() { return mesh_registry_; }
     MeshRenderSystem& GetMeshRenderSystem() { return mesh_render_system_; }
-    uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
+    std::uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
     void MarkSceneValid() { scene_valid_ = true; }
-    uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
+    std::uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
 
 private:
 
@@ -130,11 +129,11 @@ private:
 
     Components::Camera* camera_ = nullptr;
 
-    uint16_t main_technique_id_ = 0;
+    std::uint16_t main_technique_id_ = 0;
     bool initialized_ = false;
 
-    std::vector<uint32_t> vert_spv_holder_;
-    std::vector<uint32_t> frag_spv_holder_;
+    std::vector<std::uint32_t> vert_spv_holder_;
+    std::vector<std::uint32_t> frag_spv_holder_;
 
     VulkanEngine::Utils::ScopedHandle<void(void*)> imgui_event_token_{};
 

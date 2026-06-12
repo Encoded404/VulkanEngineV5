@@ -1,19 +1,9 @@
 module;
 
-#include <atomic>
-#include <cstddef>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <stdexcept>
-#include <string_view>
-#include <tuple>
-#include <type_traits>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
 export module VulkanBackend.Component;
+
+import std;
+import std.compat;
 
 import VulkanBackend.Utils.ThreadPool;
 

@@ -24,10 +24,8 @@
         },
         "nlohmann-json",
         "glm",
-        "fastgltf",
         "stb",
         "tinyobjloader",
-        "boost-stacktrace",
         "cli11",
         {
             "name": "imgui",

@@ -1,11 +1,12 @@
 module;
 
-#include <cstdint>
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.MeshRenderSystem;
+
+import std;
 
 export import VulkanBackend.Component;
 export import VulkanEngine.Components.Transform;
@@ -28,8 +29,8 @@ public:
     MeshRenderSystem(const MeshRenderSystem&) = delete;
     MeshRenderSystem& operator=(const MeshRenderSystem&) = delete;
 
-    static constexpr uint32_t EVICTION_TIMEOUT_FRAMES = 120;
-    static constexpr uint32_t MAX_GATHER = 65536;
+    static constexpr std::uint32_t EVICTION_TIMEOUT_FRAMES = 120;
+    static constexpr std::uint32_t MAX_GATHER = 65536;
 
     void ProcessFrame(ComponentRegistry& registry,
                       MeshRegistry& mesh_registry,
@@ -37,7 +38,7 @@ public:
                       SceneRenderer::SceneRenderer& renderer,
                       GpuResources::DeviceBufferHeap& vtx_heap,
                       GpuResources::DeviceBufferHeap& idx_heap,
-                      uint32_t frame_index);
+                      std::uint32_t frame_index);
 
 private:
     struct DrawEntity {

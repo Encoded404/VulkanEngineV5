@@ -1,12 +1,14 @@
 module;
 
-#include <cstdint>
-#include <memory>
 #include <SDL3/SDL_video.h>
 #include <imgui.h>
-#include <vulkan/vulkan.hpp>
 
 module VulkanEngine.ImGui;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::ImGui {
 

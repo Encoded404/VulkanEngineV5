@@ -1,19 +1,15 @@
 module;
 
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-#include <vulkan/vulkan_raii.hpp>
-#include <vulkan/vulkan.h>
-#include <cstdio>
-#include <cstring>
-#include <algorithm>
-#include <vector>
-#include <memory>
-#include <string>
 #include <logging/logging.hpp>
 
 #include <bitset>
+#include <cstring>
+
+#include <vulkan/vulkan_hpp_macros.hpp>
 
 module VulkanBackend.Runtime.VulkanDevice;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanInstance;
 import VulkanBackend.Runtime.CommonTypes;
@@ -33,7 +29,7 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
             const auto queue_families = device.getQueueFamilyProperties();
             for (uint32_t i = 0; i < queue_families.size(); ++i) {
                 const bool supports_graphics = (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) != vk::QueueFlags{};
-                const bool supports_present = device.getSurfaceSupportKHR(i, *vk_surface) == VK_TRUE;
+                const bool supports_present = device.getSurfaceSupportKHR(i, *vk_surface) == vk::True;
                 if (supports_graphics && supports_present) {
                     physical_device_ = std::make_unique<vk::raii::PhysicalDevice>(vk_instance, *device);
                     graphics_queue_family_ = i;
@@ -44,12 +40,12 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
         }
 
         if (!physical_device_) {
-            std::fprintf(stderr, "[VulkanDevice] failed to find suitable physical device\n");
+            LOGIFACE_LOG(error, "failed to find suitable physical device");
             return false;
         }
 
     } catch (const std::exception& ex) {
-        std::fprintf(stderr, "[VulkanDevice] physical device selection failed: %s\n", ex.what());
+        LOGIFACE_LOG(error, std::string("physical device selection failed: ") + ex.what());
         return false;
     }
 
@@ -64,32 +60,32 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
 
     // Query DGC properties
     {
-        VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props{};
-        dgc_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT;
-        VkPhysicalDeviceProperties2 props2{};
-        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        vk::PhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props{};
+        dgc_props.sType = vk::StructureType::ePhysicalDeviceDeviceGeneratedCommandsFeaturesEXT;
+        vk::PhysicalDeviceProperties2 props2{};
+        props2.sType = vk::StructureType::ePhysicalDeviceFeatures2;
         props2.pNext = &dgc_props;
-        vkGetPhysicalDeviceProperties2(static_cast<VkPhysicalDevice>(**physical_device_), &props2);
+        static_cast<vk::PhysicalDevice>(**physical_device_).getProperties2(&props2);
         if (dgc_props.maxIndirectSequenceCount >= 1 &&
             dgc_props.maxIndirectCommandsTokenCount >= 2 &&
             dgc_props.maxIndirectCommandsIndirectStride >= 20 &&
-            (dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding & VK_SHADER_STAGE_VERTEX_BIT)) {
+            (dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding & vk::ShaderStageFlagBits::eVertex)) {
             dgc_available_ = true;
             max_dgc_sequence_count_ = std::min(dgc_props.maxIndirectSequenceCount, 256u);
         } else {
             LOGIFACE_LOG(debug, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
-                                            std::string("\nsupported = ") + std::bitset<32>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding).to_string() +
-                                            std::string("\nneeded    = ") + std::bitset<32>(VK_SHADER_STAGE_VERTEX_BIT).to_string());
+                                            std::string("\nsupported = ") + std::bitset<32>(static_cast<uint32_t>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding)).to_string() +
+                                            std::string("\nneeded    = ") + std::bitset<32>(static_cast<int>(vk::ShaderStageFlagBits::eVertex)).to_string());
         }
     }
 
     // Check if DGC extension and its dependencies are available
     bool has_dgc_extension = false;
-    bool has_maintenance5 = false;
     if (dgc_available_) {
+        bool has_maintenance5 = false;
         auto available_extensions = physical_device_->enumerateDeviceExtensionProperties();
         for (const auto& ext : available_extensions) {
-            if (strcmp(ext.extensionName, VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME) == 0) {
+            if (strcmp(ext.extensionName, vk::EXTDeviceGeneratedCommandsExtensionName) == 0) {
                 has_dgc_extension = true;
             }
             if (strcmp(ext.extensionName, "VK_KHR_maintenance5") == 0) {
@@ -108,34 +104,34 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         queue_info.queueCount = 1;
         queue_info.pQueuePriorities = &queue_priority;
 
-        std::vector<const char*> device_extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        std::vector<const char*> device_extensions{vk::KHRSwapchainExtensionName};
         if (dgc_available_) {
             device_extensions.push_back("VK_KHR_maintenance5");
-            device_extensions.push_back(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME);
+            device_extensions.push_back(vk::EXTDeviceGeneratedCommandsExtensionName);
         }
 
         vk::PhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc_features{};
-        dgc_features.deviceGeneratedCommands = VK_TRUE;
+        dgc_features.deviceGeneratedCommands = vk::True;
 
         vk::PhysicalDeviceVulkan11Features vulkan11_features{};
-        vulkan11_features.shaderDrawParameters = VK_TRUE;
+        vulkan11_features.shaderDrawParameters = vk::True;
 
         vk::PhysicalDeviceVulkan12Features vulkan12_features{};
-        vulkan12_features.hostQueryReset = VK_TRUE;
-        vulkan12_features.descriptorIndexing = VK_TRUE;
-        vulkan12_features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-        vulkan12_features.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
-        vulkan12_features.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
-        vulkan12_features.runtimeDescriptorArray = VK_TRUE;
-        vulkan12_features.descriptorBindingPartiallyBound = VK_TRUE;
-        vulkan12_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
-        vulkan12_features.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
-        vulkan12_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
-        vulkan12_features.bufferDeviceAddress = VK_TRUE;
+        vulkan12_features.hostQueryReset = vk::True;
+        vulkan12_features.descriptorIndexing = vk::True;
+        vulkan12_features.shaderSampledImageArrayNonUniformIndexing = vk::True;
+        vulkan12_features.shaderStorageImageArrayNonUniformIndexing = vk::True;
+        vulkan12_features.shaderStorageBufferArrayNonUniformIndexing = vk::True;
+        vulkan12_features.runtimeDescriptorArray = vk::True;
+        vulkan12_features.descriptorBindingPartiallyBound = vk::True;
+        vulkan12_features.descriptorBindingSampledImageUpdateAfterBind = vk::True;
+        vulkan12_features.descriptorBindingStorageBufferUpdateAfterBind = vk::True;
+        vulkan12_features.descriptorBindingVariableDescriptorCount = vk::True;
+        vulkan12_features.bufferDeviceAddress = vk::True;
 
         vk::PhysicalDeviceVulkan13Features vulkan13_features{};
-        vulkan13_features.dynamicRendering = VK_TRUE;
-        vulkan13_features.synchronization2 = VK_TRUE;
+        vulkan13_features.dynamicRendering = vk::True;
+        vulkan13_features.synchronization2 = vk::True;
         vulkan12_features.pNext = &vulkan13_features;
 
         if (dgc_available_) {
@@ -145,8 +141,8 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         vulkan11_features.pNext = &vulkan12_features;
 
         vk::PhysicalDeviceFeatures2 core_features{};
-        core_features.features.multiDrawIndirect = VK_TRUE;
-        core_features.features.pipelineStatisticsQuery = VK_TRUE;
+        core_features.features.multiDrawIndirect = vk::True;
+        core_features.features.pipelineStatisticsQuery = vk::True;
         core_features.pNext = &vulkan11_features;
 
         vk::DeviceCreateInfo device_info{};
@@ -179,7 +175,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         cmd_alloc.commandBufferCount = frames_in_flight_;
         command_buffers_ = device_->allocateCommandBuffers(cmd_alloc);
 
-        const vk::SemaphoreCreateInfo sem_info{};
+        constexpr vk::SemaphoreCreateInfo sem_info{};
         vk::FenceCreateInfo fence_info{};
         fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
 
@@ -194,7 +190,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         }
 
     } catch (const std::exception& ex) {
-        std::fprintf(stderr, "[VulkanDevice] logical device creation failed: %s\n", ex.what());
+        LOGIFACE_LOG(error, std::string("logical device creation failed: ") + ex.what());
         Shutdown();
         return false;
     }

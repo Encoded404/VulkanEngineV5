@@ -5,8 +5,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
-#include <vulkan/vulkan.hpp>
-
 #include <array>
 #include <cstddef>
 #include <chrono>
@@ -20,6 +18,7 @@
 #include <string_view>
 #include <vector>
 
+import vulkan_hpp;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 
@@ -57,7 +56,7 @@ private:
 
 void WriteTinyKtx2TextureToTempFile(const TempTextureFile& temp) {
     ktxTextureCreateInfo info{};
-    info.vkFormat = static_cast<ktx_uint32_t>(VK_FORMAT_R8G8B8A8_UNORM);
+    info.vkFormat = static_cast<ktx_uint32_t>(vk::Format::eR8G8B8A8Unorm);
     info.baseWidth = 2;
     info.baseHeight = 2;
     info.baseDepth = 1;

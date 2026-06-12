@@ -9,9 +9,9 @@ module;
 #include <utility>
 #include <vector>
 
-#include <vulkan/vulkan.hpp>
-
 module VulkanBackend.RenderGraph;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::RenderGraph {
 

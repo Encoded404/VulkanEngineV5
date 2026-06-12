@@ -1,15 +1,11 @@
 module;
 
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <span>
-#include <stdexcept>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 module VulkanEngine.ShaderLoader;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 

@@ -1,17 +1,13 @@
 module;
 
-#include <string>
-#include <vector>
-#include <filesystem>
-#include <algorithm>
-#include <cstring>
-#include <cstdint>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.SceneLoader;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Mesh.MeshTypes;

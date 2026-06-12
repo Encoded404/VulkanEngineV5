@@ -1,19 +1,10 @@
 module;
 
-#include <memory>
-#include <future>
-#include <filesystem>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <stdexcept>
-#include <array>
-#include <cstddef>
-#include <algorithm>
-#include <cctype>
 #include <FileLoader/Types.hpp>
 
 export module VulkanEngine.FileLoaders.Mesh.MeshMagicLoader;
+
+import std;
 
 import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;

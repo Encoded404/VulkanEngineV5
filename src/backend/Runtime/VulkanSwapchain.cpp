@@ -1,13 +1,16 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
+#include <cstdint>
+
 #include <SDL3/SDL_video.h>
-#include <cstdio>
-#include <vector>
-#include <algorithm>
-#include <memory>
+
+#include <logging/logging.hpp>
 
 module VulkanBackend.Runtime.VulkanSwapchain;
+
+import std;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.CommonTypes;
 import VulkanBackend.Runtime.VulkanDevice;
@@ -73,7 +76,7 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         swap_info.preTransform = capabilities.currentTransform;
         swap_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         swap_info.presentMode = vk_present_mode;
-        swap_info.clipped = VK_TRUE;
+        swap_info.clipped = vk::True;
 
         swapchain_ = std::make_unique<vk::raii::SwapchainKHR>(vk_device, swap_info);
         VulkanEngine::Utils::SetVulkanObjectName(vk_device, *swapchain_, "swapchain");
@@ -84,7 +87,7 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         if (!RebuildSwapchainViews(vk_device)) return false;
         return CreateDepthResources(vk_physical_device, vk_device);
     } catch (const std::exception& ex) {
-        std::fprintf(stderr, "[VulkanSwapchain] initialization failed: %s\n", ex.what());
+        LOGIFACE_LOG(error, std::string("initialization failed: ") + ex.what());
         return false;
     }
 }

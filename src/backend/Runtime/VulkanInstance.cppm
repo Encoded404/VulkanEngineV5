@@ -1,10 +1,12 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
 #include <SDL3/SDL_video.h>
-#include <memory>
 
 export module VulkanBackend.Runtime.VulkanInstance;
+
+import std;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.CommonTypes;
 

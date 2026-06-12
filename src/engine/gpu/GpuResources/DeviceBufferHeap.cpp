@@ -1,13 +1,13 @@
 module;
 
-#include <cstdint>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.GpuResources.DeviceBufferHeap;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
@@ -136,7 +136,7 @@ void DeviceBufferHeap::Free(HeapAllocation& alloc) {
 }
 
 vk::Buffer DeviceBufferHeap::GetBuffer(uint32_t index) const {
-    if (index >= blocks_.size()) return VK_NULL_HANDLE;
+    if (index >= blocks_.size()) return nullptr;
     return *blocks_[index].buffer.GetBuffer();
 }
 

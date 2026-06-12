@@ -1,8 +1,8 @@
 module;
 
-#include <memory>
-
 export module VulkanEngine.DefaultTextureFactory;
+
+import std;
 
 export import VulkanEngine.ResourceSystem;
 export import VulkanEngine.ResourceSystem.TextureResource;
@@ -20,7 +20,7 @@ public:
 
     [[nodiscard]] static std::shared_ptr<VulkanEngine::TextureResource> CreateSolidColorTexture(
         VulkanEngine::ResourceManager& manager,
-        const std::array<uint8_t, 4>& color);
+        const std::array<std::uint8_t, 4>& color);
 };
 
 } // namespace VulkanEngine::DefaultTextureFactory

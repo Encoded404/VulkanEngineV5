@@ -1,6 +1,11 @@
 module;
 
+// Use headers instead of `import std;` to avoid a Clang/libstdc++ module
+// incompatibility where shared_ptr friend declarations conflict with
+// using-declarations in the std module partition (LLVM #138558, #156604).
+#include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <logging/logging.hpp>
@@ -11,6 +16,8 @@ module;
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 
 module VulkanEngine.MeshRenderSystem;
+
+import vulkan_hpp;
 
 import VulkanBackend.Component;
 import VulkanEngine.Components.Transform;

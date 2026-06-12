@@ -1,9 +1,11 @@
 module;
 
-#include <cstdint>
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.GpuBuffer;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 
@@ -12,33 +14,33 @@ export namespace VulkanEngine::GpuResources {
 class GpuBuffer {
 public:
     static GpuBuffer Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
-                            uint64_t size,
+                            std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,
                             const void* initial_data = nullptr);
 
-    void Upload(const void* data, uint64_t size);
-    void UploadAt(const void* data, uint64_t size, uint64_t offset);
-    void* Map(uint64_t offset, uint64_t size);
+    void Upload(const void* data, std::uint64_t size);
+    void UploadAt(const void* data, std::uint64_t size, std::uint64_t offset);
+    void* Map(std::uint64_t offset, std::uint64_t size);
     void Unmap();
 
     [[nodiscard]] vk::raii::Buffer& GetBuffer() { return *buffer_; }
     [[nodiscard]] const vk::raii::Buffer& GetBuffer() const { return *buffer_; }
     [[nodiscard]] vk::raii::DeviceMemory& GetMemory() { return *memory_; }
     [[nodiscard]] const vk::raii::DeviceMemory& GetMemory() const { return *memory_; }
-    [[nodiscard]] uint64_t GetSize() const { return size_; }
+    [[nodiscard]] std::uint64_t GetSize() const { return size_; }
     [[nodiscard]] bool IsValid() const { return buffer_ != nullptr; }
-    [[nodiscard]] VkDeviceAddress GetDeviceAddress(const vk::raii::Device& dev) const {
-        VkBufferDeviceAddressInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-        info.buffer = static_cast<VkBuffer>(**buffer_);
-        return vkGetBufferDeviceAddress(static_cast<VkDevice>(*dev), &info);
+    [[nodiscard]] vk::DeviceAddress GetDeviceAddress(const vk::raii::Device& dev) const {
+        vk::BufferDeviceAddressInfo info{};
+        info.sType = vk::StructureType::eBufferDeviceAddressInfo;
+        info.buffer = static_cast<vk::Buffer>(**buffer_);
+        return dev.getBufferAddress(info);
     }
 
 private:
     std::unique_ptr<vk::raii::Buffer> buffer_;
     std::unique_ptr<vk::raii::DeviceMemory> memory_;
-    uint64_t size_ = 0;
+    std::uint64_t size_ = 0;
 };
 
 } // namespace VulkanEngine::GpuResources

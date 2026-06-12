@@ -1,12 +1,11 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-#include <algorithm>
-#include <optional>
-#include <stdexcept>
-#include <vector>
-
 module VulkanBackend.Utils.MemoryUtils;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::Utils {
 

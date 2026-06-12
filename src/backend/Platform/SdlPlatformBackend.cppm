@@ -1,8 +1,8 @@
 module;
 
-#include <memory>
-
 export module VulkanBackend.Platform.SdlPlatformBackend;
+
+import std;
 
 import VulkanBackend.Platform.SdlPlatform;
 

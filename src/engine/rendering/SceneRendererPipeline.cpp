@@ -1,16 +1,17 @@
 module;
 
-#include <cstdint>
-#include <array>
-
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 
-#include <vulkan/vulkan_raii.hpp>
 #include <logging/logging.hpp>
 
 module VulkanEngine.SceneRenderer;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import Shaders.Engine.ExpandComp;
 import Shaders.Engine.DepthIndirVert;

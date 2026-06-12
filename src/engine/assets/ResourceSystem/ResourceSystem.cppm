@@ -1,23 +1,13 @@
 module;
 
-#include <string>
-#include <unordered_map>
-#include <typeindex>
-#include <memory>
-#include <shared_mutex>
-#include <future>
-#include <thread>
-#include <mutex>
-#include <type_traits>
-#include <any>
-#include <filesystem>
-#include <functional>
-#include <utility>
-#include <cstdint>
-#include <FileLoader/FileLoader.hpp>
-#include <logging/logging.hpp>
+// logging_macros.hpp has no <memory> include, safe in GMF alongside import std;
+#include <logging/logging_macros.hpp>
 
 export module VulkanEngine.ResourceSystem;
+
+import std;
+import logiface;
+import FileLoader;
 
 export namespace VulkanEngine {
 

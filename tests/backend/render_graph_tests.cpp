@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include <vulkan/vulkan.hpp>
 
+import vulkan_hpp;
 import VulkanBackend.RenderGraph;
 
 namespace {

@@ -4,10 +4,10 @@ module;
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
-#include <cstdint>
-#include <optional>
 
 export module App.Components.TransformControlComponent;
+
+import std;
 
 import VulkanBackend.Component;
 import VulkanEngine.Components.Transform;
@@ -16,7 +16,7 @@ import VulkanEngine.MaterialManager;
 
 export namespace App::Components {
 
-enum class RotationMode : uint8_t {
+enum class RotationMode : std::uint8_t {
     Euler,
     Quaternion
 };
@@ -51,7 +51,7 @@ public:
             if (current_slot != texture_slot) {
                 mat_mgr.UpdateMaterialTextureSlot(
                     material_id.value(),
-                    VulkanEngine::BindlessManager::TextureSlot{static_cast<uint16_t>(texture_slot)});
+                    VulkanEngine::BindlessManager::TextureSlot{static_cast<std::uint16_t>(texture_slot)});
             }
         }
     }
@@ -59,7 +59,7 @@ public:
     static auto GetFields() {
         return VulkanEngine::make_fields(
             VulkanEngine::field<glm::vec3>("position"),
-            VulkanEngine::field<uint8_t>("rotation_mode"),
+            VulkanEngine::field<std::uint8_t>("rotation_mode"),
             VulkanEngine::field<glm::vec3>("rotation_euler"),
             VulkanEngine::field<glm::quat>("rotation_quat"),
             VulkanEngine::field<int>("texture_slot")

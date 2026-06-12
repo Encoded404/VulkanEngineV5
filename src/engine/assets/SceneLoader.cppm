@@ -1,11 +1,8 @@
 module;
 
-#include <vector>
-#include <string>
-#include <filesystem>
-#include <cstdint>
-
 export module VulkanEngine.SceneLoader;
+
+import std;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.ResourceSystem;
@@ -26,18 +23,18 @@ struct LoadedMeshData {
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> uvs;
-    std::vector<uint32_t> indices;
+    std::vector<std::uint32_t> indices;
     std::vector<VulkanEngine::SubMesh> submeshes;
 };
 
 struct MeshInfo {
     std::string name;
-    uint32_t vertex_offset = 0;
-    uint32_t vertex_count = 0;
-    uint32_t index_offset = 0;
-    uint32_t index_count = 0;
-    uint32_t first_submesh_index = 0;
-    uint32_t submesh_count = 0;
+    std::uint32_t vertex_offset = 0;
+    std::uint32_t vertex_count = 0;
+    std::uint32_t index_offset = 0;
+    std::uint32_t index_count = 0;
+    std::uint32_t first_submesh_index = 0;
+    std::uint32_t submesh_count = 0;
 };
 
 struct CombinedScene {

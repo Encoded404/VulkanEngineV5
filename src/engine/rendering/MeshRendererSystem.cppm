@@ -3,10 +3,13 @@ module;
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
-#include <cstdint>
-#include <vulkan/vulkan_raii.hpp>
 
 export module VulkanEngine.MeshDrawRecorder;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Component;
 export import VulkanEngine.Components.Transform;
@@ -21,7 +24,7 @@ struct MeshRenderObject {
     vk::DescriptorSet descriptor_set{nullptr};
     const vk::Pipeline* pipeline = nullptr;
     const vk::PipelineLayout* pipeline_layout = nullptr;
-    uint32_t index_count = 0;
+    std::uint32_t index_count = 0;
 };
 
 class MeshDrawRecorder {
@@ -31,8 +34,8 @@ public:
                             const MeshRenderObject& render_object,
                             const glm::mat4& view_matrix,
                             const glm::mat4& projection_matrix,
-                            uint32_t width,
-                            uint32_t height);
+                            std::uint32_t width,
+                            std::uint32_t height);
 };
 
 } // namespace VulkanEngine::MeshDrawRecorder

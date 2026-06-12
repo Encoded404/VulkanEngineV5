@@ -4,11 +4,13 @@ module;
 #include <vector>
 #include <cstdint>
 #include <unordered_set>
+#include <filesystem>
 
-#include <vulkan/vulkan.hpp>
 #include <logging/logging.hpp>
 
 module VulkanEngine.Game;
+
+import vulkan_hpp;
 
 import Shaders.Engine.MainIndirVert;
 import Shaders.Engine.StandardMeshFrag;
@@ -162,7 +164,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         imgui_init_info.device = backend.GetDevice();
         imgui_init_info.queue_family = backend.GetGraphicsQueueFamily();
         imgui_init_info.queue = backend.GetGraphicsQueue();
-        imgui_init_info.api_version = VK_API_VERSION_1_3;
+        imgui_init_info.api_version = vk::ApiVersion13;
 
         [[maybe_unused]] const bool imgui_ok = imgui_system_->Initialize(imgui_init_info);
 

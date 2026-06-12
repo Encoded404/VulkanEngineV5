@@ -5,28 +5,21 @@ module;
 #include <string>
 #include <vector>
 
-#include <vulkan/vulkan.hpp>
-
 module VulkanBackend.RenderGraph;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::RenderGraph {
 
 namespace {
-    static void BeginPassLabel(vk::CommandBuffer cmd, VkDevice dev, const std::string& name) {
-        auto* fn = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
-            ::vkGetDeviceProcAddr(dev, "vkCmdBeginDebugUtilsLabelEXT"));
-        if (!fn) return;
-        VkDebugUtilsLabelEXT label{};
-        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+    static void BeginPassLabel(vk::CommandBuffer cmd, vk::Device /*dev*/, const std::string& name) {
+        vk::DebugUtilsLabelEXT label{};
         label.pLabelName = name.c_str();
-        fn(static_cast<VkCommandBuffer>(cmd), &label);
+        cmd.beginDebugUtilsLabelEXT(label);
     }
 
-    static void EndPassLabel(vk::CommandBuffer cmd, VkDevice dev) {
-        auto* fn = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
-            ::vkGetDeviceProcAddr(dev, "vkCmdEndDebugUtilsLabelEXT"));
-        if (!fn) return;
-        fn(static_cast<VkCommandBuffer>(cmd));
+    static void EndPassLabel(vk::CommandBuffer cmd, vk::Device /*dev*/) {
+        cmd.endDebugUtilsLabelEXT();
     }
 }
 
@@ -88,14 +81,14 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                         barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
                         barrier.oldLayout = IntentToImageLayout(from.layout);
                         barrier.newLayout = IntentToImageLayout(to.layout);
-                        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+                        barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
 
                         const auto format = resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
                             FormatToAspectFlags(format),
-                            0, VK_REMAINING_MIP_LEVELS,
-                            0, VK_REMAINING_ARRAY_LAYERS
+                            0, vk::RemainingMipLevels,
+                            0, vk::RemainingArrayLayers
                         };
 
                         src_stage |= IntentToPipelineStage(from.stage, from.access);
@@ -238,14 +231,14 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                         barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
                         barrier.oldLayout = IntentToImageLayout(from.layout);
                         barrier.newLayout = IntentToImageLayout(to.layout);
-                        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+                        barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
 
                         const auto format = resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
                             FormatToAspectFlags(format),
-                            0, VK_REMAINING_MIP_LEVELS,
-                            0, VK_REMAINING_ARRAY_LAYERS
+                            0, vk::RemainingMipLevels,
+                            0, vk::RemainingArrayLayers
                         };
 
                         src_stage |= IntentToPipelineStage(from.stage, from.access);

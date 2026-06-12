@@ -1,13 +1,14 @@
 module;
 
 #include <cstdint>
-#include <memory>
-#include <vector>
 
 module VulkanEngine.TechniqueManager;
 
-import VulkanEngine.StandardMeshPipeline;
+import std;
 
+import vulkan_hpp;
+
+import VulkanEngine.StandardMeshPipeline;
 
 namespace {
     std::vector<uint32_t> ResolveSpv(const std::vector<uint32_t>& override_spv,
@@ -44,12 +45,12 @@ uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootst
 
     techniques_.push_back(Technique{std::move(graphics_pipeline)});
 
-    VkPipeline pipe = techniques_.back().graphics_pipeline->GetPipeline()
-        ? static_cast<VkPipeline>(**techniques_.back().graphics_pipeline->GetPipeline())
-        : VK_NULL_HANDLE;
-    VkPipelineLayout layout = techniques_.back().graphics_pipeline->GetPipelineLayout()
+    vk::Pipeline pipe = techniques_.back().graphics_pipeline->GetPipeline()
+        ? static_cast<vk::Pipeline>(**techniques_.back().graphics_pipeline->GetPipeline())
+        : nullptr;
+    vk::PipelineLayout layout = techniques_.back().graphics_pipeline->GetPipelineLayout()
         ? *techniques_.back().graphics_pipeline->GetPipelineLayout()
-        : VK_NULL_HANDLE;
+        : nullptr;
     on_technique_changed.Call(id, pipe, layout);
 
     return id;

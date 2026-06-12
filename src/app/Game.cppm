@@ -1,8 +1,8 @@
 module;
 
-#include <filesystem>
-
 export module App.Game;
+
+import std;
 
 export import VulkanEngine.Game;
 import VulkanBackend.Utils.CallbackList;
@@ -11,7 +11,7 @@ export import App.Components.TransformControlComponent;
 
 export namespace App::Game {
 
-enum class RenderMode : uint8_t {
+enum class RenderMode : std::uint8_t {
     Normal,
     Normals,
     NoTextures

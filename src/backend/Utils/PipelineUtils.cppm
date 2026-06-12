@@ -1,9 +1,11 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-#include <vector>
-
 export module VulkanBackend.Utils.PipelineUtils;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export namespace VulkanEngine::Utils {
 
@@ -16,7 +18,7 @@ public:
                                      float x = 0.0f,
                                      float y = 0.0f);
 
-    static vk::Rect2D CreateScissor(uint32_t width, uint32_t height, int32_t offset_x = 0, int32_t offset_y = 0);
+    static vk::Rect2D CreateScissor(std::uint32_t width, std::uint32_t height, std::int32_t offset_x = 0, std::int32_t offset_y = 0);
 
     static vk::PipelineColorBlendAttachmentState CreateDefaultColorBlendAttachment();
     static vk::PipelineColorBlendAttachmentState CreateAlphaBlendAttachment();
@@ -34,14 +36,14 @@ public:
     static vk::PipelineMultisampleStateCreateInfo CreateDefaultMultisampleState();
     static vk::PipelineMultisampleStateCreateInfo CreateMsaaMultisampleState(vk::SampleCountFlagBits samples);
 
-    static vk::VertexInputBindingDescription CreateVertexInputBinding(uint32_t binding,
-                                                                    uint32_t stride,
+    static vk::VertexInputBindingDescription CreateVertexInputBinding(std::uint32_t binding,
+                                                                    std::uint32_t stride,
                                                                     vk::VertexInputRate input_rate);
 
-    static vk::VertexInputAttributeDescription CreateVertexInputAttribute(uint32_t location,
-                                                                        uint32_t binding,
+    static vk::VertexInputAttributeDescription CreateVertexInputAttribute(std::uint32_t location,
+                                                                        std::uint32_t binding,
                                                                         vk::Format format,
-                                                                        uint32_t offset);
+                                                                        std::uint32_t offset);
 
     static vk::PipelineShaderStageCreateInfo CreateShaderStageCreateInfo(vk::ShaderStageFlagBits stage,
                                                                        vk::ShaderModule module,
@@ -49,17 +51,17 @@ public:
                                                                        const vk::SpecializationInfo* specialization_info = nullptr);
 
     static vk::PipelineInputAssemblyStateCreateInfo CreateInputAssemblyState(vk::PrimitiveTopology topology,
-                                                                           vk::Bool32 primitive_restart_enable = VK_FALSE);
+                                                                           vk::Bool32 primitive_restart_enable = vk::False);
 
-    static vk::PipelineTessellationStateCreateInfo CreateTessellationState(uint32_t patch_control_points = 0);
+    static vk::PipelineTessellationStateCreateInfo CreateTessellationState(std::uint32_t patch_control_points = 0);
 
     static vk::PipelineViewportStateCreateInfo CreateViewportState(const std::vector<vk::Viewport>& viewports,
                                                                  const std::vector<vk::Rect2D>& scissors);
 
-    static vk::PipelineViewportStateCreateInfo CreateDynamicViewportState(uint32_t viewport_count, uint32_t scissor_count);
+    static vk::PipelineViewportStateCreateInfo CreateDynamicViewportState(std::uint32_t viewport_count, std::uint32_t scissor_count);
 
     static vk::PipelineColorBlendStateCreateInfo CreateColorBlendState(const std::vector<vk::PipelineColorBlendAttachmentState>& attachments,
-                                                                     vk::Bool32 logic_op_enable = VK_FALSE,
+                                                                     vk::Bool32 logic_op_enable = vk::False,
                                                                      vk::LogicOp logic_op = vk::LogicOp::eClear);
 
     static vk::PipelineDynamicStateCreateInfo CreateDynamicState(const std::vector<vk::DynamicState>& dynamic_states);

@@ -1,11 +1,11 @@
 module;
 
-#include <cstdint>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.MaterialManager;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanEngine.MaterialManager.MaterialId;
 export import VulkanEngine.BindlessManager.TextureSlot;
@@ -19,7 +19,7 @@ export namespace VulkanEngine::MaterialManager {
     using TechniqueManager::TechniqueId;
     using BindlessManager::TextureSlot;
 
-enum class BlendMode : uint8_t {
+enum class BlendMode : std::uint8_t {
     Opaque = 0,
     Cutout,
     Transparent
@@ -49,7 +49,7 @@ public:
     [[nodiscard]] const MaterialDefinition& GetMaterial(MaterialId id) const;
     void UpdateMaterialTextureSlot(MaterialId id, TextureSlot slot);
     void UpdateMaterialTechnique(MaterialId id, TechniqueId tech_id);
-    [[nodiscard]] uint16_t GetMaterialCount() const { return static_cast<uint16_t>(materials_.size()); }
+    [[nodiscard]] std::uint16_t GetMaterialCount() const { return static_cast<std::uint16_t>(materials_.size()); }
 
     MaterialManager(const MaterialManager&) = delete;
     MaterialManager& operator=(const MaterialManager&) = delete;

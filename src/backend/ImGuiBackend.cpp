@@ -8,11 +8,12 @@ module;
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
-#include <vulkan/vulkan.hpp>
 
 #include <logging/logging.hpp>
 
 module VulkanBackend.ImGui;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::Backend::ImGui {
 

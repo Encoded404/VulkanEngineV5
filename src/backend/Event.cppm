@@ -1,22 +1,18 @@
 module;
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <typeindex>
-#include <vector>
-
 export module VulkanBackend.Event;
+
+import std;
 
 export namespace VulkanEngine::Backend::Event {
 
-enum class EventCategory : uint8_t {
+enum class EventCategory : std::uint8_t {
     System,
     Platform,
     Input
 };
 
-enum class EventType : uint8_t {
+enum class EventType : std::uint8_t {
     Quit,
     WindowResized,
     WindowMinimized,
@@ -77,12 +73,12 @@ protected:
 
 class WindowResizedEvent final : public EventBase {
 public:
-    WindowResizedEvent(uint32_t width, uint32_t height);
+    WindowResizedEvent(std::uint32_t width, std::uint32_t height);
 
     [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::WindowResized; }
 
-    uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
 protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
@@ -110,11 +106,11 @@ protected:
 
 class KeyDownEvent final : public EventBase {
 public:
-    KeyDownEvent(int32_t keycode, bool repeat = false);
+    KeyDownEvent(std::int32_t keycode, bool repeat = false);
 
     [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::KeyDown; }
 
-    int32_t keycode = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t keycode = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     bool repeat = false; // NOLINT(misc-non-private-member-variables-in-classes)
 
 protected:
@@ -123,11 +119,11 @@ protected:
 
 class KeyUpEvent final : public EventBase {
 public:
-    explicit KeyUpEvent(int32_t keycode);
+    explicit KeyUpEvent(std::int32_t keycode);
 
     [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::KeyUp; }
 
-    int32_t keycode = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t keycode = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
 protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
@@ -135,13 +131,13 @@ protected:
 
 class MouseButtonDownEvent final : public EventBase {
 public:
-    MouseButtonDownEvent(int32_t button, int32_t x, int32_t y);
+    MouseButtonDownEvent(std::int32_t button, std::int32_t x, std::int32_t y);
 
     [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::MouseButtonDown; }
 
-    int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t x = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t y = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t x = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t y = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
 protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
@@ -149,13 +145,13 @@ protected:
 
 class MouseButtonUpEvent final : public EventBase {
 public:
-    MouseButtonUpEvent(int32_t button, int32_t x, int32_t y);
+    MouseButtonUpEvent(std::int32_t button, std::int32_t x, std::int32_t y);
 
     [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::MouseButtonUp; }
 
-    int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t x = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t y = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t x = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t y = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
 protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;

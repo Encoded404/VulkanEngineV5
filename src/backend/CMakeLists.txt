@@ -22,8 +22,8 @@ endif()
 
 target_link_libraries(${BACKEND_TARGET} PRIVATE
     SDL3::SDL3
-    Vulkan::Vulkan
     imgui::imgui
+    Vulkan::HppModule
 )
 
 target_include_directories(${BACKEND_TARGET} PUBLIC
@@ -45,11 +45,6 @@ if(CMAKE_CONFIGURATION_TYPES)
         "$<$<CONFIG:Release>:-O3>"
     )
 endif()
-
-target_precompile_headers(${BACKEND_TARGET} PRIVATE
-    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
-    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
-)
 
 set_source_files_properties(
     Runtime/VulkanInstance.cpp

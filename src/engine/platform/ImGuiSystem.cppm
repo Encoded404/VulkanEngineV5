@@ -1,14 +1,16 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <vulkan/vulkan.hpp>
-
 export module VulkanEngine.ImGui;
+
+import std;
+
+import vulkan_hpp;
 
 export import VulkanBackend.ImGui;
 import VulkanBackend.Utils.CallbackList;
+
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
 
 export namespace VulkanEngine::ImGui {
 
@@ -27,9 +29,9 @@ struct ImGuiSystemInitInfo {
     vk::Instance instance{};
     vk::PhysicalDevice physical_device{};
     vk::Device device{};
-    uint32_t queue_family = UINT32_MAX;
+    std::uint32_t queue_family = UINT32_MAX;
     vk::Queue queue{};
-    uint32_t api_version = VK_API_VERSION_1_0;
+    std::uint32_t api_version = vk::ApiVersion13;
 };
 
 class ImGuiSystem {
@@ -44,8 +46,8 @@ public:
 
     Utils::CallbackList<void()> draw_callbacks; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, uint32_t width, uint32_t height);
-    void OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format);
+    void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, std::uint32_t width, std::uint32_t height);
+    void OnSwapchainRecreated(std::uint32_t new_image_count, vk::Format new_format);
 
     [[nodiscard]] const ImGuiConfig& GetConfig() const { return config_; }
     void SetConfig(const ImGuiConfig& config) { config_ = config; }

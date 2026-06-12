@@ -1,13 +1,13 @@
 module;
 
-#include <cstdint>
-#include <memory>
-
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
-#include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_raii.hpp>
 
 export module VulkanEngine.Renderer;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Component;
@@ -48,7 +48,7 @@ public:
                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                      VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                      VulkanEngine::ImGui::ImGuiSystem* imgui,
-                     uint32_t image_index);
+                     std::uint32_t image_index);
 
 private:
     VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
@@ -61,12 +61,12 @@ private:
     VulkanEngine::SceneRenderer::SceneRenderer* current_scene_renderer_ = nullptr;
     VulkanEngine::ImGui::ImGuiSystem* current_imgui_ = nullptr;
     vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};
-    uint32_t current_width_ = 0;
-    uint32_t current_height_ = 0;
-    uint32_t current_image_index_ = 0;
+    std::uint32_t current_width_ = 0;
+    std::uint32_t current_height_ = 0;
+    std::uint32_t current_image_index_ = 0;
     glm::mat4 current_view_proj_{1.0f};
-    uint32_t frame_counter_ = 0;
-    uint32_t last_swapchain_image_count_ = 0;
+    std::uint32_t frame_counter_ = 0;
+    std::uint32_t last_swapchain_image_count_ = 0;
 
 
     static constexpr vk::QueryPipelineStatisticFlags GPU_STATS_FLAGS =

@@ -1,12 +1,11 @@
 module;
 
-#include <cstdint>
-#include <cstring>
-#include <memory>
-
-#include <vulkan/vulkan_raii.hpp>
-
 module VulkanEngine.GpuTexture;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.MemoryUtils;

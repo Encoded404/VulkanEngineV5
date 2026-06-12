@@ -1,15 +1,13 @@
 module;
 
-#include <cstddef>
-#include <cstdint>
-#include <filesystem>
-#include <string>
-#include <vector>
-
-#include <vulkan/vulkan.hpp>
 #include <FileLoader/Types.hpp>
 
 export module VulkanEngine.FileLoaders.TextureLoaders;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export namespace VulkanEngine::FileLoaders::Textures {
 
@@ -23,11 +21,11 @@ struct AlphaAnalysis {
 [[nodiscard]] AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels);
 
 struct TextureData {
-    uint32_t width = 0; //NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t height = 0; //NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t mip_levels = 1; //NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t layer_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t face_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0; //NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t height = 0; //NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t mip_levels = 1; //NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t layer_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t face_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
     vk::Format vk_format = vk::Format::eUndefined; //NOLINT(misc-non-private-member-variables-in-classes)
     AlphaAnalysis alpha_analysis{}; //NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<std::byte> pixels{}; //NOLINT(misc-non-private-member-variables-in-classes)

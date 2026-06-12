@@ -1,20 +1,17 @@
 module;
 
-#include <array>
-#include <cstdint>
-#include <functional>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <vulkan/vulkan.hpp>
-
 export module VulkanBackend.RenderGraph;
+
+import std;
+
+import vulkan_hpp;
+
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
 
 export namespace VulkanEngine::RenderGraph {
 
-enum class PipelineStageIntent : uint8_t {
+enum class PipelineStageIntent : std::uint8_t {
     None,
     Transfer,
     ColorAttachment,
@@ -28,14 +25,14 @@ enum class PipelineStageIntent : uint8_t {
     BottomOfPipe
 };
 
-enum class AccessIntent : uint8_t {
+enum class AccessIntent : std::uint8_t {
     None,
     Read,
     Write,
     ReadWrite
 };
 
-enum class ImageLayoutIntent : uint8_t {
+enum class ImageLayoutIntent : std::uint8_t {
     Undefined,
     General,
     ColorAttachment,
@@ -47,7 +44,7 @@ enum class ImageLayoutIntent : uint8_t {
     DepthReadOnly
 };
 
-enum class QueueType : uint8_t {
+enum class QueueType : std::uint8_t {
     Graphics,
     Compute,
     Transfer
@@ -86,14 +83,14 @@ struct ResourceState {
     }
 };
 
-enum class ResourceKind : uint8_t {
+enum class ResourceKind : std::uint8_t {
     Image,
     Buffer
 };
 
 struct ResourceHandle {
-    uint32_t index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t generation = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t generation = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsValid() const noexcept {
         return index != UINT32_MAX;
@@ -103,8 +100,8 @@ struct ResourceHandle {
 };
 
 struct PassHandle {
-    uint32_t index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t generation = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t generation = 0; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsValid() const noexcept {
         return index != UINT32_MAX;
@@ -113,13 +110,13 @@ struct PassHandle {
     friend bool operator==(const PassHandle&, const PassHandle&) = default;
 };
 
-enum class DiagnosticSeverity : uint8_t {
+enum class DiagnosticSeverity : std::uint8_t {
     Info,
     Warning,
     Error
 };
 
-enum class DiagnosticCode : uint8_t {
+enum class DiagnosticCode : std::uint8_t {
     None,
     EmptyGraph,
     InvalidExplicitDependency,
@@ -139,10 +136,10 @@ struct CompileDiagnostic {
 
 struct TransientImageInfo {
     vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t mip_levels = 1; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t array_layers = 1; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t mip_levels = 1; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t array_layers = 1; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::SampleCountFlagBits sample_count = vk::SampleCountFlagBits::e1; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageTiling tiling = vk::ImageTiling::eOptimal; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -162,10 +159,10 @@ struct ImageBarrier {
     vk::ImageLayout old_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout new_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::Image image = {}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageSubresourceRange subresource_range = {}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t src_queue_family = vk::QueueFamilyIgnored; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t dst_queue_family = vk::QueueFamilyIgnored; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct BufferBarrier {
@@ -173,9 +170,9 @@ struct BufferBarrier {
     vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::AccessFlags src_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::AccessFlags dst_access = {}; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t src_queue_family = vk::QueueFamilyIgnored; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t dst_queue_family = vk::QueueFamilyIgnored; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct AttachmentInfo {
@@ -199,7 +196,7 @@ struct PassExecutionCallback {
 };
 
 struct ResourceTransition {
-    uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t resource_index = UINT32_MAX; // NOLINT(misc-non-private-member-variables-in-classes)
     ResourceState target_state{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
@@ -226,8 +223,8 @@ struct ResourceLifetime {
     std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
     bool imported = false; // NOLINT(misc-non-private-member-variables-in-classes)
     bool transient = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t first_pass = -1; // NOLINT(misc-non-private-member-variables-in-classes)
-    int32_t last_pass = -1; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t first_pass = -1; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t last_pass = -1; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct CompiledRenderGraph {
@@ -240,13 +237,13 @@ struct CompiledRenderGraph {
     mutable std::vector<bool> has_initial_state{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<vk::Image> resource_images{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<vk::Format> resource_formats{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    mutable VkDevice device = VK_NULL_HANDLE; // NOLINT(misc-non-private-member-variables-in-classes)
+    mutable vk::Device device = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
 
     void Execute(const void* user_data, vk::CommandBuffer command_buffer) const;
-    void SetImportedResourceState(uint32_t resource_index, ResourceState state) const;
-    void SetResourceImage(uint32_t resource_index, vk::Image image);
-    void SetResourceFormat(uint32_t resource_index, vk::Format format);
-    void SetDevice(VkDevice dev) const { device = dev; }
+    void SetImportedResourceState(std::uint32_t resource_index, ResourceState state) const;
+    void SetResourceImage(std::uint32_t resource_index, vk::Image image);
+    void SetResourceFormat(std::uint32_t resource_index, vk::Format format);
+    void SetDevice(vk::Device dev) const { device = dev; }
 };
 
 class RenderGraphBuilder {
@@ -285,7 +282,7 @@ private:
     struct ResourceNode {
         std::string name{};
         ResourceKind kind = ResourceKind::Image;
-        uint32_t generation = 1;
+        std::uint32_t generation = 1;
         bool imported = false;
         bool transient = false;
         bool has_initial_state = false;
@@ -299,7 +296,7 @@ private:
     struct PassNode {
         std::string name{};
         QueueType queue = QueueType::Graphics;
-        uint32_t generation = 1;
+        std::uint32_t generation = 1;
         bool enabled = true;
         std::vector<ReadInfo> reads{};
         std::vector<ResourceHandle> writes{};

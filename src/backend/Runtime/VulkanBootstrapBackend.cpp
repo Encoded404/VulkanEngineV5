@@ -1,7 +1,5 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-
 #include <memory>
 #include <vector>
 //# include <cmath> clang tidy says its unused
@@ -9,6 +7,8 @@ module;
 #include <logging/logging.hpp>
 
 module VulkanBackend.Runtime.VulkanBootstrapBackend;
+
+import vulkan_hpp;
 
 import VulkanBackend.Component;
 import VulkanBackend.Runtime.VulkanInstance;
@@ -110,7 +110,7 @@ public:
         constexpr uint64_t timeout = 1000000000; // 1 second
 
         // Wait for previous work to finish
-        if (vk_device.waitForFences({*vk_in_flight_fence}, VK_TRUE, timeout) != vk::Result::eSuccess)
+        if (vk_device.waitForFences({*vk_in_flight_fence}, vk::True, timeout) != vk::Result::eSuccess)
         {
             LOGIFACE_LOG(error, "Failed to wait for in-flight fence during AcquireNextImage.");
             return false;

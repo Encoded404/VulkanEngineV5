@@ -1,11 +1,11 @@
 module;
 
-#include <cstdint>
-#include <memory>
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.GpuDescriptorSet;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Utils.VulkanDebugUtils;
@@ -19,13 +19,13 @@ namespace VulkanEngine::GpuResources {
 export namespace VulkanEngine::GpuResources {
 
     struct DescriptorPoolConfig {
-        uint32_t max_sets = 100;
-        uint32_t max_combined_image_samplers = 100;
-        uint32_t max_uniform_buffers = 10;
-        uint32_t max_storage_buffers = 10;
-        uint32_t max_storage_images = 10;
-        uint32_t max_sampled_images = 0;
-        uint32_t max_samplers = 0;
+        std::uint32_t max_sets = 100;
+        std::uint32_t max_combined_image_samplers = 100;
+        std::uint32_t max_uniform_buffers = 10;
+        std::uint32_t max_storage_buffers = 10;
+        std::uint32_t max_storage_images = 10;
+        std::uint32_t max_sampled_images = 0;
+        std::uint32_t max_samplers = 0;
     };
 
     class DescriptorPool : public std::enable_shared_from_this<DescriptorPool> {
@@ -74,36 +74,36 @@ export namespace VulkanEngine::GpuResources {
         GpuDescriptorSet(GpuDescriptorSet&& other) noexcept;
         GpuDescriptorSet& operator=(GpuDescriptorSet&& other) noexcept;
 
-        void UpdateBinding(uint32_t binding,
+        void UpdateBinding(std::uint32_t binding,
                            const GpuTexture& texture,
                            vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) const;
 
-        void UpdateBinding(uint32_t binding,
+        void UpdateBinding(std::uint32_t binding,
                            const GpuBuffer& buffer,
                            vk::DescriptorType type,
-                           uint64_t size = 0,
-                           uint64_t offset = 0) const;
+                           std::uint64_t size = 0,
+                           std::uint64_t offset = 0) const;
 
-        void UpdateBinding(uint32_t binding,
-                           uint32_t array_element,
+        void UpdateBinding(std::uint32_t binding,
+                           std::uint32_t array_element,
                            const GpuBuffer& buffer,
                            vk::DescriptorType type,
-                           uint64_t size = 0,
-                           uint64_t offset = 0) const;
+                           std::uint64_t size = 0,
+                           std::uint64_t offset = 0) const;
 
-        void UpdateBinding(uint32_t binding,
+        void UpdateBinding(std::uint32_t binding,
                            vk::Buffer buffer,
                            vk::DescriptorType type,
-                           uint64_t size,
-                           uint64_t offset) const;
+                           std::uint64_t size,
+                           std::uint64_t offset) const;
 
-        void UpdateBinding(uint32_t binding,
-                           VkImageView image_view,
+        void UpdateBinding(std::uint32_t binding,
+                           vk::ImageView image_view,
                            vk::DescriptorType type,
                            vk::ImageLayout layout) const;
 
-        void UpdateBinding(uint32_t binding,
-                           VkSampler sampler) const;
+        void UpdateBinding(std::uint32_t binding,
+                           vk::Sampler sampler) const;
 
         void SetDebugName(const vk::raii::Device& dev, const std::string& name) const;
 

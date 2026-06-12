@@ -1,19 +1,14 @@
 module;
 
-#include <algorithm>
-#include <cstdint>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <vector>
-
 export module VulkanBackend.Utils.CallbackList;
+
+import std;
 
 export namespace VulkanEngine::Utils {
 
 struct Handle {
-    uint32_t index;
-    uint32_t generation;
+    std::uint32_t index;
+    std::uint32_t generation;
 };
 
 template<typename Signature>
@@ -73,29 +68,29 @@ class CallbackList : public CallbackBase<Ret(Args...)> {
     using typename CallbackBase<Ret(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
 public:
     Handle RegisterRaw(Callback cb) override {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb)};
         return Handle{idx, gen};
     }
@@ -136,29 +131,29 @@ class CallbackList<void(Args...)> : public CallbackBase<void(Args...)> {
     using typename CallbackBase<void(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
 public:
     Handle RegisterRaw(Callback cb) override {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb)};
         return Handle{idx, gen};
     }
@@ -185,29 +180,29 @@ class CallbackList<bool(Args...)> : public CallbackBase<bool(Args...)> {
     using typename CallbackBase<bool(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
 public:
     Handle RegisterRaw(Callback cb) override {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb)};
         return Handle{idx, gen};
     }
@@ -237,28 +232,28 @@ class OrderedCallbackList : public CallbackBase<Ret(Args...)> {
     using typename CallbackBase<Ret(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
         int priority;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> order_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> order_;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
-    void InsertInOrder(uint32_t slot_idx, int priority) {
+    void InsertInOrder(std::uint32_t slot_idx, int priority) {
         auto it = order_.begin();
         while (it != order_.end()) {
             auto& slot = slots_[*it];
@@ -278,8 +273,8 @@ public:
     }
 
     Handle RegisterRawWithPriority(Callback cb, int priority) {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb), priority};
         InsertInOrder(idx, priority);
         return Handle{idx, gen};
@@ -297,7 +292,7 @@ public:
     Ret Call(Args... args) const {
         Ret result{};
         bool first = true;
-        for (const uint32_t idx : order_) {
+        for (const std::uint32_t idx : order_) {
             const auto& slot = slots_[idx];
             if (slot) {
                 if constexpr (std::is_same_v<Ret, void>) {
@@ -323,28 +318,28 @@ class OrderedCallbackList<void(Args...)> : public CallbackBase<void(Args...)> {
     using typename CallbackBase<void(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
         int priority;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> order_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> order_;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
-    void InsertInOrder(uint32_t slot_idx, int priority) {
+    void InsertInOrder(std::uint32_t slot_idx, int priority) {
         auto it = order_.begin();
         while (it != order_.end()) {
             auto& slot = slots_[*it];
@@ -364,8 +359,8 @@ public:
     }
 
     Handle RegisterRawWithPriority(Callback cb, int priority) {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb), priority};
         InsertInOrder(idx, priority);
         return Handle{idx, gen};
@@ -381,7 +376,7 @@ public:
     }
 
     void Call(Args... args) const {
-        for (const uint32_t idx : order_) {
+        for (const std::uint32_t idx : order_) {
             const auto& slot = slots_[idx];
             if (slot) {
                 slot->callback(args...);
@@ -395,28 +390,28 @@ class OrderedCallbackList<bool(Args...)> : public CallbackBase<bool(Args...)> {
     using typename CallbackBase<bool(Args...)>::Callback;
 
     struct Entry {
-        uint32_t generation;
+        std::uint32_t generation;
         Callback callback;
         int priority;
     };
 
     std::vector<std::optional<Entry>> slots_;
-    std::vector<uint32_t> order_;
-    std::vector<uint32_t> free_indices_;
-    uint32_t next_generation_ = 1;
+    std::vector<std::uint32_t> order_;
+    std::vector<std::uint32_t> free_indices_;
+    std::uint32_t next_generation_ = 1;
 
-    uint32_t AcquireSlot() {
+    std::uint32_t AcquireSlot() {
         if (!free_indices_.empty()) {
-            const uint32_t idx = free_indices_.back();
+            const std::uint32_t idx = free_indices_.back();
             free_indices_.pop_back();
             return idx;
         }
-        const uint32_t idx = static_cast<uint32_t>(slots_.size());
+        const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
         slots_.emplace_back();
         return idx;
     }
 
-    void InsertInOrder(uint32_t slot_idx, int priority) {
+    void InsertInOrder(std::uint32_t slot_idx, int priority) {
         auto it = order_.begin();
         while (it != order_.end()) {
             auto& slot = slots_[*it];
@@ -436,8 +431,8 @@ public:
     }
 
     Handle RegisterRawWithPriority(Callback cb, int priority) {
-        const uint32_t idx = AcquireSlot();
-        const uint32_t gen = next_generation_++;
+        const std::uint32_t idx = AcquireSlot();
+        const std::uint32_t gen = next_generation_++;
         slots_[idx] = Entry{gen, std::move(cb), priority};
         InsertInOrder(idx, priority);
         return Handle{idx, gen};
@@ -453,7 +448,7 @@ public:
     }
 
     bool Call(Args... args) const {
-        for (const uint32_t idx : order_) {
+        for (const std::uint32_t idx : order_) {
             const auto& slot = slots_[idx];
             if (slot) {
                 if (!slot->callback(args...)) {

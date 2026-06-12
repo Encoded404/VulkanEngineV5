@@ -1,5 +1,5 @@
 add_library(${ENGINE_TARGET} STATIC)
-target_compile_features(${ENGINE_TARGET} PUBLIC cxx_std_20)
+target_compile_features(${ENGINE_TARGET} PUBLIC cxx_std_23)
 target_link_libraries(${ENGINE_TARGET} PUBLIC logiface::logiface)
 
 target_link_libraries(${ENGINE_TARGET} PRIVATE
@@ -10,16 +10,31 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
 find_package(Vulkan REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
-find_package(fastgltf CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
+
+# fastgltf as a git submodule, built with C++20 modules + import std;
+# We copy the source to the build directory and patch it there so the
+# submodule tree is never modified.
+include(PatchFastgltfSubmodule)
+patch_fastgltf_submodule(
+    SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/fastgltf"
+    PATCHED_DIR_VAR _patched_fastgltf_dir
+)
+set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "")
+set(FASTGLTF_ENABLE_CPP_MODULES ON CACHE BOOL "")
+set(FASTGLTF_USE_STD_MODULE ON CACHE BOOL "")
+add_subdirectory(${_patched_fastgltf_dir} ${CMAKE_CURRENT_BINARY_DIR}/fastgltf)
 find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
+# fastgltf built as C++20 module with FASTGLTF_USE_STD_MODULE=ON via overlay port.
+# The fastgltf::module target uses import std; internally, avoiding clang bug
+# LLVM #138558 (friend/using-decl conflict in bits/shared_ptr.h).
 target_link_libraries(${ENGINE_TARGET} PRIVATE
-    Vulkan::Vulkan
+    Vulkan::HppModule
     KTX::ktx
     glm::glm
-    fastgltf::fastgltf
+    fastgltf::module
     tinyobjloader::tinyobjloader
     imgui::imgui
 )
@@ -47,11 +62,6 @@ if(CMAKE_CONFIGURATION_TYPES)
         "$<$<CONFIG:Release>:-O3>"
     )
 endif()
-
-target_precompile_headers(${ENGINE_TARGET} PRIVATE
-    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
-    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
-)
 
 target_sources(${ENGINE_TARGET} PRIVATE
     platform/Input.cpp

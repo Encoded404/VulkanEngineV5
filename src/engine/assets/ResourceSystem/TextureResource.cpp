@@ -1,16 +1,14 @@
 module;
 
-#include <cstddef>
-#include <filesystem>
-#include <string>
-#include <vector>
-
 #include <FileLoader/Types.hpp>
-#include <vulkan/vulkan.hpp>
 
 #include <logging/logging.hpp>
 
 module VulkanEngine.ResourceSystem.TextureResource;
+
+import std;
+
+import vulkan_hpp;
 
 import VulkanEngine.FileLoaders.TextureLoaders;
 

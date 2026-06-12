@@ -6,11 +6,12 @@ module;
 #include <utility>
 #include <vector>
 
-#include <vulkan/vulkan.hpp>
 
 #include <logging/logging.hpp>
 
 module VulkanBackend.RenderGraph;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::RenderGraph {
 

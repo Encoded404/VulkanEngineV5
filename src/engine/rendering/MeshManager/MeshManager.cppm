@@ -1,9 +1,5 @@
 module;
 
-#include <array>
-#include <cstdint>
-#include <vector>
-
 export module VulkanEngine.MeshManager;
 
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
@@ -12,20 +8,27 @@ export import VulkanEngine.GpuResources.MeshData;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.Mesh.MeshTypes;
 
+import std;
+
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
+
+import vulkan_hpp;
+
 export namespace VulkanEngine {
 
 class MeshManager {
 public:
-    static constexpr uint32_t INVALID_HANDLE = UINT32_MAX;
-    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
+    static constexpr std::uint32_t INVALID_HANDLE = UINT32_MAX;
+    static constexpr std::uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
-    enum class Strategy : uint8_t { Persistent, Streamed };
+    enum class Strategy : std::uint8_t { Persistent, Streamed };
 
     struct GpuMeshInfo {
         VulkanEngine::GpuResources::HeapAllocation vertex_allocation{};
         VulkanEngine::GpuResources::HeapAllocation index_allocation{};
-        uint32_t vertex_buffer_index = 0;
-        uint32_t index_buffer_index = 0;
+        std::uint32_t vertex_buffer_index = 0;
+        std::uint32_t index_buffer_index = 0;
         std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_vertex_alloc{};
         std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_index_alloc{};
         std::vector<SubMesh> sub_meshes;
@@ -33,7 +36,7 @@ public:
 
     struct Handle {
         // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-        uint32_t id = INVALID_HANDLE;
+        std::uint32_t id = INVALID_HANDLE;
         // NOLINTEND(misc-non-private-member-variables-in-classes)
         [[nodiscard]] bool IsValid() const { return id != INVALID_HANDLE; }
     };
@@ -52,7 +55,7 @@ public:
                     VulkanEngine::GpuResources::StagingManager* staging_mgr,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
-                    uint32_t frames_in_flight);
+                    std::uint32_t frames_in_flight);
     void Shutdown();
 
     Handle UploadPersistent(const VulkanEngine::GpuResources::MeshData& data);
@@ -60,20 +63,20 @@ public:
     Handle RegisterStreamed(const VulkanEngine::GpuResources::MeshData& initial_data);
 
     void UpdateStreamed(Handle handle, const VulkanEngine::GpuResources::MeshData& data,
-                        uint32_t frame_index);
+                        std::uint32_t frame_index);
 
     void Remove(Handle handle);
 
-    void EndFrame(uint32_t frame_index);
+    void EndFrame(std::uint32_t frame_index);
 
     [[nodiscard]] const GpuMeshInfo* GetMeshInfo(Handle handle) const;
 
-    [[nodiscard]] vk::Buffer GetDynamicVertexBuffer(uint32_t fif_index, uint32_t buffer_index) const;
-    [[nodiscard]] vk::Buffer GetDynamicIndexBuffer(uint32_t fif_index, uint32_t buffer_index) const;
-    [[nodiscard]] uint64_t GetDynamicVertexBlockSize(uint32_t fif_index) const;
-    [[nodiscard]] uint64_t GetDynamicIndexBlockSize(uint32_t fif_index) const;
-    [[nodiscard]] uint32_t GetDynamicVertexBlockCount(uint32_t fif_index) const;
-    [[nodiscard]] uint32_t GetDynamicIndexBlockCount(uint32_t fif_index) const;
+    [[nodiscard]] vk::Buffer GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
+    [[nodiscard]] vk::Buffer GetDynamicIndexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
+    [[nodiscard]] std::uint64_t GetDynamicVertexBlockSize(std::uint32_t fif_index) const;
+    [[nodiscard]] std::uint64_t GetDynamicIndexBlockSize(std::uint32_t fif_index) const;
+    [[nodiscard]] std::uint32_t GetDynamicVertexBlockCount(std::uint32_t fif_index) const;
+    [[nodiscard]] std::uint32_t GetDynamicIndexBlockCount(std::uint32_t fif_index) const;
 
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
@@ -86,7 +89,7 @@ private:
     struct DeferredFree {
         VulkanEngine::GpuResources::HeapAllocation allocation;
         VulkanEngine::GpuResources::DeviceBufferHeap* heap = nullptr;
-        int32_t frames_remaining = 0;
+        std::int32_t frames_remaining = 0;
     };
 
     VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
@@ -97,9 +100,9 @@ private:
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps_ = nullptr;
 
     std::vector<MeshEntry> entries_;
-    std::vector<uint32_t> free_handles_;
+    std::vector<std::uint32_t> free_handles_;
     std::vector<DeferredFree> deferred_free_queue_;
-    uint32_t frames_in_flight_ = 3;
+    std::uint32_t frames_in_flight_ = 3;
 };
 
 } // namespace VulkanEngine

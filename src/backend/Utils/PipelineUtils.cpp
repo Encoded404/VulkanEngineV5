@@ -1,9 +1,10 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-#include <vector>
-
 module VulkanBackend.Utils.PipelineUtils;
+
+import std;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::Utils {
 
@@ -36,13 +37,13 @@ vk::PipelineColorBlendAttachmentState PipelineUtils::CreateDefaultColorBlendAtta
                                 vk::ColorComponentFlagBits::eG |
                                 vk::ColorComponentFlagBits::eB |
                                 vk::ColorComponentFlagBits::eA;
-    attachment.blendEnable = VK_FALSE;
+    attachment.blendEnable = vk::False;
     return attachment;
 }
 
 vk::PipelineColorBlendAttachmentState PipelineUtils::CreateAlphaBlendAttachment() {
     vk::PipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
-    attachment.blendEnable = VK_TRUE;
+    attachment.blendEnable = vk::True;
     attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
     attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
     attachment.colorBlendOp = vk::BlendOp::eAdd;
@@ -54,7 +55,7 @@ vk::PipelineColorBlendAttachmentState PipelineUtils::CreateAlphaBlendAttachment(
 
 vk::PipelineColorBlendAttachmentState PipelineUtils::CreateAdditiveBlendAttachment() {
     vk::PipelineColorBlendAttachmentState attachment = CreateDefaultColorBlendAttachment();
-    attachment.blendEnable = VK_TRUE;
+    attachment.blendEnable = vk::True;
     attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
     attachment.dstColorBlendFactor = vk::BlendFactor::eOne;
     attachment.colorBlendOp = vk::BlendOp::eAdd;
@@ -72,11 +73,11 @@ vk::PipelineColorBlendAttachmentState PipelineUtils::CreateNoBlendAttachment() {
 
 vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateDefaultDepthStencilState() {
     vk::PipelineDepthStencilStateCreateInfo info{};
-    info.depthTestEnable = VK_TRUE;
-    info.depthWriteEnable = VK_TRUE;
+    info.depthTestEnable = vk::True;
+    info.depthWriteEnable = vk::True;
     info.depthCompareOp = vk::CompareOp::eLess;
-    info.depthBoundsTestEnable = VK_FALSE;
-    info.stencilTestEnable = VK_FALSE;
+    info.depthBoundsTestEnable = vk::False;
+    info.stencilTestEnable = vk::False;
     info.minDepthBounds = 0.0f;
     info.maxDepthBounds = 1.0f;
     return info;
@@ -84,25 +85,25 @@ vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateDefaultDepthStencil
 
 vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateDepthTestOnlyState() {
     vk::PipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
-    info.depthWriteEnable = VK_FALSE;
+    info.depthWriteEnable = vk::False;
     return info;
 }
 
 vk::PipelineDepthStencilStateCreateInfo PipelineUtils::CreateNoDepthTestState() {
     vk::PipelineDepthStencilStateCreateInfo info = CreateDefaultDepthStencilState();
-    info.depthTestEnable = VK_FALSE;
-    info.depthWriteEnable = VK_FALSE;
+    info.depthTestEnable = vk::False;
+    info.depthWriteEnable = vk::False;
     return info;
 }
 
 vk::PipelineRasterizationStateCreateInfo PipelineUtils::CreateDefaultRasterizationState() {
     vk::PipelineRasterizationStateCreateInfo info{};
-    info.depthClampEnable = VK_FALSE;
-    info.rasterizerDiscardEnable = VK_FALSE;
+    info.depthClampEnable = vk::False;
+    info.rasterizerDiscardEnable = vk::False;
     info.polygonMode = vk::PolygonMode::eFill;
     info.cullMode = vk::CullModeFlagBits::eFront;
     info.frontFace = vk::FrontFace::eClockwise;
-    info.depthBiasEnable = VK_FALSE;
+    info.depthBiasEnable = vk::False;
     info.lineWidth = 1.0f;
     return info;
 }
@@ -122,7 +123,7 @@ vk::PipelineRasterizationStateCreateInfo PipelineUtils::CreateNoCullRasterizatio
 vk::PipelineMultisampleStateCreateInfo PipelineUtils::CreateDefaultMultisampleState() {
     vk::PipelineMultisampleStateCreateInfo info{};
     info.rasterizationSamples = vk::SampleCountFlagBits::e1;
-    info.sampleShadingEnable = VK_FALSE;
+    info.sampleShadingEnable = vk::False;
     return info;
 }
 

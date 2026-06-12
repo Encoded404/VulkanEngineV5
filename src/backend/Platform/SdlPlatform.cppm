@@ -1,18 +1,17 @@
 module;
 
-#include <memory>
-#include <string>
-
 #include <SDL3/SDL_video.h>
 
 export module VulkanBackend.Platform.SdlPlatform;
+
+import std;
 
 import VulkanBackend.Event;
 import VulkanBackend.Utils.CallbackList;
 
 export namespace VulkanEngine::Platform {
 
-enum class PlatformStatus : uint8_t {
+enum class PlatformStatus : std::uint8_t {
     Ok,
     NotInitialized,
     BackendInitFailed,
@@ -23,8 +22,8 @@ enum class PlatformStatus : uint8_t {
 
 struct PlatformConfig {
     std::string window_title = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t window_width = 1280; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t window_height = 720; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t window_width = 1280; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t window_height = 720; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct PlatformState {
@@ -34,8 +33,8 @@ struct PlatformState {
     bool quit_requested = false;
     bool minimized = false;
     bool resized = false;
-    uint32_t drawable_width = 0;
-    uint32_t drawable_height = 0;
+    std::uint32_t drawable_width = 0;
+    std::uint32_t drawable_height = 0;
     PlatformStatus status = PlatformStatus::NotInitialized;
     std::string error_message; // Optional detailed error message for fatal errors
     // NOLINTEND(misc-non-private-member-variables-in-classes)

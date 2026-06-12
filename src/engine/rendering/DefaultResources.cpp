@@ -1,10 +1,17 @@
 module;
 
+// Use headers instead of `import std;` to avoid a Clang/libstdc++ module
+// incompatibility where shared_ptr friend declarations conflict with
+// using-declarations in the std module partition (LLVM #138558, #156604).
+#include <array>
 #include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 module VulkanEngine.DefaultTextureFactory;
+
+import vulkan_hpp;
 
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;

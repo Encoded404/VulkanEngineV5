@@ -1,17 +1,10 @@
 module;
 
-#include <functional>
-#include <optional>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include <stdexcept>
-
-#include <vulkan/vulkan_raii.hpp>
-
-//#include <logging/logging.hpp>
-
 module VulkanEngine.RenderPipeline;
+
+import std;
+
+import vulkan_hpp;
 
 import VulkanBackend.RenderGraph;
 import VulkanBackend.Runtime.VulkanBootstrap;
@@ -23,10 +16,9 @@ namespace {
 
 uint32_t FindMemoryType(vk::raii::PhysicalDevice const& physical_device, uint32_t type_filter, vk::MemoryPropertyFlags properties) {
     const auto mem_properties = physical_device.getMemoryProperties();
-    auto const required = static_cast<VkMemoryPropertyFlags>(properties);
     for (uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
-        auto const& raw = static_cast<VkMemoryType const&>(mem_properties.memoryTypes[i]);
-        if ((type_filter & (1u << i)) && ((raw.propertyFlags & required) == required)) {
+        auto const& raw = static_cast<vk::MemoryType const&>(mem_properties.memoryTypes[i]);
+        if ((type_filter & (1u << i)) && ((raw.propertyFlags & properties) == properties)) {
             return i;
         }
     }

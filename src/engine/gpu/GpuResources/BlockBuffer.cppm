@@ -1,11 +1,11 @@
 module;
 
-#include <cstdint>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.GpuResources.BlockArray;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
@@ -15,8 +15,8 @@ export namespace VulkanEngine::GpuResources {
 class BlockArray {
 public:
     struct Config {
-        uint32_t entry_size = 0;
-        uint32_t entries_per_block = 256;
+        std::uint32_t entry_size = 0;
+        std::uint32_t entries_per_block = 256;
         vk::BufferUsageFlags extra_usage = {};
         vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible |
                                           vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -35,15 +35,15 @@ public:
 
     void Shutdown();
 
-    void* EnsureCapacity(uint32_t count);
+    void* EnsureCapacity(std::uint32_t count);
 
-    void* Get(uint32_t index);
+    void* Get(std::uint32_t index);
 
-    [[nodiscard]] uint32_t BlockCount() const { return static_cast<uint32_t>(blocks_.size()); }
-    [[nodiscard]] vk::Buffer GetBlockArray(uint32_t block_index) const;
-    [[nodiscard]] uint64_t BlockSize() const { return static_cast<uint64_t>(cfg_.entries_per_block) * cfg_.entry_size; }
-    [[nodiscard]] uint32_t EntriesPerBlock() const { return cfg_.entries_per_block; }
-    [[nodiscard]] uint32_t EntrySize() const { return cfg_.entry_size; }
+    [[nodiscard]] std::uint32_t BlockCount() const { return static_cast<std::uint32_t>(blocks_.size()); }
+    [[nodiscard]] vk::Buffer GetBlockArray(std::uint32_t block_index) const;
+    [[nodiscard]] std::uint64_t BlockSize() const { return static_cast<std::uint64_t>(cfg_.entries_per_block) * cfg_.entry_size; }
+    [[nodiscard]] std::uint32_t EntriesPerBlock() const { return cfg_.entries_per_block; }
+    [[nodiscard]] std::uint32_t EntrySize() const { return cfg_.entry_size; }
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
 private:

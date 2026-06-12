@@ -1,14 +1,16 @@
 module;
 
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-#include <vulkan/vulkan_raii.hpp>
 #include <SDL3/SDL_vulkan.h>
 #include <memory>
 #include <vector>
 
 #include "logging/logging.hpp"
 
+#include <vulkan/vulkan_hpp_macros.hpp>
+
 module VulkanBackend.Runtime.VulkanInstance;
+
+import vulkan_hpp;
 
 import VulkanBackend.Utils.Timer;
 
@@ -24,12 +26,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     }
 
     loader_ = std::make_unique<vk::detail::DynamicLoader>();
-    auto vkGetInstanceProcAddr = loader_->getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"); // NOLINT(readability-identifier-naming)
-    if (!vkGetInstanceProcAddr) {
-        LOGIFACE_LOG(error, "failed to resolve vkGetInstanceProcAddr");
-        return false;
-    }
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(*loader_);
 
     uint32_t extension_count = 0;
     const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
@@ -44,7 +41,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         instance_layers.push_back("VK_LAYER_KHRONOS_validation");
     }
 
-    constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, VK_API_VERSION_1_3);
+    constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion12);
     const vk::InstanceCreateInfo instance_info({}, &app_info,
         static_cast<uint32_t>(instance_layers.size()), instance_layers.data(),
         static_cast<uint32_t>(instance_extensions.size()), instance_extensions.data());
@@ -58,7 +55,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         return false;
     }
 
-    VkSurfaceKHR raw_surface = VK_NULL_HANDLE;
+    VkSurfaceKHR raw_surface = nullptr;
     if (!SDL_Vulkan_CreateSurface(window_, static_cast<VkInstance>(**instance_), nullptr, &raw_surface)) {
         LOGIFACE_LOG(error, "SDL_Vulkan_CreateSurface failed");
         Shutdown();

@@ -1,6 +1,7 @@
 module;
 
-#include <cstdint>
+#include <cstdint> // to get UINT32_MAX
+#include <vector> // to fix visibility bug with modules
 
 module VulkanEngine.GpuResources.TlsfAllocator;
 

@@ -1,10 +1,10 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
-#include <memory>
-#include <vector>
-
 export module VulkanBackend.Runtime.VulkanSwapchain;
+
+import std;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.CommonTypes;
 import VulkanBackend.Runtime.VulkanDevice;
@@ -14,13 +14,13 @@ export namespace VulkanEngine::Runtime {
 
 class VulkanSwapchain {
 public:
-    [[nodiscard]] bool Initialize(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode);
+    [[nodiscard]] bool Initialize(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode);
     void Shutdown();
-    [[nodiscard]] bool Recreate(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode);
+    [[nodiscard]] bool Recreate(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode);
 
-    [[nodiscard]] uint32_t GetImageCount() const { return swapchain_image_count_; }
-    [[nodiscard]] uint32_t GetWidth() const { return swapchain_extent_.width; }
-    [[nodiscard]] uint32_t GetHeight() const { return swapchain_extent_.height; }
+    [[nodiscard]] std::uint32_t GetImageCount() const { return swapchain_image_count_; }
+    [[nodiscard]] std::uint32_t GetWidth() const { return swapchain_extent_.width; }
+    [[nodiscard]] std::uint32_t GetHeight() const { return swapchain_extent_.height; }
     [[nodiscard]] const vk::SurfaceFormatKHR& GetSurfaceFormat() const { return surface_format_; }
     [[nodiscard]] const vk::raii::SwapchainKHR& GetSwapchain() const { return *swapchain_; }
     [[nodiscard]] const std::vector<vk::Image>& GetImages() const { return swapchain_images_; }
@@ -29,9 +29,9 @@ public:
 
     // Depth buffer support (per swapchain image)
     [[nodiscard]] vk::Format GetDepthFormat() const { return depth_format_; }
-    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(uint32_t image_index) const { return depth_image_views_[image_index]; }
-    [[nodiscard]] const vk::raii::Image& GetDepthImage(uint32_t image_index) const { return depth_images_[image_index]; }
-    [[nodiscard]] uint32_t GetDepthImageCount() const { return static_cast<uint32_t>(depth_images_.size()); }
+    [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(std::uint32_t image_index) const { return depth_image_views_[image_index]; }
+    [[nodiscard]] const vk::raii::Image& GetDepthImage(std::uint32_t image_index) const { return depth_images_[image_index]; }
+    [[nodiscard]] std::uint32_t GetDepthImageCount() const { return static_cast<std::uint32_t>(depth_images_.size()); }
 
 private:
     std::unique_ptr<vk::raii::SwapchainKHR> swapchain_{};
@@ -39,7 +39,7 @@ private:
     std::vector<vk::raii::ImageView> swapchain_image_views_{};
     vk::SurfaceFormatKHR surface_format_{};
     vk::Extent2D swapchain_extent_{};
-    uint32_t swapchain_image_count_ = 0;
+    std::uint32_t swapchain_image_count_ = 0;
     std::vector<bool> swapchain_image_initialized_{};
 
     // Depth buffer resources (per swapchain image)

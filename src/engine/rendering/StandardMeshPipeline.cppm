@@ -1,12 +1,11 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module VulkanEngine.StandardMeshPipeline;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
@@ -54,7 +53,7 @@ struct MeshGPUResources {
     VulkanEngine::GpuResources::GpuBuffer vertex_buffer{};
     VulkanEngine::GpuResources::GpuBuffer index_buffer{};
     VulkanEngine::GpuResources::GpuTexture texture{};
-    uint32_t index_count = 0;
+    std::uint32_t index_count = 0;
 };
 
 class GraphicsPipeline {
@@ -63,8 +62,8 @@ public:
     ~GraphicsPipeline();
 
     void Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                    const std::vector<uint32_t>& vertex_spirv,
-                    const std::vector<uint32_t>& fragment_spirv,
+                    const std::vector<std::uint32_t>& vertex_spirv,
+                    const std::vector<std::uint32_t>& fragment_spirv,
                     const PipelineConfig& config = {},
                     vk::DescriptorSetLayout* bindless_layout = nullptr,
                     vk::DescriptorSetLayout* object_data_layout = nullptr,
@@ -81,8 +80,8 @@ public:
 
 private:
     void CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                        const std::vector<uint32_t>& vertex_spirv,
-                        const std::vector<uint32_t>& fragment_spirv,
+                        const std::vector<std::uint32_t>& vertex_spirv,
+                        const std::vector<std::uint32_t>& fragment_spirv,
                         const PipelineConfig& config);
     void CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap);
     void CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstrap& bootstrap);

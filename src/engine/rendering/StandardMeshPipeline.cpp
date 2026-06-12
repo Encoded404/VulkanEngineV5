@@ -1,15 +1,13 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-#include <array>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.StandardMeshPipeline;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;

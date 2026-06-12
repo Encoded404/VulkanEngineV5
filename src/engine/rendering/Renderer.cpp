@@ -4,14 +4,15 @@ module;
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
-#include <cstdint>
-#include <array>
-#include <memory>
 
-#include <vulkan/vulkan.hpp>
 #include <logging/logging.hpp>
 
 module VulkanEngine.Renderer;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;

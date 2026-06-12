@@ -1,19 +1,19 @@
 module;
 
-#include <algorithm>
-#include <cstdint>
-#include <vector>
-#include <array>
-#include <cstring>
-
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
-#include <vulkan/vulkan_raii.hpp>
+
+#include <logging/logging.hpp>
 
 module VulkanEngine.SceneRenderer;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Component;
 import VulkanEngine.Components.Transform;
@@ -72,7 +72,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     fr.submesh_vertex_data.EnsureCapacity(total);
     fr.submesh_cull.EnsureCapacity(total);
 
-    VkDrawIndirectCommand zero_cmd{ 0, 1, 0, 0 };
+    constexpr vk::DrawIndirectCommand zero_cmd{ 0, 1, 0, 0 };
     fr.draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
 
     // Zero intermediate buffer
@@ -124,7 +124,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 vk::DescriptorType::eStorageBuffer, dev);
 
     {
-        const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, VK_WHOLE_SIZE);
+        const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = fr.expand_set.GetHandle();
         w.dstBinding = 4;
@@ -193,7 +193,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, uint32_t w, uint32_t h, 
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
     cmd.drawIndirect(*fr.draw_count_buffer.GetBuffer(), 0, 1,
-                     sizeof(VkDrawIndirectCommand));
+                     sizeof(vk::DrawIndirectCommand));
 }
 
 void SceneRenderer::Render(vk::CommandBuffer cmd,
@@ -213,7 +213,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     // Rebind indirection set to compacted buffer for main pass
     {
         const vk::DescriptorBufferInfo bi(
-            *fr.compacted_indirection_buffer.GetBuffer(), 0, VK_WHOLE_SIZE);
+            *fr.compacted_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = *fr.indirection_raw_set;
         w.dstBinding = 0;
@@ -239,7 +239,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                  " techniques=" + std::to_string(tm.GetTechniqueCount()) +
                  " dgc=" + std::to_string(dgc_available_));
     if (dgc_available_) {
-        VkPipelineLayout shared_layout = VK_NULL_HANDLE;
+        vk::PipelineLayout shared_layout = nullptr;
         for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
             auto* pm = tm.GetGraphicsPipeline(t);
             if (pm && pm->GetPipelineLayout()) {
@@ -255,9 +255,9 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shared_layout,
                                  0, ds, {});
 
-        VkGeneratedCommandsInfoEXT gen_info{};
-        gen_info.sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_INFO_EXT;
-        gen_info.shaderStages = VK_SHADER_STAGE_VERTEX_BIT;
+        vk::GeneratedCommandsInfoEXT gen_info{};
+        gen_info.sType = vk::StructureType::eGeneratedCommandsInfoEXT;
+        gen_info.shaderStages = vk::ShaderStageFlagBits::eVertex;
         gen_info.indirectExecutionSet = **dgc_execution_set_;
         gen_info.indirectCommandsLayout = **dgc_commands_layout_;
         gen_info.indirectAddress = fr.dgc_sequence_buffer.GetDeviceAddress(dev);
@@ -268,15 +268,8 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         gen_info.sequenceCountAddress = fr.dgc_count_buffer.GetDeviceAddress(dev);
         gen_info.maxDrawCount = dgc_max_sequence_count_;
 
-        auto* dispatcher = dev.getDispatcher();
-        dispatcher->vkCmdPreprocessGeneratedCommandsEXT(
-            static_cast<VkCommandBuffer>(cmd),
-            &gen_info,
-            VK_NULL_HANDLE);
-        dispatcher->vkCmdExecuteGeneratedCommandsEXT(
-            static_cast<VkCommandBuffer>(cmd),
-            VK_FALSE,
-            &gen_info);
+        cmd.preprocessGeneratedCommandsEXT(&gen_info, cmd);
+        cmd.executeGeneratedCommandsEXT(vk::False, &gen_info);
     } else {
         for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
             auto* pm = tm.GetGraphicsPipeline(t);
@@ -288,10 +281,10 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pl);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout, 0, ds, {});
 
-            const VkDeviceSize draw_cmd_offset =
-                static_cast<VkDeviceSize>(t) * sizeof(VkDrawIndirectCommand);
+            const vk::DeviceSize draw_cmd_offset =
+                static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
             cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
-                              draw_cmd_offset, 1, sizeof(VkDrawIndirectCommand));
+                              draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
             LOGIFACE_LOG(trace, "  technique[" + std::to_string(t) + "] drawIndirect offset=" +
                          std::to_string(draw_cmd_offset));
         }
@@ -398,7 +391,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
                 vk::DescriptorType::eStorageBuffer, dev);
     {
         const vk::DescriptorBufferInfo bi(
-            *fr.indirection_buffer.GetBuffer(), 0, VK_WHOLE_SIZE);
+            *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = fr.collect_set.GetHandle();
         w.dstBinding = 1;
@@ -409,7 +402,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
     }
     {
         const vk::DescriptorBufferInfo bi(
-            *fr.compacted_indirection_buffer.GetBuffer(), 0, VK_WHOLE_SIZE);
+            *fr.compacted_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = fr.collect_set.GetHandle();
         w.dstBinding = 2;
@@ -565,7 +558,7 @@ void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {
         const vk::ImageMemoryBarrier imb(
             vk::AccessFlagBits::eNone, vk::AccessFlagBits::eTransferWrite,
             vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
             *f.hiz_image, hiz_range);
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTopOfPipe,
@@ -578,7 +571,7 @@ void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {
             vk::AccessFlagBits::eTransferWrite,
             vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
             vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
             *f.hiz_image, hiz_range);
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTransfer,

@@ -1,19 +1,20 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <stdexcept>
-#include <vector>
-
-#include <vulkan/vulkan_raii.hpp>
-
 #include <logging/logging.hpp>
 
 module VulkanEngine.GpuResources.StagingManager;
 
+import std;
+import std.compat;
+
+import vulkan_hpp;
+
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
+
+constexpr std::uint32_t UINT64_T_MAX =
+    std::numeric_limits<std::uint64_t>::max();
 
 namespace VulkanEngine::GpuResources {
 
@@ -118,7 +119,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
         auto& slot = slots_[idx];
         if (!slot.busy) {
             if (*slot.fence) {
-                const auto result = backend_->GetDevice().waitForFences(*slot.fence, VK_TRUE, UINT64_MAX);
+                const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
                 if (result != vk::Result::eSuccess) {
                     throw std::runtime_error("StagingManager: fence wait failed");
                 }
@@ -137,7 +138,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
     {
         auto& slot = slots_[current_slot_];
         if (*slot.fence) {
-            const auto result = backend_->GetDevice().waitForFences(*slot.fence, VK_TRUE, UINT64_MAX);
+            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
             if (result != vk::Result::eSuccess) {
                 throw std::runtime_error("StagingManager: fence wait failed on full wait");
             }
@@ -241,7 +242,7 @@ void StagingManager::WaitForSlot(uint32_t slot_index) {
     if (!slot.busy) return;
 
     if (*slot.fence) {
-        const auto result = backend_->GetDevice().waitForFences(*slot.fence, VK_TRUE, UINT64_MAX);
+        const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
         if (result != vk::Result::eSuccess) {
             throw std::runtime_error("StagingManager: WaitForSlot fence wait failed");
         }
@@ -255,7 +256,7 @@ void StagingManager::WaitForAll() {
     for (auto& slot : slots_) {
         if (!slot.busy) continue;
         if (*slot.fence) {
-            const auto result = backend_->GetDevice().waitForFences(*slot.fence, VK_TRUE, UINT64_MAX);
+            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
             if (result != vk::Result::eSuccess) {
                 throw std::runtime_error("StagingManager: WaitForAll fence wait failed");
             }

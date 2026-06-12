@@ -1,8 +1,8 @@
 module;
 
-#include <cstdint>
-
 export module VulkanBackend.RenderGraph.GraphExecutionContext;
+
+import std;
 
 import VulkanBackend.RenderGraph;
 
@@ -18,8 +18,8 @@ struct ImportedFrameResources {
 };
 
 struct GraphExecutionContext {
-    uint32_t frame_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    uint32_t swapchain_image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t frame_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t swapchain_image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     BorrowedCommandContext command_context{}; // NOLINT(misc-non-private-member-variables-in-classes)
     ImportedFrameResources imported_resources{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };

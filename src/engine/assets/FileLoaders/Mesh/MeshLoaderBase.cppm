@@ -1,9 +1,8 @@
 module;
 
-#include <memory>
-#include <filesystem>
-
 export module VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
+
+import std;
 
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.MaterialManager.MaterialId;

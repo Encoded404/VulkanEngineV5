@@ -1,15 +1,15 @@
 module;
 
-#include <cstdint>
-
 export module VulkanEngine.TechniqueManager.TechniqueId;
+
+import std;
 
 export namespace VulkanEngine::TechniqueManager {
 
 struct TechniqueId {
     TechniqueId() = default;
-    explicit TechniqueId(uint16_t v) : value(v) {}
-    uint16_t value{0}; // NOLINT(misc-non-private-member-variables-in-classes)
+    explicit TechniqueId(std::uint16_t v) : value(v) {}
+    std::uint16_t value{0}; // NOLINT(misc-non-private-member-variables-in-classes)
     bool operator==(const TechniqueId& o) const = default;
 };
 

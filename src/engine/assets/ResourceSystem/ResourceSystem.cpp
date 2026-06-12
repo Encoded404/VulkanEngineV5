@@ -1,13 +1,11 @@
 module;
 
-#include <string>
-#include <shared_mutex>
-#include <mutex>
-#include <ranges>
-#include <utility>
 #include <FileLoader/Types.hpp>
 
 module VulkanEngine.ResourceSystem;
+
+import std;
+
 namespace VulkanEngine {
     Resource::Resource(ResourceId id) : resourceId_(std::move(id)) {}
 

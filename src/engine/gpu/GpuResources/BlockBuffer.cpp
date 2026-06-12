@@ -1,10 +1,11 @@
 module;
 
-#include <cstdint>
-
-#include <vulkan/vulkan_raii.hpp>
-
 module VulkanEngine.GpuResources.BlockArray;
+
+import std;
+import std.compat;
+
+import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
@@ -79,7 +80,7 @@ void* BlockArray::Get(uint32_t index) {
 }
 
 vk::Buffer BlockArray::GetBlockArray(uint32_t block_index) const {
-    if (block_index >= blocks_.size()) return VK_NULL_HANDLE;
+    if (block_index >= blocks_.size()) return nullptr;
     return *blocks_[block_index].GetBuffer();
 }
 

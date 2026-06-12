@@ -54,6 +54,7 @@ target_link_libraries(${APP_TARGET} PRIVATE
     SDL3::SDL3
     Boost::stacktrace_basic
     CLI11::CLI11
+    Vulkan::HppModule
 )
 
 set_target_properties(${APP_TARGET} PROPERTIES OUTPUT_NAME ${APP_TARGET})
@@ -83,11 +84,6 @@ if(CMAKE_CONFIGURATION_TYPES)
         "$<$<CONFIG:Release>:-O3>"
     )
 endif()
-
-target_precompile_headers(${APP_TARGET} PRIVATE
-    ${CMAKE_SOURCE_DIR}/cmake/pch_vulkan.hpp
-    ${CMAKE_SOURCE_DIR}/cmake/pch_core.hpp
-)
 
 target_compile_definitions(${APP_TARGET}
     PUBLIC

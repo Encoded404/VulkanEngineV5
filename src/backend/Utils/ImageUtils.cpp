@@ -1,10 +1,11 @@
 module;
 
-#include <vulkan/vulkan_raii.hpp>
 #include <algorithm>
 #include <cmath>
 
 module VulkanBackend.Utils.ImageUtils;
+
+import vulkan_hpp;
 
 namespace VulkanEngine::Utils {
 

@@ -1,8 +1,8 @@
 module;
 
-#include <memory>
-
 export module VulkanBackend.Runtime.VulkanBootstrapBackend;
+
+import std;
 
 import VulkanBackend.Runtime.VulkanBootstrap;
 

@@ -5,9 +5,10 @@ module;
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
-#include <vulkan/vulkan_raii.hpp>
 
 module VulkanEngine.MeshDrawRecorder;
+
+import vulkan_hpp;
 
 import VulkanBackend.Component;
 import VulkanEngine.Components.Transform;

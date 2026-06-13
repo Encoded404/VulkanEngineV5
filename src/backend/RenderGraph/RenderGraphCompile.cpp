@@ -1,15 +1,10 @@
 module;
 
-#include <algorithm>
-#include <cstdint>
-#include <queue>
-#include <ranges>
-#include <string>
-#include <unordered_set>
-#include <utility>
-#include <vector>
 
 module VulkanBackend.RenderGraph;
+
+import std;
+import std.compat;
 
 import vulkan_hpp;
 
@@ -50,11 +45,11 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         }
     }
 
-    const size_t pass_count = passes_.size();
-    std::vector<std::unordered_set<uint32_t>> edges(pass_count);
-    std::vector<uint32_t> indegree(pass_count, 0);
+    const std::size_t pass_count = passes_.size();
+    std::vector<std::unordered_set<std::uint32_t>> edges(pass_count);
+    std::vector<std::uint32_t> indegree(pass_count, 0);
 
-    auto add_edge = [&](uint32_t from, uint32_t to) {
+    auto add_edge = [&](std::uint32_t from, std::uint32_t to) {
         if (from == to) {
             return;
         }
@@ -80,13 +75,13 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     }
 
     struct ResourceTracker {
-        int32_t last_writer = -1;
-        std::unordered_set<uint32_t> readers{};
+        std::int32_t last_writer = -1;
+        std::unordered_set<std::uint32_t> readers{};
     };
 
     std::vector<ResourceTracker> resource_trackers(resources_.size());
 
-    for (uint32_t pass_index = 0; pass_index < pass_count; ++pass_index) {
+    for (std::uint32_t pass_index = 0; pass_index < pass_count; ++pass_index) {
         const auto& pass = passes_[pass_index];
         if (!pass.enabled) {
             continue;
@@ -103,7 +98,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
             auto& tracker = resource_trackers[read.resource.index];
             if (tracker.last_writer >= 0) {
-                add_edge(static_cast<uint32_t>(tracker.last_writer), pass_index);
+                add_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
             }
             tracker.readers.insert(pass_index);
         }
@@ -119,18 +114,18 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
             auto& tracker = resource_trackers[write.index];
             if (tracker.last_writer >= 0) {
-                add_edge(static_cast<uint32_t>(tracker.last_writer), pass_index);
+                add_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
             }
-            for (const uint32_t reader_index : tracker.readers) {
+            for (const std::uint32_t reader_index : tracker.readers) {
                 add_edge(reader_index, pass_index);
             }
             tracker.readers.clear();
-            tracker.last_writer = static_cast<int32_t>(pass_index);
+            tracker.last_writer = static_cast<std::int32_t>(pass_index);
         }
     }
 
-    std::queue<uint32_t> ready{};
-    for (uint32_t pass_index = 0; pass_index < pass_count; ++pass_index) {
+    std::queue<std::uint32_t> ready{};
+    for (std::uint32_t pass_index = 0; pass_index < pass_count; ++pass_index) {
         if (!passes_[pass_index].enabled) {
             continue;
         }
@@ -139,20 +134,20 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         }
     }
 
-    std::vector<uint32_t> sorted_indices{};
+    std::vector<std::uint32_t> sorted_indices{};
     while (!ready.empty()) {
-        const uint32_t current = ready.front();
+        const std::uint32_t current = ready.front();
         ready.pop();
         sorted_indices.push_back(current);
 
-        for (const uint32_t dependent : edges[current]) {
+        for (const std::uint32_t dependent : edges[current]) {
             if (--indegree[dependent] == 0) {
                 ready.push(dependent);
             }
         }
     }
 
-    const uint32_t enabled_count = static_cast<uint32_t>(std::ranges::count_if(passes_, [](const PassNode& pass) {
+    const std::uint32_t enabled_count = static_cast<std::uint32_t>(std::ranges::count_if(passes_, [](const PassNode& pass) {
         return pass.enabled;
     }));
 
@@ -172,7 +167,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
     std::vector<ResourcePassState> resource_states(resources_.size());
 
-    for (uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
+    for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
         const auto& resource = resources_[resource_index];
         if (resource.has_initial_state) {
             resource_states[resource_index] = {resource.initial_state, true};
@@ -182,7 +177,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     std::vector<CompiledPass> compiled_passes;
     compiled_passes.reserve(sorted_indices.size());
 
-    auto make_transition = [&](uint32_t res_idx, const ResourceState& target) -> ResourceTransition {
+    auto make_transition = [&](std::uint32_t res_idx, const ResourceState& target) -> ResourceTransition {
         ResourceTransition t{};
         t.resource_index = res_idx;
         t.target_state = target;
@@ -325,8 +320,8 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         compiled_passes.push_back(std::move(compiled_pass));
     }
 
-    for (size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
-        const uint32_t pass_index = sorted_indices[ordered_index];
+    for (std::size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
+        const std::uint32_t pass_index = sorted_indices[ordered_index];
         const auto& pass = passes_[pass_index];
 
         for (const auto& write : pass.writes) {
@@ -334,10 +329,10 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             const auto& resource = resources_[write.index];
             if (resource.kind != ResourceKind::Image || !resource.has_final_state) continue;
 
-            const int32_t current_oi = static_cast<int32_t>(ordered_index);
-            int32_t last_usage = -1;
-            for (int32_t oi = static_cast<int32_t>(sorted_indices.size()) - 1; oi > current_oi; --oi) {
-                const auto& p = passes_[sorted_indices[static_cast<size_t>(oi)]];
+            const std::int32_t current_oi = static_cast<std::int32_t>(ordered_index);
+            std::int32_t last_usage = -1;
+            for (std::int32_t oi = static_cast<std::int32_t>(sorted_indices.size()) - 1; oi > current_oi; --oi) {
+                const auto& p = passes_[sorted_indices[static_cast<std::size_t>(oi)]];
                 const ResourceHandle h{.index = write.index, .generation = resource.generation};
                 if (ContainsResource(p.writes, h) || ContainsReadResource(p.reads, h)) {
                     last_usage = oi;
@@ -364,20 +359,20 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     result.resource_images.resize(resources_.size());
     result.resource_formats.resize(resources_.size(), vk::Format::eUndefined);
 
-    for (uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
+    for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
         const auto& resource = resources_[resource_index];
 
-        int32_t first = -1;
-        int32_t last = -1;
-        for (size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
+        std::int32_t first = -1;
+        std::int32_t last = -1;
+        for (std::size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
             const auto pass_index = sorted_indices[ordered_index];
             const auto& pass = passes_[pass_index];
             const ResourceHandle handle{.index = resource_index, .generation = resource.generation};
             if (ContainsReadResource(pass.reads, handle) || ContainsResource(pass.writes, handle)) {
                 if (first < 0) {
-                    first = static_cast<int32_t>(ordered_index);
+                    first = static_cast<std::int32_t>(ordered_index);
                 }
-                last = static_cast<int32_t>(ordered_index);
+                last = static_cast<std::int32_t>(ordered_index);
             }
         }
 

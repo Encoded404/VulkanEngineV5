@@ -26,6 +26,13 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       ${CMAKE_SOURCE_DIR}/src/app/Game.cppm
   )
 
+  target_sources(app_tests PRIVATE
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+      ${CMAKE_CURRENT_SOURCE_DIR}/test_logging.cppm
+  )
+
   # Register app shader modules needed by Game.cpp
   # (engine shader modules + ShaderReflection inherited via PUBLIC on VulkanEngine)
   get_target_property(_app_cppm ${APP_TARGET}_shaders SLANG_CPPM_FILES)

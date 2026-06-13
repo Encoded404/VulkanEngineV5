@@ -5,12 +5,14 @@ module;
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.Renderer;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -45,8 +47,8 @@ bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
     auto draw_indirect = pipeline_->ImportBuffer("draw-indirect");
 
     pipeline_->RegisterResourceResolver("hiz-image",
-        [this](uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizImage(frame_counter_) : VK_NULL_HANDLE; },
-        [this](uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizFullView(frame_counter_) : VK_NULL_HANDLE; },
+        [this](std::uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizImage(frame_counter_) : nullptr; },
+        [this](std::uint32_t) { return current_scene_renderer_ ? current_scene_renderer_->GetHizFullView(frame_counter_) : nullptr; },
         vk::Format::eR32Sfloat);
 
     pipeline_->SetFinalState(
@@ -64,7 +66,7 @@ bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         .writes = {scene_buffers, draw_indirect},
         .execute = [this](const void*, vk::CommandBuffer cmd) {
             if (current_scene_renderer_) {
-                const uint32_t cnt = current_scene_renderer_->GetCurrentEntityCount();
+                const std::uint32_t cnt = current_scene_renderer_->GetCurrentEntityCount();
                 if (cnt) {
                     current_scene_renderer_->DispatchExpand(cmd, cnt,
                         current_view_proj_, frame_counter_);
@@ -243,7 +245,8 @@ bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         qp_info.queryCount = 1;
         gpu_stats_pool_ = std::make_unique<vk::raii::QueryPool>(device, qp_info);
         VulkanEngine::Utils::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
-        vkResetQueryPool(*device, **gpu_stats_pool_, 0, 1);
+        vk::Device raw_device = *device;
+        raw_device.resetQueryPool(*gpu_stats_pool_, 0, 1);
     }
 
     LOGIFACE_LOG(info, "Renderer initialized with full render-graph pipeline");
@@ -273,7 +276,7 @@ void Renderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                    VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                                    VulkanEngine::ImGui::ImGuiSystem* imgui,
-                                   uint32_t image_index) {
+                                   std::uint32_t image_index) {
     if (!pipeline_ || !pipeline_->IsCompiled()) return;
 
     current_registry_ = &registry;
@@ -295,7 +298,7 @@ void Renderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
     }
 
     auto& backend = bootstrap.GetBackend();
-    const uint32_t sc_count = bootstrap.GetSnapshot().swapchain_image_count;
+    const std::uint32_t sc_count = bootstrap.GetSnapshot().swapchain_image_count;
     if (sc_count != last_swapchain_image_count_) {
         last_swapchain_image_count_ = sc_count;
         if (current_imgui_ && current_imgui_->IsInitialized()) {
@@ -305,22 +308,23 @@ void Renderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
     }
 
     // Enable GPU stats
-    const uint32_t frame_idx = bootstrap.GetSnapshot().frame_index;
+    const std::uint32_t frame_idx = bootstrap.GetSnapshot().frame_index;
     auto& cmd = backend.GetCommandBuffer(frame_idx);
     cmd.reset({});
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     if (gpu_stats_pool_) {
         auto& device = backend.GetDevice();
+        auto* dev_dispatcher = device.getDispatcher();
         std::array<uint64_t, 8> stats{};
-        const VkResult qr = vkGetQueryPoolResults(
-            static_cast<VkDevice>(*device),
-            static_cast<VkQueryPool>(**gpu_stats_pool_),
+        const vk::Result qr = static_cast<vk::Result>(dev_dispatcher->vkGetQueryPoolResults(
+            static_cast<vk::Device::CType>(*device),
+            static_cast<vk::QueryPool::CType>(**gpu_stats_pool_),
             0, 1,
             sizeof(stats), stats.data(),
             sizeof(uint64_t),
-            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-        if (qr == VK_SUCCESS && stats[7] != 0) {
+            static_cast<vk::QueryResultFlags::MaskType>(vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability)));
+        if (qr == vk::Result::eSuccess && stats[7] != 0) {
             LOGIFACE_LOG(trace,
                 "GPU frame=" + std::to_string(frame_counter_) +
                 " IA_verts=" + std::to_string(stats[0]) +

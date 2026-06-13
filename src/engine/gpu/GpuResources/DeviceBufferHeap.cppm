@@ -13,8 +13,15 @@ export import VulkanEngine.GpuBuffer;
 
 import VulkanEngine.GpuResources.TlsfAllocator;
 
+#ifndef UINT32_MAX
 constexpr std::uint32_t UINT32_MAX =
     std::numeric_limits<std::uint32_t>::max();
+#endif
+
+#ifndef UINT64_MAX
+constexpr std::uint64_t UINT64_MAX =
+    std::numeric_limits<std::uint64_t>::max();
+#endif
 
 export namespace VulkanEngine::GpuResources {
 

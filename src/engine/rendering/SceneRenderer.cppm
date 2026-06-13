@@ -1,13 +1,18 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <vector>
+
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.SceneRenderer;
 
-import std;
-import std.compat;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+// import std.compat;
 
 import vulkan_hpp;
 
@@ -106,15 +111,15 @@ public:
     [[nodiscard]] std::uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
     void SetCurrentEntityCount(std::uint32_t count) { current_entity_count_ = count; }
 
-    [[nodiscard]] VkImage GetHizImage(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::Image GetHizImage(std::uint32_t frame_index) const {
         const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<VkImage>(*frame.hiz_image);
+        return static_cast<vk::Image>(*frame.hiz_image);
     }
-    [[nodiscard]] VkImageView GetHizFullView(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::ImageView GetHizFullView(std::uint32_t frame_index) const {
         const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<VkImageView>(*frame.hiz_full_view);
+        return static_cast<vk::ImageView>(*frame.hiz_full_view);
     }
-    void UpdateHizDepthBinding(std::uint32_t frame_index, VkImageView depth_view);
+    void UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view);
 
     void SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm);
 
@@ -122,17 +127,17 @@ public:
                         const glm::mat4& view_proj, std::uint32_t frame_index);
 
     // Buffer access for render graph
-    [[nodiscard]] VkBuffer GetTechniqueDrawCommandsBuffer(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::Buffer GetTechniqueDrawCommandsBuffer(std::uint32_t frame_index) const {
         const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<VkBuffer>(*fr.technique_draw_commands.GetBuffer());
+        return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
     }
-    [[nodiscard]] VkBuffer GetDgcSequenceBuffer(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::Buffer GetDgcSequenceBuffer(std::uint32_t frame_index) const {
         const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<VkBuffer>(*fr.dgc_sequence_buffer.GetBuffer());
+        return static_cast<vk::Buffer>(*fr.dgc_sequence_buffer.GetBuffer());
     }
-    [[nodiscard]] VkBuffer GetDgcCountBuffer(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::Buffer GetDgcCountBuffer(std::uint32_t frame_index) const {
         const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<VkBuffer>(*fr.dgc_count_buffer.GetBuffer());
+        return static_cast<vk::Buffer>(*fr.dgc_count_buffer.GetBuffer());
     }
     [[nodiscard]] bool IsDgcAvailable() const { return dgc_available_; }
 
@@ -264,7 +269,7 @@ private:
     vk::raii::PipelineLayout dgc_degenerate_layout_ = nullptr;
     vk::raii::Pipeline dgc_degenerate_pipeline_ = nullptr;
 
-    Utils::ScopedHandle<void(std::uint16_t, VkPipeline, VkPipelineLayout)> dgc_technique_handle_{};
+    Utils::ScopedHandle<void(std::uint16_t, vk::Pipeline, vk::PipelineLayout)> dgc_technique_handle_{};
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 

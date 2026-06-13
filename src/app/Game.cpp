@@ -4,13 +4,13 @@ module;
 #define GLM_FORCE_RADIANS
 #include <glm/vec4.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
-#include <utility>
-#include <filesystem>
 
 #include <SDL3/SDL_keycode.h>
 #include <imgui.h>
 
 module App.Game;
+
+import std;
 
 import vulkan_hpp;
 
@@ -84,7 +84,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     }
 
     // 3. Create a custom material for the viking room
-    const uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
+    const std::uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
     constexpr auto viking_blend = VulkanEngine::MaterialManager::BlendMode::Transparent;
 
     const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialManager::Get().RegisterMaterial({
@@ -102,8 +102,8 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         exe_dir_ / "models" / "simple-monkey.bin", nullptr);
 
     auto& mesh_registry = engine_game_.GetMeshRegistry();
-    const uint32_t viking_id = mesh_registry.Register(viking_mesh);
-    const uint32_t monkey_id = mesh_registry.Register(monkey_mesh);
+    const std::uint32_t viking_id = mesh_registry.Register(viking_mesh);
+    const std::uint32_t monkey_id = mesh_registry.Register(monkey_mesh);
 
     // Mark scene as valid so rendering begins
     engine_game_.MarkSceneValid();

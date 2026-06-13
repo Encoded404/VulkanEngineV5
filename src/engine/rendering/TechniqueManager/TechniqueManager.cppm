@@ -11,6 +11,11 @@ export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Utils.CallbackList;
 export import VulkanEngine.StandardMeshPipeline;
 
+#ifndef UINT16_MAX
+constexpr std::uint16_t UINT16_MAX =
+    std::numeric_limits<std::uint16_t>::max();
+#endif
+
 export namespace VulkanEngine::TechniqueManager {
 
 struct ShaderOverride {

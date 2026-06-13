@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.GpuResources.DeviceBufferHeap;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -50,7 +52,7 @@ void DeviceBufferHeap::Shutdown() {
     backend_ = nullptr;
 }
 
-void* DeviceBufferHeap::MapBuffer(uint32_t block_index, uint64_t offset) {
+void* DeviceBufferHeap::MapBuffer(std::uint32_t block_index, std::uint64_t offset) {
     if (block_index >= blocks_.size()) return nullptr;
     auto& block = blocks_[block_index];
     if (block.mapped_ptr) {
@@ -62,7 +64,7 @@ void* DeviceBufferHeap::MapBuffer(uint32_t block_index, uint64_t offset) {
 uint32_t DeviceBufferHeap::AddBlock() {
     if (!backend_) return UINT32_MAX;
 
-    const uint32_t index = static_cast<uint32_t>(blocks_.size());
+    const std::uint32_t index = static_cast<std::uint32_t>(blocks_.size());
 
     const vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer |
                                        vk::BufferUsageFlagBits::eTransferDst |
@@ -95,13 +97,13 @@ uint32_t DeviceBufferHeap::AddBlock() {
     return index;
 }
 
-HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, uint64_t alignment) {
+HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, std::uint64_t alignment) {
     if (size == 0) return {};
     if (alignment == 0) alignment = config_.default_alignment;
 
-    for (uint32_t bi = 0; bi < static_cast<uint32_t>(blocks_.size()); ++bi) {
+    for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(blocks_.size()); ++bi) {
         auto& block = blocks_[bi];
-        const uint64_t offset = block.allocator.Allocate(size, alignment);
+        const std::uint64_t offset = block.allocator.Allocate(size, alignment);
         if (offset != UINT64_MAX) {
             HeapAllocation alloc{};
             alloc.buffer_index = bi;
@@ -112,11 +114,11 @@ HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, uint64_t alignment) {
     }
 
     // No space found — add a new block
-    const uint32_t new_bi = AddBlock();
+    const std::uint32_t new_bi = AddBlock();
     if (new_bi == UINT32_MAX) return {};
 
     auto& new_block = blocks_[new_bi];
-    const uint64_t offset = new_block.allocator.Allocate(size, alignment);
+    const std::uint64_t offset = new_block.allocator.Allocate(size, alignment);
     if (offset == UINT64_MAX) return {};
 
     HeapAllocation alloc{};
@@ -135,7 +137,7 @@ void DeviceBufferHeap::Free(HeapAllocation& alloc) {
     alloc = {};
 }
 
-vk::Buffer DeviceBufferHeap::GetBuffer(uint32_t index) const {
+vk::Buffer DeviceBufferHeap::GetBuffer(std::uint32_t index) const {
     if (index >= blocks_.size()) return nullptr;
     return *blocks_[index].buffer.GetBuffer();
 }

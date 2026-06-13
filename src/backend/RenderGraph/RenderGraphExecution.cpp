@@ -1,11 +1,10 @@
 module;
 
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <vector>
 
 module VulkanBackend.RenderGraph;
+
+import std;
+import std.compat;
 
 import vulkan_hpp;
 
@@ -23,20 +22,20 @@ namespace {
     }
 }
 
-void CompiledRenderGraph::SetImportedResourceState(uint32_t resource_index, ResourceState state) const {
+void CompiledRenderGraph::SetImportedResourceState(std::uint32_t resource_index, ResourceState state) const {
     if (resource_index < initial_states.size()) {
         initial_states[resource_index] = state;
         has_initial_state[resource_index] = true;
     }
 }
 
-void CompiledRenderGraph::SetResourceImage(uint32_t resource_index, vk::Image image) {
+void CompiledRenderGraph::SetResourceImage(std::uint32_t resource_index, vk::Image image) {
     if (resource_index < resource_images.size()) {
         resource_images[resource_index] = image;
     }
 }
 
-void CompiledRenderGraph::SetResourceFormat(uint32_t resource_index, vk::Format format) {
+void CompiledRenderGraph::SetResourceFormat(std::uint32_t resource_index, vk::Format format) {
     if (resource_index < resource_formats.size()) {
         resource_formats[resource_index] = format;
     }
@@ -185,7 +184,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                 vk::RenderingInfo render_info{};
                 render_info.renderArea = setup.render_area;
                 render_info.layerCount = 1;
-                render_info.colorAttachmentCount = static_cast<uint32_t>(color_attachments.size());
+                render_info.colorAttachmentCount = static_cast<std::uint32_t>(color_attachments.size());
                 render_info.pColorAttachments = color_attachments.data();
                 if (depth_attachment) {
                     render_info.pDepthAttachment = &*depth_attachment;

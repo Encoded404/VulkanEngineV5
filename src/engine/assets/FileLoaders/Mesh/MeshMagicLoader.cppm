@@ -1,10 +1,17 @@
 module;
 
-#include <FileLoader/Types.hpp>
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <future>
+#include <filesystem>
+#include <algorithm>
 
 export module VulkanEngine.FileLoaders.Mesh.MeshMagicLoader;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+
+import FileLoader.Types;
 
 import VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
@@ -21,7 +28,7 @@ namespace {
     if (!file.is_open()) {
         throw std::runtime_error("MeshMagicLoader: Failed to open file: " + path.string());
     }
-    const auto size = static_cast<size_t>(file.tellg());
+    const auto size = static_cast<std::size_t>(file.tellg());
     if (size == 0) {
         throw std::runtime_error("MeshMagicLoader: File is empty: " + path.string());
     }
@@ -70,7 +77,7 @@ protected:
         std::vector<std::byte> buf_prefix;
         auto needs = std::max(kBinMagic.size(), kGlbMagic.size());
         buf_prefix.reserve(needs);
-        for (size_t i = 0; i < needs && i < buf.size(); ++i) {
+        for (std::size_t i = 0; i < needs && i < buf.size(); ++i) {
             buf_prefix.push_back(buf[i]);
         }
 

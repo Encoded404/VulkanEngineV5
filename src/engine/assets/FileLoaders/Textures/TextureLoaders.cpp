@@ -5,9 +5,10 @@ module;
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#include <FileLoader/Types.hpp>
 
 module VulkanEngine.FileLoaders.TextureLoaders;
+
+import FileLoader.Types;
 
 import std;
 
@@ -275,12 +276,12 @@ AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels) {
     AlphaAnalysis result{};
     if (pixels.empty() || pixels.size() < 4) return result;
 
-    const size_t pixel_count = pixels.size() / 4;
+    const std::size_t pixel_count = pixels.size() / 4;
     result.hasAlphaChannel = true;
 
-    size_t opaque_count = 0;
+    std::size_t opaque_count = 0;
 
-    for (size_t i = 0; i < pixel_count; ++i) {
+    for (std::size_t i = 0; i < pixel_count; ++i) {
         const auto alpha = static_cast<uint8_t>(pixels[i * 4 + 3]);
         if (alpha > 0 && alpha < 255) result.hasFractionalAlpha = true;
         if (alpha == 0) result.hasZeroAlpha = true;
@@ -368,8 +369,8 @@ AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels) {
         return false;
     }
 
-    out.width = static_cast<uint32_t>(width);
-    out.height = static_cast<uint32_t>(height);
+    out.width = static_cast<std::uint32_t>(width);
+    out.height = static_cast<std::uint32_t>(height);
     out.mip_levels = 1;
     out.layer_count = 1;
     out.face_count = 1;

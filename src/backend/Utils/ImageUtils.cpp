@@ -1,17 +1,18 @@
 module;
 
-#include <algorithm>
-#include <cmath>
 
 module VulkanBackend.Utils.ImageUtils;
+
+import std;
+import std.compat;
 
 import vulkan_hpp;
 
 namespace VulkanEngine::Utils {
 
-uint32_t ImageUtils::CalculateMipLevels(uint32_t width, uint32_t height, uint32_t depth) {
-    const uint32_t max_dim = std::max({width, height, depth});
-    return static_cast<uint32_t>(std::floor(std::log2(std::max(1u, max_dim)))) + 1;
+uint32_t ImageUtils::CalculateMipLevels(std::uint32_t width, std::uint32_t height, std::uint32_t depth) {
+    const std::uint32_t max_dim = std::max({width, height, depth});
+    return static_cast<std::uint32_t>(std::floor(std::log2(std::max(1u, max_dim)))) + 1;
 }
 
 vk::ImageAspectFlags ImageUtils::GetImageAspectFlags(vk::Format format) {
@@ -30,10 +31,10 @@ vk::ImageAspectFlags ImageUtils::GetImageAspectFlags(vk::Format format) {
 }
 
 vk::ImageSubresourceRange ImageUtils::CreateSubresourceRange(vk::ImageAspectFlags aspect_flags,
-                                                            uint32_t base_mip_level,
-                                                            uint32_t level_count,
-                                                            uint32_t base_array_layer,
-                                                            uint32_t layer_count) {
+                                                            std::uint32_t base_mip_level,
+                                                            std::uint32_t level_count,
+                                                            std::uint32_t base_array_layer,
+                                                            std::uint32_t layer_count) {
     vk::ImageSubresourceRange range{};
     range.aspectMask = aspect_flags;
     range.baseMipLevel = base_mip_level;
@@ -43,11 +44,11 @@ vk::ImageSubresourceRange ImageUtils::CreateSubresourceRange(vk::ImageAspectFlag
     return range;
 }
 
-vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(uint32_t width,
-                                                    uint32_t height,
+vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(std::uint32_t width,
+                                                    std::uint32_t height,
                                                     vk::ImageAspectFlags aspect_flags,
-                                                    uint32_t mip_level,
-                                                    uint32_t array_layer,
+                                                    std::uint32_t mip_level,
+                                                    std::uint32_t array_layer,
                                                     vk::DeviceSize buffer_offset) {
     vk::BufferImageCopy copy{};
     copy.bufferOffset = buffer_offset;
@@ -77,9 +78,9 @@ vk::ImageCopy ImageUtils::CreateImageCopy(const vk::ImageSubresourceLayers& src_
 }
 
 vk::ImageSubresourceLayers ImageUtils::CreateSubresourceLayers(vk::ImageAspectFlags aspect_flags,
-                                                             uint32_t mip_level,
-                                                             uint32_t base_array_layer,
-                                                             uint32_t layer_count) {
+                                                             std::uint32_t mip_level,
+                                                             std::uint32_t base_array_layer,
+                                                             std::uint32_t layer_count) {
     vk::ImageSubresourceLayers layers{};
     layers.aspectMask = aspect_flags;
     layers.mipLevel = mip_level;
@@ -88,18 +89,18 @@ vk::ImageSubresourceLayers ImageUtils::CreateSubresourceLayers(vk::ImageAspectFl
     return layers;
 }
 
-vk::DeviceSize ImageUtils::CalculateImageSize(uint32_t width,
-                                            uint32_t height,
-                                            uint32_t depth,
-                                            uint32_t mip_levels,
-                                            uint32_t array_layers,
+vk::DeviceSize ImageUtils::CalculateImageSize(std::uint32_t width,
+                                            std::uint32_t height,
+                                            std::uint32_t depth,
+                                            std::uint32_t mip_levels,
+                                            std::uint32_t array_layers,
                                             vk::Format /*format*/) {
     vk::DeviceSize size = 0;
-    for (uint32_t layer = 0; layer < array_layers; ++layer) {
-        uint32_t mip_width = width;
-        uint32_t mip_height = height;
-        uint32_t mip_depth = depth;
-        for (uint32_t level = 0; level < mip_levels; ++level) {
+    for (std::uint32_t layer = 0; layer < array_layers; ++layer) {
+        std::uint32_t mip_width = width;
+        std::uint32_t mip_height = height;
+        std::uint32_t mip_depth = depth;
+        for (std::uint32_t level = 0; level < mip_levels; ++level) {
             size += static_cast<vk::DeviceSize>(std::max(1u, mip_width) * std::max(1u, mip_height) * std::max(1u, mip_depth));
             mip_width = std::max(mip_width / 2, 1u);
             mip_height = std::max(mip_height / 2, 1u);
@@ -109,13 +110,13 @@ vk::DeviceSize ImageUtils::CalculateImageSize(uint32_t width,
     return size;
 }
 
-void ImageUtils::GetMipLevelDimensions(uint32_t base_mip_width,
-                                       uint32_t base_mip_height,
-                                       uint32_t base_mip_depth,
-                                       uint32_t mip_level,
-                                       uint32_t& mip_width,
-                                       uint32_t& mip_height,
-                                       uint32_t& mip_depth) {
+void ImageUtils::GetMipLevelDimensions(std::uint32_t base_mip_width,
+                                       std::uint32_t base_mip_height,
+                                       std::uint32_t base_mip_depth,
+                                       std::uint32_t mip_level,
+                                       std::uint32_t& mip_width,
+                                       std::uint32_t& mip_height,
+                                       std::uint32_t& mip_depth) {
     mip_width = std::max(1u, base_mip_width >> mip_level);
     mip_height = std::max(1u, base_mip_height >> mip_level);
     mip_depth = std::max(1u, base_mip_depth >> mip_level);
@@ -127,7 +128,7 @@ bool ImageUtils::RequiresOptimalTiling(vk::ImageUsageFlags usage) {
                      vk::ImageUsageFlagBits::eStorage)) != vk::ImageUsageFlags{};
 }
 
-vk::ImageViewType ImageUtils::GetCompatibleViewType(vk::ImageType image_type, uint32_t array_layers) {
+vk::ImageViewType ImageUtils::GetCompatibleViewType(vk::ImageType image_type, std::uint32_t array_layers) {
     switch (image_type) {
         case vk::ImageType::e1D:
             return array_layers > 1 ? vk::ImageViewType::e1DArray : vk::ImageViewType::e1D;
@@ -144,10 +145,10 @@ vk::ImageViewCreateInfo ImageUtils::CreateImageViewCreateInfo(vk::Image image,
                                                             vk::ImageViewType view_type,
                                                             vk::Format format,
                                                             vk::ImageAspectFlags aspect_flags,
-                                                              uint32_t base_mip_level,
-                                                              uint32_t level_count,
-                                                              uint32_t base_array_layer,
-                                                              uint32_t layer_count) {
+                                                              std::uint32_t base_mip_level,
+                                                              std::uint32_t level_count,
+                                                              std::uint32_t base_array_layer,
+                                                              std::uint32_t layer_count) {
     vk::ImageViewCreateInfo view_info{};
     view_info.image = image;
     view_info.viewType = view_type;
@@ -164,12 +165,12 @@ vk::ImageMemoryBarrier ImageUtils::CreateImageMemoryBarrier(vk::Image image,
                                                           vk::ImageLayout old_layout,
                                                           vk::ImageLayout new_layout,
                                                           vk::ImageAspectFlags aspect_flags,
-                                                            uint32_t base_mip_level,
-                                                            uint32_t level_count,
-                                                            uint32_t base_array_layer,
-                                                            uint32_t layer_count,
-                                                            uint32_t src_queue_family_index,
-                                                            uint32_t dst_queue_family_index) {
+                                                            std::uint32_t base_mip_level,
+                                                            std::uint32_t level_count,
+                                                            std::uint32_t base_array_layer,
+                                                            std::uint32_t layer_count,
+                                                            std::uint32_t src_queue_family_index,
+                                                            std::uint32_t dst_queue_family_index) {
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = old_layout;
     barrier.newLayout = new_layout;
@@ -224,10 +225,10 @@ void ImageUtils::CmdTransitionImageLayout(vk::raii::CommandBuffer const& cmd,
                                              vk::ImageLayout old_layout,
                                              vk::ImageLayout new_layout,
                                              vk::ImageAspectFlags aspect_flags,
-                                             uint32_t base_mip_level,
-                                             uint32_t level_count,
-                                             uint32_t base_array_layer,
-                                             uint32_t layer_count) {
+                                             std::uint32_t base_mip_level,
+                                             std::uint32_t level_count,
+                                             std::uint32_t base_array_layer,
+                                             std::uint32_t layer_count) {
     vk::ImageMemoryBarrier barrier = CreateImageMemoryBarrier(image,
                                                                old_layout,
                                                                new_layout,
@@ -250,12 +251,12 @@ void ImageUtils::CmdTransitionImageLayout(vk::raii::CommandBuffer const& cmd,
 void ImageUtils::CmdCopyBufferToImage(vk::raii::CommandBuffer const& cmd,
                                           vk::Buffer src_buffer,
                                           vk::Image dst_image,
-                                          uint32_t width,
-                                          uint32_t height,
+                                          std::uint32_t width,
+                                          std::uint32_t height,
                                           vk::ImageLayout dst_layout,
                                           vk::ImageAspectFlags aspect_flags,
-                                          uint32_t mip_level,
-                                          uint32_t array_layer,
+                                          std::uint32_t mip_level,
+                                          std::uint32_t array_layer,
                                           vk::DeviceSize buffer_offset) {
     const vk::BufferImageCopy region = CreateBufferImageCopy(width, height, aspect_flags, mip_level, array_layer, buffer_offset);
     cmd.copyBufferToImage(src_buffer, dst_image, dst_layout, region);

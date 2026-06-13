@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.SceneLoader;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -169,11 +171,11 @@ SceneLoader::LoadTexture(VulkanEngine::ResourceManager& resource_manager,
 std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
 SceneLoader::ConvertToVertices(const LoadedMeshData& mesh) {
     std::vector<VulkanEngine::StandardMeshPipeline::Vertex> vertices{};
-    const size_t vertex_count = mesh.positions.size() / 3U;
+    const std::size_t vertex_count = mesh.positions.size() / 3U;
     if (vertex_count == 0U) return vertices;
     vertices.resize(vertex_count);
-    for (size_t i = 0; i < vertex_count; ++i) {
-        const size_t p = i * 3U, t = i * 2U;
+    for (std::size_t i = 0; i < vertex_count; ++i) {
+        const std::size_t p = i * 3U, t = i * 2U;
         vertices[i].px = mesh.positions[p + 0];
         vertices[i].py = mesh.positions[p + 1];
         vertices[i].pz = mesh.positions[p + 2];
@@ -198,29 +200,29 @@ CombinedScene SceneLoader::UploadCombined(
 
     // Convert all meshes to vertices and combine
     std::vector<VulkanEngine::StandardMeshPipeline::Vertex> all_vertices;
-    std::vector<uint32_t> all_indices;
-    uint32_t vertex_offset = 0;
-    uint32_t index_offset = 0;
+    std::vector<std::uint32_t> all_indices;
+    std::uint32_t vertex_offset = 0;
+    std::uint32_t index_offset = 0;
 
     std::vector<VulkanEngine::SubMesh> all_submeshes;
 
-    for (size_t i = 0; i < meshes.size(); ++i) {
+    for (std::size_t i = 0; i < meshes.size(); ++i) {
         auto verts = ConvertToVertices(meshes[i]);
 
         MeshInfo info{};
         info.name = "mesh_" + std::to_string(i);
         info.vertex_offset = vertex_offset;
-        info.vertex_count = static_cast<uint32_t>(verts.size());
+        info.vertex_count = static_cast<std::uint32_t>(verts.size());
         info.index_offset = index_offset;
-        info.index_count = static_cast<uint32_t>(meshes[i].indices.size());
+        info.index_count = static_cast<std::uint32_t>(meshes[i].indices.size());
 
         LOGIFACE_LOG(trace, "UploadCombined mesh[" + std::to_string(i) + "]: name=" + info.name +
                      " vertices=" + std::to_string(info.vertex_count) +
                      " indices=" + std::to_string(info.index_count) +
                      " submeshes=" + std::to_string(meshes[i].submeshes.size()));
 
-        info.first_submesh_index = static_cast<uint32_t>(all_submeshes.size());
-        info.submesh_count = static_cast<uint32_t>(meshes[i].submeshes.size());
+        info.first_submesh_index = static_cast<std::uint32_t>(all_submeshes.size());
+        info.submesh_count = static_cast<std::uint32_t>(meshes[i].submeshes.size());
         if (info.submesh_count == 0) {
             VulkanEngine::SubMesh default_sm{};
             default_sm.index_start = index_offset;
@@ -239,12 +241,12 @@ CombinedScene SceneLoader::UploadCombined(
 
         all_vertices.insert(all_vertices.end(), verts.begin(), verts.end());
 
-        for (const uint32_t idx : meshes[i].indices) {
+        for (const std::uint32_t idx : meshes[i].indices) {
             all_indices.push_back(idx + vertex_offset);
         }
 
-        vertex_offset += static_cast<uint32_t>(verts.size());
-        index_offset += static_cast<uint32_t>(meshes[i].indices.size());
+        vertex_offset += static_cast<std::uint32_t>(verts.size());
+        index_offset += static_cast<std::uint32_t>(meshes[i].indices.size());
     }
 
     scene.submeshes = std::move(all_submeshes);
@@ -252,7 +254,7 @@ CombinedScene SceneLoader::UploadCombined(
     LOGIFACE_LOG(trace, "UploadCombined: total submeshes=" + std::to_string(scene.submeshes.size()) +
                  " total_indices=" + std::to_string(all_indices.size()) +
                  " total_vertices=" + std::to_string(all_vertices.size()));
-    for (size_t i = 0; i < scene.submeshes.size(); ++i) {
+    for (std::size_t i = 0; i < scene.submeshes.size(); ++i) {
         const auto& sm = scene.submeshes[i];
         LOGIFACE_LOG(trace, "  submesh[" + std::to_string(i) + "]: index_start=" +
                      std::to_string(sm.index_start) + " index_count=" +
@@ -262,11 +264,11 @@ CombinedScene SceneLoader::UploadCombined(
 
     if (all_vertices.empty()) return scene;
 
-    const uint64_t vertex_data_size = all_vertices.size() * sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
-    const uint64_t index_data_size = all_indices.size() * sizeof(uint32_t);
+    const std::uint64_t vertex_data_size = all_vertices.size() * sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
+    const std::uint64_t index_data_size = all_indices.size() * sizeof(std::uint32_t);
 
     // Allocate from heaps
-    constexpr uint64_t VERTEX_ALIGNMENT = 4;
+    constexpr std::uint64_t VERTEX_ALIGNMENT = 4;
     scene.vertex_allocation = vertex_heap.Allocate(vertex_data_size, VERTEX_ALIGNMENT);
     if (scene.vertex_allocation.buffer_index == UINT32_MAX) {
         LOGIFACE_LOG(error, "UploadCombined: vertex heap allocation failed");
@@ -274,10 +276,10 @@ CombinedScene SceneLoader::UploadCombined(
     }
 
     // Pack indices with buffer index into the top 8 bits
-    std::vector<uint32_t> packed_indices;
+    std::vector<std::uint32_t> packed_indices;
     packed_indices.reserve(all_indices.size());
-    for (const uint32_t idx : all_indices) {
-        const uint32_t packed = (scene.vertex_allocation.buffer_index << 24) | idx;
+    for (const std::uint32_t idx : all_indices) {
+        const std::uint32_t packed = (scene.vertex_allocation.buffer_index << 24) | idx;
         packed_indices.push_back(packed);
     }
 

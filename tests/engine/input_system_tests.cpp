@@ -1,7 +1,9 @@
-#include <cstdint>
 #include <gtest/gtest.h>
 
 #include <SDL3/SDL_keycode.h>
+
+import std;
+import std.compat;
 
 import VulkanBackend.Event;
 import VulkanEngine.Input;

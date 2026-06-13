@@ -1,13 +1,13 @@
 module;
 
-#include <cstdint>
-#include <string>
-#include <string_view>
-#include <vector>
-
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.MaterialManager;
+
+import std;
+import std.compat;
+
+import logiface;
 
 namespace VulkanEngine::MaterialManager {
 
@@ -33,9 +33,9 @@ MaterialId MaterialManager::RegisterMaterial(const MaterialDefinition& def,
     materials_.push_back(MaterialEntry{def});
     LOGIFACE_LOG(debug, "Registered material ID " + std::to_string(id) + ": technique_id=" +
                 std::to_string(def.texture_slot.value) + " blend_mode=" + std::string(
-                    static_cast<size_t>(def.blend_mode) == 0 ? std::string_view{"Opaque"} :
-                    static_cast<size_t>(def.blend_mode) == 1 ? std::string_view{"Cutout"} :
-                    static_cast<size_t>(def.blend_mode) == 2 ? std::string_view{"Transparent"} :
+                    static_cast<std::size_t>(def.blend_mode) == 0 ? std::string_view{"Opaque"} :
+                    static_cast<std::size_t>(def.blend_mode) == 1 ? std::string_view{"Cutout"} :
+                    static_cast<std::size_t>(def.blend_mode) == 2 ? std::string_view{"Transparent"} :
                     std::string_view{"Unknown"})
                );
 

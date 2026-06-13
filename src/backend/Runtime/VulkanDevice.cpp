@@ -1,13 +1,15 @@
 module;
 
-#include <logging/logging.hpp>
-
-#include <bitset>
-#include <cstring>
+#include <logging/logging_macros.hpp>
 
 #include <vulkan/vulkan_hpp_macros.hpp>
 
 module VulkanBackend.Runtime.VulkanDevice;
+
+import std;
+import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -27,7 +29,7 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
         const auto physical_devices = vk_instance.enumeratePhysicalDevices();
         for (const auto& device : physical_devices) {
             const auto queue_families = device.getQueueFamilyProperties();
-            for (uint32_t i = 0; i < queue_families.size(); ++i) {
+            for (std::uint32_t i = 0; i < queue_families.size(); ++i) {
                 const bool supports_graphics = (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) != vk::QueueFlags{};
                 const bool supports_present = device.getSurfaceSupportKHR(i, *vk_surface) == vk::True;
                 if (supports_graphics && supports_present) {
@@ -52,7 +54,7 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
     return true;
 }
 
-bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flight) {
+bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in_flight) {
     if (device_) return true;
     if (!physical_device_) return false;
 
@@ -74,7 +76,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
             max_dgc_sequence_count_ = std::min(dgc_props.maxIndirectSequenceCount, 256u);
         } else {
             LOGIFACE_LOG(debug, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
-                                            std::string("\nsupported = ") + std::bitset<32>(static_cast<uint32_t>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding)).to_string() +
+                                            std::string("\nsupported = ") + std::bitset<32>(static_cast<std::uint32_t>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding)).to_string() +
                                             std::string("\nneeded    = ") + std::bitset<32>(static_cast<int>(vk::ShaderStageFlagBits::eVertex)).to_string());
         }
     }
@@ -149,7 +151,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         device_info.pNext = &core_features;
         device_info.queueCreateInfoCount = 1;
         device_info.pQueueCreateInfos = &queue_info;
-        device_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
+        device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_extensions.size());
         device_info.ppEnabledExtensionNames = device_extensions.data();
 
         // Mark DGC as unavailable if the extension was not enabled
@@ -182,7 +184,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const uint32_t frames_in_flig
         image_available_semaphores_.resize(frames_in_flight_);
         in_flight_fences_.resize(frames_in_flight_);
 
-        for (uint32_t i = 0; i < frames_in_flight_; ++i) {
+        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
             image_available_semaphores_[i] = std::make_unique<vk::raii::Semaphore>(*device_, sem_info);
             VulkanEngine::Utils::SetVulkanObjectName(*device_, *image_available_semaphores_[i], "image-available-semaphore-" + std::to_string(i));
             in_flight_fences_[i] = std::make_unique<vk::raii::Fence>(*device_, fence_info);
@@ -203,7 +205,7 @@ void VulkanDevice::Shutdown() {
         device_->waitIdle();
     }
 
-    for (uint32_t i = 0; i < frames_in_flight_; ++i) {
+    for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
         in_flight_fences_[i].reset();
         image_available_semaphores_[i].reset();
     }

@@ -1,12 +1,13 @@
 module;
 
-#include <FileLoader/Types.hpp>
-
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.ResourceSystem.TextureResource;
 
 import std;
+
+import FileLoader.Types;
+import logiface;
 
 import vulkan_hpp;
 
@@ -19,7 +20,7 @@ TextureResource::TextureResource(ResourceId id)
     Reset();
 }
 
-TextureResource::TextureResource(ResourceId id, uint32_t width, uint32_t height, vk::Format format,
+TextureResource::TextureResource(ResourceId id, std::uint32_t width, std::uint32_t height, vk::Format format,
                                   std::vector<std::byte> pixels)
     : Resource(std::move(id)), width_(width), height_(height), mip_levels_(1),
       layer_count_(1), face_count_(1), vk_format_(format), pixels_(std::move(pixels)) {

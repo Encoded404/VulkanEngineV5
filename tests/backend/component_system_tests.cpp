@@ -1,12 +1,11 @@
 #include <gtest/gtest.h>
+#include <logging/logging_macros.hpp>  // LOGIFACE_LOG macro only — safe with import
 
-#include <logging/logging.hpp>
+import std;
+import logiface;
+import test_logging;
 
 import VulkanBackend.Component;
-
-#include <type_traits>
-
-#include "../test_logging.hpp"
 
 namespace {
 // Compile-time schema used to verify field metadata extraction in the tests.

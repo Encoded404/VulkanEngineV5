@@ -1,21 +1,18 @@
 module;
 
-// Use headers instead of `import std;` to avoid a Clang/libstdc++ module
-// incompatibility where shared_ptr friend declarations conflict with
-// using-declarations in the std module partition (LLVM #138558, #156604).
-#include <algorithm>
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include <logging/logging.hpp>
-
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>          // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 
+#include <logging/logging_macros.hpp>
+
 module VulkanEngine.MeshRenderSystem;
+
+import std;
+import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -38,7 +35,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                      SceneRenderer::SceneRenderer& renderer,
                                      GpuResources::DeviceBufferHeap& vtx_heap,
                                      GpuResources::DeviceBufferHeap& idx_heap,
-                                     uint32_t frame_index) {
+                                     std::uint32_t frame_index) {
     // --- Phase 1: Collect static mesh entities ---
     std::vector<DrawEntity> static_ents;
     static_ents.reserve(MAX_GATHER);
@@ -76,13 +73,13 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     // --- Phase 3: Request GPU residency for static meshes ---
     for (auto& e : static_ents) {
-        const uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
+        const std::uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
         mesh_registry.RequestGpuResidency(mesh_id, mesh_mgr, renderer,
                                            vtx_heap, idx_heap);
     }
 
     // --- Phase 4: Count total submesh entries ---
-    uint32_t total_submeshes = 0;
+    std::uint32_t total_submeshes = 0;
 
     for (auto& e : static_ents) {
         const auto* info = mesh_registry.Get(e.mesh_ref->loaded_mesh_id);
@@ -91,7 +88,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     }
 
     {
-        const uint32_t dyn_fif = frame_index % 3;
+        const std::uint32_t dyn_fif = frame_index % 3;
         for (auto& e : dyn_ents) {
             const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
             if (!gpu_info) {
@@ -123,14 +120,14 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     auto& scene_submeshes = renderer.GetSubmeshes();
 
     {
-        const uint32_t blk_pre = frame_blocks.compact_dynamic->BlockCount();
+        const std::uint32_t blk_pre = frame_blocks.compact_dynamic->BlockCount();
         frame_blocks.compact_dynamic->EnsureCapacity(total_submeshes);
         LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
                      std::to_string(frame_blocks.compact_dynamic->BlockCount()));
     }
     {
-        const uint32_t blk_pre = frame_blocks.compact_static->BlockCount();
+        const std::uint32_t blk_pre = frame_blocks.compact_static->BlockCount();
         frame_blocks.compact_static->EnsureCapacity(total_submeshes);
         LOGIFACE_LOG(trace, "ProcessFrame: compact_static EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
@@ -145,10 +142,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         float rx, ry, rz, rw;
     };
     struct alignas(16) StaticEntry {
-        uint32_t index_start_packed;
-        uint32_t index_range;
-        uint32_t technique_texture;
-        uint32_t vertex_info;
+        std::uint32_t index_start_packed;
+        std::uint32_t index_range;
+        std::uint32_t technique_texture;
+        std::uint32_t vertex_info;
     };
     struct alignas(16) OBBGPUEntry {
         float cx, cy, cz, pad0;
@@ -157,7 +154,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         float wx, wy, wz, hw;
     };
 
-    uint32_t ci = 0;
+    std::uint32_t ci = 0;
 
     // Write static mesh entries
     for (auto& e : static_ents) {
@@ -167,17 +164,17 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const auto* gpu_info = mesh_mgr.GetMeshInfo(loaded->gpu_handle);
         if (!gpu_info) continue;
 
-        const uint32_t vertex_buf_slot = gpu_info->vertex_allocation.buffer_index;
-        const uint32_t base_vertex = static_cast<uint32_t>(
+        const std::uint32_t vertex_buf_slot = gpu_info->vertex_allocation.buffer_index;
+        const std::uint32_t base_vertex = static_cast<std::uint32_t>(
             gpu_info->vertex_allocation.offset / sizeof(StandardMeshPipeline::Vertex));
-        const uint32_t index_buf_slot = gpu_info->index_allocation.buffer_index;
+        const std::uint32_t index_buf_slot = gpu_info->index_allocation.buffer_index;
 
         const auto pos = e.transform ? e.transform->position : glm::vec3(0);
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
         const glm::quat rot = e.transform ? e.transform->rotation : glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
 
-        for (uint32_t s = 0; s < loaded->submesh_count; ++s) {
-            const uint32_t si = loaded->first_submesh_in_renderer + s;
+        for (std::uint32_t s = 0; s < loaded->submesh_count; ++s) {
+            const std::uint32_t si = loaded->first_submesh_in_renderer + s;
             const auto sm = (si < scene_submeshes.size())
                 ? scene_submeshes[si]
                 : SubMesh{};
@@ -194,7 +191,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 {
                     const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
                     s2->technique_texture =
-                        (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
+                        (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
                         mat_def.technique_id.value;
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
@@ -219,9 +216,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     }
 
     // Write dynamic mesh entries
-    const uint32_t static_vtx_count = vtx_heap.GetBufferCount();
-    const uint32_t static_idx_count = idx_heap.GetBufferCount();
-    const uint32_t fif = frame_index % 3;
+    const std::uint32_t static_vtx_count = vtx_heap.GetBufferCount();
+    const std::uint32_t static_idx_count = idx_heap.GetBufferCount();
+    const std::uint32_t fif = frame_index % 3;
 
     for (auto& e : dyn_ents) {
         const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
@@ -239,12 +236,12 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             continue;
         }
 
-        const uint32_t vertex_buf_slot = static_vtx_count + vtx_alloc.buffer_index;
-        const uint32_t base_vertex = static_cast<uint32_t>(
+        const std::uint32_t vertex_buf_slot = static_vtx_count + vtx_alloc.buffer_index;
+        const std::uint32_t base_vertex = static_cast<std::uint32_t>(
             vtx_alloc.offset / sizeof(StandardMeshPipeline::Vertex));
-        const uint32_t index_buf_slot = static_idx_count + idx_alloc.buffer_index;
-        const uint32_t index_offset = static_cast<uint32_t>(
-            idx_alloc.offset / sizeof(uint32_t));
+        const std::uint32_t index_buf_slot = static_idx_count + idx_alloc.buffer_index;
+        const std::uint32_t index_offset = static_cast<std::uint32_t>(
+            idx_alloc.offset / sizeof(std::uint32_t));
 
         const auto pos = e.transform ? e.transform->position : glm::vec3(0);
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
@@ -256,8 +253,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                      ") rot=(" + std::to_string(rot.x) + "," + std::to_string(rot.y) + "," + std::to_string(rot.z) + "," + std::to_string(rot.w) +
                      ")");
 
-        for (uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {
-            const uint32_t si = e.dyn_mesh->first_submesh + s;
+        for (std::uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {
+            const std::uint32_t si = e.dyn_mesh->first_submesh + s;
             const auto& sms = gpu_info->sub_meshes;
             const auto sm = (si < sms.size()) ? sms[si] : SubMesh{};
 
@@ -283,8 +280,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             {
                 auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci));
                 if (s2) {
-                    const uint32_t packed_index = (index_buf_slot << 24) | (index_offset + sm.index_start);
-                    const uint32_t packed_vertex = (vertex_buf_slot << 24) | base_vertex;
+                    const std::uint32_t packed_index = (index_buf_slot << 24) | (index_offset + sm.index_start);
+                    const std::uint32_t packed_vertex = (vertex_buf_slot << 24) | base_vertex;
                     LOGIFACE_LOG(trace, "ProcessFrame: writing compact_static[" + std::to_string(ci) +
                                  "] index_buf_slot=" + std::to_string(index_buf_slot) +
                                  " index_offset=" + std::to_string(index_offset) +
@@ -298,7 +295,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     {
                         const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
                         s2->technique_texture =
-                            (static_cast<uint32_t>(mat_def.texture_slot.value) << 16) |
+                            (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
                             mat_def.technique_id.value;
                     }
                     s2->vertex_info = packed_vertex;
@@ -335,10 +332,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     renderer.SetCurrentEntityCount(total_submeshes);
 
     // --- Phase 6: Update dynamic block descriptors for this frame ---
-    const uint32_t dyn_vtx_block_count = mesh_mgr.GetDynamicVertexBlockCount(fif);
-    const uint32_t dyn_idx_block_count = mesh_mgr.GetDynamicIndexBlockCount(fif);
+    const std::uint32_t dyn_vtx_block_count = mesh_mgr.GetDynamicVertexBlockCount(fif);
+    const std::uint32_t dyn_idx_block_count = mesh_mgr.GetDynamicIndexBlockCount(fif);
 
-    for (uint32_t bi = 0; bi < dyn_vtx_block_count; ++bi) {
+    for (std::uint32_t bi = 0; bi < dyn_vtx_block_count; ++bi) {
         const vk::Buffer vbuf = mesh_mgr.GetDynamicVertexBuffer(fif, bi);
         LOGIFACE_LOG(trace, "ProcessFrame: update bindless_vertex_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_vtx_count + bi));
@@ -348,7 +345,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             vbuf,
             mesh_mgr.GetDynamicVertexBlockSize(fif));
     }
-    for (uint32_t bi = 0; bi < dyn_idx_block_count; ++bi) {
+    for (std::uint32_t bi = 0; bi < dyn_idx_block_count; ++bi) {
         const vk::Buffer ibuf = mesh_mgr.GetDynamicIndexBuffer(fif, bi);
         LOGIFACE_LOG(trace, "ProcessFrame: update bindless_index_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_idx_count + bi));
@@ -361,7 +358,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     // Verify compact_dynamic content from mapped memory
     if (ci > 0) {
-        for (uint32_t vi = 0; vi < std::min(ci, 4u); ++vi) {
+        for (std::uint32_t vi = 0; vi < std::min(ci, 4u); ++vi) {
             auto* d = static_cast<const DynamicEntry*>(frame_blocks.compact_dynamic->Get(vi));
             if (d) {
                 LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic verify[" + std::to_string(vi) +

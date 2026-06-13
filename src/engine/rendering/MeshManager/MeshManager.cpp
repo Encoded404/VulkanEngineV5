@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.MeshManager;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -27,7 +29,7 @@ bool MeshManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::StagingManager* staging_mgr,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
-                              uint32_t frames_in_flight) {
+                              std::uint32_t frames_in_flight) {
     if (!vertex_heap || !index_heap || !staging_mgr || !dynamic_vertex_heaps || !dynamic_index_heaps) {
         LOGIFACE_LOG(error, "MeshManager: null dependencies");
         return false;
@@ -58,11 +60,11 @@ MeshManager::Handle MeshManager::UploadPersistent(
         return handle;
     }
 
-    const uint64_t vertex_data_size = data.vertices.size() *
+    const std::uint64_t vertex_data_size = data.vertices.size() *
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
-    const uint64_t index_data_size = data.indices.size() * sizeof(uint32_t);
+    const std::uint64_t index_data_size = data.indices.size() * sizeof(std::uint32_t);
 
-    constexpr uint64_t alignment = 256ULL;
+    constexpr std::uint64_t alignment = 256ULL;
     auto vertex_alloc = vertex_heap_->Allocate(vertex_data_size, alignment);
     if (!vertex_alloc.IsValid()) {
         LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex heap allocation failed");
@@ -105,13 +107,13 @@ MeshManager::Handle MeshManager::UploadPersistent(
     staging_mgr_->Flush();
     staging_mgr_->WaitForAll();
 
-    uint32_t handle_id;
+    std::uint32_t handle_id;
     if (!free_handles_.empty()) {
         handle_id = free_handles_.back();
         free_handles_.pop_back();
         entries_[handle_id] = {};
     } else {
-        handle_id = static_cast<uint32_t>(entries_.size());
+        handle_id = static_cast<std::uint32_t>(entries_.size());
         entries_.emplace_back();
     }
 
@@ -133,9 +135,9 @@ MeshManager::Handle MeshManager::RegisterStreamed(
 
     if (!dynamic_vertex_heaps_ || !dynamic_index_heaps_) return handle;
 
-    const uint64_t vertex_bytes = initial_data.vertices.size() *
+    const std::uint64_t vertex_bytes = initial_data.vertices.size() *
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
-    const uint64_t index_bytes = initial_data.indices.size() * sizeof(uint32_t);
+    const std::uint64_t index_bytes = initial_data.indices.size() * sizeof(std::uint32_t);
 
     if (vertex_bytes == 0 || index_bytes == 0) {
         LOGIFACE_LOG(warn, "RegisterStreamed: empty mesh data (" +
@@ -151,18 +153,18 @@ MeshManager::Handle MeshManager::RegisterStreamed(
                  std::to_string(initial_data.sub_meshes.size()) + " submeshes, " +
                  std::to_string(frames_in_flight_) + " FIFs");
 
-    constexpr uint64_t alignment = 256ULL;
+    constexpr std::uint64_t alignment = 256ULL;
 
     GpuMeshInfo info{};
     info.sub_meshes = initial_data.sub_meshes;
 
-    for (uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
+    for (std::uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
         auto& vtx_alloc = info.streamed_vertex_alloc[fif];
         auto& idx_alloc = info.streamed_index_alloc[fif];
 
         vtx_alloc = dynamic_vertex_heaps_[fif].Allocate(vertex_bytes, alignment);
         if (!vtx_alloc.IsValid()) {
-            for (uint32_t j = 0; j < fif; ++j) {
+            for (std::uint32_t j = 0; j < fif; ++j) {
                 if (info.streamed_vertex_alloc[j].IsValid())
                     dynamic_vertex_heaps_[j].Free(info.streamed_vertex_alloc[j]);
                 if (info.streamed_index_alloc[j].IsValid())
@@ -176,7 +178,7 @@ MeshManager::Handle MeshManager::RegisterStreamed(
         idx_alloc = dynamic_index_heaps_[fif].Allocate(index_bytes, alignment);
         if (!idx_alloc.IsValid()) {
             dynamic_vertex_heaps_[fif].Free(vtx_alloc);
-            for (uint32_t j = 0; j < fif; ++j) {
+            for (std::uint32_t j = 0; j < fif; ++j) {
                 if (info.streamed_vertex_alloc[j].IsValid())
                     dynamic_vertex_heaps_[j].Free(info.streamed_vertex_alloc[j]);
                 if (info.streamed_index_alloc[j].IsValid())
@@ -203,13 +205,13 @@ MeshManager::Handle MeshManager::RegisterStreamed(
         if (iptr) std::memcpy(iptr, initial_data.indices.data(), index_bytes);
     }
 
-    uint32_t handle_id;
+    std::uint32_t handle_id;
     if (!free_handles_.empty()) {
         handle_id = free_handles_.back();
         free_handles_.pop_back();
         entries_[handle_id] = {};
     } else {
-        handle_id = static_cast<uint32_t>(entries_.size());
+        handle_id = static_cast<std::uint32_t>(entries_.size());
         entries_.emplace_back();
     }
 
@@ -223,7 +225,7 @@ MeshManager::Handle MeshManager::RegisterStreamed(
 
 void MeshManager::UpdateStreamed(Handle handle,
                                   const VulkanEngine::GpuResources::MeshData& data,
-                                  uint32_t frame_index) {
+                                  std::uint32_t frame_index) {
     if (!handle.IsValid() || handle.id >= entries_.size()) {
         LOGIFACE_LOG(debug, "UpdateStreamed: invalid handle (id=" +
                      std::to_string(handle.id) + "), skipping");
@@ -237,7 +239,7 @@ void MeshManager::UpdateStreamed(Handle handle,
         return;
     }
 
-    const uint32_t fif = frame_index % frames_in_flight_;
+    const std::uint32_t fif = frame_index % frames_in_flight_;
     const auto& vtx_alloc = entry.info.streamed_vertex_alloc[fif];
     const auto& idx_alloc = entry.info.streamed_index_alloc[fif];
 
@@ -248,9 +250,9 @@ void MeshManager::UpdateStreamed(Handle handle,
         return;
     }
 
-    const uint64_t vertex_bytes = data.vertices.size() *
+    const std::uint64_t vertex_bytes = data.vertices.size() *
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
-    const uint64_t index_bytes = data.indices.size() * sizeof(uint32_t);
+    const std::uint64_t index_bytes = data.indices.size() * sizeof(std::uint32_t);
 
     LOGIFACE_LOG(trace, "UpdateStreamed: handle=" + std::to_string(handle.id) +
                  " fif=" + std::to_string(fif) +
@@ -284,7 +286,7 @@ void MeshManager::Remove(Handle handle) {
     if (!handle.IsValid() || handle.id >= entries_.size()) return;
 
     MeshEntry& entry = entries_[handle.id];
-    const int32_t frames_wait = static_cast<int32_t>(frames_in_flight_);
+    const std::int32_t frames_wait = static_cast<std::int32_t>(frames_in_flight_);
 
     if (entry.strategy == Strategy::Persistent) {
         if (entry.info.vertex_allocation.IsValid()) {
@@ -298,7 +300,7 @@ void MeshManager::Remove(Handle handle) {
             });
         }
     } else if (entry.strategy == Strategy::Streamed) {
-        for (uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
+        for (std::uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
             auto& valloc = entry.info.streamed_vertex_alloc[fif];
             auto& ialloc = entry.info.streamed_index_alloc[fif];
             if (valloc.IsValid()) {
@@ -318,7 +320,7 @@ void MeshManager::Remove(Handle handle) {
     free_handles_.push_back(handle.id);
 }
 
-void MeshManager::EndFrame(uint32_t) {
+void MeshManager::EndFrame(std::uint32_t) {
     auto it = deferred_free_queue_.begin();
     while (it != deferred_free_queue_.end()) {
         it->frames_remaining--;
@@ -339,32 +341,32 @@ const MeshManager::GpuMeshInfo* MeshManager::GetMeshInfo(Handle handle) const {
     return &entries_[handle.id].info;
 }
 
-vk::Buffer MeshManager::GetDynamicVertexBuffer(uint32_t fif_index, uint32_t buffer_index) const {
-    if (fif_index >= frames_in_flight_) return VK_NULL_HANDLE;
+vk::Buffer MeshManager::GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const {
+    if (fif_index >= frames_in_flight_) return nullptr;
     return dynamic_vertex_heaps_[fif_index].GetBuffer(buffer_index);
 }
 
-vk::Buffer MeshManager::GetDynamicIndexBuffer(uint32_t fif_index, uint32_t buffer_index) const {
-    if (fif_index >= frames_in_flight_) return VK_NULL_HANDLE;
+vk::Buffer MeshManager::GetDynamicIndexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const {
+    if (fif_index >= frames_in_flight_) return nullptr;
     return dynamic_index_heaps_[fif_index].GetBuffer(buffer_index);
 }
 
-uint64_t MeshManager::GetDynamicVertexBlockSize(uint32_t fif_index) const {
+uint64_t MeshManager::GetDynamicVertexBlockSize(std::uint32_t fif_index) const {
     if (fif_index >= frames_in_flight_) return 0;
     return dynamic_vertex_heaps_[fif_index].GetConfig().block_size;
 }
 
-uint64_t MeshManager::GetDynamicIndexBlockSize(uint32_t fif_index) const {
+uint64_t MeshManager::GetDynamicIndexBlockSize(std::uint32_t fif_index) const {
     if (fif_index >= frames_in_flight_) return 0;
     return dynamic_index_heaps_[fif_index].GetConfig().block_size;
 }
 
-uint32_t MeshManager::GetDynamicVertexBlockCount(uint32_t fif_index) const {
+uint32_t MeshManager::GetDynamicVertexBlockCount(std::uint32_t fif_index) const {
     if (fif_index >= frames_in_flight_) return 0;
     return dynamic_vertex_heaps_[fif_index].GetBufferCount();
 }
 
-uint32_t MeshManager::GetDynamicIndexBlockCount(uint32_t fif_index) const {
+uint32_t MeshManager::GetDynamicIndexBlockCount(std::uint32_t fif_index) const {
     if (fif_index >= frames_in_flight_) return 0;
     return dynamic_index_heaps_[fif_index].GetBufferCount();
 }

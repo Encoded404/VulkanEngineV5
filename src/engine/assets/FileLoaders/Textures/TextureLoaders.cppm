@@ -1,11 +1,11 @@
 module;
 
-#include <FileLoader/Types.hpp>
-
 export module VulkanEngine.FileLoaders.TextureLoaders;
 
 import std;
 import std.compat;
+
+import FileLoader.Types;
 
 import vulkan_hpp;
 

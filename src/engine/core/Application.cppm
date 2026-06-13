@@ -2,16 +2,23 @@ module;
 
 #include <SDL3/SDL_video.h>
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <functional>
+#include <chrono>
+#include <thread>
+#include <stacktrace>
+#include <iostream>
+
 // logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.Application;
 
-import std;
-import logiface;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
-constexpr std::uint32_t UINT32_MAX =
-    std::numeric_limits<std::uint32_t>::max();
+import logiface;
 
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
@@ -23,6 +30,11 @@ import VulkanEngine.Input;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Runtime.VulkanBootstrapBackend;
 import VulkanEngine.Startup;
+
+#ifndef UINT32_MAX
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
+#endif
 
 export namespace VulkanEngine::Application {
 
@@ -277,7 +289,7 @@ struct ApplicationHooks {
         return 0;
     } catch (const std::exception& ex) {
         LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
-        const auto trace = std::stacktrace::from_current_exception();
+        const auto trace = std::stacktrace::current();
         std::cerr << "\nStacktrace:\n" << trace << '\n';
         cleanup();
         return 1;

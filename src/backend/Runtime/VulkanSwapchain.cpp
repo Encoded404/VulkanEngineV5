@@ -1,14 +1,14 @@
 module;
 
-#include <cstdint>
-
 #include <SDL3/SDL_video.h>
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanBackend.Runtime.VulkanSwapchain;
 
 import std;
+import std.compat;
+import logiface;
 
 import vulkan_hpp;
 
@@ -33,7 +33,7 @@ vk::PresentModeKHR ToVkPresentMode(PresentMode mode) {
 
 } // anonymous namespace
 
-bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode) {
+bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode) {
     try {
         const auto& vk_surface = instance.GetSurface();
         const auto& vk_physical_device = device.GetPhysicalDevice();
@@ -53,13 +53,13 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         if (capabilities.currentExtent.width == UINT32_MAX || capabilities.currentExtent.height == UINT32_MAX) {
             int drawable_w = 0, drawable_h = 0;
             SDL_GetWindowSizeInPixels(window, &drawable_w, &drawable_h);
-            swapchain_extent_.width = std::clamp(static_cast<uint32_t>(drawable_w), capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-            swapchain_extent_.height = std::clamp(static_cast<uint32_t>(drawable_h), capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+            swapchain_extent_.width = std::clamp(static_cast<std::uint32_t>(drawable_w), capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+            swapchain_extent_.height = std::clamp(static_cast<std::uint32_t>(drawable_h), capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
         } else {
             swapchain_extent_ = capabilities.currentExtent;
         }
 
-        uint32_t image_count = std::max(preferred_image_count, capabilities.minImageCount);
+        std::uint32_t image_count = std::max(preferred_image_count, capabilities.minImageCount);
         if (capabilities.maxImageCount > 0) {
             image_count = std::min(image_count, capabilities.maxImageCount);
         }
@@ -82,7 +82,7 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         VulkanEngine::Utils::SetVulkanObjectName(vk_device, *swapchain_, "swapchain");
         swapchain_images_ = swapchain_->getImages();
         swapchain_image_initialized_.assign(swapchain_images_.size(), false);
-        swapchain_image_count_ = static_cast<uint32_t>(swapchain_images_.size());
+        swapchain_image_count_ = static_cast<std::uint32_t>(swapchain_images_.size());
 
         if (!RebuildSwapchainViews(vk_device)) return false;
         return CreateDepthResources(vk_physical_device, vk_device);
@@ -95,7 +95,7 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
 bool VulkanSwapchain::RebuildSwapchainViews(const vk::raii::Device& device) {
     try {
         swapchain_image_views_.clear();
-        uint32_t view_idx = 0;
+        std::uint32_t view_idx = 0;
         for (const auto& image : swapchain_images_) {
             vk::ImageViewCreateInfo view_info{};
             view_info.image = image;
@@ -115,7 +115,7 @@ bool VulkanSwapchain::RebuildSwapchainViews(const vk::raii::Device& device) {
 
 bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device) {
     try {
-        const uint32_t count = swapchain_image_count_;
+        const std::uint32_t count = swapchain_image_count_;
 
         depth_images_.clear();
         depth_image_memories_.clear();
@@ -136,7 +136,7 @@ bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physi
         image_info.samples = vk::SampleCountFlagBits::e1;
         image_info.sharingMode = vk::SharingMode::eExclusive;
 
-        for (uint32_t i = 0; i < count; ++i) {
+        for (std::uint32_t i = 0; i < count; ++i) {
             depth_images_.emplace_back(device, image_info);
             VulkanEngine::Utils::SetVulkanObjectName(device, depth_images_.back(), "depth-image-" + std::to_string(i));
 
@@ -145,8 +145,8 @@ bool VulkanSwapchain::CreateDepthResources(const vk::raii::PhysicalDevice& physi
             alloc_info.allocationSize = requirements.size;
 
             const auto mem_properties = physical_device.getMemoryProperties();
-            uint32_t memory_type_index = UINT32_MAX;
-            for (uint32_t j = 0; j < mem_properties.memoryTypeCount; ++j) {
+            std::uint32_t memory_type_index = UINT32_MAX;
+            for (std::uint32_t j = 0; j < mem_properties.memoryTypeCount; ++j) {
                 if ((requirements.memoryTypeBits & (1u << j)) && (mem_properties.memoryTypes[j].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
                     memory_type_index = j;
                     break;
@@ -185,7 +185,7 @@ void VulkanSwapchain::Shutdown() {
     swapchain_.reset();
 }
 
-bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device, uint32_t preferred_image_count, PresentMode present_mode) {
+bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode) {
     Shutdown();
     return Initialize(instance, device, preferred_image_count, present_mode);
 }

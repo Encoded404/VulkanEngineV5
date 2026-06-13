@@ -1,14 +1,13 @@
 module;
 
-#include <algorithm>
-//#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <utility>
-
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanBackend.Runtime.VulkanBootstrap;
+
+import std;
+import std.compat;
+
+import logiface;
 
 namespace VulkanEngine::Runtime {
 
@@ -48,7 +47,7 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
     }
     snapshot_.device_ready = true;
 
-    uint32_t swapchain_image_count = 0;
+    std::uint32_t swapchain_image_count = 0;
     if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, config_.present_mode, swapchain_image_count)) {
         snapshot_.status = BootstrapStatus::SwapchainCreationFailed;
         backend_->Shutdown();
@@ -123,7 +122,7 @@ bool VulkanBootstrap::RecreateSwapchain() {
         return false;
     }
 
-    uint32_t swapchain_image_count = 0;
+    std::uint32_t swapchain_image_count = 0;
     if (!backend_->CreateSwapchain(config_.preferred_swapchain_image_count, config_.present_mode, swapchain_image_count)) {
         snapshot_.status = BootstrapStatus::SwapchainCreationFailed;
         snapshot_.swapchain_ready = false;
@@ -142,14 +141,14 @@ bool VulkanBootstrap::RecreateSwapchain() {
     return true;
 }
 
-bool VulkanBootstrap::AcquireNextImage(uint32_t& out_image_index) {
+bool VulkanBootstrap::AcquireNextImage(std::uint32_t& out_image_index) {
     if (!initialized_ || !backend_) {
         return false;
     }
     return backend_->AcquireNextImage(snapshot_.frame_index, out_image_index);
 }
 
-bool VulkanBootstrap::Present(uint32_t image_index, bool rendering_succeeded) {
+bool VulkanBootstrap::Present(std::uint32_t image_index, bool rendering_succeeded) {
     if (!initialized_ || !backend_) {
         return false;
     }

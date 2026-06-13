@@ -11,4 +11,14 @@ add_executable(backend_tests
   component_system_tests.cpp
 )
 target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET})
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  target_sources(backend_tests PRIVATE
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_SOURCE_DIR}/tests/app
+    FILES
+      ${CMAKE_SOURCE_DIR}/tests/app/test_logging.cppm
+  )
+endif()
+
 setup_test_target(backend_tests)

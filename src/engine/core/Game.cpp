@@ -1,14 +1,12 @@
 module;
 
-#include <memory>
-#include <vector>
-#include <cstdint>
-#include <unordered_set>
-#include <filesystem>
 
-#include <logging/logging.hpp>
 
 module VulkanEngine.Game;
+
+import std;
+import std.compat;
+import logiface;
 
 import vulkan_hpp;
 
@@ -57,7 +55,7 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
             vk::MemoryPropertyFlagBits::eHostVisible |
             vk::MemoryPropertyFlagBits::eHostCoherent;
 
-        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT_DYN; ++i) {
+        for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT_DYN; ++i) {
             if (!dynamic_vertex_heaps_[i].Initialize(backend, dynamic_heap_config,
                 "dynamic_vertex_fifo" + std::to_string(i))) return false;
             if (!dynamic_index_heaps_[i].Initialize(backend, dynamic_heap_config,
@@ -106,7 +104,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                               std::span<const std::uint32_t> frag_override) {
     auto& backend = ctx.bootstrap->GetBackend();
 
-    constexpr uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
+    constexpr std::uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
     scene_renderer_ = std::make_unique<SceneRenderer::SceneRenderer>();
     if (!scene_renderer_->Initialize(backend, vertex_heap_, initial_indirection_entries)) {
         LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
@@ -137,7 +135,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     MaterialManager::MaterialManager::Initialize();
 
     // Register fallback material (ID 0): main technique, bindless checkerboard
-    const uint32_t fallback_slot = UploadTextureToBindless(ctx, missing_texture_.get());
+    const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, missing_texture_.get());
     MaterialManager::MaterialDefinition fallback_def{};
     fallback_def.technique_id = TechniqueManager::TechniqueId{main_technique_id_};
     fallback_def.texture_slot = BindlessManager::TextureSlot{static_cast<uint16_t>(fallback_slot)};
@@ -188,8 +186,8 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
     if (!mesh_manager_) return result;
 
     std::vector<VulkanEngine::SubMesh> all_submeshes;
-    std::unordered_set<uint32_t> vertex_buffers_updated;
-    std::unordered_set<uint32_t> index_buffers_updated;
+    std::unordered_set<std::uint32_t> vertex_buffers_updated;
+    std::unordered_set<std::uint32_t> index_buffers_updated;
 
     for (const auto& mesh_data : meshes) {
         auto handle = mesh_manager_->UploadPersistent(mesh_data);
@@ -201,18 +199,18 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         const auto* info = mesh_manager_->GetMeshInfo(handle);
         if (!info) continue;
 
-        const uint32_t index_offset = static_cast<uint32_t>(
-            info->index_allocation.offset / sizeof(uint32_t));
+        const std::uint32_t index_offset = static_cast<std::uint32_t>(
+            info->index_allocation.offset / sizeof(std::uint32_t));
 
         UploadedMesh uploaded{};
-        uploaded.first_submesh = static_cast<uint32_t>(all_submeshes.size());
-        uploaded.submesh_count = static_cast<uint32_t>(info->sub_meshes.size());
+        uploaded.first_submesh = static_cast<std::uint32_t>(all_submeshes.size());
+        uploaded.submesh_count = static_cast<std::uint32_t>(info->sub_meshes.size());
         uploaded.vertex_buffer_index = info->vertex_allocation.buffer_index;
         uploaded.index_buffer_index = info->index_allocation.buffer_index;
 
         if (info->sub_meshes.empty()) {
-            const uint32_t total_indices = static_cast<uint32_t>(
-                info->index_allocation.size / sizeof(uint32_t));
+            const std::uint32_t total_indices = static_cast<std::uint32_t>(
+                info->index_allocation.size / sizeof(std::uint32_t));
             SubMesh default_sm{};
             default_sm.index_start = index_offset;
             default_sm.index_count = total_indices;
@@ -288,7 +286,7 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
     }
 
     {
-        const uint32_t frame_index = ctx.frame.image_index % 3;
+        const std::uint32_t frame_index = ctx.frame.image_index % 3;
         mesh_render_system_.ProcessFrame(
             ctx.bootstrap->GetBackend().GetComponentRegistry(),
             mesh_registry_,

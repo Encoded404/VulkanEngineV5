@@ -1,12 +1,17 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <utility>
+
 #include <SDL3/SDL_video.h>
 #include <imgui.h>
 
 module VulkanEngine.ImGui;
 
-import std;
-import std.compat;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+// import std.compat;
 
 import vulkan_hpp;
 
@@ -55,14 +60,14 @@ void ImGuiSystem::ProcessSDLEvent(void* sdl_event) {
     backend_->ProcessSDLEvent(sdl_event);
 }
 
-void ImGuiSystem::OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format) {
+void ImGuiSystem::OnSwapchainRecreated(std::uint32_t new_image_count, vk::Format new_format) {
     if (!initialized_) return;
     backend_config_.image_count = new_image_count;
     backend_config_.swapchain_format = new_format;
     backend_->OnSwapchainRecreated(new_image_count, new_format);
 }
 
-void ImGuiSystem::RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, uint32_t width, uint32_t height) {
+void ImGuiSystem::RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, std::uint32_t width, std::uint32_t height) {
     if (!initialized_) {
         return;
     }

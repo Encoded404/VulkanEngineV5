@@ -4,12 +4,14 @@ module;
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.SceneRenderer;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -27,11 +29,11 @@ import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
-        struct ExpandPC { glm::mat4 vp; uint32_t cnt; uint32_t p0; uint32_t p1; };
-        struct OccPC { uint32_t cnt; uint32_t refineLevel; uint32_t hizWidth; uint32_t hizHeight; };
-        struct HiZPC { uint32_t bl; uint32_t sw; uint32_t sh; uint32_t tc; };
-        struct CollectPC { uint32_t cnt; uint32_t p0; uint32_t mt; uint32_t pass; };
-        struct WritePC { uint32_t cnt; uint32_t p0; uint32_t techniqueCount; uint32_t p1; };
+        struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
+        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; };
+        struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
+        struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
+        struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
 
     } // anonymous namespace
 
@@ -43,7 +45,7 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBoo
     pr.size = sizeof(ExpandPC);
     std::array<vk::DescriptorSetLayout, 2> sl{ *expand_layout_, *bindless_index_layout_ };
     vk::PipelineLayoutCreateInfo li{};
-    li.setLayoutCount = static_cast<uint32_t>(sl.size());
+    li.setLayoutCount = static_cast<std::uint32_t>(sl.size());
     li.pSetLayouts = sl.data();
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pr;
@@ -68,7 +70,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap&
         *empty_layout_, *submesh_vertex_layout_, *raw_vertex_layout_, *indirection_layout_
     };
     vk::PipelineLayoutCreateInfo li{};
-    li.setLayoutCount = static_cast<uint32_t>(sl.size());
+    li.setLayoutCount = static_cast<std::uint32_t>(sl.size());
     li.pSetLayouts = sl.data();
     depth_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanEngine::Utils::SetVulkanObjectName(dev, *depth_pipeline_layout_, "depth-prepass-pipeline-layout");
@@ -118,7 +120,7 @@ bool SceneRenderer::CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& b
     bs[2].descriptorCount = MAX_HIZ_MIPS;
     bs[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
     hiz_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-        dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<uint32_t>(bs.size()), bs.data()});
+        dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
     GpuResources::DescriptorPoolConfig pc{};
     pc.max_sets = FRAMES_IN_FLIGHT;
     pc.max_storage_images = FRAMES_IN_FLIGHT * MAX_HIZ_MIPS;
@@ -239,11 +241,11 @@ bool SceneRenderer::CreateDegeneratePipeline(const VulkanEngine::Runtime::IVulka
         *indirection_layout_
     };
 
-    constexpr uint32_t push_constant_size = 64;
+    constexpr std::uint32_t push_constant_size = 64;
     constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
 
     vk::PipelineLayoutCreateInfo layout_ci{};
-    layout_ci.setLayoutCount = static_cast<uint32_t>(set_layouts.size());
+    layout_ci.setLayoutCount = static_cast<std::uint32_t>(set_layouts.size());
     layout_ci.pSetLayouts = set_layouts.data();
     layout_ci.pushConstantRangeCount = 1;
     layout_ci.pPushConstantRanges = &push_range;

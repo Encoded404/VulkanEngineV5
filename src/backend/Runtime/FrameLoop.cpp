@@ -1,8 +1,9 @@
 module;
 
-#include <algorithm>
 
 module VulkanBackend.Runtime.FrameLoop;
+
+import std;
 
 namespace VulkanEngine::Runtime {
 

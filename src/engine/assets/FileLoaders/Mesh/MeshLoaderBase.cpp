@@ -1,13 +1,10 @@
 module;
 
-#include <vector>
-#include <array>
-#include <cmath>
-#include <algorithm>
-#include <cstdint>
-#include <limits>
 
 module VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
+
+import std;
+import std.compat;
 
 import VulkanEngine.Mesh.MeshTypes;
 
@@ -16,12 +13,12 @@ namespace VulkanEngine::FileLoaders::Mesh {
 namespace {
 
 void ComputeSubmeshBoundingVolumes(const std::vector<MeshVertexVec3>& vertices,
-                                    const std::vector<uint32_t>& indices,
+                                    const std::vector<std::uint32_t>& indices,
                                     SubMesh& sm) {
     // Gather positions for this submesh
     std::vector<MeshVertexVec3> positions;
     positions.reserve(sm.index_count);
-    for (uint32_t i = sm.index_start; i < sm.index_start + sm.index_count; ++i) {
+    for (std::uint32_t i = sm.index_start; i < sm.index_start + sm.index_count; ++i) {
         positions.push_back(vertices[indices[i]]);
     }
 

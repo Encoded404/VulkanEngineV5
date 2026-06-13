@@ -1,8 +1,13 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <filesystem>
+
 export module VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.MaterialManager.MaterialId;

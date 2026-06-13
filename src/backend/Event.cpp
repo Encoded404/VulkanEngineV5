@@ -1,11 +1,11 @@
 module;
 
-#include <cstdint>
-#include <memory>
-#include <typeindex>
 //#include <typeinfo>
 
 module VulkanBackend.Event;
+
+import std;
+import std.compat;
 
 namespace VulkanEngine::Backend::Event {
 
@@ -35,7 +35,7 @@ std::unique_ptr<IEvent> QuitEvent::CloneEvent() const {
     return std::make_unique<QuitEvent>(*this);
 }
 
-WindowResizedEvent::WindowResizedEvent(uint32_t width_value, uint32_t height_value)
+WindowResizedEvent::WindowResizedEvent(std::uint32_t width_value, std::uint32_t height_value)
     : EventBase(typeid(WindowResizedEvent), EventCategory::Platform, EventType::WindowResized), width(width_value), height(height_value) {}
 
 std::unique_ptr<IEvent> WindowResizedEvent::CloneEvent() const {
@@ -56,28 +56,28 @@ std::unique_ptr<IEvent> WindowRestoredEvent::CloneEvent() const {
     return std::make_unique<WindowRestoredEvent>(*this);
 }
 
-KeyDownEvent::KeyDownEvent(int32_t keycode_value, bool repeat_value)
+KeyDownEvent::KeyDownEvent(std::int32_t keycode_value, bool repeat_value)
     : EventBase(typeid(KeyDownEvent), EventCategory::Input, EventType::KeyDown), keycode(keycode_value), repeat(repeat_value) {}
 
 std::unique_ptr<IEvent> KeyDownEvent::CloneEvent() const {
     return std::make_unique<KeyDownEvent>(*this);
 }
 
-KeyUpEvent::KeyUpEvent(int32_t keycode_value)
+KeyUpEvent::KeyUpEvent(std::int32_t keycode_value)
     : EventBase(typeid(KeyUpEvent), EventCategory::Input, EventType::KeyUp), keycode(keycode_value) {}
 
 std::unique_ptr<IEvent> KeyUpEvent::CloneEvent() const {
     return std::make_unique<KeyUpEvent>(*this);
 }
 
-MouseButtonDownEvent::MouseButtonDownEvent(int32_t button_value, int32_t x_value, int32_t y_value)
+MouseButtonDownEvent::MouseButtonDownEvent(std::int32_t button_value, std::int32_t x_value, std::int32_t y_value)
     : EventBase(typeid(MouseButtonDownEvent), EventCategory::Input, EventType::MouseButtonDown), button(button_value), x(x_value), y(y_value) {}
 
 std::unique_ptr<IEvent> MouseButtonDownEvent::CloneEvent() const {
     return std::make_unique<MouseButtonDownEvent>(*this);
 }
 
-MouseButtonUpEvent::MouseButtonUpEvent(int32_t button_value, int32_t x_value, int32_t y_value)
+MouseButtonUpEvent::MouseButtonUpEvent(std::int32_t button_value, std::int32_t x_value, std::int32_t y_value)
     : EventBase(typeid(MouseButtonUpEvent), EventCategory::Input, EventType::MouseButtonUp), button(button_value), x(x_value), y(y_value) {}
 
 std::unique_ptr<IEvent> MouseButtonUpEvent::CloneEvent() const {

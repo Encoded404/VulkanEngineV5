@@ -1,12 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <logging/logging.hpp>
-
-// #include <lib1/lib_example.hpp>
-
-#include "../test_logging.hpp"
-
-// using modern_cmake_template::example;
+import test_logging;
 
 namespace {
 // Install the per-test file logger once for the test binary.

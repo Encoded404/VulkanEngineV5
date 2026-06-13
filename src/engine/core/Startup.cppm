@@ -6,6 +6,7 @@ module;
 export module VulkanEngine.Startup;
 
 import std;
+
 import logiface;
 import logiface.ConsoleLogger;
 

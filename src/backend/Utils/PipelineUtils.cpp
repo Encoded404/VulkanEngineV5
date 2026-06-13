@@ -24,7 +24,7 @@ vk::Viewport PipelineUtils::CreateViewport(float width,
     return viewport;
 }
 
-vk::Rect2D PipelineUtils::CreateScissor(uint32_t width, uint32_t height, int32_t offset_x, int32_t offset_y) {
+vk::Rect2D PipelineUtils::CreateScissor(std::uint32_t width, std::uint32_t height, std::int32_t offset_x, std::int32_t offset_y) {
     vk::Rect2D scissor{};
     scissor.offset = vk::Offset2D{offset_x, offset_y};
     scissor.extent = vk::Extent2D{width, height};
@@ -133,8 +133,8 @@ vk::PipelineMultisampleStateCreateInfo PipelineUtils::CreateMsaaMultisampleState
     return info;
 }
 
-vk::VertexInputBindingDescription PipelineUtils::CreateVertexInputBinding(uint32_t binding,
-                                                                        uint32_t stride,
+vk::VertexInputBindingDescription PipelineUtils::CreateVertexInputBinding(std::uint32_t binding,
+                                                                        std::uint32_t stride,
                                                                         vk::VertexInputRate input_rate) {
     vk::VertexInputBindingDescription desc{};
     desc.binding = binding;
@@ -143,10 +143,10 @@ vk::VertexInputBindingDescription PipelineUtils::CreateVertexInputBinding(uint32
     return desc;
 }
 
-vk::VertexInputAttributeDescription PipelineUtils::CreateVertexInputAttribute(uint32_t location,
-                                                                            uint32_t binding,
+vk::VertexInputAttributeDescription PipelineUtils::CreateVertexInputAttribute(std::uint32_t location,
+                                                                            std::uint32_t binding,
                                                                             vk::Format format,
-                                                                            uint32_t offset) {
+                                                                            std::uint32_t offset) {
     vk::VertexInputAttributeDescription desc{};
     desc.location = location;
     desc.binding = binding;
@@ -175,7 +175,7 @@ vk::PipelineInputAssemblyStateCreateInfo PipelineUtils::CreateInputAssemblyState
     return info;
 }
 
-vk::PipelineTessellationStateCreateInfo PipelineUtils::CreateTessellationState(uint32_t patch_control_points) {
+vk::PipelineTessellationStateCreateInfo PipelineUtils::CreateTessellationState(std::uint32_t patch_control_points) {
     vk::PipelineTessellationStateCreateInfo info{};
     info.patchControlPoints = patch_control_points;
     return info;
@@ -184,15 +184,15 @@ vk::PipelineTessellationStateCreateInfo PipelineUtils::CreateTessellationState(u
 vk::PipelineViewportStateCreateInfo PipelineUtils::CreateViewportState(const std::vector<vk::Viewport>& viewports,
                                                                  const std::vector<vk::Rect2D>& scissors) {
     vk::PipelineViewportStateCreateInfo info{};
-    info.viewportCount = static_cast<uint32_t>(viewports.size());
+    info.viewportCount = static_cast<std::uint32_t>(viewports.size());
     info.pViewports = viewports.empty() ? nullptr : viewports.data();
-    info.scissorCount = static_cast<uint32_t>(scissors.size());
+    info.scissorCount = static_cast<std::uint32_t>(scissors.size());
     info.pScissors = scissors.empty() ? nullptr : scissors.data();
     return info;
 }
 
-vk::PipelineViewportStateCreateInfo PipelineUtils::CreateDynamicViewportState(uint32_t viewport_count,
-                                                                            uint32_t scissor_count) {
+vk::PipelineViewportStateCreateInfo PipelineUtils::CreateDynamicViewportState(std::uint32_t viewport_count,
+                                                                            std::uint32_t scissor_count) {
     vk::PipelineViewportStateCreateInfo info{};
     info.viewportCount = viewport_count;
     info.pViewports = nullptr;
@@ -207,14 +207,14 @@ vk::PipelineColorBlendStateCreateInfo PipelineUtils::CreateColorBlendState(const
     vk::PipelineColorBlendStateCreateInfo info{};
     info.logicOpEnable = logic_op_enable;
     info.logicOp = logic_op;
-    info.attachmentCount = static_cast<uint32_t>(attachments.size());
+    info.attachmentCount = static_cast<std::uint32_t>(attachments.size());
     info.pAttachments = attachments.empty() ? nullptr : attachments.data();
     return info;
 }
 
 vk::PipelineDynamicStateCreateInfo PipelineUtils::CreateDynamicState(const std::vector<vk::DynamicState>& dynamic_states) {
     vk::PipelineDynamicStateCreateInfo info{};
-    info.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+    info.dynamicStateCount = static_cast<std::uint32_t>(dynamic_states.size());
     info.pDynamicStates = dynamic_states.empty() ? nullptr : dynamic_states.data();
     return info;
 }

@@ -17,7 +17,7 @@ namespace VulkanEngine::GpuResources {
 namespace {
 
 void CreateBufferResource(const VulkanEngine::Runtime::IVulkanBootstrap & backend,
-                          uint64_t size,
+                          std::uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
                           std::unique_ptr<vk::raii::Buffer>& out_buffer,
@@ -42,14 +42,14 @@ void CreateBufferResource(const VulkanEngine::Runtime::IVulkanBootstrap & backen
 
 GpuTexture GpuTexture::CreateFromPixels(VulkanEngine::Runtime::IVulkanBootstrap& backend,
                                         const uint8_t* pixels,
-                                        uint32_t width,
-                                        uint32_t height,
+                                        std::uint32_t width,
+                                        std::uint32_t height,
                                         vk::Format format) {
     GpuTexture texture{};
     texture.width_ = width;
     texture.height_ = height;
 
-    const uint64_t pixel_size = static_cast<uint64_t>(width) * height * 4;
+    const std::uint64_t pixel_size = static_cast<uint64_t>(width) * height * 4;
 
     std::unique_ptr<vk::raii::Buffer> staging_buffer;
     std::unique_ptr<vk::raii::DeviceMemory> staging_memory;

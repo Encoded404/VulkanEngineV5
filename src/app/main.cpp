@@ -1,8 +1,7 @@
-#include <filesystem>
-#include <map>
-#include <string>
 
 #include <CLI/CLI.hpp>
+
+import std;
 
 import App.Game;
 import VulkanEngine.Application;

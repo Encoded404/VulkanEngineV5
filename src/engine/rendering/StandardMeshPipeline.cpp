@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.StandardMeshPipeline;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -19,8 +21,8 @@ GraphicsPipeline::GraphicsPipeline() = default;
 GraphicsPipeline::~GraphicsPipeline() = default;
 
 void GraphicsPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                  const std::vector<uint32_t>& vertex_spirv,
-                                  const std::vector<uint32_t>& fragment_spirv,
+                                  const std::vector<std::uint32_t>& vertex_spirv,
+                                  const std::vector<std::uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
                                   vk::DescriptorSetLayout* bindless_layout,
                                   vk::DescriptorSetLayout* object_data_layout,
@@ -107,17 +109,17 @@ void GraphicsPipeline::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstr
 }
 
 void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                      const std::vector<uint32_t>& vertex_spirv,
-                                      const std::vector<uint32_t>& fragment_spirv,
+                                      const std::vector<std::uint32_t>& vertex_spirv,
+                                      const std::vector<std::uint32_t>& fragment_spirv,
                                       const PipelineConfig& config) {
     LOGIFACE_LOG(trace, "entering CreatePipeline");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
 
-    const vk::ShaderModuleCreateInfo vert_info({}, vertex_spirv.size() * sizeof(uint32_t), vertex_spirv.data());
+    const vk::ShaderModuleCreateInfo vert_info({}, vertex_spirv.size() * sizeof(std::uint32_t), vertex_spirv.data());
     const vk::raii::ShaderModule vert_module(device, vert_info);
 
-    const vk::ShaderModuleCreateInfo frag_info({}, fragment_spirv.size() * sizeof(uint32_t), fragment_spirv.data());
+    const vk::ShaderModuleCreateInfo frag_info({}, fragment_spirv.size() * sizeof(std::uint32_t), fragment_spirv.data());
     const vk::raii::ShaderModule frag_module(device, frag_info);
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
@@ -137,11 +139,11 @@ void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bo
         set_layouts.push_back(*indirection_layout_);      // set 3
     }
 
-    constexpr uint32_t push_constant_size = 64;
+    constexpr std::uint32_t push_constant_size = 64;
     constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
 
     vk::PipelineLayoutCreateInfo layout_info{};
-    layout_info.setLayoutCount = static_cast<uint32_t>(set_layouts.size());
+    layout_info.setLayoutCount = static_cast<std::uint32_t>(set_layouts.size());
     layout_info.pSetLayouts = set_layouts.data();
 
     layout_info.pushConstantRangeCount = 1;
@@ -156,10 +158,14 @@ void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bo
         constexpr std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
             vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
         };
+        // Note: explicit offsets are used instead of offsetof() because
+        // offsetof is a C preprocessor macro and is not available through
+        // C++20 module imports (import std; does not export macros).
+        // Struct Vertex layout: px(0-11), nx(12-23), u(24-31) — each float = 4 bytes.
         constexpr std::array<vk::VertexInputAttributeDescription, 3> vertex_attributes = {
-            vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, px)},
-            vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, nx)},
-            vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, u)},
+            vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat,  0},   // Vertex::px
+            vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},   // Vertex::nx
+            vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat,    24},   // Vertex::u
         };
         vertex_input = vk::PipelineVertexInputStateCreateInfo({}, vertex_bindings, vertex_attributes);
     }

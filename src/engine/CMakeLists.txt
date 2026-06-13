@@ -27,9 +27,6 @@ add_subdirectory(${_patched_fastgltf_dir} ${CMAKE_CURRENT_BINARY_DIR}/fastgltf)
 find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
-# fastgltf built as C++20 module with FASTGLTF_USE_STD_MODULE=ON via overlay port.
-# The fastgltf::module target uses import std; internally, avoiding clang bug
-# LLVM #138558 (friend/using-decl conflict in bits/shared_ptr.h).
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     Vulkan::HppModule
     KTX::ktx

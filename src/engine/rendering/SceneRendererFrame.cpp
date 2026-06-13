@@ -6,12 +6,14 @@ module;
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.SceneRenderer;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -26,18 +28,18 @@ import VulkanEngine.MaterialManager;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
-        struct ExpandPC { glm::mat4 vp; uint32_t cnt; uint32_t p0; uint32_t p1; };
-        struct HiZPC { uint32_t bl; uint32_t sw; uint32_t sh; uint32_t tc; };
-        struct OccPC { uint32_t cnt; uint32_t refineLevel; uint32_t hizWidth; uint32_t hizHeight; };
-        struct CollectPC { uint32_t cnt; uint32_t p0; uint32_t mt; uint32_t pass; };
-        struct WritePC { uint32_t cnt; uint32_t p0; uint32_t techniqueCount; uint32_t p1; };
-        static constexpr uint32_t HIZ_BATCH = 2;
+        struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
+        struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
+        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; };
+        struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
+        struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
+        static constexpr std::uint32_t HIZ_BATCH = 2;
 
-        static void WriteBlocks(vk::DescriptorSet ds, uint32_t binding,
+        static void WriteBlocks(vk::DescriptorSet ds, std::uint32_t binding,
                                 GpuResources::BlockArray& buf,
                                 vk::DescriptorType desc_type,
                                 const vk::raii::Device& dev) {
-            for (uint32_t bi = 0; bi < buf.BlockCount(); ++bi) {
+            for (std::uint32_t bi = 0; bi < buf.BlockCount(); ++bi) {
                 const vk::DescriptorBufferInfo bii(
                     buf.GetBlockArray(bi), 0, buf.BlockSize());
                 vk::WriteDescriptorSet w{};
@@ -55,12 +57,12 @@ namespace VulkanEngine::SceneRenderer {
 void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                                     VulkanEngine::ComponentRegistry& /*reg*/,
                                     const glm::mat4& /*vm*/, const glm::mat4& /*pm*/,
-                                    uint32_t, uint32_t, uint32_t fi) {
-    const uint32_t f = fi % FRAMES_IN_FLIGHT;
+                                    std::uint32_t, std::uint32_t, std::uint32_t fi) {
+    const std::uint32_t f = fi % FRAMES_IN_FLIGHT;
     auto& fr = frames_[f];
     const auto& dev = backend_->GetDevice();
 
-    const uint32_t total = current_entity_count_;
+    const std::uint32_t total = current_entity_count_;
     if (total == 0) {
         LOGIFACE_LOG(debug, "PrepareCompute: current_entity_count_ is 0, no work to do");
     }
@@ -134,7 +136,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         dev.updateDescriptorSets(w, nullptr);
     }
     {
-        const vk::DescriptorBufferInfo bi(*fr.draw_count_buffer.GetBuffer(), 0, sizeof(uint32_t));
+        const vk::DescriptorBufferInfo bi(*fr.draw_count_buffer.GetBuffer(), 0, sizeof(std::uint32_t));
         vk::WriteDescriptorSet w{};
         w.dstSet = fr.expand_set.GetHandle();
         w.dstBinding = 5;
@@ -168,7 +170,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     }
 }
 
-void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, uint32_t w, uint32_t h, uint32_t fi) {
+void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     if (!depth_pipeline_) {
         LOGIFACE_LOG(warn, "DepthPrepass: depth_pipeline_ is null, skipping");
@@ -201,7 +203,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                             VulkanEngine::TechniqueManager::TechniqueManager& tm,
                             VulkanEngine::BindlessManager::BindlessManager& bm,
                             const glm::mat4&, const glm::mat4&,
-                            uint32_t w, uint32_t h, uint32_t fi) {
+                            std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
     if (!w || !h) return;
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "Render: current_entity_count_ is 0, skipping");
@@ -291,8 +293,8 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     }
 }
 
-void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, uint32_t cnt,
-                                    const glm::mat4& vp, uint32_t fi) {
+void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
+                                    const glm::mat4& vp, std::uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     if (!cnt) {
         LOGIFACE_LOG(debug, "DispatchExpand: cnt is 0, skipping");
@@ -312,8 +314,8 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, uint32_t cnt,
     cmd.dispatch((cnt + 63) / 64, 1, 1);
 }
 
-void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, uint32_t w, uint32_t h,
-                                    uint32_t fi, uint32_t) {
+void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,
+                                    std::uint32_t fi, std::uint32_t) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchHiZGen: current_entity_count_ is 0, skipping");
@@ -335,10 +337,10 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, uint32_t w, uint32_t h
     const std::array<vk::DescriptorSet, 1> ds{ fr.hiz_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *hiz_pipeline_layout_,
                              0, ds, {});
-    for (uint32_t bl = 0; bl < hiz_mip_count_ - 1; bl += HIZ_BATCH) {
-        const uint32_t bc = std::min(HIZ_BATCH, hiz_mip_count_ - bl);
-        const uint32_t sw = w >> bl;
-        const uint32_t sh = h >> bl;
+    for (std::uint32_t bl = 0; bl < hiz_mip_count_ - 1; bl += HIZ_BATCH) {
+        const std::uint32_t bc = std::min(HIZ_BATCH, hiz_mip_count_ - bl);
+        const std::uint32_t sw = w >> bl;
+        const std::uint32_t sh = h >> bl;
         HiZPC pc{ bl, sw, sh, bc };
         cmd.pushConstants(*hiz_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                            0, sizeof(HiZPC), &pc);
@@ -352,7 +354,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, uint32_t w, uint32_t h
     }
 }
 
-void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, uint32_t fi) {
+void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchOcclusion: current_entity_count_ is 0, skipping");
@@ -368,15 +370,15 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, uint32_t fi) {
     const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occlusion_pipeline_layout_,
                              0, ds, {});
-    const uint32_t hiz_w = (depth_width_ + 1) / 2;
-    const uint32_t hiz_h = (depth_height_ + 1) / 2;
+    const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
+    const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
     OccPC pc{ current_entity_count_, 1, hiz_w, hiz_h };
     cmd.pushConstants(*occlusion_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccPC), &pc);
     cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
 }
 
-void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
+void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchCollect: current_entity_count_ is 0, skipping");
@@ -551,7 +553,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, uint32_t fi) {
 
 void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {
     if (hiz_initialized_) return;
-    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+    for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         auto& f = frames_[i];
         const vk::ImageSubresourceRange hiz_range(
             vk::ImageAspectFlagBits::eColor, 0, hiz_mip_count_, 0, 1);

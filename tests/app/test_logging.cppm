@@ -1,17 +1,15 @@
-#pragma once
+module;
 
-#include <logging/logging.hpp>
-#include <logging/ConsoleLogger.hpp>
-
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <optional>
-#include <string>
-
+// GTest is a preprocessor-based framework — must stay in the global module fragment
 #include <gtest/gtest.h>
 
-namespace TestLogging {
+export module test_logging;
+
+import std;
+import logiface;
+import logiface.ConsoleLogger;
+
+export namespace TestLogging {
 
 // GTest listener that routes per-test logs to TEST_LOG_DIR/[suite]_[test].txt.
 class PerTestFileLogger final : public ::testing::EmptyTestEventListener {

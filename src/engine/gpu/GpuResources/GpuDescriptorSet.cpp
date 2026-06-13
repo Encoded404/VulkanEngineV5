@@ -1,11 +1,19 @@
 module;
 
-#include <logging/logging.hpp>
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <chrono>
+#include <vector>
+
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.GpuDescriptorSet;
 
-import std;
-import std.compat;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+// import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -199,7 +207,7 @@ GpuDescriptorSet GpuDescriptorSet::Create(
     return GpuDescriptorSet(backend, std::move(pool), set, layout);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
                                      const GpuTexture& texture,
                                      vk::ImageLayout layout) const {
     if (!backend_ || !descriptor_set_ || !texture.IsValid()) {
@@ -222,16 +230,16 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
                                      const GpuBuffer& buffer,
                                      vk::DescriptorType type,
-                                     uint64_t size,
-                                     uint64_t offset) const {
+                                     std::uint64_t size,
+                                     std::uint64_t offset) const {
     if (!backend_ || !descriptor_set_) {
         return;
     }
 
-    const uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
+    const std::uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
 
     const vk::DescriptorBufferInfo buffer_info(
         *buffer.GetBuffer(),
@@ -249,17 +257,17 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
-                                     uint32_t array_element,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
+                                     std::uint32_t array_element,
                                      const GpuBuffer& buffer,
                                      vk::DescriptorType type,
-                                     uint64_t size,
-                                     uint64_t offset) const {
+                                     std::uint64_t size,
+                                     std::uint64_t offset) const {
     if (!backend_ || !descriptor_set_) {
         return;
     }
 
-    const uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
+    const std::uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
 
     const vk::DescriptorBufferInfo buffer_info(
         *buffer.GetBuffer(),
@@ -277,11 +285,11 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
                                      vk::Buffer buffer,
                                      vk::DescriptorType type,
-                                     uint64_t size,
-                                     uint64_t offset) const {
+                                     std::uint64_t size,
+                                     std::uint64_t offset) const {
     if (!backend_ || !descriptor_set_) {
         return;
     }
@@ -302,7 +310,7 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
                                      vk::ImageView image_view,
                                      vk::DescriptorType type,
                                      vk::ImageLayout layout) const {
@@ -325,7 +333,7 @@ void GpuDescriptorSet::UpdateBinding(uint32_t binding,
     backend_->GetDevice().updateDescriptorSets(write, nullptr);
 }
 
-void GpuDescriptorSet::UpdateBinding(uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
                                      vk::Sampler sampler) const {
     if (!backend_ || !descriptor_set_ || !sampler) {
         return;

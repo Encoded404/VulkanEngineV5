@@ -15,6 +15,11 @@ export import VulkanEngine.MaterialManager.MaterialId;
 
 import VulkanEngine.GpuResources.MeshData;
 
+#ifndef UINT32_MAX
+constexpr std::uint32_t UINT32_MAX =
+    std::numeric_limits<std::uint32_t>::max();
+#endif
+
 export namespace VulkanEngine::SceneLoader {
 
 using MaterialManager::MaterialId;

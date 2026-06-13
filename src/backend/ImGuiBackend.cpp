@@ -1,17 +1,25 @@
 module;
 
-#define IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-#include <array>
-#include <cstdint>
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
 #include <memory>
+#include <utility>
+#include <chrono>
+
+#define IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 #include <SDL3/SDL_events.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanBackend.ImGui;
+
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+// import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -23,8 +31,8 @@ public:
 
     [[nodiscard]] bool Initialize(SDL_Window* window, const ImGuiBackendConfig& config,
                                   vk::Instance instance, vk::PhysicalDevice physical_device,
-                                  vk::Device device, uint32_t queue_family, vk::Queue queue,
-                                  uint32_t api_version) override {
+                                  vk::Device device, std::uint32_t queue_family, vk::Queue queue,
+                                  std::uint32_t api_version) override {
         config_ = config;
         device_ = device;
 
@@ -48,7 +56,7 @@ public:
         vk::DescriptorPoolCreateInfo pool_info{};
         pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
         pool_info.maxSets = 16;
-        pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+        pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
         pool_info.pPoolSizes = pool_sizes.data();
 
         descriptor_pool_ = std::make_unique<vk::DescriptorPool>(device.createDescriptorPool(pool_info));
@@ -71,7 +79,7 @@ public:
         init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = reinterpret_cast<const VkFormat*>(&format);
         init_info.CheckVkResultFn = [](VkResult err) {
             if (err < 0) {
-                LOGIFACE_LOG(warn, "An error occurred when initializing ImGui. Error code: " + std::to_string(static_cast<uint32_t>(err)));
+                LOGIFACE_LOG(warn, "An error occurred when initializing ImGui. Error code: " + std::to_string(static_cast<std::uint32_t>(err)));
             }
         };
 
@@ -107,7 +115,7 @@ public:
     }
 
     void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment,
-                        vk::Format /*render_target_format*/, uint32_t width, uint32_t height) override {
+                        vk::Format /*render_target_format*/, std::uint32_t width, std::uint32_t height) override {
         ::ImGui::Render();
 
         ImDrawData* draw_data = ::ImGui::GetDrawData();
@@ -136,7 +144,7 @@ public:
         ImGui_ImplVulkan_SetMinImageCount(config_.image_count);
     }
 
-    void OnSwapchainRecreated(uint32_t new_image_count, vk::Format new_format) override {
+    void OnSwapchainRecreated(std::uint32_t new_image_count, vk::Format new_format) override {
         config_.image_count = new_image_count;
         config_.swapchain_format = new_format;
         ImGui_ImplVulkan_SetMinImageCount(config_.image_count);

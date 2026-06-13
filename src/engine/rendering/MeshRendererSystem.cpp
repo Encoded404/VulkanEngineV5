@@ -45,8 +45,8 @@ void MeshDrawRecorder::RecordAllMeshDraws(vk::CommandBuffer cmd,
                                             const MeshRenderObject& render_object,
                                             const glm::mat4& view_matrix,
                                             const glm::mat4& projection_matrix,
-                                            uint32_t width,
-                                            uint32_t height) {
+                                            std::uint32_t width,
+                                            std::uint32_t height) {
     if (width == 0U || height == 0U) return;
     if (render_object.index_count == 0) return;
     if (!render_object.pipeline || !render_object.pipeline_layout ||

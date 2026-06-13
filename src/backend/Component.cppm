@@ -1,9 +1,18 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <atomic>
+#include <string>
+#include <vector>
+#include <functional>
+#include <mutex>
+
 export module VulkanBackend.Component;
 
-import std;
-import std.compat;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+//import std;
+//import std.compat;
 
 import VulkanBackend.Utils.ThreadPool;
 
@@ -617,7 +626,7 @@ public:
             return;
         }
 
-        const size_t component_count = components.size();
+        const std::size_t component_count = components.size();
         thread_pool_.ParallelFor(component_count,
             [delta_time, components = std::move(components)](const std::size_t index) mutable {
                 components[index]->DispatchUpdate(delta_time);

@@ -1,8 +1,9 @@
 module;
 
-#include <FileLoader/Types.hpp>
 
 module VulkanEngine.ResourceSystem;
+
+import FileLoader.Types;
 
 import std;
 

@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.GpuResources.StagingManager;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -13,8 +15,10 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
 
-constexpr std::uint32_t UINT64_T_MAX =
+#ifndef UINT64_MAX
+constexpr std::uint32_t UINT64_MAX =
     std::numeric_limits<std::uint64_t>::max();
+#endif
 
 namespace VulkanEngine::GpuResources {
 
@@ -23,8 +27,8 @@ StagingManager::~StagingManager() {
 }
 
 bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
-                                 uint64_t slot_size,
-                                 uint32_t slot_count) {
+                                 std::uint64_t slot_size,
+                                 std::uint32_t slot_count) {
     if (slot_count == 0 || slot_size == 0) return false;
 
     backend_ = &backend;
@@ -48,7 +52,7 @@ bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend
     auto cmd_bufs = device.allocateCommandBuffers(cmd_alloc);
 
     slots_.reserve(slot_count);
-    for (uint32_t i = 0; i < slot_count; ++i) {
+    for (std::uint32_t i = 0; i < slot_count; ++i) {
         Slot slot;
         slot.buffer = GpuBuffer::Create(
             backend, slot_size,
@@ -114,12 +118,12 @@ void StagingManager::Shutdown() {
 }
 
 StagingManager::Slot& StagingManager::AcquireSlot() {
-    for (uint32_t i = 0; i < static_cast<uint32_t>(slots_.size()); ++i) {
-        const uint32_t idx = (current_slot_ + i) % static_cast<uint32_t>(slots_.size());
+    for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(slots_.size()); ++i) {
+        const std::uint32_t idx = (current_slot_ + i) % static_cast<std::uint32_t>(slots_.size());
         auto& slot = slots_[idx];
         if (!slot.busy) {
             if (*slot.fence) {
-                const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
+                const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_MAX);
                 if (result != vk::Result::eSuccess) {
                     throw std::runtime_error("StagingManager: fence wait failed");
                 }
@@ -129,7 +133,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
             slot.cmd_buffer.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
             slot.bump_offset = 0;
             slot.busy = true;
-            current_slot_ = (idx + 1) % static_cast<uint32_t>(slots_.size());
+            current_slot_ = (idx + 1) % static_cast<std::uint32_t>(slots_.size());
             return slot;
         }
     }
@@ -138,7 +142,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
     {
         auto& slot = slots_[current_slot_];
         if (*slot.fence) {
-            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
+            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_MAX);
             if (result != vk::Result::eSuccess) {
                 throw std::runtime_error("StagingManager: fence wait failed on full wait");
             }
@@ -149,12 +153,12 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
         slot.bump_offset = 0;
         slot.busy = true;
         auto& ret = slots_[current_slot_];
-        current_slot_ = (current_slot_ + 1) % static_cast<uint32_t>(slots_.size());
+        current_slot_ = (current_slot_ + 1) % static_cast<std::uint32_t>(slots_.size());
         return ret;
     }
 }
 
-StagingSlice StagingManager::Allocate(uint64_t size, uint64_t alignment) {
+StagingSlice StagingManager::Allocate(uint64_t size, std::uint64_t alignment) {
     if (slots_.empty() || size > slot_size_) {
         LOGIFACE_LOG(error, "StagingManager::Allocate: invalid size " + std::to_string(size));
         return {};
@@ -162,7 +166,7 @@ StagingSlice StagingManager::Allocate(uint64_t size, uint64_t alignment) {
 
     auto& slot = AcquireSlot();
 
-    const uint64_t misalignment = slot.bump_offset % alignment;
+    const std::uint64_t misalignment = slot.bump_offset % alignment;
     if (misalignment != 0) {
         slot.bump_offset += alignment - misalignment;
     }
@@ -173,7 +177,7 @@ StagingSlice StagingManager::Allocate(uint64_t size, uint64_t alignment) {
     }
 
     StagingSlice slice{};
-    slice.slot_index = static_cast<uint32_t>(&slot - slots_.data());
+    slice.slot_index = static_cast<std::uint32_t>(&slot - slots_.data());
     slice.offset = slot.bump_offset;
     slice.data = static_cast<uint8_t*>(slot.mapping) + slot.bump_offset;
     slice.buffer = *slot.buffer.GetBuffer();
@@ -184,7 +188,7 @@ StagingSlice StagingManager::Allocate(uint64_t size, uint64_t alignment) {
 }
 
 void StagingManager::RecordBufferCopy(const StagingSlice& slice,
-                                       vk::Buffer dst_buffer, uint64_t dst_offset) {
+                                       vk::Buffer dst_buffer, std::uint64_t dst_offset) {
     if (slice.slot_index >= slots_.size()) return;
     auto& slot = slots_[slice.slot_index];
     if (!*slot.cmd_buffer) return;
@@ -197,7 +201,7 @@ void StagingManager::RecordBufferCopy(const StagingSlice& slice,
 }
 
 void StagingManager::RecordBufferToImage(const StagingSlice& slice,
-                                          vk::Image dst_image, uint32_t width, uint32_t height) {
+                                          vk::Image dst_image, std::uint32_t width, std::uint32_t height) {
     if (slice.slot_index >= slots_.size()) return;
     auto& slot = slots_[slice.slot_index];
     if (!*slot.cmd_buffer) return;
@@ -236,13 +240,13 @@ void StagingManager::Flush() {
     if (!has_work) return;
 }
 
-void StagingManager::WaitForSlot(uint32_t slot_index) {
+void StagingManager::WaitForSlot(std::uint32_t slot_index) {
     if (slot_index >= slots_.size()) return;
     auto& slot = slots_[slot_index];
     if (!slot.busy) return;
 
     if (*slot.fence) {
-        const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
+        const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_MAX);
         if (result != vk::Result::eSuccess) {
             throw std::runtime_error("StagingManager: WaitForSlot fence wait failed");
         }
@@ -256,7 +260,7 @@ void StagingManager::WaitForAll() {
     for (auto& slot : slots_) {
         if (!slot.busy) continue;
         if (*slot.fence) {
-            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_T_MAX);
+            const auto result = backend_->GetDevice().waitForFences(*slot.fence, vk::True, UINT64_MAX);
             if (result != vk::Result::eSuccess) {
                 throw std::runtime_error("StagingManager: WaitForAll fence wait failed");
             }

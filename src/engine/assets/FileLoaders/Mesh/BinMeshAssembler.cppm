@@ -1,11 +1,18 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <future>
+#include <filesystem>
+#include <cstring>
+
 // logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 import logiface;
 import FileLoader;
 
@@ -17,7 +24,7 @@ import VulkanEngine.MaterialManager.MaterialId;
 // helpers (non-exported)
 namespace {
     template<typename T>
-    T ReadValue(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& field_name)
+    T ReadValue(const FileLoader::ByteBuffer& buffer, std::size_t& off, const std::string& field_name)
     {
         if (off + sizeof(T) > buffer.size()) {
             throw std::out_of_range("BinMeshAssembler: buffer too small to read " + field_name +
@@ -32,23 +39,23 @@ namespace {
         return std::bit_cast<T>(a);
     }
 
-    inline float ReadFloat(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<float>(buffer, off, name); }
-    inline std::uint32_t ReadU32(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<std::uint32_t>(buffer, off, name); }
-    inline std::uint16_t ReadU16(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<std::uint16_t>(buffer, off, name); }
-    inline std::uint8_t ReadU8(const FileLoader::ByteBuffer& buffer, size_t& off, const std::string& name) { return ReadValue<std::uint8_t>(buffer, off, name); }
+    inline float ReadFloat(const FileLoader::ByteBuffer& buffer, std::size_t& off, const std::string& name) { return ReadValue<float>(buffer, off, name); }
+    inline std::uint32_t ReadU32(const FileLoader::ByteBuffer& buffer, std::size_t& off, const std::string& name) { return ReadValue<std::uint32_t>(buffer, off, name); }
+    inline std::uint16_t ReadU16(const FileLoader::ByteBuffer& buffer, std::size_t& off, const std::string& name) { return ReadValue<std::uint16_t>(buffer, off, name); }
+    inline std::uint8_t ReadU8(const FileLoader::ByteBuffer& buffer, std::size_t& off, const std::string& name) { return ReadValue<std::uint8_t>(buffer, off, name); }
 
-    void ReadVector3(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::MeshVertexVec3& v, const std::string& prefix) {
+    void ReadVector3(const FileLoader::ByteBuffer& buffer, std::size_t& off, VulkanEngine::MeshVertexVec3& v, const std::string& prefix) {
         v.x = ReadFloat(buffer, off, prefix + ".x");
         v.y = ReadFloat(buffer, off, prefix + ".y");
         v.z = ReadFloat(buffer, off, prefix + ".z");
     }
 
-    void ReadVector2(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::MeshVertexVec2& v, const std::string& prefix) {
+    void ReadVector2(const FileLoader::ByteBuffer& buffer, std::size_t& off, VulkanEngine::MeshVertexVec2& v, const std::string& prefix) {
         v.u = ReadFloat(buffer, off, prefix + ".u");
         v.v = ReadFloat(buffer, off, prefix + ".v");
     }
 
-    void ReadSubMesh(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::SubMesh& sm, std::uint32_t index,
+    void ReadSubMesh(const FileLoader::ByteBuffer& buffer, std::size_t& off, VulkanEngine::SubMesh& sm, std::uint32_t index,
                      const std::vector<VulkanEngine::MaterialId>* bindings) {
         const std::string p = "subMesh[" + std::to_string(index) + "]";
         sm.index_start = ReadU32(buffer, off, p + ".index_start");
@@ -63,10 +70,10 @@ namespace {
         }
     }
 
-    void ReadBoneWeight(const FileLoader::ByteBuffer& buffer, size_t& off, VulkanEngine::BoneWeight& bw, std::uint32_t index) {
+    void ReadBoneWeight(const FileLoader::ByteBuffer& buffer, std::size_t& off, VulkanEngine::BoneWeight& bw, std::uint32_t index) {
         const std::string p = "boneWeight[" + std::to_string(index) + "]";
-        for (size_t i = 0; i < 4; ++i) bw.bone_indices[i] = ReadU16(buffer, off, p + ".bone_indices[" + std::to_string(i) + "]");
-        for (size_t i = 0; i < 4; ++i) bw.weights[i] = ReadU8(buffer, off, p + ".weights[" + std::to_string(i) + "]");
+        for (std::size_t i = 0; i < 4; ++i) bw.bone_indices[i] = ReadU16(buffer, off, p + ".bone_indices[" + std::to_string(i) + "]");
+        for (std::size_t i = 0; i < 4; ++i) bw.weights[i] = ReadU8(buffer, off, p + ".weights[" + std::to_string(i) + "]");
     }
 }
 
@@ -80,7 +87,7 @@ public:
     std::future<std::shared_ptr<VulkanEngine::Mesh>> AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer> buffer) override {
         auto prom = std::make_shared<std::promise<std::shared_ptr<VulkanEngine::Mesh>>>();
         try {
-            size_t off = 0;
+            std::size_t off = 0;
 
             // 1. Verify Magic Number (3 bytes: 0x1B, 0xEF, 0xF8)
             auto m0 = ReadU8(*buffer, off, "magic[0]");
@@ -147,7 +154,7 @@ public:
     std::future<std::shared_ptr<VulkanEngine::SkinnedMesh>> AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer> buffer) override {
         auto prom = std::make_shared<std::promise<std::shared_ptr<VulkanEngine::SkinnedMesh>>>();
         try {
-            size_t off = 0;
+            std::size_t off = 0;
 
             // Skip Magic (3 bytes)
             off += 3;
@@ -214,7 +221,7 @@ private:
         if (!file.is_open()) {
             throw std::runtime_error("BinMeshLoader: Failed to open file: " + file_path.string());
         }
-        const auto size = static_cast<size_t>(file.tellg());
+        const auto size = static_cast<std::size_t>(file.tellg());
         if (size == 0) {
             throw std::runtime_error("BinMeshLoader: File is empty: " + file_path.string());
         }

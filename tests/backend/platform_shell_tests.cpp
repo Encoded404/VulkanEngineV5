@@ -1,10 +1,9 @@
 #include <gtest/gtest.h>
 
-#include <memory>
-#include <utility>
-#include <vector>
 
 #include <SDL3/SDL_video.h>
+
+import std;
 
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;

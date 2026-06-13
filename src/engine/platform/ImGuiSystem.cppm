@@ -1,16 +1,25 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <string>
+#include <cstdint>
+#include <limits>
+
 export module VulkanEngine.ImGui;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
 import vulkan_hpp;
 
 export import VulkanBackend.ImGui;
 import VulkanBackend.Utils.CallbackList;
 
+#ifndef UINT32_MAX
 constexpr std::uint32_t UINT32_MAX =
     std::numeric_limits<std::uint32_t>::max();
+#endif
 
 export namespace VulkanEngine::ImGui {
 

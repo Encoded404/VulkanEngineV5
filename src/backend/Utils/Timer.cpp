@@ -1,9 +1,9 @@
 module;
 
-#include <cstdint>
-#include <ctime>
-
 module VulkanBackend.Utils.Timer;
+
+import std;
+import std.compat;
 
 namespace VulkanEngine::Utils {
 
@@ -57,7 +57,7 @@ double Timer::ElapsedS() const noexcept {
     return static_cast<double>(ElapsedRaw()) / 1000000000.0;
 }
 
-int64_t Timer::ElapsedNsInt() const noexcept {
+std::int64_t Timer::ElapsedNsInt() const noexcept {
     return ElapsedRaw();
 }
 
@@ -65,17 +65,19 @@ bool Timer::IsRunning() const noexcept {
     return running_;
 }
 
-int64_t Timer::ElapsedRaw() const noexcept {
+std::int64_t Timer::ElapsedRaw() const noexcept {
     if (running_) {
         return accumulated_ + (Now() - start_time_);
     }
     return accumulated_;
 }
 
-int64_t Timer::Now() noexcept {
-    struct timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
-    return static_cast<int64_t>(ts.tv_sec) * static_cast<int64_t>(1000000000) + static_cast<int64_t>(ts.tv_nsec);
+std::int64_t Timer::Now() noexcept {
+    using namespace std::chrono;
+
+    return duration_cast<nanoseconds>(
+        steady_clock::now().time_since_epoch()
+    ).count();
 }
 
 } // namespace VulkanEngine::Utils

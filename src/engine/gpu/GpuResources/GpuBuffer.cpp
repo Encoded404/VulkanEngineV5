@@ -16,7 +16,7 @@ namespace VulkanEngine::GpuResources {
 namespace {
 
 void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrap& backend,
-                          uint64_t size,
+                          std::uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
                           std::unique_ptr<vk::raii::Buffer>& out_buffer,
@@ -40,7 +40,7 @@ void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrap& backend,
 } // namespace
 
 GpuBuffer GpuBuffer::Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
-                            uint64_t size,
+                            std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,
                             const void* initial_data) {
@@ -55,20 +55,20 @@ GpuBuffer GpuBuffer::Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
     return buffer;
 }
 
-void GpuBuffer::Upload(const void* data, uint64_t size) {
+void GpuBuffer::Upload(const void* data, std::uint64_t size) {
     void* mapped = memory_->mapMemory(0, size);
     std::memcpy(mapped, data, size);
     memory_->unmapMemory();
 }
 
-void GpuBuffer::UploadAt(const void* data, uint64_t size, uint64_t offset) {
+void GpuBuffer::UploadAt(const void* data, std::uint64_t size, std::uint64_t offset) {
     if (offset + size > size_) return;
     void* mapped = memory_->mapMemory(offset, size);
     std::memcpy(mapped, data, size);
     memory_->unmapMemory();
 }
 
-void* GpuBuffer::Map(uint64_t offset, uint64_t size) {
+void* GpuBuffer::Map(uint64_t offset, std::uint64_t size) {
     return memory_->mapMemory(offset, size);
 }
 

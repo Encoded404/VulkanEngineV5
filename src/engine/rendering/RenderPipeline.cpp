@@ -14,9 +14,9 @@ namespace VulkanEngine::RenderPipeline {
 
 namespace {
 
-uint32_t FindMemoryType(vk::raii::PhysicalDevice const& physical_device, uint32_t type_filter, vk::MemoryPropertyFlags properties) {
+uint32_t FindMemoryType(vk::raii::PhysicalDevice const& physical_device, std::uint32_t type_filter, vk::MemoryPropertyFlags properties) {
     const auto mem_properties = physical_device.getMemoryProperties();
-    for (uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
+    for (std::uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
         auto const& raw = static_cast<vk::MemoryType const&>(mem_properties.memoryTypes[i]);
         if ((type_filter & (1u << i)) && ((raw.propertyFlags & properties) == properties)) {
             return i;
@@ -52,12 +52,12 @@ void RenderPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstra
     const auto depth_format = backend.GetDepthFormat();
 
     RegisterResourceResolver("swapchain-backbuffer",
-        [&backend](uint32_t img_idx) { return backend.GetSwapchainImages()[img_idx]; },
-        [&backend](uint32_t img_idx) { return *backend.GetSwapchainImageViews()[img_idx]; },
+        [&backend](std::uint32_t img_idx) { return backend.GetSwapchainImages()[img_idx]; },
+        [&backend](std::uint32_t img_idx) { return *backend.GetSwapchainImageViews()[img_idx]; },
         surface_format);
     RegisterResourceResolver("depth-buffer",
-        [&backend](uint32_t img_idx) { return *backend.GetDepthImage(img_idx); },
-        [&backend](uint32_t img_idx) { return *backend.GetDepthImageView(img_idx); },
+        [&backend](std::uint32_t img_idx) { return *backend.GetDepthImage(img_idx); },
+        [&backend](std::uint32_t img_idx) { return *backend.GetDepthImageView(img_idx); },
         depth_format);
 }
 
@@ -125,7 +125,7 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
         graph_builder_.SetFinalState(handle, final_state);
     }
 
-    const uint32_t res_index = handle.index;
+    const std::uint32_t res_index = handle.index;
     transient_image_descs_[res_index] = desc;
 
     return handle;
@@ -182,18 +182,18 @@ void RenderPipeline::Compile() {
     if (compiled_) {
         AllocateTransients();
 
-        for (size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
+        for (std::size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
             const auto& resource = compiled_graph_.resource_lifetimes[i];
             if (resource.name == "swapchain-backbuffer") {
-                backbuffer_resource_index_ = static_cast<uint32_t>(i);
+                backbuffer_resource_index_ = static_cast<std::uint32_t>(i);
             } else if (resource.name == "depth-buffer") {
-                depth_buffer_resource_index_ = static_cast<uint32_t>(i);
+                depth_buffer_resource_index_ = static_cast<std::uint32_t>(i);
             }
         }
     }
 }
 
-void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer, uint32_t image_index) {
+void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer, std::uint32_t image_index) {
     if (!compiled_ || !initialized_) {
         return;
     }
@@ -201,7 +201,7 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     auto resolved_graph = compiled_graph_;
 
     if (!bootstrap_) return;
-    const uint32_t sc_count = bootstrap_->GetSnapshot().swapchain_image_count;
+    const std::uint32_t sc_count = bootstrap_->GetSnapshot().swapchain_image_count;
     if (swapchain_image_presented_.size() != sc_count) {
         swapchain_image_presented_.assign(sc_count, false);
         swapchain_depth_initialized_.assign(sc_count, false);
@@ -297,29 +297,29 @@ void RenderPipeline::DeallocateTransients() {
     transient_image_descs_.clear();
 }
 
-void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, uint32_t image_index) {
+void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index) {
     if (!bootstrap_) {
         return;
     }
 
     auto& backend = bootstrap_->GetBackend();
 
-    for (size_t i = 0; i < graph.resource_lifetimes.size(); ++i) {
+    for (std::size_t i = 0; i < graph.resource_lifetimes.size(); ++i) {
         const auto& resource = graph.resource_lifetimes[i];
 
         if (resource.imported) {
             auto it = resource_resolvers_.find(resource.name);
             if (it != resource_resolvers_.end()) {
-                graph.SetResourceImage(static_cast<uint32_t>(i), it->second.resolve_image(image_index));
-                graph.SetResourceFormat(static_cast<uint32_t>(i), it->second.format);
+                graph.SetResourceImage(static_cast<std::uint32_t>(i), it->second.resolve_image(image_index));
+                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
             }
         } else {
             if (i < transient_images_.size()) {
-                graph.SetResourceImage(static_cast<uint32_t>(i), *transient_images_[i]);
+                graph.SetResourceImage(static_cast<std::uint32_t>(i), *transient_images_[i]);
             }
-            auto it = transient_image_descs_.find(static_cast<uint32_t>(i));
+            auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
             if (it != transient_image_descs_.end()) {
-                graph.SetResourceFormat(static_cast<uint32_t>(i), it->second.format);
+                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
             }
         }
     }
@@ -348,7 +348,7 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
                 resolve_attachment_view(*setup.depth_attachment); //NOLINT(bugprone-unchecked-optional-access)
             }
 
-            uint32_t max_width = 0, max_height = 0;
+            std::uint32_t max_width = 0, max_height = 0;
             for (const auto& attach : setup.color_attachments) {
                 if (attach.resource.index < transient_image_descs_.size()) {
                     const auto& desc = transient_image_descs_[attach.resource.index];

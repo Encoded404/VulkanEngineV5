@@ -1,8 +1,14 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <array>
+#include <cstdint>
+
 export module VulkanEngine.DefaultTextureFactory;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
 export import VulkanEngine.ResourceSystem;
 export import VulkanEngine.ResourceSystem.TextureResource;

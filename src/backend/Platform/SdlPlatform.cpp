@@ -1,11 +1,11 @@
 module;
 
-#include <memory>
-#include <utility>
 
 #include <SDL3/SDL_video.h>
 
 module VulkanBackend.Platform.SdlPlatform;
+
+import std;
 
 import VulkanBackend.Event;
 

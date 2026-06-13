@@ -1,11 +1,13 @@
 module;
 
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.BindlessManager;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -28,7 +30,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
         vk::PhysicalDeviceProperties2,
         vk::PhysicalDeviceDescriptorIndexingProperties>();
     const auto& indexing_props = props.get<vk::PhysicalDeviceDescriptorIndexingProperties>();
-    const uint32_t max_samplers = indexing_props.maxDescriptorSetUpdateAfterBindSampledImages;
+    const std::uint32_t max_samplers = indexing_props.maxDescriptorSetUpdateAfterBindSampledImages;
 
     LOGIFACE_LOG(debug, "maxDescriptorSetUpdateAfterBindSamplers=" + std::to_string(max_samplers));
 
@@ -59,7 +61,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     VulkanEngine::Utils::SetVulkanObjectName(device, *layout_, "bindless-layout");
 
     // Create descriptor pool — reasonably large, can grow if needed
-    constexpr uint32_t MAX_POOL_TEXTURES = 65536;
+    constexpr std::uint32_t MAX_POOL_TEXTURES = 65536;
     vk::DescriptorPoolSize pool_size{};
     pool_size.type = vk::DescriptorType::eCombinedImageSampler;
     pool_size.descriptorCount = MAX_POOL_TEXTURES;
@@ -75,7 +77,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     VulkanEngine::Utils::SetVulkanObjectName(device, *pool_, "bindless-pool");
 
     // Allocate with variable descriptor count — start with capacity for 1024
-    const uint32_t variable_count = 1024;
+    const std::uint32_t variable_count = 1024;
     vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_count_info{};
     variable_count_info.descriptorSetCount = 1;
     variable_count_info.pDescriptorCounts = &variable_count;
@@ -110,7 +112,7 @@ void BindlessManager::Shutdown() {
 }
 
 uint32_t BindlessManager::AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id) {
-    const uint32_t slot = next_slot_++;
+    const std::uint32_t slot = next_slot_++;
     if (slot >= textures_.size()) {
         textures_.resize(slot + 1);
         texture_ids_.resize(slot + 1);
@@ -122,12 +124,12 @@ uint32_t BindlessManager::AllocateTextureSlot(VulkanEngine::GpuResources::GpuTex
     return slot;
 }
 
-const VulkanEngine::ResourceId* BindlessManager::GetTextureId(uint32_t slot) const {
+const VulkanEngine::ResourceId* BindlessManager::GetTextureId(std::uint32_t slot) const {
     if (slot < texture_ids_.size()) return &texture_ids_[slot];
     return nullptr;
 }
 
-void BindlessManager::UpdateSlot(uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {
+void BindlessManager::UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {
     if (!backend_ || *descriptor_set_ == nullptr) return;
 
     vk::DescriptorImageInfo image_info{};

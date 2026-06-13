@@ -1,15 +1,13 @@
 module;
 
-#include <algorithm>
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
-
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanBackend.RenderGraph;
+
+import std;
+import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -149,7 +147,7 @@ bool StatesEqual(const ResourceState& a, const ResourceState& b) {
 }
 
 ResourceHandle RenderGraphBuilder::CreateTransientResource(std::string name, ResourceKind kind) {
-    const uint32_t index = static_cast<uint32_t>(resources_.size());
+    const std::uint32_t index = static_cast<std::uint32_t>(resources_.size());
     resources_.push_back(ResourceNode{
         .name = std::move(name),
         .kind = kind,
@@ -164,7 +162,7 @@ ResourceHandle RenderGraphBuilder::CreateTransientResource(std::string name, Res
 ResourceHandle RenderGraphBuilder::ImportResource(std::string name, ResourceKind kind) {
     LOGIFACE_LOG(trace, "Importing resource '" + name + "'");
 
-    const uint32_t index = static_cast<uint32_t>(resources_.size());
+    const std::uint32_t index = static_cast<std::uint32_t>(resources_.size());
     resources_.push_back(ResourceNode{
         .name = std::move(name),
         .kind = kind,
@@ -237,7 +235,7 @@ bool RenderGraphBuilder::SetFinalState(ResourceHandle resource, ResourceState st
 PassHandle RenderGraphBuilder::AddPass(std::string name, QueueType queue, bool enabled, PassExecutionCallback execute) {
     LOGIFACE_LOG(trace, "Adding pass '" + name + "' with queue type " + std::to_string(static_cast<int>(queue)));
 
-    const uint32_t index = static_cast<uint32_t>(passes_.size());
+    const std::uint32_t index = static_cast<std::uint32_t>(passes_.size());
     passes_.push_back(PassNode{
         .name = std::move(name),
         .queue = queue,

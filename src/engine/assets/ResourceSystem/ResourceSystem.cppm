@@ -1,11 +1,21 @@
 module;
 
-// logging_macros.hpp has no <memory> include, safe in GMF alongside import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <future>
+#include <unordered_map>
+#include <typeindex>
+#include <shared_mutex>
+#include <any>
+#include <filesystem>
+
+// logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.ResourceSystem;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 import logiface;
 import FileLoader;
 

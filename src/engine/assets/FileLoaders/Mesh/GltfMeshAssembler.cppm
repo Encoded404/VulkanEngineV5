@@ -1,12 +1,15 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <future>
+#include <filesystem>
+
 export module VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
-// fastgltf is imported as a C++20 module. With FASTGLTF_USE_STD_MODULE=ON
-// (applied via the vcpkg overlay port), it uses import std; internally,
-// avoiding clang bug LLVM #138558.
 import fastgltf;
 
 import FileLoader;
@@ -65,7 +68,7 @@ private:
         if (!file.is_open()) {
             throw std::runtime_error("GltfMeshLoader: Failed to open file: " + file_path.string());
         }
-        const auto size = static_cast<size_t>(file.tellg());
+        const auto size = static_cast<std::size_t>(file.tellg());
         if (size == 0) {
             throw std::runtime_error("GltfMeshLoader: File is empty: " + file_path.string());
         }

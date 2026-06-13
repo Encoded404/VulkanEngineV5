@@ -10,12 +10,12 @@ import vulkan_hpp;
 namespace VulkanEngine::Utils {
 
 namespace {
-std::optional<uint32_t> FindMemoryTypeInternal(vk::PhysicalDevice physical_device,
-                                               uint32_t type_filter,
+std::optional<std::uint32_t> FindMemoryTypeInternal(vk::PhysicalDevice physical_device,
+                                               std::uint32_t type_filter,
                                                vk::MemoryPropertyFlags properties) {
     vk::PhysicalDeviceMemoryProperties mem_properties = physical_device.getMemoryProperties();
 
-    for (uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
+    for (std::uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
         if ((type_filter & (1u << i)) &&
             (mem_properties.memoryTypes[i].propertyFlags & properties) == properties) {
             return i;
@@ -25,8 +25,8 @@ std::optional<uint32_t> FindMemoryTypeInternal(vk::PhysicalDevice physical_devic
     return std::nullopt;
 }
 
-std::optional<uint32_t> TryFindMemoryType(vk::PhysicalDevice physical_device,
-                                          uint32_t type_filter,
+std::optional<std::uint32_t> TryFindMemoryType(vk::PhysicalDevice physical_device,
+                                          std::uint32_t type_filter,
                                           vk::MemoryPropertyFlags required,
                                           vk::MemoryPropertyFlags preferred) {
     if (auto index = FindMemoryTypeInternal(physical_device, type_filter, required | preferred)) {
@@ -48,7 +48,7 @@ std::optional<uint32_t> TryFindMemoryType(vk::PhysicalDevice physical_device,
 } // namespace
 
 uint32_t MemoryUtils::FindMemoryType(vk::PhysicalDevice physical_device,
-                                     uint32_t type_filter,
+                                     std::uint32_t type_filter,
                                      vk::MemoryPropertyFlags properties) {
     if (auto index = FindMemoryTypeInternal(physical_device, type_filter, properties)) {
         return *index;
@@ -65,7 +65,7 @@ bool MemoryUtils::GetMemoryBudget(vk::PhysicalDevice physical_device,
 
     physical_device.getMemoryProperties2(&properties);
 
-    const uint32_t heap_count = properties.memoryProperties.memoryHeapCount;
+    const std::uint32_t heap_count = properties.memoryProperties.memoryHeapCount;
     heap_budgets.assign(budget_props.heapBudget.begin(), budget_props.heapBudget.begin() + heap_count);
     heap_usages.assign(budget_props.heapUsage.begin(), budget_props.heapUsage.begin() + heap_count);
 
@@ -92,7 +92,7 @@ vk::DeviceSize MemoryUtils::AlignedSize(vk::DeviceSize size, vk::DeviceSize alig
 }
 
 vk::MemoryPropertyFlags MemoryUtils::GetMemoryTypeProperties(vk::PhysicalDevice physical_device,
-                                                          uint32_t memory_type_index) {
+                                                          std::uint32_t memory_type_index) {
     vk::PhysicalDeviceMemoryProperties mem_properties = physical_device.getMemoryProperties();
     if (memory_type_index >= mem_properties.memoryTypeCount) {
         throw std::out_of_range("Memory type index out of range");
@@ -100,17 +100,17 @@ vk::MemoryPropertyFlags MemoryUtils::GetMemoryTypeProperties(vk::PhysicalDevice 
     return mem_properties.memoryTypes[memory_type_index].propertyFlags;
 }
 
-bool MemoryUtils::IsMemoryTypeHostVisible(vk::PhysicalDevice physical_device, uint32_t memory_type_index) {
+bool MemoryUtils::IsMemoryTypeHostVisible(vk::PhysicalDevice physical_device, std::uint32_t memory_type_index) {
     const vk::MemoryPropertyFlags flags = GetMemoryTypeProperties(physical_device, memory_type_index);
     return (flags & vk::MemoryPropertyFlagBits::eHostVisible) != vk::MemoryPropertyFlags{};
 }
 
-bool MemoryUtils::IsMemoryTypeDeviceLocal(vk::PhysicalDevice physical_device, uint32_t memory_type_index) {
+bool MemoryUtils::IsMemoryTypeDeviceLocal(vk::PhysicalDevice physical_device, std::uint32_t memory_type_index) {
     const vk::MemoryPropertyFlags flags = GetMemoryTypeProperties(physical_device, memory_type_index);
     return (flags & vk::MemoryPropertyFlagBits::eDeviceLocal) != vk::MemoryPropertyFlags{};
 }
 
-bool MemoryUtils::IsMemoryTypeHostCoherent(vk::PhysicalDevice physical_device, uint32_t memory_type_index) {
+bool MemoryUtils::IsMemoryTypeHostCoherent(vk::PhysicalDevice physical_device, std::uint32_t memory_type_index) {
     const vk::MemoryPropertyFlags flags = GetMemoryTypeProperties(physical_device, memory_type_index);
     return (flags & vk::MemoryPropertyFlagBits::eHostCoherent) != vk::MemoryPropertyFlags{};
 }

@@ -1,10 +1,5 @@
 module;
 
-#include <string>
-#include <string_view>
-#include <unordered_set>
-#include <unordered_map>
-#include <utility>
 
 module VulkanEngine.Input;
 
@@ -14,17 +9,17 @@ namespace VulkanEngine::Input {
 
 namespace {
 
-[[nodiscard]] bool HasBinding(const std::unordered_set<int32_t>& values, int32_t code) {
+[[nodiscard]] bool HasBinding(const std::unordered_set<std::int32_t>& values, std::int32_t code) {
     return values.contains(code);
 }
 
 }  // namespace
 
-InputBinding InputBinding::Key(const int32_t keycode) {
+InputBinding InputBinding::Key(const std::int32_t keycode) {
     return InputBinding{.type = BindingType::Key, .code = keycode};
 }
 
-InputBinding InputBinding::MouseButton(const int32_t button) {
+InputBinding InputBinding::MouseButton(const std::int32_t button) {
     return InputBinding{.type = BindingType::MouseButton, .code = button};
 }
 

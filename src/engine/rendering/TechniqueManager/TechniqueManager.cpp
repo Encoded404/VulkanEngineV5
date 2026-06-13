@@ -1,8 +1,10 @@
 module;
 
-#include <cstdint>
 
 module VulkanEngine.TechniqueManager;
+
+import std;
+import std.compat;
 
 import std;
 
@@ -11,8 +13,8 @@ import vulkan_hpp;
 import VulkanEngine.StandardMeshPipeline;
 
 namespace {
-    std::vector<uint32_t> ResolveSpv(const std::vector<uint32_t>& override_spv,
-                                              const std::vector<uint32_t>& default_spv) {
+    std::vector<std::uint32_t> ResolveSpv(const std::vector<std::uint32_t>& override_spv,
+                                              const std::vector<std::uint32_t>& default_spv) {
         if (!override_spv.empty()) return override_spv;
         return default_spv;
     }
@@ -25,8 +27,8 @@ TechniqueManager::~TechniqueManager() {
 }
 
 uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
-                                               const std::vector<uint32_t>& vert_spv,
-                                               const std::vector<uint32_t>& frag_spv,
+                                               const std::vector<std::uint32_t>& vert_spv,
+                                               const std::vector<std::uint32_t>& frag_spv,
                                                const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                                                vk::DescriptorSetLayout* bindless_layout,
                                                vk::DescriptorSetLayout* object_data_layout,

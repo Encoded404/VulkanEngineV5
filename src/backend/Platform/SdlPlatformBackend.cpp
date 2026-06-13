@@ -4,10 +4,10 @@ module;
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
 
-#include <memory>
-#include <vector>
 
 module VulkanBackend.Platform.SdlPlatformBackend;
+
+import std;
 
 import VulkanBackend.Event;
 import VulkanBackend.Utils.CallbackList;
@@ -79,8 +79,8 @@ public:
                     break;
                 case SDL_EVENT_WINDOW_RESIZED:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowResizedEvent>(
-                        static_cast<uint32_t>(event.window.data1),
-                        static_cast<uint32_t>(event.window.data2)));
+                        static_cast<std::uint32_t>(event.window.data1),
+                        static_cast<std::uint32_t>(event.window.data2)));
                     break;
                 case SDL_EVENT_WINDOW_MINIMIZED:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowMinimizedEvent>());
@@ -90,24 +90,24 @@ public:
                     break;
                 case SDL_EVENT_KEY_DOWN:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyDownEvent>(
-                        static_cast<int32_t>(event.key.key),
+                        static_cast<std::int32_t>(event.key.key),
                         event.key.repeat != 0));
                     break;
                 case SDL_EVENT_KEY_UP:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyUpEvent>(
-                        static_cast<int32_t>(event.key.key)));
+                        static_cast<std::int32_t>(event.key.key)));
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonDownEvent>(
-                        static_cast<int32_t>(event.button.button),
-                        static_cast<int32_t>(event.button.x),
-                        static_cast<int32_t>(event.button.y)));
+                        static_cast<std::int32_t>(event.button.button),
+                        static_cast<std::int32_t>(event.button.x),
+                        static_cast<std::int32_t>(event.button.y)));
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_UP:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonUpEvent>(
-                        static_cast<int32_t>(event.button.button),
-                        static_cast<int32_t>(event.button.x),
-                        static_cast<int32_t>(event.button.y)));
+                        static_cast<std::int32_t>(event.button.button),
+                        static_cast<std::int32_t>(event.button.x),
+                        static_cast<std::int32_t>(event.button.y)));
                     break;
                 case SDL_EVENT_MOUSE_MOTION:
                     events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseMotionEvent>(

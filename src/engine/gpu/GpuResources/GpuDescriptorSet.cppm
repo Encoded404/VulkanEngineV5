@@ -1,9 +1,14 @@
 module;
 
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <cstdint>
+
 export module VulkanEngine.GpuDescriptorSet;
 
-import std;
-import std.compat;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+//import std;
+//import std.compat;
 
 import vulkan_hpp;
 

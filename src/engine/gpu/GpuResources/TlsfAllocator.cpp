@@ -1,9 +1,9 @@
 module;
 
-#include <cstdint> // to get UINT32_MAX
-#include <vector> // to fix visibility bug with modules
-
 module VulkanEngine.GpuResources.TlsfAllocator;
+
+import std;
+import std.compat;
 
 namespace VulkanEngine::GpuResources {
 
@@ -23,7 +23,7 @@ bool TlsfAllocator::Initialize(uint64_t total_size) {
 
     phys_head_ = UINT32_MAX;
 
-    const uint32_t node_idx = AllocNode();
+    const std::uint32_t node_idx = AllocNode();
     if (node_idx == UINT32_MAX) return false;
 
     TlsfFreeNode& root = nodes_[node_idx];
@@ -39,12 +39,12 @@ bool TlsfAllocator::Initialize(uint64_t total_size) {
     return true;
 }
 
-void TlsfAllocator::Mapping(uint64_t size, uint32_t& fl, uint32_t& sl) const {
+void TlsfAllocator::Mapping(uint64_t size, std::uint32_t& fl, std::uint32_t& sl) const {
     if (size < (1ULL << FL_INDEX_SHIFT)) {
         size = (1ULL << FL_INDEX_SHIFT);
     }
 
-    fl = static_cast<uint32_t>(63ULL - static_cast<uint64_t>(__builtin_clzll(size)));
+    fl = static_cast<std::uint32_t>(63ULL - static_cast<uint64_t>(__builtin_clzll(size)));
 
     if (fl > MAX_FL) {
         fl = MAX_FL;
@@ -52,20 +52,20 @@ void TlsfAllocator::Mapping(uint64_t size, uint32_t& fl, uint32_t& sl) const {
         return;
     }
 
-    const uint64_t fl_min = 1ULL << fl;
-    sl = static_cast<uint32_t>(((size - fl_min) * SL_INDEX_COUNT) >> fl);
+    const std::uint64_t fl_min = 1ULL << fl;
+    sl = static_cast<std::uint32_t>(((size - fl_min) * SL_INDEX_COUNT) >> fl);
 }
 
-uint32_t TlsfAllocator::ListIndex(uint32_t fl, uint32_t sl) const {
+uint32_t TlsfAllocator::ListIndex(std::uint32_t fl, std::uint32_t sl) const {
     return (fl - FL_INDEX_SHIFT) * SL_INDEX_COUNT + sl;
 }
 
-uint32_t TlsfAllocator::FindSuitableBlock(uint32_t fl, uint32_t sl) {
+uint32_t TlsfAllocator::FindSuitableBlock(std::uint32_t fl, std::uint32_t sl) {
     // Search within the current first-level index
-    const uint32_t sl_map = sl_bitmaps_[fl - FL_INDEX_SHIFT] >> sl;
+    const std::uint32_t sl_map = sl_bitmaps_[fl - FL_INDEX_SHIFT] >> sl;
     if (sl_map != 0) {
-        const uint32_t matched_sl = sl + static_cast<uint32_t>(__builtin_ctz(sl_map));
-        const uint32_t list = ListIndex(fl, matched_sl);
+        const std::uint32_t matched_sl = sl + static_cast<std::uint32_t>(__builtin_ctz(sl_map));
+        const std::uint32_t list = ListIndex(fl, matched_sl);
         if (heads_[list] != UINT32_MAX) {
             return heads_[list];
         }
@@ -73,13 +73,13 @@ uint32_t TlsfAllocator::FindSuitableBlock(uint32_t fl, uint32_t sl) {
 
     // Search higher first-level indices (clamp to avoid UB shift by >= 32)
     if (fl < 31U) {
-        const uint32_t fl_map = fl_bitmap_ >> (fl + 1);
+        const std::uint32_t fl_map = fl_bitmap_ >> (fl + 1);
         if (fl_map != 0) {
-            fl = fl + 1 + static_cast<uint32_t>(__builtin_ctz(fl_map));
-            const uint32_t sl_bitmap = sl_bitmaps_[fl - FL_INDEX_SHIFT];
+            fl = fl + 1 + static_cast<std::uint32_t>(__builtin_ctz(fl_map));
+            const std::uint32_t sl_bitmap = sl_bitmaps_[fl - FL_INDEX_SHIFT];
             if (sl_bitmap != 0) {
-                sl = static_cast<uint32_t>(__builtin_ctz(sl_bitmap));
-                const uint32_t list = ListIndex(fl, sl);
+                sl = static_cast<std::uint32_t>(__builtin_ctz(sl_bitmap));
+                const std::uint32_t list = ListIndex(fl, sl);
                 if (heads_[list] != UINT32_MAX) {
                     return heads_[list];
                 }
@@ -90,13 +90,13 @@ uint32_t TlsfAllocator::FindSuitableBlock(uint32_t fl, uint32_t sl) {
     return UINT32_MAX;
 }
 
-void TlsfAllocator::RemoveFromFreeLists(uint32_t node_index) {
+void TlsfAllocator::RemoveFromFreeLists(std::uint32_t node_index) {
     TlsfFreeNode& node = nodes_[node_index];
 
-    uint32_t fl = 0;
-    uint32_t sl = 0;
+    std::uint32_t fl = 0;
+    std::uint32_t sl = 0;
     Mapping(node.size, fl, sl);
-    const uint32_t list_idx = ListIndex(fl, sl);
+    const std::uint32_t list_idx = ListIndex(fl, sl);
 
     if (node.prev_free != UINT32_MAX) {
         nodes_[node.prev_free].next_free = node.next_free;
@@ -129,13 +129,13 @@ void TlsfAllocator::RemoveFromFreeLists(uint32_t node_index) {
     node.next_phys = UINT32_MAX;
 }
 
-void TlsfAllocator::InsertIntoFreeLists(uint32_t node_index) {
+void TlsfAllocator::InsertIntoFreeLists(std::uint32_t node_index) {
     TlsfFreeNode& node = nodes_[node_index];
 
-    uint32_t fl = 0;
-    uint32_t sl = 0;
+    std::uint32_t fl = 0;
+    std::uint32_t sl = 0;
     Mapping(node.size, fl, sl);
-    const uint32_t list_idx = ListIndex(fl, sl);
+    const std::uint32_t list_idx = ListIndex(fl, sl);
 
     node.prev_free = UINT32_MAX;
     node.next_free = heads_[list_idx];
@@ -155,8 +155,8 @@ void TlsfAllocator::InsertIntoFreeLists(uint32_t node_index) {
         return;
     }
 
-    uint32_t current = phys_head_;
-    uint32_t prev = UINT32_MAX;
+    std::uint32_t current = phys_head_;
+    std::uint32_t prev = UINT32_MAX;
     while (current != UINT32_MAX && nodes_[current].offset < node.offset) {
         prev = current;
         current = nodes_[current].next_phys;
@@ -177,56 +177,56 @@ void TlsfAllocator::InsertIntoFreeLists(uint32_t node_index) {
 
 uint32_t TlsfAllocator::AllocNode() {
     if (node_pool_head_ >= 0) {
-        const uint32_t index = static_cast<uint32_t>(node_pool_head_);
-        node_pool_head_ = static_cast<int32_t>(static_cast<uint32_t>(nodes_[index].next_free));
+        const std::uint32_t index = static_cast<std::uint32_t>(node_pool_head_);
+        node_pool_head_ = static_cast<std::int32_t>(static_cast<std::uint32_t>(nodes_[index].next_free));
         return index;
     }
 
-    const uint32_t index = static_cast<uint32_t>(nodes_.size());
+    const std::uint32_t index = static_cast<std::uint32_t>(nodes_.size());
     nodes_.emplace_back();
     return index;
 }
 
-void TlsfAllocator::FreeNode(uint32_t index) {
+void TlsfAllocator::FreeNode(std::uint32_t index) {
     TlsfFreeNode& node = nodes_[index];
-    node.next_free = static_cast<uint32_t>(node_pool_head_);
+    node.next_free = static_cast<std::uint32_t>(node_pool_head_);
     node.prev_free = UINT32_MAX;
-    node_pool_head_ = static_cast<int32_t>(index);
+    node_pool_head_ = static_cast<std::int32_t>(index);
 }
 
-uint64_t TlsfAllocator::Allocate(uint64_t size, uint64_t alignment) {
+uint64_t TlsfAllocator::Allocate(uint64_t size, std::uint64_t alignment) {
     if (size == 0 || total_size_ == 0 || alignment == 0) return UINT64_MAX;
 
-    const uint64_t search_size = size + (alignment > 1 ? alignment - 1 : 0);
+    const std::uint64_t search_size = size + (alignment > 1 ? alignment - 1 : 0);
 
-    uint32_t fl = 0;
-    uint32_t sl = 0;
+    std::uint32_t fl = 0;
+    std::uint32_t sl = 0;
     Mapping(search_size, fl, sl);
 
-    const uint32_t node_idx = FindSuitableBlock(fl, sl);
+    const std::uint32_t node_idx = FindSuitableBlock(fl, sl);
     if (node_idx == UINT32_MAX) return UINT64_MAX;
 
     const TlsfFreeNode& node = nodes_[node_idx];
-    const uint64_t block_start = node.offset;
-    const uint64_t block_end = node.offset + node.size;
+    const std::uint64_t block_start = node.offset;
+    const std::uint64_t block_end = node.offset + node.size;
 
-    uint64_t aligned = block_start;
-    const uint64_t mod = block_start % alignment;
+    std::uint64_t aligned = block_start;
+    const std::uint64_t mod = block_start % alignment;
     if (mod != 0) aligned += alignment - mod;
 
     if (aligned + size > block_end) {
         return UINT64_MAX;
     }
 
-    const uint64_t padding_before = aligned - block_start;
-    const uint64_t remainder = block_end - aligned - size;
+    const std::uint64_t padding_before = aligned - block_start;
+    const std::uint64_t remainder = block_end - aligned - size;
 
     RemoveFromFreeLists(node_idx);
     free_size_ -= node.size;
     FreeNode(node_idx);
 
     if (padding_before >= (1ULL << FL_INDEX_SHIFT)) {
-        const uint32_t pad_idx = AllocNode();
+        const std::uint32_t pad_idx = AllocNode();
         if (pad_idx != UINT32_MAX) {
             nodes_[pad_idx] = {block_start, padding_before, 0, 0, 0, 0};
             InsertIntoFreeLists(pad_idx);
@@ -235,7 +235,7 @@ uint64_t TlsfAllocator::Allocate(uint64_t size, uint64_t alignment) {
     }
 
     if (remainder >= (1ULL << FL_INDEX_SHIFT)) {
-        const uint32_t rem_idx = AllocNode();
+        const std::uint32_t rem_idx = AllocNode();
         if (rem_idx != UINT32_MAX) {
             nodes_[rem_idx] = {aligned + size, remainder, 0, 0, 0, 0};
             InsertIntoFreeLists(rem_idx);
@@ -255,7 +255,7 @@ void TlsfAllocator::Reset() {
     phys_head_ = UINT32_MAX;
     free_size_ = total_size_;
 
-    const uint32_t node_idx = AllocNode();
+    const std::uint32_t node_idx = AllocNode();
     if (node_idx != UINT32_MAX) {
         TlsfFreeNode& root = nodes_[node_idx];
         root.offset = 0;
@@ -268,13 +268,13 @@ void TlsfAllocator::Reset() {
     }
 }
 
-bool TlsfAllocator::Free(uint64_t offset, uint64_t size) {
+bool TlsfAllocator::Free(uint64_t offset, std::uint64_t size) {
     if (offset + size > total_size_ || size == 0) return false;
 
-    uint64_t coalesced_offset = offset;
-    uint64_t coalesced_size = size;
+    std::uint64_t coalesced_offset = offset;
+    std::uint64_t coalesced_size = size;
 
-    uint32_t current = phys_head_;
+    std::uint32_t current = phys_head_;
     while (current != UINT32_MAX) {
         const TlsfFreeNode& n = nodes_[current];
 
@@ -283,7 +283,7 @@ bool TlsfAllocator::Free(uint64_t offset, uint64_t size) {
             coalesced_size += n.size;
             free_size_ -= n.size;
             RemoveFromFreeLists(current);
-            const uint32_t to_free = current;
+            const std::uint32_t to_free = current;
             current = nodes_[current].next_phys;
             FreeNode(to_free);
             continue;
@@ -293,7 +293,7 @@ bool TlsfAllocator::Free(uint64_t offset, uint64_t size) {
             coalesced_size += n.size;
             free_size_ -= n.size;
             RemoveFromFreeLists(current);
-            const uint32_t to_free = current;
+            const std::uint32_t to_free = current;
             current = nodes_[current].next_phys;
             FreeNode(to_free);
             continue;
@@ -302,7 +302,7 @@ bool TlsfAllocator::Free(uint64_t offset, uint64_t size) {
         current = n.next_phys;
     }
 
-    const uint32_t node_idx = AllocNode();
+    const std::uint32_t node_idx = AllocNode();
     if (node_idx == UINT32_MAX) return false;
 
     nodes_[node_idx] = {coalesced_offset, coalesced_size, 0, 0, 0, 0};

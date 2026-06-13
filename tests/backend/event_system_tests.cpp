@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
-#include <memory>
+
+import std;
 
 import VulkanBackend.Event;
 

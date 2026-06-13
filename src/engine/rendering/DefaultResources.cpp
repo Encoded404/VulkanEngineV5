@@ -1,15 +1,18 @@
 module;
 
-// Use headers instead of `import std;` to avoid a Clang/libstdc++ module
-// incompatibility where shared_ptr friend declarations conflict with
-// using-declarations in the std module partition (LLVM #138558, #156604).
-#include <array>
-#include <cstddef>
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
 #include <memory>
-#include <utility>
 #include <vector>
+#include <array>
+#include <cstdint>
+#include <cstddef>
+#include <utility>
 
 module VulkanEngine.DefaultTextureFactory;
+
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
+// import std.compat;
 
 import vulkan_hpp;
 
@@ -21,15 +24,15 @@ namespace VulkanEngine::DefaultTextureFactory {
 std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateCheckerboard(
     VulkanEngine::ResourceManager&  /*manager*/,
     const VulkanEngine::CheckerboardConfig& config) {
-    const uint32_t pixel_count = config.size * config.size * 4;
+    const std::uint32_t pixel_count = config.size * config.size * 4;
     std::vector<std::byte> pixels(pixel_count);
-    const uint32_t square_size = config.size / config.squares;
+    const std::uint32_t square_size = config.size / config.squares;
 
-    for (uint32_t y = 0; y < config.size; ++y) {
-        for (uint32_t x = 0; x < config.size; ++x) {
+    for (std::uint32_t y = 0; y < config.size; ++y) {
+        for (std::uint32_t x = 0; x < config.size; ++x) {
             const bool is_color1 = (((x / square_size) + (y / square_size)) % 2U) == 0U;
             const auto& color = is_color1 ? config.color1 : config.color2;
-            const size_t idx = (static_cast<size_t>(y) * config.size + x) * 4;
+            const std::size_t idx = (static_cast<std::size_t>(y) * config.size + x) * 4;
             pixels[idx + 0] = static_cast<std::byte>(color[0]);
             pixels[idx + 1] = static_cast<std::byte>(color[1]);
             pixels[idx + 2] = static_cast<std::byte>(color[2]);

@@ -1,18 +1,23 @@
 module;
 
-#include <FileLoader/Types.hpp>
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+#include <memory>
+#include <future>
+#include <filesystem>
+#include <unordered_map>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
+#include <logging/logging_macros.hpp>
+
 export module VulkanEngine.FileLoaders.Mesh.ObjMeshAssembler;
 
-import std;
+// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
+// import std;
 
-// NOTE: in module purview to avoid clang bug (LLVM #138558):
-// #include <memory> in global module fragment conflicts with import std;
-#include <FileLoader/FileLoader.hpp>
-#include <logging/logging.hpp>
+import FileLoader;
+import logiface;
 
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
@@ -49,8 +54,8 @@ public:
                 }
             };
             struct ObjVertHash {
-                size_t operator()(const ObjVert& v) const {
-                    return static_cast<size_t>(v.vi) ^ (static_cast<size_t>(v.ni) << 10) ^ (static_cast<size_t>(v.ti) << 20);
+                std::size_t operator()(const ObjVert& v) const {
+                    return static_cast<std::size_t>(v.vi) ^ (static_cast<std::size_t>(v.ni) << 10) ^ (static_cast<std::size_t>(v.ti) << 20);
                 }
             };
 
@@ -58,9 +63,9 @@ public:
                 if (shape.mesh.num_face_vertices.empty()) continue;
 
                 // Pre-compute per-face index offsets into shape.mesh.indices
-                std::vector<size_t> face_offsets(shape.mesh.num_face_vertices.size());
-                size_t running_offset = 0;
-                for (size_t i = 0; i < shape.mesh.num_face_vertices.size(); ++i) {
+                std::vector<std::size_t> face_offsets(shape.mesh.num_face_vertices.size());
+                std::size_t running_offset = 0;
+                for (std::size_t i = 0; i < shape.mesh.num_face_vertices.size(); ++i) {
                     face_offsets[i] = running_offset;
                     running_offset += shape.mesh.num_face_vertices[i];
                 }
@@ -69,17 +74,17 @@ public:
                 int current_mat_id = has_materials ? shape.mesh.material_ids[0] : -1;
                 std::uint32_t group_start_face = 0;
 
-                for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+                for (std::size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
                     const int face_mat_id = has_materials ? shape.mesh.material_ids[f] : -1;
                     const bool last_face = (f == shape.mesh.num_face_vertices.size() - 1);
                     const bool group_ended = (face_mat_id != current_mat_id);
 
                     if (group_ended || last_face) {
-                        const size_t group_end = (last_face && !group_ended) ? f + 1 : f;
+                        const std::size_t group_end = (last_face && !group_ended) ? f + 1 : f;
 
                         if (group_end > group_start_face) {
                             std::unordered_map<ObjVert, std::uint32_t, ObjVertHash> vert_map;
-                            size_t face_offset = face_offsets[group_start_face];
+                            std::size_t face_offset = face_offsets[group_start_face];
 
                             const std::uint16_t raw_mat_id = static_cast<std::uint16_t>(std::max(0, current_mat_id));
                             VulkanEngine::MaterialId mat_id{0};
@@ -89,7 +94,7 @@ public:
                                 mat_id = (*material_bindings_)[raw_mat_id];
                             }
 
-                            for (size_t gf = group_start_face; gf < group_end; ++gf) {
+                            for (std::size_t gf = group_start_face; gf < group_end; ++gf) {
                                 const std::uint32_t fv = shape.mesh.num_face_vertices[gf];
                                 for (std::uint32_t v = 0; v < fv; ++v) {
                                     const auto& idx = shape.mesh.indices[face_offset + v];
@@ -99,23 +104,23 @@ public:
                                         const std::uint32_t new_idx = static_cast<std::uint32_t>(mesh->vertices.size());
                                         vert_map[key] = new_idx;
 
-                                        const float px = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 0] : 0.0f;
-                                        const float py = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 1] : 0.0f;
-                                        const float pz = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<size_t>(idx.vertex_index) + 2] : 0.0f;
+                                        const float px = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<std::size_t>(idx.vertex_index) + 0] : 0.0f;
+                                        const float py = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<std::size_t>(idx.vertex_index) + 1] : 0.0f;
+                                        const float pz = idx.vertex_index >= 0 ? attrib.vertices[3 * static_cast<std::size_t>(idx.vertex_index) + 2] : 0.0f;
                                         mesh->vertices.push_back({px, py, pz});
 
-                                        const float nx = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 0] : 0.0f;
-                                        const float ny = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 1] : 0.0f;
-                                        const float nz = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<size_t>(idx.normal_index) + 2] : 0.0f;
+                                        const float nx = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<std::size_t>(idx.normal_index) + 0] : 0.0f;
+                                        const float ny = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<std::size_t>(idx.normal_index) + 1] : 0.0f;
+                                        const float nz = idx.normal_index >= 0 ? attrib.normals[3 * static_cast<std::size_t>(idx.normal_index) + 2] : 0.0f;
                                         mesh->normals.push_back({nx, ny, nz});
 
-                                        const float tu = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 0] : 0.0f;
-                                        const float tv = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<size_t>(idx.texcoord_index) + 1] : 0.0f;
+                                        const float tu = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<std::size_t>(idx.texcoord_index) + 0] : 0.0f;
+                                        const float tv = idx.texcoord_index >= 0 ? attrib.texcoords[2 * static_cast<std::size_t>(idx.texcoord_index) + 1] : 0.0f;
                                         mesh->uvs.push_back({tu, tv});
                                     }
                                     mesh->indices.push_back(vert_map[key]);
                                 }
-                                face_offset += static_cast<size_t>(fv);
+                                face_offset += static_cast<std::size_t>(fv);
                             }
 
                             const std::uint32_t submesh_start = mesh->subMeshes.empty()
@@ -173,7 +178,7 @@ private:
         if (!file.is_open()) {
             throw std::runtime_error("ObjMeshLoader: Failed to open file: " + file_path.string());
         }
-        const auto size = static_cast<size_t>(file.tellg());
+        const auto size = static_cast<std::size_t>(file.tellg());
         if (size == 0) {
             throw std::runtime_error("ObjMeshLoader: File is empty: " + file_path.string());
         }

@@ -1,12 +1,13 @@
 module;
 
-#include <cstdint>
-#include <vector>
-#include <unordered_set>
-
-#include <logging/logging.hpp>
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.MeshRegistry;
+
+import std;
+import std.compat;
+
+import logiface;
 
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.MeshManager;
@@ -20,25 +21,25 @@ MeshRegistry::~MeshRegistry() {
 }
 
 uint32_t MeshRegistry::Register(const GpuResources::MeshData& data) {
-    uint32_t id;
+    std::uint32_t id;
     if (!free_ids_.empty()) {
         id = free_ids_.back();
         free_ids_.pop_back();
         entries_[id] = {};
     } else {
-        id = static_cast<uint32_t>(entries_.size());
+        id = static_cast<std::uint32_t>(entries_.size());
         entries_.emplace_back();
     }
 
     auto& info = entries_[id];
     info.cpu_data = data;
-    info.submesh_count = static_cast<uint32_t>(
+    info.submesh_count = static_cast<std::uint32_t>(
         data.sub_meshes.empty() ? 1 : data.sub_meshes.size());
 
     return id;
 }
 
-void MeshRegistry::RequestGpuResidency(uint32_t mesh_id, MeshManager& mgr,
+void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
                                         SceneRenderer::SceneRenderer& renderer,
                                         GpuResources::DeviceBufferHeap& vtx_heap,
                                         GpuResources::DeviceBufferHeap& idx_heap) {
@@ -75,13 +76,13 @@ void MeshRegistry::RequestGpuResidency(uint32_t mesh_id, MeshManager& mgr,
     }
 
     // Add submeshes to renderer with adjusted index_start
-    const uint32_t index_offset = static_cast<uint32_t>(
-        gpu_info->index_allocation.offset / sizeof(uint32_t));
+    const std::uint32_t index_offset = static_cast<std::uint32_t>(
+        gpu_info->index_allocation.offset / sizeof(std::uint32_t));
 
     std::vector<SubMesh> adjusted;
     if (gpu_info->sub_meshes.empty()) {
-        const uint32_t total_indices = static_cast<uint32_t>(
-            gpu_info->index_allocation.size / sizeof(uint32_t));
+        const std::uint32_t total_indices = static_cast<std::uint32_t>(
+            gpu_info->index_allocation.size / sizeof(std::uint32_t));
         SubMesh sm{};
         sm.index_start = index_offset;
         sm.index_count = total_indices;
@@ -94,9 +95,9 @@ void MeshRegistry::RequestGpuResidency(uint32_t mesh_id, MeshManager& mgr,
         }
     }
 
-    info.first_submesh_in_renderer = static_cast<uint32_t>(
+    info.first_submesh_in_renderer = static_cast<std::uint32_t>(
         renderer.GetSubmeshes().size());
-    info.submesh_count = static_cast<uint32_t>(adjusted.size());
+    info.submesh_count = static_cast<std::uint32_t>(adjusted.size());
 
     // Append to renderer's submesh list
     auto all_submeshes = renderer.GetSubmeshes();
@@ -122,7 +123,7 @@ void MeshRegistry::RequestGpuResidency(uint32_t mesh_id, MeshManager& mgr,
     info.frames_since_last_reference = 0;
 }
 
-void MeshRegistry::Release(uint32_t mesh_id, MeshManager& mgr) {
+void MeshRegistry::Release(std::uint32_t mesh_id, MeshManager& mgr) {
     if (mesh_id >= entries_.size()) return;
 
     auto& info = entries_[mesh_id];
@@ -134,8 +135,8 @@ void MeshRegistry::Release(uint32_t mesh_id, MeshManager& mgr) {
     referenced_this_frame_.erase(mesh_id);
 }
 
-void MeshRegistry::EndFrame(MeshManager& mgr, uint32_t eviction_timeout_frames) {
-    for (uint32_t id = 0; id < static_cast<uint32_t>(entries_.size()); ++id) {
+void MeshRegistry::EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_frames) {
+    for (std::uint32_t id = 0; id < static_cast<std::uint32_t>(entries_.size()); ++id) {
         auto& info = entries_[id];
 
         // Skip free slots
@@ -155,7 +156,7 @@ void MeshRegistry::EndFrame(MeshManager& mgr, uint32_t eviction_timeout_frames) 
     referenced_this_frame_.clear();
 }
 
-const LoadedMeshInfo* MeshRegistry::Get(uint32_t mesh_id) const {
+const LoadedMeshInfo* MeshRegistry::Get(std::uint32_t mesh_id) const {
     if (mesh_id >= entries_.size()) return nullptr;
     return &entries_[mesh_id];
 }

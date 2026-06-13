@@ -1,14 +1,15 @@
 module;
 
 #include <SDL3/SDL_vulkan.h>
-#include <memory>
-#include <vector>
-
-#include "logging/logging.hpp"
 
 #include <vulkan/vulkan_hpp_macros.hpp>
 
+#include <logging/logging_macros.hpp>
+
 module VulkanBackend.Runtime.VulkanInstance;
+
+import std;
+import logiface;
 
 import vulkan_hpp;
 
@@ -28,7 +29,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     loader_ = std::make_unique<vk::detail::DynamicLoader>();
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*loader_);
 
-    uint32_t extension_count = 0;
+    std::uint32_t extension_count = 0;
     const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
     if (!sdl_extensions) {
         LOGIFACE_LOG(error, "SDL_Vulkan_GetInstanceExtensions failed");
@@ -43,8 +44,8 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 
     constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion12);
     const vk::InstanceCreateInfo instance_info({}, &app_info,
-        static_cast<uint32_t>(instance_layers.size()), instance_layers.data(),
-        static_cast<uint32_t>(instance_extensions.size()), instance_extensions.data());
+        static_cast<std::uint32_t>(instance_layers.size()), instance_layers.data(),
+        static_cast<std::uint32_t>(instance_extensions.size()), instance_extensions.data());
 
     try {
         instance_ = std::make_unique<vk::raii::Instance>(vk::raii::Context{}, instance_info);

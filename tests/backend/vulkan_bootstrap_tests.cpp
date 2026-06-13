@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include <memory>
-#include <cstdint>
-#include <vector>
+
+import std;
+import std.compat;
 
 import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;

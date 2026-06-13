@@ -5,18 +5,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
-#include <array>
-#include <cstddef>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <random>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <vector>
+
+import std;
+import std.compat;
 
 import vulkan_hpp;
 import VulkanEngine.ResourceSystem;

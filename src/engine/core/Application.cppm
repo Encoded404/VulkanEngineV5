@@ -2,21 +2,12 @@ module;
 
 #include <SDL3/SDL_video.h>
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <functional>
-#include <chrono>
-#include <thread>
-#include <stacktrace>
-#include <iostream>
-
 // logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.Application;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
 
 import logiface;
 
@@ -289,8 +280,6 @@ struct ApplicationHooks {
         return 0;
     } catch (const std::exception& ex) {
         LOGIFACE_LOG(error, std::string("Fatal error: ") + ex.what());
-        const auto trace = std::stacktrace::current();
-        std::cerr << "\nStacktrace:\n" << trace << '\n';
         cleanup();
         return 1;
     }

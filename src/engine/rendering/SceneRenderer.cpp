@@ -434,7 +434,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             exec_set_ci.type = vk::IndirectExecutionSetInfoTypeEXT::ePipelines;
             exec_set_ci.info = exec_set_info;
 
-            vk::IndirectExecutionSetEXT raw_exec_set = dev.createIndirectExecutionSetEXT(exec_set_ci, nullptr);
+            const vk::IndirectExecutionSetEXT raw_exec_set = dev.createIndirectExecutionSetEXT(exec_set_ci, nullptr);
             dgc_execution_set_ = std::make_unique<vk::raii::IndirectExecutionSetEXT>(dev, raw_exec_set);
             VulkanEngine::Utils::SetVulkanObjectName(dev, *dgc_execution_set_, "dgc-execution-set");
         }
@@ -520,7 +520,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 mem_req_info.indirectCommandsLayout = **dgc_commands_layout_;
                 mem_req_info.maxSequenceCount = dgc_max_sequence_count_;
                 mem_req_info.maxDrawCount = dgc_max_sequence_count_;
-                vk::MemoryRequirements2 mem_req = dev.getGeneratedCommandsMemoryRequirementsEXT(mem_req_info);
+                const vk::MemoryRequirements2 mem_req = dev.getGeneratedCommandsMemoryRequirementsEXT(mem_req_info);
                 fr.dgc_preprocess_size = mem_req.memoryRequirements.size;
                 fr.dgc_preprocess_buffer = GpuResources::GpuBuffer::Create(be,
                     fr.dgc_preprocess_size,
@@ -870,8 +870,8 @@ SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(std::uint32_t
 void SceneRenderer::SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm) {
     if (!dgc_available_ || !dgc_execution_set_) return;
     const auto& dev = backend_->GetDevice();
-    vk::Device vk_dev = static_cast<vk::Device>(*dev);
-    vk::IndirectExecutionSetEXT exec_set = **dgc_execution_set_;
+    const vk::Device vk_dev = static_cast<vk::Device>(*dev);
+    const vk::IndirectExecutionSetEXT exec_set = **dgc_execution_set_;
 
     dgc_technique_handle_ = tm.on_technique_changed.Register(
         [exec_set, vk_dev](uint16_t id, vk::Pipeline pipeline, vk::PipelineLayout) {

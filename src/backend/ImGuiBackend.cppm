@@ -1,15 +1,10 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <cstdint>
-
 struct SDL_Window;
 
 export module VulkanBackend.ImGui;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-//import std;
+import std;
 
 import vulkan_hpp;
 

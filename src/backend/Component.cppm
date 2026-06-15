@@ -1,18 +1,9 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <atomic>
-#include <string>
-#include <vector>
-#include <functional>
-#include <mutex>
-
 export module VulkanBackend.Component;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-//import std;
-//import std.compat;
+import std;
+import std.compat;
 
 import VulkanBackend.Utils.ThreadPool;
 
@@ -163,6 +154,7 @@ public:
 
     template<typename U>
     requires std::is_assignable_v<value_type&, U&&>
+    // NOLINTNEXTLINE(misc-unconventional-assign-operator)
     constexpr FieldHandle& operator=(U&& value) {
         *ptr_ = std::forward<U>(value);
         return *this;

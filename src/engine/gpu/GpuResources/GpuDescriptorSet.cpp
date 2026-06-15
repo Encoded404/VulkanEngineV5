@@ -1,17 +1,11 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <chrono>
-#include <vector>
-
 #include <logging/logging_macros.hpp>
 
 module VulkanEngine.GpuDescriptorSet;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
-// import std.compat;
+import std;
+import std.compat;
 
 import logiface;
 

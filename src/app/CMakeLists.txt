@@ -47,12 +47,10 @@ endif()
 target_link_libraries(${APP_TARGET} PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET} slang_shared_reflection)
 
 find_package(SDL3 CONFIG REQUIRED)
-find_package(Boost CONFIG REQUIRED COMPONENTS stacktrace_basic)
 find_package(CLI11 CONFIG REQUIRED)
 
 target_link_libraries(${APP_TARGET} PRIVATE
     SDL3::SDL3
-    Boost::stacktrace_basic
     CLI11::CLI11
     Vulkan::HppModule
 )

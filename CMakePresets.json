@@ -23,7 +23,9 @@
         "CMAKE_TOOLCHAIN_FILE": {
           "type": "FILEPATH",
           "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-        }
+        },
+        "USE_LIBCPP": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-libcxx"
       },
       "condition": {
         "type": "notEquals",

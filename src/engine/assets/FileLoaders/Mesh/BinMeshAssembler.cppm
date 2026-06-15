@@ -1,18 +1,11 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <future>
-#include <filesystem>
-#include <cstring>
-
 // logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.FileLoaders.Mesh.BinMeshAssembler;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
 import logiface;
 import FileLoader;
 

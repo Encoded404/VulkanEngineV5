@@ -1,14 +1,8 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <vector>
-#include <filesystem>
-
 export module VulkanEngine.Game;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
 
 import vulkan_hpp;
 

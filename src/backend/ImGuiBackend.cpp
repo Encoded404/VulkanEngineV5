@@ -1,10 +1,5 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <utility>
-#include <chrono>
-
 #define IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 #include <SDL3/SDL_events.h>
 #include <imgui.h>
@@ -15,9 +10,8 @@ module;
 
 module VulkanBackend.ImGui;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
-// import std.compat;
+import std;
+import std.compat;
 
 import logiface;
 

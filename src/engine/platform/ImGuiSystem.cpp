@@ -1,17 +1,12 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <utility>
-
 #include <SDL3/SDL_video.h>
 #include <imgui.h>
 
 module VulkanEngine.ImGui;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
-// import std.compat;
+import std;
+import std.compat;
 
 import vulkan_hpp;
 

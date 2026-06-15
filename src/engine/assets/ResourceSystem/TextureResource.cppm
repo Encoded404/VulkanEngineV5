@@ -1,8 +1,5 @@
 module;
 
-// NOLINTNEXTLINE(misc-include-cleaner)
-#include <memory>  // workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-
 export module VulkanEngine.ResourceSystem.TextureResource;
 
 import std;

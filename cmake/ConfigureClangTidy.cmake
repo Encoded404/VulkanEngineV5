@@ -20,7 +20,7 @@ function(enable_target_clang_tidy target)
         return()
     endif()
 
-    set(CLANG_TIDY_CMD "${CLANG_TIDY_EXECUTABLE};-p=${CMAKE_BINARY_DIR}")
+    set(CLANG_TIDY_CMD "${CLANG_TIDY_EXECUTABLE};-p=${CMAKE_BINARY_DIR};--system-headers=0;--header-filter=^${CMAKE_SOURCE_DIR}/(src|tests)/")
     set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_CMD}")
     message(STATUS "Clang-Tidy enabled for target '${target}'.")
 endfunction()

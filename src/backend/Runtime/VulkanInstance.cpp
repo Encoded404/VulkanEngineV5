@@ -40,9 +40,10 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     std::vector<const char*> instance_layers{};
     if (config.enable_validation) {
         instance_layers.push_back("VK_LAYER_KHRONOS_validation");
+        instance_extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
 
-    constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion12);
+    constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion13);
     const vk::InstanceCreateInfo instance_info({}, &app_info,
         static_cast<std::uint32_t>(instance_layers.size()), instance_layers.data(),
         static_cast<std::uint32_t>(instance_extensions.size()), instance_extensions.data());

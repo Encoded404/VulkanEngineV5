@@ -1,21 +1,12 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <future>
-#include <unordered_map>
-#include <typeindex>
-#include <shared_mutex>
-#include <any>
-#include <filesystem>
-
 // logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module VulkanEngine.ResourceSystem;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
+
 import logiface;
 import FileLoader;
 
@@ -64,7 +55,7 @@ struct ResourceId {
         ResourceHandle(ResourceId id, ResourceManager* manager)
             : resourceId_(std::move(id)), resourceManager_(manager) {}
 
-        T* Get() const;
+        [[nodiscard]] T* Get() const;
         [[nodiscard]] bool IsValid() const;
         [[nodiscard]] const ResourceId& GetId() const { return resourceId_; }
 

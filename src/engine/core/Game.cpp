@@ -1,6 +1,6 @@
 module;
 
-
+#include <logging/logging_macros.hpp>
 
 module VulkanEngine.Game;
 

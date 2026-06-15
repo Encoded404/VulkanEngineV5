@@ -1,15 +1,8 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <future>
-#include <filesystem>
-#include <algorithm>
-
 export module VulkanEngine.FileLoaders.Mesh.MeshMagicLoader;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
 
 import FileLoader.Types;
 

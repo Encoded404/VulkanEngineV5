@@ -63,9 +63,9 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     // Query DGC properties
     {
         vk::PhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props{};
-        dgc_props.sType = vk::StructureType::ePhysicalDeviceDeviceGeneratedCommandsFeaturesEXT;
+        dgc_props.sType = vk::StructureType::ePhysicalDeviceDeviceGeneratedCommandsPropertiesEXT;
         vk::PhysicalDeviceProperties2 props2{};
-        props2.sType = vk::StructureType::ePhysicalDeviceFeatures2;
+        props2.sType = vk::StructureType::ePhysicalDeviceProperties2;
         props2.pNext = &dgc_props;
         static_cast<vk::PhysicalDevice>(**physical_device_).getProperties2(&props2);
         if (dgc_props.maxIndirectSequenceCount >= 1 &&
@@ -81,12 +81,16 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         }
     }
 
-    // Check if DGC extension and its dependencies are available
+    // Query available device extensions once
+    bool has_debug_utils = false;
     bool has_dgc_extension = false;
-    if (dgc_available_) {
-        bool has_maintenance5 = false;
+    bool has_maintenance5 = false;
+    {
         auto available_extensions = physical_device_->enumerateDeviceExtensionProperties();
         for (const auto& ext : available_extensions) {
+            if (strcmp(ext.extensionName, vk::EXTDebugUtilsExtensionName) == 0) {
+                has_debug_utils = true;
+            }
             if (strcmp(ext.extensionName, vk::EXTDeviceGeneratedCommandsExtensionName) == 0) {
                 has_dgc_extension = true;
             }
@@ -94,9 +98,11 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
                 has_maintenance5 = true;
             }
         }
-        if (!has_dgc_extension || !has_maintenance5) {
-            dgc_available_ = false;
-        }
+    }
+
+    // Disable DGC if the required extensions are missing
+    if (dgc_available_ && (!has_dgc_extension || !has_maintenance5)) {
+        dgc_available_ = false;
     }
 
     try {
@@ -107,6 +113,9 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         queue_info.pQueuePriorities = &queue_priority;
 
         std::vector<const char*> device_extensions{vk::KHRSwapchainExtensionName};
+        if (has_debug_utils) {
+            device_extensions.push_back(vk::EXTDebugUtilsExtensionName);
+        }
         if (dgc_available_) {
             device_extensions.push_back("VK_KHR_maintenance5");
             device_extensions.push_back(vk::EXTDeviceGeneratedCommandsExtensionName);
@@ -154,11 +163,6 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_extensions.size());
         device_info.ppEnabledExtensionNames = device_extensions.data();
 
-        // Mark DGC as unavailable if the extension was not enabled
-        if (!has_dgc_extension) {
-            dgc_available_ = false;
-        }
-
         device_ = std::make_unique<vk::raii::Device>(*physical_device_, device_info);
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(**device_);
@@ -205,9 +209,11 @@ void VulkanDevice::Shutdown() {
         device_->waitIdle();
     }
 
-    for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
-        in_flight_fences_[i].reset();
-        image_available_semaphores_[i].reset();
+    for (auto& fence : in_flight_fences_) {
+        fence.reset();
+    }
+    for (auto& sem : image_available_semaphores_) {
+        sem.reset();
     }
 
     image_available_semaphores_.clear();

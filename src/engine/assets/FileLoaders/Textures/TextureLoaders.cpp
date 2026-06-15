@@ -232,15 +232,15 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
         std::byte{'0'}, std::byte{0xBB}, std::byte{0x0D}, std::byte{0x0A}, std::byte{0x1A}, std::byte{0x0A}
     };
 
-    return HasPrefix(buffer, ktx1_magic.data(), sizeof(ktx1_magic)) ||
-           HasPrefix(buffer, ktx2_magic.data(), sizeof(ktx2_magic));
+    return HasPrefix(buffer, ktx1_magic.data(), ktx1_magic.size()) ||
+           HasPrefix(buffer, ktx2_magic.data(), ktx2_magic.size());
 }
 
 [[nodiscard]] bool LooksLikePng(const FileLoader::ByteBuffer& buffer) {
     static constexpr std::array<std::byte, 8> png_magic = {
         std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'}, std::byte{0x0D}, std::byte{0x0A}, std::byte{0x1A}, std::byte{0x0A}
     };
-    return HasPrefix(buffer, png_magic.data(), sizeof(png_magic));
+    return HasPrefix(buffer, png_magic.data(), png_magic.size());
 }
 
 [[nodiscard]] bool LooksLikeJpeg(const FileLoader::ByteBuffer& buffer) {

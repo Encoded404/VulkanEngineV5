@@ -245,7 +245,7 @@ bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         qp_info.queryCount = 1;
         gpu_stats_pool_ = std::make_unique<vk::raii::QueryPool>(device, qp_info);
         VulkanEngine::Utils::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
-        vk::Device raw_device = *device;
+        const vk::Device raw_device = *device;
         raw_device.resetQueryPool(*gpu_stats_pool_, 0, 1);
     }
 

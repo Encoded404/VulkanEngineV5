@@ -1,15 +1,8 @@
 module;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-#include <memory>
-#include <string>
-#include <cstdint>
-#include <limits>
-
 export module VulkanEngine.ImGui;
 
-// workaround for LLVM #138558: friend/using-decl conflict in bits/shared_ptr.h
-// import std;
+import std;
 
 import vulkan_hpp;
 

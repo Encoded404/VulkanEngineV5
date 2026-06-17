@@ -39,3 +39,4 @@
 /src/app/models/*
 /src/app/textures/*
 .idea/discord.xml
+/.idea

@@ -2,7 +2,7 @@
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
-    uint texSlot;
+    uint materialId;
 };
 
 [[vk::binding(0, 1)]]
@@ -48,7 +48,7 @@ VSOutput main(uint vertexId : SV_VertexID) {
     float2 t = float2(vert.u, vert.v);
 
     VertEntry info = submeshInfo[NonUniformResourceIndex(block)][elemIndex];
-    result.outM = info.texSlot;
+    result.outM = info.materialId;
     result.outN = n;
     result.outT = t;
     result.position = mul(float4(p, 1.0), info.MVP);

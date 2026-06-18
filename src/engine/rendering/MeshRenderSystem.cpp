@@ -144,7 +144,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     struct alignas(16) StaticEntry {
         std::uint32_t index_start_packed;
         std::uint32_t index_range;
-        std::uint32_t technique_texture;
+        std::uint32_t technique_material;  // packed: hi 16 = material_id, lo 16 = technique_id
         std::uint32_t vertex_info;
     };
     struct alignas(16) OBBGPUEntry {
@@ -190,7 +190,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 s2->index_range = sm.index_count;
                 {
                     const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                    s2->technique_texture =
+                    // Packed: hi 16 = texture_slot (used as material_id by existing shaders),
+                    //         lo 16 = technique_id
+                    // Future: hi 16 = material_id when per-material StructuredBuffer is adopted.
+                    s2->technique_material =
                         (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
                         mat_def.technique_id.value;
                 }
@@ -294,7 +297,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->index_range = sm.index_count;
                     {
                         const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                        s2->technique_texture =
+                        // Packed: hi 16 = texture_slot (as material_id for existing shaders),
+                        //         lo 16 = technique_id
+                        s2->technique_material =
                             (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
                             mat_def.technique_id.value;
                     }

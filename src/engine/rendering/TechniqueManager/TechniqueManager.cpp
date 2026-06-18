@@ -6,8 +6,6 @@ module VulkanEngine.TechniqueManager;
 import std;
 import std.compat;
 
-import std;
-
 import vulkan_hpp;
 
 import VulkanEngine.StandardMeshPipeline;
@@ -79,6 +77,15 @@ uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootst
 VulkanEngine::StandardMeshPipeline::GraphicsPipeline* TechniqueManager::GetGraphicsPipeline(uint16_t technique_id) {
     if (technique_id >= techniques_.size()) return nullptr;
     return techniques_[technique_id].graphics_pipeline.get();
+}
+
+BaseTechnique* TechniqueManager::GetTechnique(uint16_t technique_id) {
+    if (technique_id >= techniques_.size()) return nullptr;
+    return techniques_[technique_id].base_technique.get();
+}
+
+BaseTechnique* TechniqueManager::GetTechnique(TechniqueId id) {
+    return GetTechnique(id.value);
 }
 
 void TechniqueManager::Shutdown() {

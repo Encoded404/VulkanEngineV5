@@ -10,7 +10,14 @@ import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 
+import VulkanEngine.GpuResources.StagingManager;
+
 export namespace VulkanEngine::GpuResources {
+
+export enum class MemoryMode : std::uint8_t {
+    HostVisible,   // CPU-mapped, Get() returns direct pointer
+    DeviceLocal,   // GPU-resident, upload via UploadEntry() with StagingManager
+};
 
 class BlockArray {
 public:
@@ -20,6 +27,7 @@ public:
         vk::BufferUsageFlags extra_usage = {};
         vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible |
                                           vk::MemoryPropertyFlagBits::eHostCoherent;
+        MemoryMode memory_mode = MemoryMode::HostVisible;
     };
 
     BlockArray() = default;
@@ -37,8 +45,16 @@ public:
 
     void* EnsureCapacity(std::uint32_t count);
 
+    // For HostVisible memory: returns pointer to entry data.
+    // For DeviceLocal memory: asserts and returns nullptr — use UploadEntry() instead.
     void* Get(std::uint32_t index);
 
+    // Upload data to a specific entry. For HostVisible memory, does a direct memcpy.
+    // For DeviceLocal memory, uses StagingManager for transfer.
+    void UploadEntry(std::uint32_t index, const void* data, std::uint64_t size,
+                     StagingManager& staging);
+
+    [[nodiscard]] bool IsDeviceLocal() const { return cfg_.memory_mode == MemoryMode::DeviceLocal; }
     [[nodiscard]] std::uint32_t BlockCount() const { return static_cast<std::uint32_t>(blocks_.size()); }
     [[nodiscard]] vk::Buffer GetBlockArray(std::uint32_t block_index) const;
     [[nodiscard]] std::uint64_t BlockSize() const { return static_cast<std::uint64_t>(cfg_.entries_per_block) * cfg_.entry_size; }

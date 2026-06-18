@@ -201,4 +201,75 @@ void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bo
     LOGIFACE_LOG(trace, "leaving CreatePipeline successfully");
 }
 
+void GraphicsPipeline::CreatePipelineWithLayout(
+        VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+        const std::vector<std::uint32_t>& vertex_spirv,
+        const std::vector<std::uint32_t>& fragment_spirv,
+        const PipelineConfig& config,
+        const std::vector<vk::DescriptorSetLayout>& set_layouts,
+        vk::PipelineLayout external_pipeline_layout) {
+        LOGIFACE_LOG(trace, "entering CreatePipelineWithLayout");
+
+        const auto& device = bootstrap.GetBackend().GetDevice();
+
+        const vk::ShaderModuleCreateInfo vert_info({}, vertex_spirv.size() * sizeof(std::uint32_t), vertex_spirv.data());
+        const vk::raii::ShaderModule vert_module(device, vert_info);
+
+        const vk::ShaderModuleCreateInfo frag_info({}, fragment_spirv.size() * sizeof(std::uint32_t), fragment_spirv.data());
+        const vk::raii::ShaderModule frag_module(device, frag_info);
+
+        std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
+            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, *vert_module, "main"),
+            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, *frag_module, "main")
+        };
+
+        // Use the pre-built layout — do NOT create our own
+        // The external_pipeline_layout is owned by BaseTechnique
+
+        // When indirection layout is present, use zero vertex bindings (SSBO pulling)
+        const bool use_vertex_pulling = true; // Use SSBO pulling for technique pipelines
+        vk::PipelineVertexInputStateCreateInfo vertex_input({}, 0, nullptr, 0, nullptr);
+        if (!use_vertex_pulling) {
+            constexpr std::array<vk::VertexInputBindingDescription, 1> vertex_bindings = {
+                vk::VertexInputBindingDescription(0, sizeof(Vertex), vk::VertexInputRate::eVertex)
+            };
+            constexpr std::array<vk::VertexInputAttributeDescription, 3> vertex_attributes = {
+                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat,  0},
+                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat,    24},
+            };
+            vertex_input = vk::PipelineVertexInputStateCreateInfo({}, vertex_bindings, vertex_attributes);
+        }
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, config.primitive_topology);
+        constexpr vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
+        const vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
+        const vk::PipelineMultisampleStateCreateInfo multisample({}, config.sample_count);
+        const vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
+
+        const vk::PipelineColorBlendAttachmentState color_blend_attachment(
+            config.blend_enable,
+            config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
+            config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+        const vk::PipelineColorBlendStateCreateInfo color_blend({}, false, vk::LogicOp::eCopy, color_blend_attachment);
+
+        std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
+
+        const vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
+        vk::PipelineRenderingCreateInfo rendering_info{};
+        rendering_info.colorAttachmentCount = 1;
+        rendering_info.pColorAttachmentFormats = &format;
+        rendering_info.depthAttachmentFormat = bootstrap.GetBackend().GetDepthFormat();
+        rendering_info.stencilAttachmentFormat = vk::Format::eUndefined;
+
+        vk::GraphicsPipelineCreateInfo pipeline_info({}, stages, &vertex_input, &input_assembly, nullptr, &viewport_state, &rasterization, &multisample, &depth_stencil, &color_blend, &dynamic_state, external_pipeline_layout, nullptr, 0, {}, 0);
+        pipeline_info.setPNext(&rendering_info);
+
+        pipeline_ = std::make_unique<vk::raii::Pipeline>(device, nullptr, pipeline_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_, "technique-pipeline");
+
+        LOGIFACE_LOG(trace, "leaving CreatePipelineWithLayout successfully");
+    }
+
 } // namespace VulkanEngine::StandardMeshPipeline

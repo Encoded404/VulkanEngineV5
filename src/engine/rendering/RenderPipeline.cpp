@@ -162,6 +162,76 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipeli
     return handle;
 }
 
+VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddCustomPass(
+    std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass,
+    VulkanEngine::PipelinePass::PassSetupContext& ctx) {
+    // Store the pass for lifetime
+    custom_passes_.push_back(std::move(pass));
+    auto* pass_ptr = custom_passes_.back().get();
+
+    // Build a RenderPipelinePassDesc from the context's declarations
+    RenderPipelinePassDesc desc;
+    desc.name = "CustomPass-" + std::to_string(custom_passes_.size());
+
+    // ── Wire up declared resource reads ──
+    const auto& read_resources = ctx.GetReadResources();
+    const auto& read_stages = ctx.GetReadStages();
+    const auto& read_accesses = ctx.GetReadAccesses();
+    for (std::size_t i = 0; i < read_resources.size(); ++i) {
+        desc.reads.push_back({
+            .resource = read_resources[i],
+            .stage = i < read_stages.size() ? read_stages[i]
+                     : VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader,
+            .access = i < read_accesses.size() ? read_accesses[i]
+                      : VulkanEngine::RenderGraph::AccessIntent::Read,
+        });
+    }
+
+    // ── Wire up declared writes ──
+    desc.writes = ctx.GetWriteResources();
+
+    // ── Set attachment info ──
+    if (ctx.GetAttachmentSetup()) {
+        desc.attachments = *ctx.GetAttachmentSetup();
+    }
+
+    // ── Create execute callback ──
+    desc.execute = [pass_ptr](const void* /*user_data*/, vk::CommandBuffer cmd) {
+        // TODO: Populate FrameContext with per-frame data from user_data.
+        // The user_data is passed through from RenderPipeline::Execute()
+        // and will contain frame-specific resources (descriptor sets, etc.).
+        VulkanEngine::PipelinePass::FrameContext frame_ctx{};
+        pass_ptr->Execute(frame_ctx, cmd);
+    };
+
+    // Register with the graph builder via the existing AddPass path
+    auto handle = AddPass(desc);
+
+    // ── Resolve RunBefore/RunAfter ordering with builtin passes ──
+    for (auto bp : ctx.GetBeforeBuiltinPasses()) {
+        auto idx = static_cast<std::size_t>(bp);
+        if (idx < builtin_handles_.size() && builtin_handles_[idx].IsValid()) {
+            AddDependency(handle, builtin_handles_[idx]);
+        }
+    }
+    for (auto bp : ctx.GetAfterBuiltinPasses()) {
+        auto idx = static_cast<std::size_t>(bp);
+        if (idx < builtin_handles_.size() && builtin_handles_[idx].IsValid()) {
+            AddDependency(builtin_handles_[idx], handle);
+        }
+    }
+
+    return handle;
+}
+
+void RenderPipeline::SetBuiltinHandles(const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& handles) {
+    builtin_handles_ = handles;
+}
+
+const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& RenderPipeline::GetBuiltinHandles() const {
+    return builtin_handles_;
+}
+
 bool RenderPipeline::AddDependency(VulkanEngine::RenderGraph::PassHandle before,
                                    VulkanEngine::RenderGraph::PassHandle after) {
     return graph_builder_.AddDependency(before, after);

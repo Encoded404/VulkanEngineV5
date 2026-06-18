@@ -78,6 +78,16 @@ public:
     [[nodiscard]] vk::DescriptorSetLayout* GetDescriptorSetLayout();
     [[nodiscard]] const vk::DescriptorSetLayout* GetDescriptorSetLayout() const;
 
+    // ── New: Create pipeline with pre-built layout (used by BaseTechnique::Compile()) ──
+    // Creates a graphics pipeline using an externally provided VkPipelineLayout,
+    // descriptor set layouts, and push constant ranges. Does NOT create its own layout.
+    void CreatePipelineWithLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+                                  const std::vector<std::uint32_t>& vertex_spirv,
+                                  const std::vector<std::uint32_t>& fragment_spirv,
+                                  const PipelineConfig& config,
+                                  const std::vector<vk::DescriptorSetLayout>& set_layouts,
+                                  vk::PipelineLayout external_pipeline_layout);
+
 private:
     void CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                         const std::vector<std::uint32_t>& vertex_spirv,

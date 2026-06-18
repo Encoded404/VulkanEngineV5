@@ -13,7 +13,7 @@ StructuredBuffer<DynEntry> dynamicInstances[];
 struct StaticEntry {
     uint indexStart;       // packed: hi 8 = indexBufSlot, lo 24 = indexOffset
     uint indexRange;
-    uint techniqueTexSlot;
+    uint techniqueMaterial; // packed: hi 16 = materialId, lo 16 = techniqueId
     uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
 };
 
@@ -23,7 +23,7 @@ StructuredBuffer<StaticEntry> staticMeshes[];
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
-    uint texSlot;
+    uint materialId;
 };
 
 [[vk::binding(2, 0)]]
@@ -91,22 +91,23 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float4 rotation = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].rot;
 
     uint indexRange = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexRange;
-    uint techniqueTexSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].techniqueTexSlot;
-    uint texSlot = techniqueTexSlot >> 16;
+    uint techniqueMaterial = staticMeshes[NonUniformResourceIndex(block)][elemIndex].techniqueMaterial;
+    uint techId = techniqueMaterial & 0xFFFFu;
+    uint matId  = techniqueMaterial >> 16;
 
     float maxScaleVal = max(abs(scale.x), max(abs(scale.y), abs(scale.z)));
     float4x4 mvp = mul(modelMat(position, rotation, scale), pushConstant.vp);
 
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].MVP = mvp;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].maxScale = maxScaleVal;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].texSlot = texSlot;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].materialId = matId;
 
     uint drawOffset;
     InterlockedAdd(drawCounter[0], indexRange, drawOffset); // allocate range in the indirect draw buffer
 
     cullEntries[NonUniformResourceIndex(block)][elemIndex].indirOffset = drawOffset;
     cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techniqueTexSlot & 0xFFFFu;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techId;
 
     uint indexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart >> 24;
     uint indexOffset  = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart & 0xFFFFFFu;

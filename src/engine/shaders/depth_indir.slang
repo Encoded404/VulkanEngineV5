@@ -2,7 +2,7 @@
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
-    uint texSlot;
+    uint materialId;
 };
 
 [[vk::binding(0, 1)]]

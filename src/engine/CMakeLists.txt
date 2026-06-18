@@ -70,6 +70,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/ResourceSystem/TextureResource.cpp
     platform/ImGuiSystem.cpp
     rendering/RenderPipeline.cpp
+    rendering/PipelinePass.cpp
+    rendering/TechniqueManager/BaseTechnique.cpp
     gpu/GpuResources/GpuBuffer.cpp
     gpu/GpuResources/GpuTexture.cpp
     gpu/GpuResources/GpuDescriptorSet.cpp
@@ -149,6 +151,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Textures/TextureLoaders.cppm
             platform/ImGuiSystem.cppm
             rendering/RenderPipeline.cppm
+            rendering/PipelinePass.cppm
         gpu/GpuResources/GpuResources.cppm
         gpu/GpuResources/GpuBuffer.cppm
         gpu/GpuResources/BlockBuffer.cppm
@@ -168,6 +171,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/MeshRegistry.cppm
             rendering/Renderer.cppm
             rendering/TechniqueManager/TechniqueManager.cppm
+            rendering/TechniqueManager/BaseTechnique.cppm
             rendering/TechniqueManager/TechniqueId.cppm
             rendering/MaterialManager/MaterialManager.cppm
             rendering/MaterialManager/MaterialId.cppm

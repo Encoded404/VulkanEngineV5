@@ -10,6 +10,7 @@ import vulkan_hpp;
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanBackend.Utils.CallbackList;
 export import VulkanEngine.StandardMeshPipeline;
+export import VulkanEngine.TechniqueManager.BaseTechnique;
 
 #ifndef UINT16_MAX
 constexpr std::uint16_t UINT16_MAX =
@@ -52,18 +53,47 @@ public:
 
     [[nodiscard]] VulkanEngine::StandardMeshPipeline::GraphicsPipeline* GetGraphicsPipeline(std::uint16_t technique_id);
 
+    // ── New: get technique by ID (returns BaseTechnique* or nullptr) ──
+    [[nodiscard]] BaseTechnique* GetTechnique(std::uint16_t technique_id);
+    [[nodiscard]] BaseTechnique* GetTechnique(TechniqueId id);
+
     [[nodiscard]] std::uint16_t GetTechniqueCount() const { return static_cast<std::uint16_t>(techniques_.size()); }
+
+    // ── New: register a typed technique ──
+    template<typename Tech>
+        requires std::derived_from<Tech, BaseTechnique>
+    TechniqueId Register(std::unique_ptr<Tech> technique) {
+        auto id = TechniqueId{static_cast<std::uint16_t>(techniques_.size())};
+        technique->id_ = id;
+        type_to_id_[std::type_index(typeid(Tech))] = id;
+        Technique t;
+        t.base_technique = std::move(technique);
+        techniques_.push_back(std::move(t));
+        return id;
+    }
+
+    // ── New: get technique ID by type ──
+    template<typename Tech>
+    TechniqueId GetId() const {
+        auto it = type_to_id_.find(std::type_index(typeid(Tech)));
+        if (it != type_to_id_.end()) return it->second;
+        return TechniqueId{UINT16_MAX};
+    }
 
     void Shutdown();
 
 private:
+    friend class BaseTechnique; // Allow BaseTechnique to access Technique struct
+
     struct Technique {
         std::unique_ptr<VulkanEngine::StandardMeshPipeline::GraphicsPipeline> graphics_pipeline;
+        std::unique_ptr<BaseTechnique> base_technique;
     };
 
     std::vector<Technique> techniques_{};
     std::vector<std::uint32_t> default_vert_spv_{};
     std::vector<std::uint32_t> default_frag_spv_{};
+    std::unordered_map<std::type_index, TechniqueId> type_to_id_{};
     bool has_defaults_ = false;
 };
 

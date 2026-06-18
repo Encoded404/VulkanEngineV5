@@ -132,7 +132,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
 
     scene_renderer_->SetupTechniqueDgcCallback(*technique_mgr_);
 
-    MaterialManager::MaterialManager::Initialize();
+    MaterialManager::MaterialManager::Initialize(&staging_mgr_);
+    MaterialManager::MaterialManager::Get().SetTechniqueManager(technique_mgr_.get());
 
     // Register fallback material (ID 0): main technique, bindless checkerboard
     const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, missing_texture_.get());
@@ -315,6 +316,9 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     if (mesh_manager_) {
         mesh_manager_->EndFrame(ctx.frame.image_index % 3);
     }
+
+    // Flush dirty material data to GPU before rendering
+    MaterialManager::MaterialManager::Get().FlushDirtyMaterials();
 
     renderer_->RenderFrame(*ctx.bootstrap,
                            ctx.bootstrap->GetBackend().GetComponentRegistry(),

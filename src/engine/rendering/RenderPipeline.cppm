@@ -9,6 +9,7 @@ import vulkan_hpp;
 
 export import VulkanBackend.RenderGraph;
 export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::RenderPipeline {
 
@@ -60,6 +61,18 @@ public:
 
     VulkanEngine::RenderGraph::PassHandle AddPass(const RenderPipelinePassDesc& desc);
 
+    // ── Custom pass registration ──
+    // Creates a pass from an IPipelinePass, calling Setup() to collect resources.
+    // Returns the pass handle for custom-to-custom ordering via AddDependency().
+    VulkanEngine::RenderGraph::PassHandle AddCustomPass(
+        std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass,
+        VulkanEngine::PipelinePass::PassSetupContext& ctx);
+
+    // ── Built-in pass handle access ──
+    // The caller (Renderer) populates these after registering all built-in passes.
+    void SetBuiltinHandles(const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& handles);
+    [[nodiscard]] const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& GetBuiltinHandles() const;
+
     bool AddDependency(VulkanEngine::RenderGraph::PassHandle before,
                        VulkanEngine::RenderGraph::PassHandle after);
 
@@ -100,6 +113,10 @@ private:
     std::uint32_t depth_buffer_resource_index_ = 0;
     std::vector<bool> swapchain_image_presented_{};
     std::vector<bool> swapchain_depth_initialized_{};
+
+    // Custom pass storage and built-in handles
+    std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};
+    std::array<VulkanEngine::RenderGraph::PassHandle, 6> builtin_handles_{};
 
     bool compiled_ = false;
     bool initialized_ = false;

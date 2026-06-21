@@ -1,9 +1,14 @@
 module;
 
+#include <cassert>
+#include <logging/logging_macros.hpp>
+
 module VulkanEngine.TechniqueManager.BaseTechnique;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -11,16 +16,12 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.GpuResources.BlockArray;
-import VulkanEngine.GpuResources.GpuBuffer;
+import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuResources.StagingManager;
 
 namespace VulkanEngine::TechniqueManager {
 
 static TechniqueId s_next_technique_id{0};
-
-BaseTechnique::~BaseTechnique() {
-    Shutdown();
-}
 
 void BaseTechnique::Shutdown() {
     block_arrays_.clear();

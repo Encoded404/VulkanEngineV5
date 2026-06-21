@@ -1,5 +1,7 @@
 module;
 
+#include <cassert> // NOLINT(misc-include-cleaner)
+
 export module VulkanEngine.PipelinePass;
 
 import std;
@@ -7,14 +9,13 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanEngine.RenderPipeline;
 export import VulkanBackend.RenderGraph;
 export import VulkanBackend.Runtime.VulkanBootstrap;
 
 export namespace VulkanEngine::PipelinePass {
 
 // ── Built-in pass ordering points ──
-export enum class BuiltinPass : std::uint8_t {
+enum class BuiltinPass : std::uint8_t {
     Expand,
     DepthPrepass,
     HiZGen,
@@ -24,19 +25,45 @@ export enum class BuiltinPass : std::uint8_t {
 };
 
 // ── Opaque typed handles for FrameContext ──
-export struct BindlessTextureSet  { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
-export struct SubmeshVertexSet    { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
-export struct RawVertexArray      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
-export struct IndirectionSet      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
-export struct DepthPyramid        { vk::Image image = nullptr; vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
-export struct DepthBufferView     { vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct BindlessTextureSet  { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct SubmeshVertexSet    { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct RawVertexArray      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct IndirectionSet      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct DepthPyramid        { vk::Image image = nullptr; vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct DepthBufferView     { vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+
+// ── TransientImageDesc — description of a transient (pass-owned) image ──
+struct TransientImageDesc {
+    std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageLayout initial_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::ImageLayout final_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+// ── IResourceRegistry — abstract interface for resource registration ──
+// Implemented by RenderPipeline to allow PassSetupContext to declare
+// resources without depending on the RenderPipeline concrete type.
+class IResourceRegistry {
+public:
+    virtual ~IResourceRegistry() = default;
+
+    virtual VulkanEngine::RenderGraph::ResourceHandle ImportDepthBuffer() = 0;
+    virtual VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer() = 0;
+    virtual VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) = 0;
+    virtual VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) = 0;
+    virtual VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) = 0;
+};
 
 // ── Forward declarations ──
 class IPipelinePass;
 class PassSetupContext;
 
 // ── FrameContext — per-frame resources passed to IPipelinePass::Execute() ──
-export struct FrameContext {
+struct FrameContext {
+    //NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     vk::Extent2D render_extent{};
     std::uint32_t frame_index = 0;
     std::uint32_t swapchain_image_index = 0;
@@ -57,6 +84,7 @@ export struct FrameContext {
     // Push constant metadata for runtime validation
     std::uint32_t declared_push_constant_size = 0;
     vk::ShaderStageFlags declared_push_constant_stages{};
+    //NOLINTEND(misc-non-private-member-variables-in-classes)
 
     // ── Push constant upload with runtime validation ──
     template<typename T>
@@ -71,13 +99,13 @@ export struct FrameContext {
     // ── Resolve a resource declared in Setup() ──
     // Returns the Vulkan handle for a resource by its name.
     // Implemented in PipelinePass.cpp via the resource map populated during compilation.
-    VulkanEngine::RenderGraph::ResourceHandle GetResource(std::string_view name) const;
+    [[nodiscard]] VulkanEngine::RenderGraph::ResourceHandle GetResource(std::string_view name) const;
 };
 
 // ── PassSetupContext — resource and ordering declarations in Setup() ──
-export class PassSetupContext {
+class PassSetupContext {
 public:
-    explicit PassSetupContext(VulkanEngine::RenderPipeline::RenderPipeline& pipeline);
+    explicit PassSetupContext(IResourceRegistry& registry);
     ~PassSetupContext() = default;
 
     PassSetupContext(const PassSetupContext&) = delete;
@@ -94,7 +122,7 @@ public:
     VulkanEngine::RenderGraph::ResourceHandle ReadBackbuffer();
     VulkanEngine::RenderGraph::ResourceHandle ImportImage(std::string_view name);
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(std::string_view name);
-    VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const VulkanEngine::RenderPipeline::TransientImageDesc& desc);
+    VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc);
 
     // ── Render graph resource usage declarations ──
     void AddRead(VulkanEngine::RenderGraph::ResourceHandle res,
@@ -113,8 +141,8 @@ public:
     }
 
     // ── Render extent query ──
-    std::uint32_t GetRenderWidth() const;
-    std::uint32_t GetRenderHeight() const;
+    [[nodiscard]] std::uint32_t GetRenderWidth() const;
+    [[nodiscard]] std::uint32_t GetRenderHeight() const;
 
     // ── Internal: accessors for RenderPipeline integration ──
     [[nodiscard]] const std::vector<VulkanEngine::RenderGraph::PassHandle>& GetDeferredBefore() const { return deferred_before_; }
@@ -134,7 +162,7 @@ public:
 private:
     friend class IPipelinePass;
 
-    VulkanEngine::RenderPipeline::RenderPipeline* pipeline_ = nullptr;
+    IResourceRegistry* registry_ = nullptr;
     VulkanEngine::RenderGraph::PassHandle pass_handle_{};
     bool pass_handle_assigned_ = false;
 
@@ -164,7 +192,7 @@ private:
 };
 
 // ── IPipelinePass — abstract base for all pipeline passes ──
-export class IPipelinePass {
+class IPipelinePass {
 public:
     virtual ~IPipelinePass() = default;
 
@@ -175,7 +203,7 @@ public:
     virtual void Execute(const FrameContext& ctx, vk::CommandBuffer cmd) = 0;
 
     // Optional: validate configuration before compilation
-    virtual bool Validate() const { return true; }
+    [[nodiscard]] virtual bool Validate() const { return true; }
 };
 
 } // namespace VulkanEngine::PipelinePass

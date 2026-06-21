@@ -1,5 +1,7 @@
 module;
 
+#include <cassert>
+
 export module VulkanEngine.MaterialManager;
 
 import std;
@@ -18,18 +20,12 @@ import VulkanEngine.GpuResources.StagingManager;
 import VulkanEngine.TechniqueManager.BaseTechnique;
 import VulkanEngine.TechniqueManager;
 
-// Include the MaterialHandle template header
-#include "MaterialHandle.hpp"
+// Import the MaterialHandle template from the module partition
+export import :MaterialHandle;
 
 export namespace VulkanEngine::MaterialManager {
     using TechniqueManager::TechniqueId;
     using BindlessManager::TextureSlot;
-
-enum class BlendMode : std::uint8_t {
-    Opaque = 0,
-    Cutout,
-    Transparent
-};
 
 // ── Old MaterialDefinition (kept for backward compatibility during migration) ──
 struct MaterialDefinition {
@@ -41,15 +37,6 @@ struct MaterialDefinition {
 void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& alpha,
                               BlendMode mode,
                               std::string_view texture_name);
-
-// ── New MaterialEntry for the typed material system ──
-struct MaterialEntry {
-    TechniqueId technique_id{0};
-    BlendMode blend_mode{BlendMode::Opaque};
-    bool dirty = false;
-    std::uint32_t dirty_bindings = 0;
-    std::vector<std::byte> cpu_data;  // PerMaterial bindings only, flat buffer
-};
 
 class MaterialManager {
 public:

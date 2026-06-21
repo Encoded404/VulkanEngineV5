@@ -14,7 +14,7 @@ import VulkanEngine.GpuResources.StagingManager;
 
 export namespace VulkanEngine::GpuResources {
 
-export enum class MemoryMode : std::uint8_t {
+enum class MemoryMode : std::uint8_t {
     HostVisible,   // CPU-mapped, Get() returns direct pointer
     DeviceLocal,   // GPU-resident, upload via UploadEntry() with StagingManager
 };

@@ -175,6 +175,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             rendering/TechniqueManager/TechniqueId.cppm
             rendering/MaterialManager/MaterialManager.cppm
             rendering/MaterialManager/MaterialId.cppm
+            rendering/MaterialManager/MaterialHandle.cppm
             rendering/SceneRenderer.cppm
             rendering/BindlessManager/BindlessManager.cppm
             rendering/BindlessManager/TextureSlot.cppm

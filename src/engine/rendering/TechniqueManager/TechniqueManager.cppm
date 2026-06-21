@@ -64,7 +64,7 @@ public:
         requires std::derived_from<Tech, BaseTechnique>
     TechniqueId Register(std::unique_ptr<Tech> technique) {
         auto id = TechniqueId{static_cast<std::uint16_t>(techniques_.size())};
-        technique->id_ = id;
+        technique->SetId(id);
         type_to_id_[std::type_index(typeid(Tech))] = id;
         Technique t;
         t.base_technique = std::move(technique);

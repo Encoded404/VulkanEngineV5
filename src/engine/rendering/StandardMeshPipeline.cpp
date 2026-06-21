@@ -206,7 +206,7 @@ void GraphicsPipeline::CreatePipelineWithLayout(
         const std::vector<std::uint32_t>& vertex_spirv,
         const std::vector<std::uint32_t>& fragment_spirv,
         const PipelineConfig& config,
-        const std::vector<vk::DescriptorSetLayout>& set_layouts,
+        [[maybe_unused]] const std::vector<vk::DescriptorSetLayout>& set_layouts,
         vk::PipelineLayout external_pipeline_layout) {
         LOGIFACE_LOG(trace, "entering CreatePipelineWithLayout");
 

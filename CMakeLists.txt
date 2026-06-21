@@ -2,8 +2,10 @@ cmake_minimum_required(VERSION 3.30)
 
 if( NOT CMAKE_EXPERIMENTAL_CXX_IMPORT_STD )
     if( ${CMAKE_VERSION} VERSION_GREATER_EQUAL 4.3 )
-        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD 451f2fe2-a8a2-47c3-bc32-94786d8fc91b)
+		message("enabling import std with version greater or equal 4.3")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
     elseif( ${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.30 )
+		message("enabling import std with version greater or equal 3.30")
         set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
     endif ()
 endif ()
@@ -120,6 +122,7 @@ find_package( Vulkan 1.4.350 QUIET )
 
 # manually create module target if it was not previously provided
 if( NOT TARGET Vulkan::HppModule )
+	message("could not find vulkan target with find, adding manually")
 	add_library( Vulkan-HppModule OBJECT )
 	add_library( Vulkan::HppModule ALIAS Vulkan-HppModule )
 	target_sources( Vulkan-HppModule PUBLIC

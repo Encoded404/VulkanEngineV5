@@ -10,14 +10,12 @@ import vulkan_hpp;
 import VulkanBackend.RenderGraph;
 import VulkanBackend.Runtime.VulkanBootstrap;
 
-import VulkanEngine.RenderPipeline;
-
 namespace VulkanEngine::PipelinePass {
 
 // ── PassSetupContext implementation ──
 
-PassSetupContext::PassSetupContext(VulkanEngine::RenderPipeline::RenderPipeline& pipeline)
-    : pipeline_(&pipeline) {}
+PassSetupContext::PassSetupContext(IResourceRegistry& registry)
+    : registry_(&registry) {}
 
 void PassSetupContext::RunBefore(BuiltinPass pass) {
     before_builtin_passes_.push_back(pass);
@@ -28,24 +26,24 @@ void PassSetupContext::RunAfter(BuiltinPass pass) {
 }
 
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadDepthBuffer() {
-    return pipeline_->ImportDepthBuffer();
+    return registry_->ImportDepthBuffer();
 }
 
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadBackbuffer() {
-    return pipeline_->ImportBackbuffer();
+    return registry_->ImportBackbuffer();
 }
 
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ImportImage(std::string_view name) {
-    return pipeline_->ImportImage(std::string(name));
+    return registry_->ImportImage(std::string(name));
 }
 
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ImportBuffer(std::string_view name) {
-    return pipeline_->ImportBuffer(std::string(name));
+    return registry_->ImportBuffer(std::string(name));
 }
 
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::CreateTransientImage(
-    const VulkanEngine::RenderPipeline::TransientImageDesc& desc) {
-    return pipeline_->CreateTransientImage(desc);
+    const TransientImageDesc& desc) {
+    return registry_->CreateTransientImage(desc);
 }
 
 void PassSetupContext::AddRead(VulkanEngine::RenderGraph::ResourceHandle res,

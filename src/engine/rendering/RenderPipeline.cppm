@@ -28,29 +28,23 @@ struct RenderPipelinePassDesc {
     std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> execute{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-struct TransientImageDesc {
-    std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
-    vk::ImageLayout initial_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
-    vk::ImageLayout final_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
-};
+// TransientImageDesc is now provided by the VulkanEngine.PipelinePass module.
+using VulkanEngine::PipelinePass::TransientImageDesc;
 
-class RenderPipeline {
+class RenderPipeline : public VulkanEngine::PipelinePass::IResourceRegistry {
 public:
     RenderPipeline();
-    ~RenderPipeline();
+    ~RenderPipeline() override;
 
     void Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap);
     void Shutdown();
 
-    VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer();
-    VulkanEngine::RenderGraph::ResourceHandle ImportDepthBuffer();
-    VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name);
-    VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name);
-    VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc);
+    // ── IResourceRegistry overrides ──
+    VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer() override;
+    VulkanEngine::RenderGraph::ResourceHandle ImportDepthBuffer() override;
+    VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) override;
+    VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) override;
+    VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) override;
 
     using ImageResolver = std::function<vk::Image(std::uint32_t image_index)>;
     using ImageViewResolver = std::function<vk::ImageView(std::uint32_t image_index)>;

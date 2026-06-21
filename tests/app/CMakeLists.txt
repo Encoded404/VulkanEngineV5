@@ -1,5 +1,4 @@
 find_package(SDL3 CONFIG REQUIRED)
-find_package(Boost CONFIG REQUIRED COMPONENTS stacktrace_basic)
 find_package(CLI11 CONFIG REQUIRED)
 
 add_executable(app_tests
@@ -11,7 +10,6 @@ target_link_libraries(app_tests PRIVATE
   ${BACKEND_TARGET}
   slang_shared_reflection
   SDL3::SDL3
-  Boost::stacktrace_basic
   CLI11::CLI11
 )
 target_compile_options(app_tests PRIVATE -Wno-c23-extensions)

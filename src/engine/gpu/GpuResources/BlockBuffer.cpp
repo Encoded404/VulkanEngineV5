@@ -1,4 +1,5 @@
 module;
+#include <cassert>
 
 module VulkanEngine.GpuResources.BlockArray;
 

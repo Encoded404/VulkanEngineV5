@@ -1,5 +1,7 @@
 module;
 
+#include <cassert>
+
 export module VulkanEngine.TechniqueManager.BaseTechnique;
 
 import std;
@@ -11,13 +13,13 @@ export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.TechniqueId;
 export import VulkanEngine.GpuResources.BlockArray;
-export import VulkanEngine.GpuResources.GpuBuffer;
+export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuResources.StagingManager;
 
 export namespace VulkanEngine::TechniqueManager {
 
 // ── BaseTechnique — abstract base for all rendering techniques ──
-export class BaseTechnique {
+class BaseTechnique {
 public:
     enum class BindingKind : std::uint8_t {
         PerMaterial,  // bindless array indexed by material_id
@@ -34,10 +36,10 @@ public:
 
     virtual ~BaseTechnique() = default;
 
-    TechniqueId GetId() const { return id_; }
-    std::span<const BindingDecl> GetBindings() const { return bindings_; }
-    std::size_t GetBindingCount() const { return bindings_.size(); }
-    const BindingDecl& GetBinding(std::size_t i) const { return bindings_[i]; }
+    [[nodiscard]] TechniqueId GetId() const { return id_; }
+    [[nodiscard]] std::span<const BindingDecl> GetBindings() const { return bindings_; }
+    [[nodiscard]] std::size_t GetBindingCount() const { return bindings_.size(); }
+    [[nodiscard]] const BindingDecl& GetBinding(std::size_t i) const { return bindings_[i]; }
 
     // ── Typed access to shared data (technique-local, not per-material) ──
     template<typename T>
@@ -99,8 +101,8 @@ public:
     }
 
     // ── GPU resource access ──
-    vk::Pipeline GetPipeline() const { return pipeline_ ? **pipeline_ : nullptr; }
-    vk::PipelineLayout GetPipelineLayout() const { return pipeline_layout_ ? **pipeline_layout_ : nullptr; }
+    [[nodiscard]] vk::Pipeline GetPipeline() const { return pipeline_; }
+    [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return pipeline_layout_; }
 
     // ── Shutdown — cleanup GPU resources ──
     void Shutdown();
@@ -129,6 +131,9 @@ protected:
         DeclareBindingImpl(decl);
     }
 
+    // ── Set technique ID (called by TechniqueManager during registration) ──
+    void SetId(TechniqueId id) { id_ = id; }
+
     // ── Compilation (separate from constructor) ──
     // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
@@ -140,8 +145,6 @@ protected:
                  vk::DescriptorSetLayout submesh_vertex_layout,
                  vk::DescriptorSetLayout raw_vertex_layout,
                  vk::DescriptorSetLayout indirection_layout);
-
-    friend class VulkanEngine::TechniqueManager::TechniqueManager;
 
 private:
     TechniqueId id_{};
@@ -161,7 +164,7 @@ private:
         std::uint32_t set;
         std::vector<const BindingDecl*> bindings;
     };
-    std::vector<BindingGroup> GroupBindingsBySet() const;
+    [[nodiscard]] std::vector<BindingGroup> GroupBindingsBySet() const;
 };
 
 } // namespace VulkanEngine::TechniqueManager

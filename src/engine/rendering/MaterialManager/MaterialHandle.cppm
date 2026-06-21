@@ -1,11 +1,15 @@
-// MaterialHandle.hpp — Templated material handle with lambda-based modify<T>() and read<T>().
-//
-// This is a header-only template because it's parameterized on the technique type (Tech),
-// which is user-defined and not known to the engine module.
-//
-// Design: Lambda-based modify<T>([](T& d) { d.field = value; }) eliminates reference-escape
-// footgun that RAII proxy approaches have. After the lambda returns, dirty flag and per-binding
-// dirty mask are set automatically, and MarkDirty() is called on the MaterialManager.
+module;
+
+export module VulkanEngine.MaterialManager:MaterialHandle;
+
+import std;
+import VulkanEngine.TechniqueManager.TechniqueId;
+
+// ── Design ──
+// Lambda-based modify<T>([](T& d) { d.field = value; }) eliminates the
+// reference-escape footgun that RAII proxy approaches have.  After the
+// lambda returns, the dirty flag and per-binding dirty mask are set
+// automatically, and MarkDirty() is called on the MaterialManager.
 //
 // Usage:
 //   auto wood = material_mgr.Register<PBRTechnique>(BlendMode::Opaque, MaterialData{...});
@@ -13,22 +17,27 @@
 //   float r = wood.read<MaterialData>().roughness;
 //
 // The technique type Tech must provide static constexpr members:
-//   template<typename T> static constexpr size_t GetOffset()
-//   template<typename T> static constexpr bool HasBinding()
-//   template<typename T> static constexpr uint32_t GetBindingIndex()
+//   template<typename T> static constexpr std::size_t GetOffset()
+//   template<typename T> static constexpr bool     HasBinding()
+//   template<typename T> static constexpr std::uint32_t GetBindingIndex()
 
-#pragma once
+export namespace VulkanEngine::MaterialManager {
 
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <vector>
-#include <type_traits>
+// ── Blend mode ──
+enum class BlendMode : std::uint8_t {
+    Opaque = 0,
+    Cutout,
+    Transparent
+};
 
-namespace VulkanEngine::MaterialManager {
-
-// Forward declaration of MaterialEntry (defined in the module)
-struct MaterialEntry;
+// ── Per-material GPU data entry ──
+struct MaterialEntry {
+    TechniqueManager::TechniqueId technique_id{0};
+    BlendMode blend_mode{BlendMode::Opaque};
+    bool dirty = false;
+    std::uint32_t dirty_bindings = 0;
+    std::vector<std::byte> cpu_data;  // PerMaterial bindings only, flat buffer
+};
 
 template<typename Tech>
 class MaterialHandle {
@@ -38,7 +47,7 @@ public:
     const T& read() const {
         static_assert(Tech::template HasBinding<T>(),
                       "Technique does not declare a PerMaterial binding for this type");
-        constexpr size_t off = Tech::template GetOffset<T>();
+        constexpr std::size_t off = Tech::template GetOffset<T>();
         return *reinterpret_cast<const T*>(entry_->cpu_data.data() + off);
     }
 
@@ -48,8 +57,8 @@ public:
     void modify(Func&& func) {
         static_assert(Tech::template HasBinding<T>(),
                       "Technique does not declare a PerMaterial binding for this type");
-        constexpr size_t off = Tech::template GetOffset<T>();
-        constexpr uint32_t binding_idx = Tech::template GetBindingIndex<T>();
+        constexpr std::size_t off = Tech::template GetOffset<T>();
+        constexpr std::uint32_t binding_idx = Tech::template GetBindingIndex<T>();
         func(*reinterpret_cast<T*>(entry_->cpu_data.data() + off));
         entry_->dirty = true;
         entry_->dirty_bindings |= (1u << binding_idx);
@@ -57,8 +66,8 @@ public:
     }
 
     // ── Accessors ──
-    uint32_t id() const { return id_; }
-    bool valid() const { return entry_ != nullptr; }
+    [[nodiscard]] std::uint32_t id() const { return id_; }
+    [[nodiscard]] bool valid() const { return entry_ != nullptr; }
 
     // Copyable — all copies point to the same MaterialEntry
     MaterialHandle(const MaterialHandle&) = default;
@@ -69,13 +78,13 @@ public:
 private:
     friend class MaterialManager;
 
-    MaterialHandle(uint32_t id, MaterialEntry* entry,
-                   void (*mark_dirty)(uint32_t))
+    MaterialHandle(std::uint32_t id, MaterialEntry* entry,
+                   void (*mark_dirty)(std::uint32_t))
         : id_(id), entry_(entry), mark_dirty_(mark_dirty) {}
 
-    uint32_t id_ = 0;
+    std::uint32_t id_ = 0;
     MaterialEntry* entry_ = nullptr;
-    void (*mark_dirty_)(uint32_t) = nullptr;
+    void (*mark_dirty_)(std::uint32_t) = nullptr;
 };
 
 } // namespace VulkanEngine::MaterialManager

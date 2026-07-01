@@ -12,7 +12,7 @@ import vulkan_hpp;
 
 namespace VulkanEngine::ImGui {
 
-ImGuiSystem::ImGuiSystem(std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> backend)
+ImGuiSystem::ImGuiSystem(std::shared_ptr<VulkanBackend::ImGui::IImGuiBackend> backend)
     : backend_(std::move(backend)) {}
 
 [[nodiscard]] bool ImGuiSystem::Initialize(const ImGuiSystemInitInfo& init_info) {

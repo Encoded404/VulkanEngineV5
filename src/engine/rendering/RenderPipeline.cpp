@@ -43,7 +43,7 @@ vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
 RenderPipeline::RenderPipeline() = default;
 RenderPipeline::~RenderPipeline() = default;
 
-void RenderPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
+void RenderPipeline::Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
     bootstrap_ = &bootstrap;
     initialized_ = true;
 
@@ -338,7 +338,7 @@ void RenderPipeline::AllocateTransients() {
         image_info.initialLayout = vk::ImageLayout::eUndefined;
 
         transient_images_.emplace_back(device, image_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, transient_images_.back(), "transient-image");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_images_.back(), "transient-image");
 
         const auto mem_requirements = transient_images_.back().getMemoryRequirements();
         vk::MemoryAllocateInfo alloc_info{};
@@ -346,7 +346,7 @@ void RenderPipeline::AllocateTransients() {
         alloc_info.memoryTypeIndex = FindMemoryType(physical_device, mem_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
         transient_memories_.emplace_back(device, alloc_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, transient_memories_.back(), "transient-memory");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_memories_.back(), "transient-memory");
         transient_images_.back().bindMemory(transient_memories_.back(), 0);
 
         vk::ImageViewCreateInfo view_info{};
@@ -356,7 +356,7 @@ void RenderPipeline::AllocateTransients() {
         view_info.subresourceRange = {FormatToAspectFlags(desc.format), 0, 1, 0, 1};
 
         transient_image_views_.emplace_back(device, view_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, transient_image_views_.back(), "transient-image-view");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_image_views_.back(), "transient-image-view");
     }
 }
 

@@ -26,7 +26,7 @@ StagingManager::~StagingManager() {
     Shutdown();
 }
 
-bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+bool StagingManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                                  std::uint64_t slot_size,
                                  std::uint32_t slot_count) {
     if (slot_count == 0 || slot_size == 0) return false;
@@ -42,7 +42,7 @@ bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend
     pool_info.queueFamilyIndex = backend.GetGraphicsQueueFamily();
     pool_info.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
     cmd_pool_ = std::make_unique<vk::raii::CommandPool>(device, pool_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *cmd_pool_, "staging-command-pool");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *cmd_pool_, "staging-command-pool");
 
     vk::CommandBufferAllocateInfo cmd_alloc{};
     cmd_alloc.commandPool = **cmd_pool_;
@@ -77,7 +77,7 @@ bool StagingManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend
         vk::FenceCreateInfo fence_info{};
         fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
         slot.fence = vk::raii::Fence(device, fence_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, slot.fence, "staging-fence-" + std::to_string(i));
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, slot.fence, "staging-fence-" + std::to_string(i));
 
         slot.bump_offset = 0;
         slot.busy = false;

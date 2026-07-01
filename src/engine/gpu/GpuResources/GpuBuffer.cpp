@@ -15,7 +15,7 @@ namespace VulkanEngine::GpuResources {
 
 namespace {
 
-void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+void CreateBufferResource(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                           std::uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
@@ -32,14 +32,14 @@ void CreateBufferResource(VulkanEngine::Runtime::IVulkanBootstrap& backend,
     const auto& reqs = requirements.memoryRequirements;
 
     vk::MemoryAllocateInfo const alloc(reqs.size,
-        VulkanEngine::Utils::MemoryUtils::FindMemoryType(backend.GetPhysicalDevice(), reqs.memoryTypeBits, properties));
+        VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(backend.GetPhysicalDevice(), reqs.memoryTypeBits, properties));
     out_memory = std::make_unique<vk::raii::DeviceMemory>(backend.GetDevice(), alloc);
     out_buffer->bindMemory(*out_memory, 0);
 }
 
 } // namespace
 
-GpuBuffer GpuBuffer::Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+GpuBuffer GpuBuffer::Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                             std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,

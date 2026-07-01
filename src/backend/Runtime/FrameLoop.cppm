@@ -4,7 +4,7 @@ export module VulkanBackend.Runtime.FrameLoop;
 
 import std;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 enum class RuntimeStatus : std::uint8_t {
     Ok,
@@ -51,4 +51,4 @@ private:
     RuntimeStatus pending_status_ = RuntimeStatus::Ok;
 };
 
-}  // namespace VulkanEngine::Runtime
+}  // namespace VulkanBackend::Runtime

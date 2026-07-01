@@ -36,7 +36,7 @@ public:
     RenderPipeline();
     ~RenderPipeline() override;
 
-    void Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap);
+    void Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap);
     void Shutdown();
 
     // ── IResourceRegistry overrides ──
@@ -84,7 +84,7 @@ private:
     void DeallocateTransients();
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index);
 
-    VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
 

@@ -30,19 +30,19 @@ constexpr std::uint32_t UINT32_MAX =
 export namespace VulkanEngine::Application {
 
 struct ApplicationFrameState {
-    VulkanEngine::Runtime::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Runtime::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     float delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     bool render_success = true; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationContext {
-    VulkanEngine::Platform::SdlPlatform* platform = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Runtime::FrameLoop* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Runtime::VulkanBootstrap* bootstrap = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Platform::SdlPlatform* platform = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Runtime::FrameLoop* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Runtime::VulkanBootstrap* bootstrap = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::InputSystem* input_system = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     SDL_Window* window = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    const VulkanEngine::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    const VulkanBackend::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -51,9 +51,9 @@ struct ApplicationContext {
 struct ApplicationConfig {
     std::string app_name = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
     std::string log_level = "info"; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Platform::PlatformConfig platform_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Runtime::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Runtime::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Platform::PlatformConfig platform_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Runtime::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Runtime::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
@@ -68,8 +68,8 @@ struct ApplicationHooks {
     VulkanShared::CallbackList<void(ApplicationContext&)> on_shutdown{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
-[[nodiscard]] std::string_view PlatformStatusToString(VulkanEngine::Platform::PlatformStatus status) {
-    using VulkanEngine::Platform::PlatformStatus;
+[[nodiscard]] std::string_view PlatformStatusToString(VulkanBackend::Platform::PlatformStatus status) {
+    using VulkanBackend::Platform::PlatformStatus;
     switch (status) {
         case PlatformStatus::Ok: return "Ok";
         case PlatformStatus::NotInitialized: return "NotInitialized";
@@ -83,10 +83,10 @@ struct ApplicationHooks {
 
 // NOLINTBEGIN
 [[nodiscard]] int RunApplication(const ApplicationConfig& config, const ApplicationHooks& hooks) {
-    std::unique_ptr<VulkanEngine::Platform::SdlPlatform> platform{};
-    std::shared_ptr<VulkanEngine::Runtime::IVulkanBootstrap> vk_backend{};
-    std::unique_ptr<VulkanEngine::Runtime::VulkanBootstrap> bootstrap{};
-    std::unique_ptr<VulkanEngine::Runtime::FrameLoop> runtime{};
+    std::unique_ptr<VulkanBackend::Platform::SdlPlatform> platform{};
+    std::shared_ptr<VulkanBackend::Runtime::IVulkanBootstrap> vk_backend{};
+    std::unique_ptr<VulkanBackend::Runtime::VulkanBootstrap> bootstrap{};
+    std::unique_ptr<VulkanBackend::Runtime::FrameLoop> runtime{};
     VulkanEngine::Input::InputSystem input_system{};
     ApplicationContext context{};
     bool platform_initialized = false;
@@ -138,8 +138,8 @@ struct ApplicationHooks {
         VulkanEngine::Startup::InitializeLogger(config.log_level);
         LOGIFACE_LOG(info, config.app_name + " started");
 
-        const auto platform_backend = VulkanEngine::Platform::CreateSdlPlatformBackend();
-        platform = std::make_unique<VulkanEngine::Platform::SdlPlatform>(platform_backend);
+        const auto platform_backend = VulkanBackend::Platform::CreateSdlPlatformBackend();
+        platform = std::make_unique<VulkanBackend::Platform::SdlPlatform>(platform_backend);
 
         auto platform_config = config.platform_config;
         if (platform_config.window_title.empty()) {
@@ -159,8 +159,8 @@ struct ApplicationHooks {
             return fail("Native SDL window handle is null");
         }
 
-        vk_backend = VulkanEngine::Runtime::CreateVulkanBootstrapBackend();
-        bootstrap = std::make_unique<VulkanEngine::Runtime::VulkanBootstrap>(vk_backend);
+        vk_backend = VulkanBackend::Runtime::CreateVulkanBootstrapBackend();
+        bootstrap = std::make_unique<VulkanBackend::Runtime::VulkanBootstrap>(vk_backend);
         auto bootstrap_config = config.bootstrap_config;
         bootstrap_config.native_window_handle = window;
         if (!bootstrap->Initialize(bootstrap_config)) {
@@ -168,7 +168,7 @@ struct ApplicationHooks {
         }
         bootstrap_initialized = true;
 
-        runtime = std::make_unique<VulkanEngine::Runtime::FrameLoop>();
+        runtime = std::make_unique<VulkanBackend::Runtime::FrameLoop>();
         if (!runtime->Initialize(config.runtime_config)) {
             return fail("Runtime shell initialization failed");
         }
@@ -197,18 +197,18 @@ struct ApplicationHooks {
             bool filter_mouse = hooks.should_filter_mouse_input && hooks.should_filter_mouse_input();
             bool filter_keyboard = hooks.should_filter_keyboard_input && hooks.should_filter_keyboard_input();
 
-            VulkanEngine::Backend::Event::EventList filtered_events;
+            VulkanBackend::Event::EventList filtered_events;
             filtered_events.reserve(platform_events.size());
 
             for (auto& event : platform_events) {
                 const auto etype = event->GetEventType();
-                bool is_mouse = etype == VulkanEngine::Backend::Event::EventType::MouseButtonDown ||
-                                etype == VulkanEngine::Backend::Event::EventType::MouseButtonUp ||
-                                etype == VulkanEngine::Backend::Event::EventType::MouseMotion ||
-                                etype == VulkanEngine::Backend::Event::EventType::MouseWheel;
+                bool is_mouse = etype == VulkanBackend::Event::EventType::MouseButtonDown ||
+                                etype == VulkanBackend::Event::EventType::MouseButtonUp ||
+                                etype == VulkanBackend::Event::EventType::MouseMotion ||
+                                etype == VulkanBackend::Event::EventType::MouseWheel;
 
-                bool is_keyboard = etype == VulkanEngine::Backend::Event::EventType::KeyDown ||
-                                   etype == VulkanEngine::Backend::Event::EventType::KeyUp;
+                bool is_keyboard = etype == VulkanBackend::Event::EventType::KeyDown ||
+                                   etype == VulkanBackend::Event::EventType::KeyUp;
 
                 if (is_mouse && filter_mouse) {
                     continue;
@@ -231,8 +231,8 @@ struct ApplicationHooks {
 
             runtime->NotifyWindowMinimized(context.platform_state->minimized);
             context.frame.runtime_frame = runtime->BeginFrame();
-            if (context.frame.runtime_frame.status == VulkanEngine::Runtime::RuntimeStatus::Minimized ||
-                context.frame.runtime_frame.status == VulkanEngine::Runtime::RuntimeStatus::ShutdownRequested) {
+            if (context.frame.runtime_frame.status == VulkanBackend::Runtime::RuntimeStatus::Minimized ||
+                context.frame.runtime_frame.status == VulkanBackend::Runtime::RuntimeStatus::ShutdownRequested) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(config.minimized_sleep_ms));
                 continue;
             }
@@ -242,13 +242,13 @@ struct ApplicationHooks {
             }
 
             const auto bootstrap_frame = bootstrap->BeginFrame();
-            if (bootstrap_frame.status == VulkanEngine::Runtime::BootstrapStatus::SwapchainOutOfDate) {
+            if (bootstrap_frame.status == VulkanBackend::Runtime::BootstrapStatus::SwapchainOutOfDate) {
                 if (!bootstrap->RecreateSwapchain()) {
                     return fail("Swapchain recreation failed");
                 }
                 continue;
             }
-            if (bootstrap_frame.status != VulkanEngine::Runtime::BootstrapStatus::Ok) {
+            if (bootstrap_frame.status != VulkanBackend::Runtime::BootstrapStatus::Ok) {
                 return fail("Vulkan bootstrap entered non-OK frame status");
             }
 

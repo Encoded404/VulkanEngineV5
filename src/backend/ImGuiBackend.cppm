@@ -9,7 +9,7 @@ import std;
 import vulkan_hpp;
 
 
-export namespace VulkanEngine::Backend::ImGui {
+export namespace VulkanBackend::ImGui {
 
 struct ImGuiBackendConfig {
     std::uint32_t image_count = 3;

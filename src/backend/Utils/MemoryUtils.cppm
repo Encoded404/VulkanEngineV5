@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanBackend::Vulkan {
 
 class MemoryUtils {
 public:
@@ -44,4 +44,4 @@ public:
     static vk::DeviceSize GetNonCoherentAtomSize(vk::PhysicalDevice physical_device);
 };
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

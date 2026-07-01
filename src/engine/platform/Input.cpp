@@ -34,20 +34,20 @@ void InputSystem::BeginFrame() {
     raw_state_.wheel_y = 0.0f;
 }
 
-void InputSystem::ProcessEvent(const VulkanEngine::Backend::Event::IEvent& event) {
-    if (const auto* key_down = dynamic_cast<const VulkanEngine::Backend::Event::KeyDownEvent*>(&event)) {
+void InputSystem::ProcessEvent(const VulkanBackend::Event::IEvent& event) {
+    if (const auto* key_down = dynamic_cast<const VulkanBackend::Event::KeyDownEvent*>(&event)) {
         raw_state_.held_keys.insert(key_down->keycode);
         raw_state_.pressed_keys.insert(key_down->keycode);
         return;
     }
 
-    if (const auto* key_up = dynamic_cast<const VulkanEngine::Backend::Event::KeyUpEvent*>(&event)) {
+    if (const auto* key_up = dynamic_cast<const VulkanBackend::Event::KeyUpEvent*>(&event)) {
         raw_state_.held_keys.erase(key_up->keycode);
         raw_state_.released_keys.insert(key_up->keycode);
         return;
     }
 
-    if (const auto* button_down = dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonDownEvent*>(&event)) {
+    if (const auto* button_down = dynamic_cast<const VulkanBackend::Event::MouseButtonDownEvent*>(&event)) {
         raw_state_.held_mouse_buttons.insert(button_down->button);
         raw_state_.pressed_mouse_buttons.insert(button_down->button);
         raw_state_.mouse_x = static_cast<float>(button_down->x);
@@ -55,7 +55,7 @@ void InputSystem::ProcessEvent(const VulkanEngine::Backend::Event::IEvent& event
         return;
     }
 
-    if (const auto* button_up = dynamic_cast<const VulkanEngine::Backend::Event::MouseButtonUpEvent*>(&event)) {
+    if (const auto* button_up = dynamic_cast<const VulkanBackend::Event::MouseButtonUpEvent*>(&event)) {
         raw_state_.held_mouse_buttons.erase(button_up->button);
         raw_state_.released_mouse_buttons.insert(button_up->button);
         raw_state_.mouse_x = static_cast<float>(button_up->x);
@@ -63,7 +63,7 @@ void InputSystem::ProcessEvent(const VulkanEngine::Backend::Event::IEvent& event
         return;
     }
 
-    if (const auto* motion = dynamic_cast<const VulkanEngine::Backend::Event::MouseMotionEvent*>(&event)) {
+    if (const auto* motion = dynamic_cast<const VulkanBackend::Event::MouseMotionEvent*>(&event)) {
         raw_state_.mouse_x = motion->x;
         raw_state_.mouse_y = motion->y;
         raw_state_.mouse_delta_x += motion->delta_x;
@@ -71,13 +71,13 @@ void InputSystem::ProcessEvent(const VulkanEngine::Backend::Event::IEvent& event
         return;
     }
 
-    if (const auto* wheel = dynamic_cast<const VulkanEngine::Backend::Event::MouseWheelEvent*>(&event)) {
+    if (const auto* wheel = dynamic_cast<const VulkanBackend::Event::MouseWheelEvent*>(&event)) {
         raw_state_.wheel_x += wheel->x;
         raw_state_.wheel_y += wheel->y;
     }
 }
 
-void InputSystem::ProcessEvents(const VulkanEngine::Backend::Event::EventList& events) {
+void InputSystem::ProcessEvents(const VulkanBackend::Event::EventList& events) {
     BeginFrame();
     for (const auto& event : events) {
         if (event) {

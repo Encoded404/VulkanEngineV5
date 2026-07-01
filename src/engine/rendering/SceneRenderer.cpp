@@ -24,7 +24,7 @@ SceneRenderer::~SceneRenderer() {
     Shutdown();
 }
 
-bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
+bool SceneRenderer::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& be,
                                 VulkanEngine::GpuResources::DeviceBufferHeap& vh,
                                 std::uint32_t tic) {
     backend_ = &be;
@@ -42,7 +42,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                            vk::ShaderStageFlagBits::eCompute;
         submesh_vertex_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *submesh_vertex_layout_, "submesh-vertex-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *submesh_vertex_layout_, "submesh-vertex-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * MAX_BLOCKS;
@@ -69,7 +69,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         layout_ci.bindingCount = 1;
         layout_ci.pBindings = bs.data();
         raw_vertex_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *raw_vertex_layout_, "raw-vertex-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *raw_vertex_layout_, "raw-vertex-layout");
 
         const vk::DescriptorPoolSize ps{
             vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_VERTEX_BUFFERS
@@ -81,7 +81,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         raw_vertex_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *raw_vertex_pool_, "raw-vertex-pool");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *raw_vertex_pool_, "raw-vertex-pool");
 
         for (auto& fr : frames_) {
             const std::uint32_t var_desc_count = MAX_VERTEX_BUFFERS;
@@ -97,12 +97,12 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             fr.bindless_vertex_set = std::move(sets[0]);
         }
 
-        VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[0].bindless_vertex_set, "bindless-vertex-frame-0");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[0].bindless_vertex_set, "bindless-vertex-frame-0");
         if constexpr (FRAMES_IN_FLIGHT > 1) {
-            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[1].bindless_vertex_set, "bindless-vertex-frame-1");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[1].bindless_vertex_set, "bindless-vertex-frame-1");
         }
         if constexpr (FRAMES_IN_FLIGHT > 2) {
-            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[2].bindless_vertex_set, "bindless-vertex-frame-2");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[2].bindless_vertex_set, "bindless-vertex-frame-2");
         }
 
         // Write initial static blocks into ALL frame vertex sets
@@ -138,7 +138,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         layout_ci.bindingCount = 1;
         layout_ci.pBindings = bs.data();
         indirection_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
         const vk::DescriptorPoolSize indir_ps{
             vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * 2
         };
@@ -149,7 +149,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         indir_pool_ci.poolSizeCount = 1;
         indir_pool_ci.pPoolSizes = &indir_ps;
         indirection_raw_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, indir_pool_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *indirection_raw_pool_, "indirection-raw-pool");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_raw_pool_, "indirection-raw-pool");
     }
 
     // Index buffer array (bindless, update-after-bind) for expand - per-frame
@@ -171,7 +171,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         layout_ci.bindingCount = 1;
         layout_ci.pBindings = bs.data();
         bindless_index_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *bindless_index_layout_, "bindless-index-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *bindless_index_layout_, "bindless-index-layout");
 
         const vk::DescriptorPoolSize ps{
             vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_INDEX_BUFFERS
@@ -183,7 +183,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         bindless_index_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *bindless_index_pool_, "bindless-index-pool");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *bindless_index_pool_, "bindless-index-pool");
 
         for (auto& fr : frames_) {
             const std::uint32_t var_desc_count = MAX_INDEX_BUFFERS;
@@ -199,12 +199,12 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             fr.bindless_index_set = std::move(sets[0]);
         }
 
-        VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[0].bindless_index_set, "bindless-index-frame-0");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[0].bindless_index_set, "bindless-index-frame-0");
         if constexpr (FRAMES_IN_FLIGHT > 1) {
-            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[1].bindless_index_set, "bindless-index-frame-1");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[1].bindless_index_set, "bindless-index-frame-1");
         }
         if constexpr (FRAMES_IN_FLIGHT > 2) {
-            VulkanEngine::Utils::SetVulkanObjectName(dev, frames_[2].bindless_index_set, "bindless-index-frame-2");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[2].bindless_index_set, "bindless-index-frame-2");
         }
     }
 
@@ -226,7 +226,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         expand_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS * 4 + 2);
@@ -254,7 +254,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         occlusion_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * MAX_BLOCKS * 4;
@@ -280,7 +280,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         collect_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS + 3);
@@ -300,7 +300,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         collect_write_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT + 1;
         pc.max_storage_buffers = FRAMES_IN_FLIGHT * 5;
@@ -312,7 +312,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
     {
         constexpr vk::DescriptorSetLayoutCreateInfo empty_ci{};
         empty_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, empty_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *empty_layout_, "empty-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *empty_layout_, "empty-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = FRAMES_IN_FLIGHT;
         empty_pool_ = GpuResources::DescriptorPool::Create(be, pc);
@@ -397,7 +397,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferDst,
                 vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "indirection-buffer");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "indirection-buffer");
 
             fr.compacted_indirection_buffer = GpuResources::GpuBuffer::Create(be,
                 max_indirection_size,
@@ -405,7 +405,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferDst,
                 vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.compacted_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "compacted-indirection-buffer");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.compacted_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "compacted-indirection-buffer");
 
             fr.draw_count_buffer = GpuResources::GpuBuffer::Create(be,
                 sizeof(vk::DrawIndirectCommand),
@@ -415,7 +415,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
 
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "draw-count-buffer");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "draw-count-buffer");
 
             fr.intermediate_buffer = GpuResources::GpuBuffer::Create(be,
                 intermediate_size,
@@ -423,7 +423,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferDst,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.intermediate_buffer.GetBuffer(), vk::ObjectType::eBuffer, "intermediate-buffer");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.intermediate_buffer.GetBuffer(), vk::ObjectType::eBuffer, "intermediate-buffer");
 
             fr.technique_draw_commands = GpuResources::GpuBuffer::Create(be,
                 technique_cmd_size,
@@ -433,7 +433,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
 
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(), vk::ObjectType::eBuffer, "technique-draw-cmds");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(), vk::ObjectType::eBuffer, "technique-draw-cmds");
 
             fr.tech_counts_buffer = GpuResources::GpuBuffer::Create(be,
                 tech_counts_size,
@@ -441,7 +441,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferDst,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.tech_counts_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-counts");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.tech_counts_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-counts");
 
             fr.tech_offsets_buffer = GpuResources::GpuBuffer::Create(be,
                 tech_offsets_size,
@@ -449,7 +449,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferDst,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.tech_offsets_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-offsets");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.tech_offsets_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-offsets");
 
             fr.expand_set = expand_pool_->Allocate(*expand_layout_);
             fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);
@@ -464,7 +464,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 alloc_ci.pSetLayouts = &**indirection_layout_;
                 auto sets = dev.allocateDescriptorSets(alloc_ci);
                 fr.indirection_raw_set = std::move(sets[0]);
-                VulkanEngine::Utils::SetVulkanObjectName(dev, fr.indirection_raw_set, "indirection-raw-set");
+                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_raw_set, "indirection-raw-set");
             }
             {
                 vk::DescriptorSetAllocateInfo alloc_ci{};
@@ -473,7 +473,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 alloc_ci.pSetLayouts = &**indirection_layout_;
                 auto sets = dev.allocateDescriptorSets(alloc_ci);
                 fr.depth_indirection_set = std::move(sets[0]);
-                VulkanEngine::Utils::SetVulkanObjectName(dev, fr.depth_indirection_set, "depth-indirection-set");
+                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indirection_set, "depth-indirection-set");
                 const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
                 vk::WriteDescriptorSet w{};
                 w.dstSet = *fr.depth_indirection_set;
@@ -513,7 +513,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
         sampler_ci.minLod = 0.0f;
         sampler_ci.maxLod = static_cast<float>(mip_levels);
         hiz_sampler_ = std::make_unique<vk::raii::Sampler>(dev, sampler_ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *hiz_sampler_, "hiz-sampler");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_sampler_, "hiz-sampler");
 
         for (auto& fr : frames_) {
             vk::ImageCreateInfo img_ci{};
@@ -530,16 +530,16 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             img_ci.initialLayout = vk::ImageLayout::eUndefined;
             fr.hiz_image = vk::raii::Image(dev, img_ci);
 
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.hiz_image, "hiz-image");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_image, "hiz-image");
 
             const vk::MemoryRequirements mem_req = fr.hiz_image.getMemoryRequirements();
             vk::MemoryAllocateInfo alloc_ci{};
             alloc_ci.allocationSize = mem_req.size;
-            alloc_ci.memoryTypeIndex = VulkanEngine::Utils::MemoryUtils::FindMemoryType(
+            alloc_ci.memoryTypeIndex = VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
                 be.GetPhysicalDevice(), mem_req.memoryTypeBits,
                 vk::MemoryPropertyFlagBits::eDeviceLocal);
             fr.hiz_memory = vk::raii::DeviceMemory(dev, alloc_ci);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.hiz_memory, "hiz-memory");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_memory, "hiz-memory");
             fr.hiz_image.bindMemory(*fr.hiz_memory, 0);
 
             fr.hiz_mip_views.clear();
@@ -555,7 +555,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
                 view_ci.subresourceRange.baseArrayLayer = 0;
                 view_ci.subresourceRange.layerCount = 1;
                 fr.hiz_mip_views.emplace_back(dev, view_ci);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.hiz_mip_views.back(), "hiz-mip-view-" + std::to_string(mip));
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_mip_views.back(), "hiz-mip-view-" + std::to_string(mip));
             }
 
             vk::ImageViewCreateInfo full_view_ci{};
@@ -568,7 +568,7 @@ bool SceneRenderer::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& be,
             full_view_ci.subresourceRange.baseArrayLayer = 0;
             full_view_ci.subresourceRange.layerCount = 1;
             fr.hiz_full_view = vk::raii::ImageView(dev, full_view_ci);
-            VulkanEngine::Utils::SetVulkanObjectName(dev, fr.hiz_full_view, "hiz-full-view");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_full_view, "hiz-full-view");
 
             // Bind Hi-Z mip views as storage image array and sampler
             std::vector<vk::DescriptorImageInfo> storage_infos;

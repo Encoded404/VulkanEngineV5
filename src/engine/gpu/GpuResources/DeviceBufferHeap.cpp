@@ -20,7 +20,7 @@ DeviceBufferHeap::~DeviceBufferHeap() {
     Shutdown();
 }
 
-bool DeviceBufferHeap::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+bool DeviceBufferHeap::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                                    const HeapConfig& config,
                                    const std::string& debug_name) {
     backend_ = &backend;

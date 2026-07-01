@@ -4,7 +4,7 @@ export module VulkanBackend.Event;
 
 import std;
 
-export namespace VulkanEngine::Backend::Event {
+export namespace VulkanBackend::Event {
 
 enum class EventCategory : std::uint8_t {
     System,
@@ -197,5 +197,5 @@ private:
     EventList events_{};
 };
 
-}  // namespace VulkanEngine::Backend::Event
+}  // namespace VulkanBackend::Event
 

@@ -24,7 +24,7 @@ TechniqueManager::~TechniqueManager() {
     Shutdown();
 }
 
-uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+uint16_t TechniqueManager::RegisterTechnique(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                                const std::vector<std::uint32_t>& vert_spv,
                                                const std::vector<std::uint32_t>& frag_spv,
                                                const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
@@ -56,7 +56,7 @@ uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootst
     return id;
 }
 
-uint16_t TechniqueManager::RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+uint16_t TechniqueManager::RegisterTechnique(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                                const ShaderOverride& override,
                                                const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                                                vk::DescriptorSetLayout* bindless_layout,

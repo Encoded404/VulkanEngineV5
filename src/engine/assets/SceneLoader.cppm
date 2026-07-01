@@ -80,7 +80,7 @@ public:
                                              const std::vector<MaterialId>* material_bindings = nullptr);
 
     [[nodiscard]] static CombinedScene UploadCombined(
-        VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+        VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
         VulkanEngine::GpuResources::StagingManager& staging_mgr,
         VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
         VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,

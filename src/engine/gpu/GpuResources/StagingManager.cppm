@@ -30,7 +30,7 @@ public:
     StagingManager(StagingManager&&) = delete;
     StagingManager& operator=(StagingManager&&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                     std::uint64_t slot_size = 64ULL << 20, // 64 MiB
                     std::uint32_t slot_count = 3);
     void Shutdown();
@@ -48,7 +48,7 @@ public:
     void WaitForAll();
 
     [[nodiscard]] bool IsValid() const { return !slots_.empty(); }
-    VulkanEngine::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
+    VulkanBackend::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
 
 private:
     struct Slot {
@@ -62,7 +62,7 @@ private:
 
     Slot& AcquireSlot();
 
-    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
     std::unique_ptr<vk::raii::CommandPool> cmd_pool_;
     std::vector<Slot> slots_;
     std::uint64_t slot_size_ = 0;

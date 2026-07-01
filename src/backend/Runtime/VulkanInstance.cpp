@@ -15,7 +15,7 @@ import vulkan_hpp;
 
 import VulkanShared.Timer;
 
-namespace VulkanEngine::Runtime {
+namespace VulkanBackend::Runtime {
 
 bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     if (instance_) return true;
@@ -79,4 +79,4 @@ void VulkanInstance::Shutdown() {
     window_ = nullptr;
 }
 
-} // namespace VulkanEngine::Runtime
+} // namespace VulkanBackend::Runtime

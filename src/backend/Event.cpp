@@ -7,7 +7,7 @@ module VulkanBackend.Event;
 import std;
 import std.compat;
 
-namespace VulkanEngine::Backend::Event {
+namespace VulkanBackend::Event {
 
 EventBase::EventBase(std::type_index type, EventCategory category, EventType event_type) noexcept
     : type_(type), category_(category), event_type_(event_type) {}
@@ -122,6 +122,6 @@ EventList EventQueue::Drain() {
     return drained;
 }
 
-}  // namespace VulkanEngine::Backend::Event
+}  // namespace VulkanBackend::Event
 
 

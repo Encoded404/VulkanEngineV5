@@ -9,14 +9,14 @@ import vulkan_hpp;
 export import VulkanBackend.Component;
 export import VulkanBackend.Runtime.CommonTypes;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 class IVulkanBootstrap {
 public:
     virtual ~IVulkanBootstrap() = default;
 
-    [[nodiscard]] virtual ComponentRegistry& GetComponentRegistry() = 0;
-    [[nodiscard]] virtual const ComponentRegistry& GetComponentRegistry() const = 0;
+    [[nodiscard]] virtual VulkanEngine::ComponentRegistry& GetComponentRegistry() = 0;
+    [[nodiscard]] virtual const VulkanEngine::ComponentRegistry& GetComponentRegistry() const = 0;
 
     [[nodiscard]] virtual bool CreateInstance(const VulkanBootstrapConfig& config) = 0;
     [[nodiscard]] virtual bool SelectPhysicalDevice() = 0;
@@ -90,4 +90,4 @@ private:
     bool initialized_ = false;
 };
 
-}  // namespace VulkanEngine::Runtime
+}  // namespace VulkanBackend::Runtime

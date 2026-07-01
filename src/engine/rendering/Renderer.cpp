@@ -33,7 +33,7 @@ Renderer::~Renderer() {
     Shutdown();
 }
 
-bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+bool Renderer::Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                   const RendererConfig& config) {
     bootstrap_ = &bootstrap;
 
@@ -244,7 +244,7 @@ bool Renderer::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         qp_info.pipelineStatistics = GPU_STATS_FLAGS;
         qp_info.queryCount = 1;
         gpu_stats_pool_ = std::make_unique<vk::raii::QueryPool>(device, qp_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
         const vk::Device raw_device = *device;
         raw_device.resetQueryPool(*gpu_stats_pool_, 0, 1);
     }
@@ -269,7 +269,7 @@ void Renderer::Shutdown() {
     bootstrap_ = nullptr;
 }
 
-void Renderer::RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void Renderer::RenderFrame(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                    VulkanEngine::ComponentRegistry& registry,
                                    const VulkanEngine::Components::Camera& camera,
                                    VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,

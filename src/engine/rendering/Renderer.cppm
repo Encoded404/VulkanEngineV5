@@ -36,12 +36,12 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    bool Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                     const RendererConfig& config);
 
     void Shutdown();
 
-    void RenderFrame(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    void RenderFrame(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                      VulkanEngine::ComponentRegistry& registry,
                      const VulkanEngine::Components::Camera& camera,
                      VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
@@ -51,7 +51,7 @@ public:
                      std::uint32_t image_index);
 
 private:
-    VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
     std::unique_ptr<VulkanEngine::RenderPipeline::RenderPipeline> pipeline_{};
 
     VulkanEngine::ComponentRegistry* current_registry_ = nullptr;

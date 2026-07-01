@@ -9,7 +9,7 @@ import std;
 import VulkanBackend.Event;
 import VulkanShared.CallbackList;
 
-export namespace VulkanEngine::Platform {
+export namespace VulkanBackend::Platform {
 
 enum class PlatformStatus : std::uint8_t {
     Ok,
@@ -47,7 +47,7 @@ public:
     [[nodiscard]] virtual bool Initialize() = 0;
     virtual void Shutdown() = 0;
     [[nodiscard]] virtual bool CreateMainWindow(const PlatformConfig& config) = 0;
-    [[nodiscard]] virtual VulkanEngine::Backend::Event::EventList PumpEvents() = 0;
+    [[nodiscard]] virtual VulkanBackend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
 
     virtual VulkanShared::CallbackList<void(void*)>& GetSdlEventProcessors() = 0;
@@ -59,7 +59,7 @@ public:
 
     [[nodiscard]] bool Initialize(const PlatformConfig& config);
     void Shutdown();
-    [[nodiscard]] VulkanEngine::Backend::Event::EventList PollEvents();
+    [[nodiscard]] VulkanBackend::Event::EventList PollEvents();
 
     [[nodiscard]] const PlatformState& GetState() const;
     [[nodiscard]] bool IsInitialized() const;
@@ -72,5 +72,5 @@ private:
     PlatformState state_{};
 };
 
-}  // namespace VulkanEngine::Platform
+}  // namespace VulkanBackend::Platform
 

@@ -23,7 +23,7 @@ MeshManager::~MeshManager() {
     Shutdown();
 }
 
-bool MeshManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+bool MeshManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                               VulkanEngine::GpuResources::StagingManager* staging_mgr,

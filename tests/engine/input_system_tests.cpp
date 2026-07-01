@@ -10,7 +10,7 @@ import VulkanEngine.Input;
 
 namespace {
 
-using namespace VulkanEngine::Backend::Event;
+using namespace VulkanBackend::Event;
 using namespace VulkanEngine::Input;
 
 TEST(InputSystemTest, TracksKeyboardActionsAcrossFrames) {

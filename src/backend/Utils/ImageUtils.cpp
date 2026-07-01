@@ -8,7 +8,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-namespace VulkanEngine::Utils {
+namespace VulkanBackend::Vulkan {
 
 uint32_t ImageUtils::CalculateMipLevels(std::uint32_t width, std::uint32_t height, std::uint32_t depth) {
     const std::uint32_t max_dim = std::max({width, height, depth});
@@ -262,4 +262,4 @@ void ImageUtils::CmdCopyBufferToImage(vk::raii::CommandBuffer const& cmd,
     cmd.copyBufferToImage(src_buffer, dst_image, dst_layout, region);
 }
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

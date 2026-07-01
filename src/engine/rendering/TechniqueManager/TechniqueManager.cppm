@@ -34,7 +34,7 @@ public:
 
     VulkanShared::CallbackList<void(std::uint16_t id, vk::Pipeline pipeline, vk::PipelineLayout layout)> on_technique_changed; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                               const std::vector<std::uint32_t>& vert_spv,
                                               const std::vector<std::uint32_t>& frag_spv,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config = {},
@@ -43,7 +43,7 @@ public:
                                               vk::DescriptorSetLayout* raw_vertex_layout = nullptr,
                                               vk::DescriptorSetLayout* indirection_layout = nullptr);
 
-    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    [[nodiscard]] std::uint16_t RegisterTechnique(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                               const ShaderOverride& override,
                                               const VulkanEngine::StandardMeshPipeline::PipelineConfig& config = {},
                                               vk::DescriptorSetLayout* bindless_layout = nullptr,

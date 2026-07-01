@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanBackend::Vulkan {
 
 // RAII handles (vk::raii::*) — objectType is a static member.
 // *obj returns the non-RAII C++ wrapper; static_cast<CType> invokes

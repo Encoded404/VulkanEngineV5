@@ -9,7 +9,7 @@ import std.compat;
 
 import logiface;
 
-namespace VulkanEngine::Runtime {
+namespace VulkanBackend::Runtime {
 
 VulkanBootstrap::VulkanBootstrap(std::shared_ptr<IVulkanBootstrap> backend)
     : backend_(std::move(backend)) {}
@@ -167,4 +167,4 @@ const VulkanBootstrapState& VulkanBootstrap::GetSnapshot() const {
     return snapshot_;
 }
 
-}  // namespace VulkanEngine::Runtime
+}  // namespace VulkanBackend::Runtime

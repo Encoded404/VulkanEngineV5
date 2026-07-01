@@ -20,7 +20,7 @@ namespace VulkanEngine::StandardMeshPipeline {
 GraphicsPipeline::GraphicsPipeline() = default;
 GraphicsPipeline::~GraphicsPipeline() = default;
 
-void GraphicsPipeline::Initialize(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                   const std::vector<std::uint32_t>& vertex_spirv,
                                   const std::vector<std::uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
@@ -80,7 +80,7 @@ const vk::DescriptorSetLayout* GraphicsPipeline::GetDescriptorSetLayout() const 
     return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr;
 }
 
-void GraphicsPipeline::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorSetLayout(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorSetLayout");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
@@ -91,12 +91,12 @@ void GraphicsPipeline::CreateDescriptorSetLayout(VulkanEngine::Runtime::VulkanBo
 
     const vk::DescriptorSetLayoutCreateInfo info({}, bindings);
     descriptor_set_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(device, info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *descriptor_set_layout_, "standard-mesh-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *descriptor_set_layout_, "standard-mesh-layout");
 
     LOGIFACE_LOG(trace, "leaving CreateDescriptorSetLayout successfully");
 }
 
-void GraphicsPipeline::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorPool(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorPool");
 
     VulkanEngine::GpuResources::DescriptorPoolConfig config{};
@@ -108,7 +108,7 @@ void GraphicsPipeline::CreateDescriptorPool(VulkanEngine::Runtime::VulkanBootstr
     LOGIFACE_LOG(trace, "leaving CreateDescriptorPool successfully");
 }
 
-void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::CreatePipeline(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                                       const std::vector<std::uint32_t>& vertex_spirv,
                                       const std::vector<std::uint32_t>& fragment_spirv,
                                       const PipelineConfig& config) {
@@ -149,7 +149,7 @@ void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bo
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges = &push_range;
     pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_layout_, "standard-mesh-pipeline-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *pipeline_layout_, "standard-mesh-pipeline-layout");
 
     // When indirection layout is present, use zero vertex bindings (SSBO pulling)
     const bool use_vertex_pulling = (indirection_layout_ != nullptr);
@@ -196,13 +196,13 @@ void GraphicsPipeline::CreatePipeline(VulkanEngine::Runtime::VulkanBootstrap& bo
     pipeline_info.setPNext(&rendering_info);
 
     pipeline_ = std::make_unique<vk::raii::Pipeline>(device, nullptr, pipeline_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_, "standard-mesh-pipeline");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *pipeline_, "standard-mesh-pipeline");
 
     LOGIFACE_LOG(trace, "leaving CreatePipeline successfully");
 }
 
 void GraphicsPipeline::CreatePipelineWithLayout(
-        VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+        VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
         const std::vector<std::uint32_t>& vertex_spirv,
         const std::vector<std::uint32_t>& fragment_spirv,
         const PipelineConfig& config,
@@ -267,7 +267,7 @@ void GraphicsPipeline::CreatePipelineWithLayout(
         pipeline_info.setPNext(&rendering_info);
 
         pipeline_ = std::make_unique<vk::raii::Pipeline>(device, nullptr, pipeline_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_, "technique-pipeline");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, *pipeline_, "technique-pipeline");
 
         LOGIFACE_LOG(trace, "leaving CreatePipelineWithLayout successfully");
     }

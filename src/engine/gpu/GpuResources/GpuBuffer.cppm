@@ -13,7 +13,7 @@ export namespace VulkanEngine::GpuResources {
 
 class GpuBuffer {
 public:
-    static GpuBuffer Create(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    static GpuBuffer Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                             std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,

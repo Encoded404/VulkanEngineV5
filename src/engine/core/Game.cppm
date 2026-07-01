@@ -110,7 +110,7 @@ private:
     std::unique_ptr<TechniqueManager::TechniqueManager> technique_mgr_;
     std::unique_ptr<Renderer::Renderer> renderer_;
     std::unique_ptr<ImGui::ImGuiSystem> imgui_system_;
-    std::shared_ptr<Backend::ImGui::IImGuiBackend> imgui_backend_;
+    std::shared_ptr<VulkanBackend::ImGui::IImGuiBackend> imgui_backend_;
 
     GpuResources::DeviceBufferHeap vertex_heap_;
     GpuResources::DeviceBufferHeap index_heap_;
@@ -137,7 +137,7 @@ private:
 
     VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
 
-    VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
     GameConfig config_{};
 };
 

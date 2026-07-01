@@ -6,7 +6,7 @@ export module VulkanBackend.Runtime.CommonTypes;
 
 import std;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 enum class PresentMode : std::uint8_t {
     Mailbox,
@@ -49,4 +49,4 @@ struct VulkanBootstrapState {
     BootstrapStatus status = BootstrapStatus::NotInitialized;
 };
 
-} // namespace VulkanEngine::Runtime
+} // namespace VulkanBackend::Runtime

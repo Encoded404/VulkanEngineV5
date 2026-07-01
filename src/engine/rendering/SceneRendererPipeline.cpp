@@ -34,7 +34,7 @@ namespace VulkanEngine::SceneRenderer {
 
     } // anonymous namespace
 
-bool SceneRenderer::CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating expand pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -47,19 +47,19 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBoo
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pr;
     expand_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *expand_pipeline_layout_, "expand-pipeline-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_pipeline_layout_, "expand-pipeline-layout");
     const vk::raii::ShaderModule mod = Shaders::Engine::ExpandComp::CreateModule(dev);
     const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
     vk::ComputePipelineCreateInfo ci{};
     ci.stage = ss;
     ci.layout = *expand_pipeline_layout_;
     expand_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *expand_pipeline_, "expand-pipeline");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_pipeline_, "expand-pipeline");
     LOGIFACE_LOG(debug, "Expand pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap& be,
+bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Runtime::IVulkanBootstrap& be,
                                          const vk::PipelineRasterizationStateCreateInfo& rs) {
     LOGIFACE_LOG(debug, "Creating depth pipeline...");
     const auto& dev = be.GetDevice();
@@ -70,7 +70,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap&
     li.setLayoutCount = static_cast<std::uint32_t>(sl.size());
     li.pSetLayouts = sl.data();
     depth_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *depth_pipeline_layout_, "depth-prepass-pipeline-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *depth_pipeline_layout_, "depth-prepass-pipeline-layout");
     const vk::raii::ShaderModule vm = Shaders::Engine::DepthIndirVert::CreateModule(dev);
     const vk::raii::ShaderModule fm = Shaders::Engine::DepthPrepassFrag::CreateModule(dev);
     std::array<vk::PipelineShaderStageCreateInfo, 2> ss{
@@ -92,12 +92,12 @@ bool SceneRenderer::CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap&
                                        *depth_pipeline_layout_, nullptr, 0, {}, 0);
     pi.setPNext(&ri);
     depth_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, pi);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *depth_pipeline_, "depth-prepass-pipeline");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *depth_pipeline_, "depth-prepass-pipeline");
     LOGIFACE_LOG(debug, "Depth pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Runtime::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating HIZ pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -130,19 +130,19 @@ bool SceneRenderer::CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& b
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pr;
     hiz_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *hiz_pipeline_layout_, "hiz-gen-pipeline-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_pipeline_layout_, "hiz-gen-pipeline-layout");
     const vk::raii::ShaderModule mod = Shaders::Engine::HizGenComp::CreateModule(dev);
     const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
     vk::ComputePipelineCreateInfo ci{};
     ci.stage = ss;
     ci.layout = *hiz_pipeline_layout_;
     hiz_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *hiz_pipeline_, "hiz-gen-pipeline");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_pipeline_, "hiz-gen-pipeline");
     LOGIFACE_LOG(debug, "HiZ pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating occlusion pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -154,19 +154,19 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkan
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pr;
     occlusion_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *occlusion_pipeline_layout_, "occlusion-pipeline-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_pipeline_layout_, "occlusion-pipeline-layout");
     const vk::raii::ShaderModule mod = Shaders::Engine::OcclusionCullComp::CreateModule(dev);
     const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
     vk::ComputePipelineCreateInfo ci{};
     ci.stage = ss;
     ci.layout = *occlusion_pipeline_layout_;
     occlusion_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, *occlusion_pipeline_, "occlusion-pipeline");
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_pipeline_, "occlusion-pipeline");
     LOGIFACE_LOG(debug, "Occlusion pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating collect pipelines...");
     const auto& dev = be.GetDevice();
 
@@ -181,7 +181,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges = &pr;
         collect_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_pipeline_layout_, "collect-count-pipeline-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_pipeline_layout_, "collect-count-pipeline-layout");
 
         // Load collect_count_compact.comp (handles both pass 0 and pass 1)
         const vk::raii::ShaderModule mod = Shaders::Engine::CollectCountCompactComp::CreateModule(dev);
@@ -190,7 +190,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
         ci.stage = ss;
         ci.layout = *collect_pipeline_layout_;
         collect_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_pipeline_, "collect-count-pipeline");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_pipeline_, "collect-count-pipeline");
     }
 
     // collect_write pipeline (set 7)
@@ -204,7 +204,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges = &pr;
         collect_write_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_write_pipeline_layout_, "collect-write-pipeline-layout");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_pipeline_layout_, "collect-write-pipeline-layout");
 
         const vk::raii::ShaderModule mod = Shaders::Engine::CollectWriteComp::CreateModule(dev);
         const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
@@ -212,7 +212,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
         ci.stage = ss;
         ci.layout = *collect_write_pipeline_layout_;
         collect_write_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-        VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_write_pipeline_, "collect-write-pipeline");
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_pipeline_, "collect-write-pipeline");
     }
 
     LOGIFACE_LOG(debug, "Collect pipelines created");

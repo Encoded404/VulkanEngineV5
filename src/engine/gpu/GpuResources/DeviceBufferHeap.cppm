@@ -52,7 +52,7 @@ public:
     DeviceBufferHeap(DeviceBufferHeap&&) = delete;
     DeviceBufferHeap& operator=(DeviceBufferHeap&&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                     const HeapConfig& config = {},
                     const std::string& debug_name = "unnamed");
     void Shutdown();
@@ -67,7 +67,7 @@ public:
     [[nodiscard]] std::uint32_t GetBufferCount() const { return static_cast<std::uint32_t>(blocks_.size()); }
     [[nodiscard]] const HeapConfig& GetConfig() const { return config_; }
     [[nodiscard]] const std::string& GetDebugName() const { return debug_name_; }
-    VulkanEngine::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
+    VulkanBackend::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
 private:
@@ -80,7 +80,7 @@ private:
 
     std::uint32_t AddBlock();
 
-    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
     std::vector<Block> blocks_;
     HeapConfig config_;
     std::string debug_name_ = "unnamed";

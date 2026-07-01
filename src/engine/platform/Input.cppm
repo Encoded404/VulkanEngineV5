@@ -70,8 +70,8 @@ struct InputBinding {
 class InputSystem {
 public:
     void BeginFrame();
-    void ProcessEvent(const VulkanEngine::Backend::Event::IEvent& event);
-    void ProcessEvents(const VulkanEngine::Backend::Event::EventList& events);
+    void ProcessEvent(const VulkanBackend::Event::IEvent& event);
+    void ProcessEvents(const VulkanBackend::Event::EventList& events);
     void Update();
 
     [[nodiscard]] ActionHandle BindAction(std::string_view name, InputBinding binding);

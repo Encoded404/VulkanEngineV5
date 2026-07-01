@@ -27,7 +27,7 @@ struct ImGuiConfig {
 struct ImGuiSystemInitInfo {
     void* sdl_window = nullptr;
     ImGuiConfig config{};
-    VulkanEngine::Backend::ImGui::ImGuiBackendConfig backend_config{};
+    VulkanBackend::ImGui::ImGuiBackendConfig backend_config{};
     vk::Instance instance{};
     vk::PhysicalDevice physical_device{};
     vk::Device device{};
@@ -38,7 +38,7 @@ struct ImGuiSystemInitInfo {
 
 class ImGuiSystem {
 public:
-    explicit ImGuiSystem(std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> backend);
+    explicit ImGuiSystem(std::shared_ptr<VulkanBackend::ImGui::IImGuiBackend> backend);
 
     [[nodiscard]] bool Initialize(const ImGuiSystemInitInfo& init_info);
     void Shutdown();
@@ -57,9 +57,9 @@ public:
     [[nodiscard]] bool IsInitialized() const { return initialized_; }
 
 private:
-    std::shared_ptr<VulkanEngine::Backend::ImGui::IImGuiBackend> backend_;
+    std::shared_ptr<VulkanBackend::ImGui::IImGuiBackend> backend_;
     ImGuiConfig config_{};
-    VulkanEngine::Backend::ImGui::ImGuiBackendConfig backend_config_{};
+    VulkanBackend::ImGui::ImGuiBackendConfig backend_config_{};
     bool initialized_ = false;
 };
 

@@ -17,7 +17,7 @@ import logiface;
 
 import vulkan_hpp;
 
-namespace VulkanEngine::Backend::ImGui {
+namespace VulkanBackend::ImGui {
 
 class VulkanImGuiBackend : public IImGuiBackend {
 public:

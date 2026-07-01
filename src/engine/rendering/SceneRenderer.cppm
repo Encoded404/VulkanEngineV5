@@ -41,7 +41,7 @@ public:
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
                     std::uint32_t total_index_count);
     void Shutdown();
@@ -162,19 +162,19 @@ private:
         vk::raii::ImageView hiz_full_view = vk::raii::ImageView(nullptr);
     };
 
-    bool CreateExpandPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
-    bool CreateDepthPipeline(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    bool CreateExpandPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool CreateDepthPipeline(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                              const vk::PipelineRasterizationStateCreateInfo& rasterization);
-    bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& backend);
-    bool CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
-    bool CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
+    bool CreateHiZPipeline(VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool CreateOcclusionPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool CreateCollectPipelines(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
 
 
     void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, std::uint32_t binding,
                                       VulkanEngine::GpuResources::BlockArray& block_buf,
                                       vk::DescriptorType desc_type);
 
-    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
 
     // Set 1: SubmeshVertexData blocks
     std::unique_ptr<vk::raii::DescriptorSetLayout> submesh_vertex_layout_{};

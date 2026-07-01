@@ -75,7 +75,7 @@ std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() con
     return groups;
 }
 
-void BaseTechnique::Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+void BaseTechnique::Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                             std::span<const std::uint32_t> vert_spv,
                             std::span<const std::uint32_t> frag_spv,
                             const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
@@ -144,7 +144,7 @@ void BaseTechnique::Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
     layout_info.pPushConstantRanges = push_constant_ranges.data();
 
     pipeline_layout_ = vk::raii::PipelineLayout(device, layout_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, pipeline_layout_, "base-technique-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_layout_, "base-technique-layout");
 
     // ── 5. Create pipeline directly (reusing GraphicsPipeline's pipeline creation pattern) ──
     {
@@ -188,7 +188,7 @@ void BaseTechnique::Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         pipeline_info.setPNext(&rendering_info);
 
         pipeline_ = vk::raii::Pipeline(device, nullptr, pipeline_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, pipeline_, "technique-pipeline");
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_, "technique-pipeline");
     }
 
     // ── 6. Create BlockArrays for PerMaterial bindings ──

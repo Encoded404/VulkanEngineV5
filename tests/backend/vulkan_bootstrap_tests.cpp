@@ -9,7 +9,7 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 
 namespace {
 
-using namespace VulkanEngine::Runtime;
+using namespace VulkanBackend::Runtime;
 
 class FakeVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
@@ -32,7 +32,7 @@ public:
         current_frames_in_flight = frames_in_flight;
         return logical_device_result;
     }
-    [[nodiscard]] bool CreateSwapchain(uint32_t, VulkanEngine::Runtime::PresentMode, uint32_t& out_image_count) override {
+    [[nodiscard]] bool CreateSwapchain(uint32_t, VulkanBackend::Runtime::PresentMode, uint32_t& out_image_count) override {
         out_image_count = produced_swapchain_image_count;
         return swapchain_result;
     }

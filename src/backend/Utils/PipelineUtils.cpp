@@ -6,7 +6,7 @@ import std;
 
 import vulkan_hpp;
 
-namespace VulkanEngine::Utils {
+namespace VulkanBackend::Vulkan {
 
 vk::Viewport PipelineUtils::CreateViewport(float width,
                                          float height,
@@ -231,4 +231,4 @@ std::vector<vk::DynamicState> PipelineUtils::GetExtendedDynamicStates() {
             vk::DynamicState::eBlendConstants};
 }
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

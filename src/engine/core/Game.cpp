@@ -145,11 +145,11 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     renderer_->Initialize(*ctx.bootstrap, config_.renderer_config);
 
     if (config_.enable_imgui) {
-        imgui_backend_ = Backend::ImGui::CreateImGuiBackend();
+        imgui_backend_ = VulkanBackend::ImGui::CreateImGuiBackend();
         imgui_system_ = std::make_unique<ImGui::ImGuiSystem>(imgui_backend_);
 
         const auto surface_format = backend.GetSurfaceFormat();
-        Backend::ImGui::ImGuiBackendConfig imgui_backend_config{};
+        VulkanBackend::ImGui::ImGuiBackendConfig imgui_backend_config{};
         imgui_backend_config.image_count = ctx.bootstrap->GetSnapshot().swapchain_image_count;
         imgui_backend_config.swapchain_format = static_cast<vk::Format>(surface_format.format);
 

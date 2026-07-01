@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanBackend::Vulkan {
 
 class ImageUtils {
 public:
@@ -92,4 +92,4 @@ public:
                                      vk::DeviceSize buffer_offset = 0);
 };
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

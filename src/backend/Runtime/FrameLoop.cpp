@@ -5,7 +5,7 @@ module VulkanBackend.Runtime.FrameLoop;
 
 import std;
 
-namespace VulkanEngine::Runtime {
+namespace VulkanBackend::Runtime {
 
 bool FrameLoop::Initialize(const RuntimeConfig& config) {
     if (initialized_) {
@@ -86,4 +86,4 @@ bool FrameLoop::ShouldShutdown() const {
     return pending_status_ == RuntimeStatus::ShutdownRequested;
 }
 
-}  // namespace VulkanEngine::Runtime
+}  // namespace VulkanBackend::Runtime

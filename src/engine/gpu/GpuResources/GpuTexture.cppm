@@ -13,7 +13,7 @@ export namespace VulkanEngine::GpuResources {
 
 class GpuTexture {
 public:
-    static GpuTexture CreateFromPixels(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    static GpuTexture CreateFromPixels(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                                        const std::uint8_t* pixels,
                                        std::uint32_t width,
                                        std::uint32_t height,

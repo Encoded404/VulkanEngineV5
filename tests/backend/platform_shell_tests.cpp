@@ -11,14 +11,14 @@ import VulkanShared.CallbackList;
 
 namespace {
 
-using namespace VulkanEngine::Platform;
+using namespace VulkanBackend::Platform;
 
 class FakePlatformBackend final : public IPlatformBackend {
 public:
     bool initialize_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
     bool create_window_result = true; // NOLINT(misc-non-private-member-variables-in-classes)
     bool shutdown_called = false; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Backend::Event::EventList queued_events{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanBackend::Event::EventList queued_events{}; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool Initialize() override {
         return initialize_result;
@@ -32,7 +32,7 @@ public:
         return create_window_result;
     }
 
-    [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
+    [[nodiscard]] VulkanBackend::Event::EventList PumpEvents() override {
         return std::exchange(queued_events, {});
     }
 
@@ -66,8 +66,8 @@ TEST(PlatformShellTest, PollEventsUpdatesResizeAndQuitState) {
 
     ASSERT_TRUE(shell.Initialize(PlatformConfig{}));
 
-    backend->queued_events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowResizedEvent>(1920u, 1080u));
-    backend->queued_events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
+    backend->queued_events.push_back(std::make_unique<VulkanBackend::Event::WindowResizedEvent>(1920u, 1080u));
+    backend->queued_events.push_back(std::make_unique<VulkanBackend::Event::QuitEvent>());
 
     const auto events = shell.PollEvents();
 
@@ -78,8 +78,8 @@ TEST(PlatformShellTest, PollEventsUpdatesResizeAndQuitState) {
     EXPECT_TRUE(shell.ShouldQuit());
     EXPECT_EQ(state.status, PlatformStatus::QuitRequested);
     ASSERT_EQ(events.size(), 2u);
-    EXPECT_NE(dynamic_cast<VulkanEngine::Backend::Event::WindowResizedEvent*>(events[0].get()), nullptr);
-    EXPECT_NE(dynamic_cast<VulkanEngine::Backend::Event::QuitEvent*>(events[1].get()), nullptr);
+    EXPECT_NE(dynamic_cast<VulkanBackend::Event::WindowResizedEvent*>(events[0].get()), nullptr);
+    EXPECT_NE(dynamic_cast<VulkanBackend::Event::QuitEvent*>(events[1].get()), nullptr);
 }
 
 TEST(PlatformShellTest, ReportsBackendInitializationFailure) {

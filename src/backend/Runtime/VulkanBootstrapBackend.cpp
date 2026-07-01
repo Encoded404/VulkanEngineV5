@@ -16,14 +16,14 @@ import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanSwapchain;
 import VulkanShared.Timer;
 
-namespace VulkanEngine::Runtime {
+namespace VulkanBackend::Runtime {
 
 namespace {
 
 class DefaultVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
-    [[nodiscard]] ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
-    [[nodiscard]] const ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
+    [[nodiscard]] VulkanEngine::ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
+    [[nodiscard]] const VulkanEngine::ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
 
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig& config) override {
         instance_ = std::make_unique<VulkanInstance>();
@@ -223,7 +223,7 @@ public:
     }
 
 private:
-    ComponentRegistry component_registry_{};
+    VulkanEngine::ComponentRegistry component_registry_{};
     std::unique_ptr<VulkanInstance> instance_{};
     std::unique_ptr<VulkanDevice> device_{};
     std::unique_ptr<VulkanSwapchain> swapchain_{};
@@ -237,4 +237,4 @@ std::shared_ptr<IVulkanBootstrap> CreateVulkanBootstrapBackend() {
     return std::make_shared<DefaultVulkanBootstrapBackend>();
 }
 
-}  // namespace VulkanEngine::Runtime
+}  // namespace VulkanBackend::Runtime

@@ -137,7 +137,7 @@ protected:
     // ── Compilation (separate from constructor) ──
     // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
-    void Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
+    void Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
                  std::span<const std::uint32_t> vert_spv,
                  std::span<const std::uint32_t> frag_spv,
                  const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,

@@ -21,7 +21,7 @@ BindlessManager::~BindlessManager() {
     Shutdown();
 }
 
-bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend) {
+bool BindlessManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend) {
     backend_ = &backend;
     const auto& device = backend.GetDevice();
 
@@ -58,7 +58,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     layout_info.pBindings = &binding;
 
     layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(device, layout_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *layout_, "bindless-layout");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *layout_, "bindless-layout");
 
     // Create descriptor pool — reasonably large, can grow if needed
     constexpr std::uint32_t MAX_POOL_TEXTURES = 65536;
@@ -74,7 +74,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     pool_info.pPoolSizes = &pool_size;
 
     pool_ = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *pool_, "bindless-pool");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, *pool_, "bindless-pool");
 
     // Allocate with variable descriptor count — start with capacity for 1024
     const std::uint32_t variable_count = 1024;
@@ -95,7 +95,7 @@ bool BindlessManager::Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backen
     }
     // Move the RAII wrapper out of the vector to keep it alive
     descriptor_set_ = std::move(sets[0]);
-    VulkanEngine::Utils::SetVulkanObjectName(device, descriptor_set_, "bindless-descriptor-set");
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, descriptor_set_, "bindless-descriptor-set");
 
     LOGIFACE_LOG(debug, "BindlessManager initialized with unbounded texture array");
     return true;

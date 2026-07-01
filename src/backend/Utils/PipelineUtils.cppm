@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanBackend::Vulkan {
 
 class PipelineUtils {
 public:
@@ -70,4 +70,4 @@ public:
     static std::vector<vk::DynamicState> GetExtendedDynamicStates();
 };
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

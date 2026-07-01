@@ -39,7 +39,7 @@ public:
     BlockArray(BlockArray&&) noexcept;
     BlockArray& operator=(BlockArray&&) noexcept;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend, const Config& cfg);
+    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend, const Config& cfg);
 
     void Shutdown();
 
@@ -65,7 +65,7 @@ public:
 private:
     bool AddBlock();
 
-    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
     Config cfg_{};
     std::vector<GpuBuffer> blocks_;
     std::vector<void*> mappings_;

@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-namespace VulkanEngine::Utils {
+namespace VulkanBackend::Vulkan {
 
 namespace {
 std::optional<std::uint32_t> FindMemoryTypeInternal(vk::PhysicalDevice physical_device,
@@ -158,4 +158,4 @@ vk::DeviceSize MemoryUtils::GetNonCoherentAtomSize(vk::PhysicalDevice physical_d
     return properties.limits.nonCoherentAtomSize;
 }
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanBackend::Vulkan

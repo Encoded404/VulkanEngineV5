@@ -9,7 +9,7 @@ import std;
 
 import VulkanBackend.Event;
 
-namespace VulkanEngine::Platform {
+namespace VulkanBackend::Platform {
 
 SdlPlatform::SdlPlatform(std::shared_ptr<IPlatformBackend> backend)
     : backend_(std::move(backend)) {}
@@ -50,7 +50,7 @@ void SdlPlatform::Shutdown() {
     state_ = PlatformState{};
 }
 
-VulkanEngine::Backend::Event::EventList SdlPlatform::PollEvents() {
+VulkanBackend::Event::EventList SdlPlatform::PollEvents() {
     if (!state_.initialized) {
         state_.status = PlatformStatus::NotInitialized;
         return {};
@@ -61,13 +61,13 @@ VulkanEngine::Backend::Event::EventList SdlPlatform::PollEvents() {
     auto events = backend_->PumpEvents();
 
     for (const auto& event : events) {
-        if (dynamic_cast<const VulkanEngine::Backend::Event::QuitEvent*>(event.get()) != nullptr) {
+        if (dynamic_cast<const VulkanBackend::Event::QuitEvent*>(event.get()) != nullptr) {
             state_.quit_requested = true;
             state_.status = PlatformStatus::QuitRequested;
             continue;
         }
 
-        if (const auto* resized_event = dynamic_cast<const VulkanEngine::Backend::Event::WindowResizedEvent*>(event.get()); resized_event != nullptr) {
+        if (const auto* resized_event = dynamic_cast<const VulkanBackend::Event::WindowResizedEvent*>(event.get()); resized_event != nullptr) {
             state_.resized = true;
             state_.minimized = false;
             state_.drawable_width = resized_event->width;
@@ -76,13 +76,13 @@ VulkanEngine::Backend::Event::EventList SdlPlatform::PollEvents() {
             continue;
         }
 
-        if (dynamic_cast<const VulkanEngine::Backend::Event::WindowMinimizedEvent*>(event.get()) != nullptr) {
+        if (dynamic_cast<const VulkanBackend::Event::WindowMinimizedEvent*>(event.get()) != nullptr) {
             state_.minimized = true;
             state_.status = PlatformStatus::Ok;
             continue;
         }
 
-        if (dynamic_cast<const VulkanEngine::Backend::Event::WindowRestoredEvent*>(event.get()) != nullptr) {
+        if (dynamic_cast<const VulkanBackend::Event::WindowRestoredEvent*>(event.get()) != nullptr) {
             state_.minimized = false;
             state_.status = PlatformStatus::Ok;
         }
@@ -114,7 +114,7 @@ IPlatformBackend& SdlPlatform::GetBackend() const {
     return *backend_;
 }
 
-}  // namespace VulkanEngine::Platform
+}  // namespace VulkanBackend::Platform
 
 
 

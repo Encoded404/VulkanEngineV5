@@ -10,7 +10,7 @@ import vulkan_hpp;
 
 import VulkanBackend.Runtime.CommonTypes;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 class VulkanInstance {
 public:
@@ -28,4 +28,4 @@ private:
     std::unique_ptr<vk::raii::SurfaceKHR> surface_{};
 };
 
-} // namespace VulkanEngine::Runtime
+} // namespace VulkanBackend::Runtime

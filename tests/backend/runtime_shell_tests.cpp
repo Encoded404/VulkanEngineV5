@@ -4,7 +4,7 @@ import VulkanBackend.Runtime.FrameLoop;
 
 namespace {
 
-using namespace VulkanEngine::Runtime;
+using namespace VulkanBackend::Runtime;
 
 TEST(FrameLoopTest, ResizeAndOutOfDateStatusesAreReported) {
     FrameLoop runtime{};

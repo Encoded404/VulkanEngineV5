@@ -7,7 +7,7 @@ import VulkanBackend.Runtime.FrameLoop;
 namespace {
 
 using namespace VulkanEngine::RenderGraph;
-using namespace VulkanEngine::Runtime;
+using namespace VulkanBackend::Runtime;
 
 TEST(GraphExecutionBridgeTest, RuntimeFrameMapsToGraphExecutionContext) {
     const RuntimeFrameInfo runtime_frame{

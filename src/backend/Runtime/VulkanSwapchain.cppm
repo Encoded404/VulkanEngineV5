@@ -10,7 +10,7 @@ import VulkanBackend.Runtime.CommonTypes;
 import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanInstance;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 class VulkanSwapchain {
 public:
@@ -52,4 +52,4 @@ private:
     [[nodiscard]] bool CreateDepthResources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device);
 };
 
-} // namespace VulkanEngine::Runtime
+} // namespace VulkanBackend::Runtime

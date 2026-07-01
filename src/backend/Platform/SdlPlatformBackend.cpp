@@ -12,7 +12,7 @@ import std;
 import VulkanBackend.Event;
 import VulkanShared.CallbackList;
 
-namespace VulkanEngine::Platform {
+namespace VulkanBackend::Platform {
 
 namespace {
 
@@ -66,8 +66,8 @@ public:
         return sdl_event_processors_;
     }
 
-    [[nodiscard]] VulkanEngine::Backend::Event::EventList PumpEvents() override {
-        VulkanEngine::Backend::Event::EventList events{};
+    [[nodiscard]] VulkanBackend::Event::EventList PumpEvents() override {
+        VulkanBackend::Event::EventList events{};
 
         SDL_Event event{};
         while (SDL_PollEvent(&event)) {
@@ -75,49 +75,49 @@ public:
 
             switch (event.type) {
                 case SDL_EVENT_QUIT:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::QuitEvent>());
+                    events.push_back(std::make_unique<VulkanBackend::Event::QuitEvent>());
                     break;
                 case SDL_EVENT_WINDOW_RESIZED:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowResizedEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::WindowResizedEvent>(
                         static_cast<std::uint32_t>(event.window.data1),
                         static_cast<std::uint32_t>(event.window.data2)));
                     break;
                 case SDL_EVENT_WINDOW_MINIMIZED:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowMinimizedEvent>());
+                    events.push_back(std::make_unique<VulkanBackend::Event::WindowMinimizedEvent>());
                     break;
                 case SDL_EVENT_WINDOW_RESTORED:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::WindowRestoredEvent>());
+                    events.push_back(std::make_unique<VulkanBackend::Event::WindowRestoredEvent>());
                     break;
                 case SDL_EVENT_KEY_DOWN:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyDownEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::KeyDownEvent>(
                         static_cast<std::int32_t>(event.key.key),
                         event.key.repeat != 0));
                     break;
                 case SDL_EVENT_KEY_UP:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::KeyUpEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::KeyUpEvent>(
                         static_cast<std::int32_t>(event.key.key)));
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonDownEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::MouseButtonDownEvent>(
                         static_cast<std::int32_t>(event.button.button),
                         static_cast<std::int32_t>(event.button.x),
                         static_cast<std::int32_t>(event.button.y)));
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_UP:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseButtonUpEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::MouseButtonUpEvent>(
                         static_cast<std::int32_t>(event.button.button),
                         static_cast<std::int32_t>(event.button.x),
                         static_cast<std::int32_t>(event.button.y)));
                     break;
                 case SDL_EVENT_MOUSE_MOTION:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseMotionEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::MouseMotionEvent>(
                         static_cast<float>(event.motion.x),
                         static_cast<float>(event.motion.y),
                         static_cast<float>(event.motion.xrel),
                         static_cast<float>(event.motion.yrel)));
                     break;
                 case SDL_EVENT_MOUSE_WHEEL:
-                    events.push_back(std::make_unique<VulkanEngine::Backend::Event::MouseWheelEvent>(
+                    events.push_back(std::make_unique<VulkanBackend::Event::MouseWheelEvent>(
                         static_cast<float>(event.wheel.x),
                         static_cast<float>(event.wheel.y)));
                     break;
@@ -145,7 +145,7 @@ std::shared_ptr<IPlatformBackend> CreateSdlPlatformBackend() {
     return std::make_shared<SdlPlatformBackend>();
 }
 
-}  // namespace VulkanEngine::Platform
+}  // namespace VulkanBackend::Platform
 
 
 

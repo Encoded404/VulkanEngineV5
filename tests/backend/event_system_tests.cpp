@@ -7,7 +7,7 @@ import VulkanBackend.Event;
 
 namespace {
 
-using namespace VulkanEngine::Backend::Event;
+using namespace VulkanBackend::Event;
 
 TEST(BackendEventTest, ClonesConcreteEvents) {
     WindowResizedEvent original{1280u, 720u};

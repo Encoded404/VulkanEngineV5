@@ -49,7 +49,7 @@ public:
     MeshManager(MeshManager&&) = delete;
     MeshManager& operator=(MeshManager&&) = delete;
 
-    bool Initialize(VulkanEngine::Runtime::IVulkanBootstrap& backend,
+    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                     VulkanEngine::GpuResources::StagingManager* staging_mgr,
@@ -92,7 +92,7 @@ private:
         std::int32_t frames_remaining = 0;
     };
 
-    VulkanEngine::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
     VulkanEngine::GpuResources::StagingManager* staging_mgr_ = nullptr;

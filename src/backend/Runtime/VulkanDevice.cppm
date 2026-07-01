@@ -8,7 +8,7 @@ import vulkan_hpp;
 
 import VulkanBackend.Runtime.VulkanInstance;
 
-export namespace VulkanEngine::Runtime {
+export namespace VulkanBackend::Runtime {
 
 class VulkanDevice {
 public:
@@ -47,4 +47,4 @@ private:
     std::uint32_t frames_in_flight_ = 0;
 };
 
-} // namespace VulkanEngine::Runtime
+} // namespace VulkanBackend::Runtime

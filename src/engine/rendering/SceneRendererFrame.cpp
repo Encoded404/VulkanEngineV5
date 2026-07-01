@@ -262,8 +262,13 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             // this is a placeholder for the full dynamic binding.
             // For now, custom block arrays are not bound here.
 
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
-                                    0, {ds.data(), slot}, {});
+            cmd.bindDescriptorSets(
+                vk::PipelineBindPoint::eGraphics,
+                layout,
+                0,
+                vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()),
+                {}
+            );
 
             const vk::DeviceSize draw_cmd_offset =
                 static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);

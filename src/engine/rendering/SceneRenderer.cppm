@@ -142,6 +142,7 @@ private:
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
         VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
         VulkanEngine::GpuResources::GpuBuffer tech_offsets_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};
 
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};

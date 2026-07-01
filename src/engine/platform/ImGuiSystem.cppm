@@ -46,7 +46,7 @@ public:
     void NewFrame();
     void ProcessSDLEvent(void* sdl_event);
 
-    Utils::CallbackList<void()> draw_callbacks; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanShared::CallbackList<void()> draw_callbacks; // NOLINT(misc-non-private-member-variables-in-classes)
 
     void RenderDrawData(vk::CommandBuffer command_buffer, vk::ImageView color_attachment, std::uint32_t width, std::uint32_t height);
     void OnSwapchainRecreated(std::uint32_t new_image_count, vk::Format new_format);

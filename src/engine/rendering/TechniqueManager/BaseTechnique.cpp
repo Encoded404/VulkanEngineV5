@@ -143,8 +143,8 @@ void BaseTechnique::Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
     layout_info.pushConstantRangeCount = static_cast<std::uint32_t>(push_constant_ranges.size());
     layout_info.pPushConstantRanges = push_constant_ranges.data();
 
-    pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
-    VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_layout_, "base-technique-layout");
+    pipeline_layout_ = vk::raii::PipelineLayout(device, layout_info);
+    VulkanEngine::Utils::SetVulkanObjectName(device, pipeline_layout_, "base-technique-layout");
 
     // ── 5. Create pipeline directly (reusing GraphicsPipeline's pipeline creation pattern) ──
     {
@@ -187,8 +187,8 @@ void BaseTechnique::Compile(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
         vk::GraphicsPipelineCreateInfo pipeline_info({}, stages, &vertex_input, &input_assembly, nullptr, &viewport_state, &rasterization, &multisample, &depth_stencil, &color_blend, &dynamic_state, *pipeline_layout_, nullptr, 0, {}, 0);
         pipeline_info.setPNext(&rendering_info);
 
-        pipeline_ = std::make_unique<vk::raii::Pipeline>(device, nullptr, pipeline_info);
-        VulkanEngine::Utils::SetVulkanObjectName(device, *pipeline_, "technique-pipeline");
+        pipeline_ = vk::raii::Pipeline(device, nullptr, pipeline_info);
+        VulkanEngine::Utils::SetVulkanObjectName(device, pipeline_, "technique-pipeline");
     }
 
     // ── 6. Create BlockArrays for PerMaterial bindings ──

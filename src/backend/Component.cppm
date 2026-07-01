@@ -573,7 +573,7 @@ private:
     std::vector<std::unique_ptr<Entity>> entities_{};
     Entity::EntityId next_entity_id_ = 0;
     mutable std::mutex mutex_{};
-    ThreadPool thread_pool_{};
+    VulkanShared::ThreadPool thread_pool_{};
 
 public:
     [[nodiscard]] Entity& CreateEntity() {

@@ -200,7 +200,7 @@ public:
     }
 
     void Shutdown() override {
-        const ::VulkanEngine::Utils::Timer t{true};
+        const ::VulkanShared::Timer t{true};
         if (device_ && device_->IsValid()) {
             device_->GetDevice().waitIdle();
         }

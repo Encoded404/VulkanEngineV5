@@ -59,7 +59,7 @@ public:
     // Only PerMaterial binding data is passed; Shared data lives on the technique.
     template<typename Tech, typename... Ts>
     MaterialHandle<Tech> Register(BlendMode blend, const Ts&... data) {
-        static_assert(std::is_trivially_copyable_v<Ts> && ...,
+        static_assert((std::is_trivially_copyable_v<Ts> && ...),
                       "All material data types must be trivially copyable (GPU POD)");
 
         // Validate technique exists and get its ID
@@ -115,7 +115,6 @@ public:
             auto staging_slice = staging_mgr_->Allocate(static_cast<std::uint64_t>(total_size), 256);
             std::memcpy(staging_slice.data, entry->cpu_data.data(), total_size);
 
-            std::size_t upload_offset = 0;
             for (std::size_t bi = 0; bi < tech_ptr->GetBindingCount(); ++bi) {
                 const auto& binding = tech_ptr->GetBinding(bi);
                 if (binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) continue;
@@ -123,11 +122,8 @@ public:
                 if (ba) {
                     staging_mgr_->RecordBufferCopy(staging_slice,
                                                    ba->GetBlockArray(id.value / 256),
-                                                   ba->EntrySize() * (static_cast<std::uint64_t>(id.value % 256)),
-                                                   upload_offset,
-                                                   binding.stride);
+                                                   ba->EntrySize() * (static_cast<std::uint64_t>(id.value % 256)));
                 }
-                upload_offset += binding.stride;
             }
 
             // Flush staging so the upload takes effect immediately

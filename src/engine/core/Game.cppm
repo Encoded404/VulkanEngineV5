@@ -135,7 +135,7 @@ private:
     std::vector<std::uint32_t> vert_spv_holder_;
     std::vector<std::uint32_t> frag_spv_holder_;
 
-    VulkanEngine::Utils::ScopedHandle<void(void*)> imgui_event_token_{};
+    VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
 
     VulkanEngine::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
     GameConfig config_{};

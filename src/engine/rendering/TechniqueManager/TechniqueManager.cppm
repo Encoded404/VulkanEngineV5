@@ -32,7 +32,7 @@ public:
     TechniqueManager(const TechniqueManager&) = delete;
     TechniqueManager& operator=(const TechniqueManager&) = delete;
 
-    Utils::CallbackList<void(std::uint16_t id, vk::Pipeline pipeline, vk::PipelineLayout layout)> on_technique_changed; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanShared::CallbackList<void(std::uint16_t id, vk::Pipeline pipeline, vk::PipelineLayout layout)> on_technique_changed; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] std::uint16_t RegisterTechnique(VulkanEngine::Runtime::VulkanBootstrap& bootstrap,
                                               const std::vector<std::uint32_t>& vert_spv,

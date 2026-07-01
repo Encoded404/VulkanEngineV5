@@ -62,7 +62,7 @@ public:
         return window_ != nullptr;
     }
 
-    Utils::CallbackList<void(void*)>& GetSdlEventProcessors() override {
+    VulkanShared::CallbackList<void(void*)>& GetSdlEventProcessors() override {
         return sdl_event_processors_;
     }
 
@@ -136,7 +136,7 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     bool initialized_ = false;
-    Utils::CallbackList<void(void*)> sdl_event_processors_{};
+    VulkanShared::CallbackList<void(void*)> sdl_event_processors_{};
 };
 
 }  // namespace

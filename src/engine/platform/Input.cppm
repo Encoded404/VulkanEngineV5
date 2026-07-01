@@ -86,17 +86,17 @@ public:
     [[nodiscard]] float GetActionValue(ActionHandle handle) const;
     [[nodiscard]] std::pair<float, float> GetActionValue2D(ActionHandle handle) const;
 
-    Utils::ScopedHandle<void()> RegisterActiveCallback(ActionHandle handle, std::function<void()> callback);
-    Utils::ScopedHandle<void()> RegisterStartedCallback(ActionHandle handle, std::function<void()> callback);
-    Utils::ScopedHandle<void()> RegisterEndedCallback(ActionHandle handle, std::function<void()> callback);
+    VulkanShared::ScopedHandle<void()> RegisterActiveCallback(ActionHandle handle, std::function<void()> callback);
+    VulkanShared::ScopedHandle<void()> RegisterStartedCallback(ActionHandle handle, std::function<void()> callback);
+    VulkanShared::ScopedHandle<void()> RegisterEndedCallback(ActionHandle handle, std::function<void()> callback);
 
     [[nodiscard]] const std::unordered_map<ActionHandle, std::string>& GetAllActions() const;
 
 private:
     struct ActionCallbacks {
-        Utils::CallbackList<void()> on_active{};
-        Utils::CallbackList<void()> on_started{};
-        Utils::CallbackList<void()> on_ended{};
+        VulkanShared::CallbackList<void()> on_active{};
+        VulkanShared::CallbackList<void()> on_started{};
+        VulkanShared::CallbackList<void()> on_ended{};
     };
 
     RawInputState raw_state_{};

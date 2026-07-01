@@ -189,15 +189,15 @@ std::pair<float, float> InputSystem::GetActionValue2D(ActionHandle handle) const
     return {state.value_x, state.value_y};
 }
 
-Utils::ScopedHandle<void()> InputSystem::RegisterActiveCallback(ActionHandle handle, std::function<void()> callback) {
+VulkanShared::ScopedHandle<void()> InputSystem::RegisterActiveCallback(ActionHandle handle, std::function<void()> callback) {
     return action_callbacks_[handle].on_active.Register(std::move(callback));
 }
 
-Utils::ScopedHandle<void()> InputSystem::RegisterStartedCallback(ActionHandle handle, std::function<void()> callback) {
+VulkanShared::ScopedHandle<void()> InputSystem::RegisterStartedCallback(ActionHandle handle, std::function<void()> callback) {
     return action_callbacks_[handle].on_started.Register(std::move(callback));
 }
 
-Utils::ScopedHandle<void()> InputSystem::RegisterEndedCallback(ActionHandle handle, std::function<void()> callback) {
+VulkanShared::ScopedHandle<void()> InputSystem::RegisterEndedCallback(ActionHandle handle, std::function<void()> callback) {
     return action_callbacks_[handle].on_ended.Register(std::move(callback));
 }
 

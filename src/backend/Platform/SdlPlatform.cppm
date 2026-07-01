@@ -50,7 +50,7 @@ public:
     [[nodiscard]] virtual VulkanEngine::Backend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
 
-    virtual Utils::CallbackList<void(void*)>& GetSdlEventProcessors() = 0;
+    virtual VulkanShared::CallbackList<void(void*)>& GetSdlEventProcessors() = 0;
 };
 
 class SdlPlatform {

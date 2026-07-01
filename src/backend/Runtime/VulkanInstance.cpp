@@ -69,7 +69,7 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 }
 
 void VulkanInstance::Shutdown() {
-    const VulkanEngine::Utils::Timer t{true};
+    const VulkanShared::Timer t{true};
     surface_.reset();
     LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy surface in VulkanInstance::Shutdown.");
     instance_.reset();

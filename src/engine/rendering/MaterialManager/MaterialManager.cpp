@@ -126,12 +126,10 @@ void MaterialManager::FlushDirtyMaterials() {
         if (technique_mgr_) {
             auto* tech = technique_mgr_->GetTechnique(p.entry->technique_id);
             if (tech) {
-                std::size_t src_offset = 0;
                 std::uint32_t mask = p.entry->dirty_bindings;
                 for (std::size_t bi = 0; bi < tech->GetBindingCount(); ++bi) {
                     const auto& binding = tech->GetBinding(bi);
                     if (binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) {
-                        src_offset += binding.stride;
                         continue;
                     }
                     if (mask & 1u) {
@@ -139,12 +137,9 @@ void MaterialManager::FlushDirtyMaterials() {
                         if (ba) {
                             staging_mgr_->RecordBufferCopy(p.slice,
                                 ba->GetBlockArray(p.id.value / 256),
-                                ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % 256)),
-                                src_offset,
-                                binding.stride);
+                                ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % 256)));
                         }
                     }
-                    src_offset += binding.stride;
                     mask >>= 1;
                 }
             }

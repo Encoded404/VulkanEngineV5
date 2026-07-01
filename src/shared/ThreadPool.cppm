@@ -1,10 +1,10 @@
 module;
 
-export module VulkanBackend.Utils.ThreadPool;
+export module VulkanShared.ThreadPool;
 
 import std;
 
-export namespace VulkanEngine {
+export namespace VulkanShared {
 
 class ThreadPool {
 public:

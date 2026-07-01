@@ -1,10 +1,10 @@
 module;
 
-export module VulkanBackend.Utils.CallbackList;
+export module VulkanShared.CallbackList;
 
 import std;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanShared {
 
 struct Handle {
     std::uint32_t index;

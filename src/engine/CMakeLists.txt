@@ -5,6 +5,7 @@ target_link_libraries(${ENGINE_TARGET} PUBLIC logiface::logiface)
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     FileLoader
     ${BACKEND_TARGET}
+    VulkanShared
 )
 
 find_package(Vulkan REQUIRED)
@@ -115,14 +116,11 @@ add_slang_shaders(
         OcclusionCullComp       occlusion_cull.slang       compute  main
         HizGenComp              hiz_gen.slang              compute  main
         CollectCountCompactComp collect_count_compact.slang compute  main
-        CollectWriteDgcComp     collect_write_dgc.slang    compute  main
-        CollectWriteLegacyComp  collect_write_legacy.slang compute  main
+        CollectWriteComp        collect_write.slang        compute  main
         MainIndirVert           main_indir.slang           vertex   main
         DepthIndirVert          depth_indir.slang          vertex   main
         StandardMeshFrag        standard_mesh.slang        fragment main
         DepthPrepassFrag        depth_prepass.slang        fragment main
-        DegenerateVert          degenerate.slang           vertex   vert_main
-        DegenerateFrag          degenerate.slang           fragment frag_main
 )
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shaders SLANG_CPPM_FILES)

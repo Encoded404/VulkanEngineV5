@@ -1,6 +1,6 @@
 add_library(${BACKEND_TARGET} STATIC)
 target_compile_features(${BACKEND_TARGET} PUBLIC cxx_std_20)
-target_link_libraries(${BACKEND_TARGET} PUBLIC logiface::logiface)
+target_link_libraries(${BACKEND_TARGET} PUBLIC logiface::logiface VulkanShared)
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
@@ -70,7 +70,6 @@ target_sources(${BACKEND_TARGET} PRIVATE
     Utils/MemoryUtils.cpp
     Utils/ImageUtils.cpp
     Utils/PipelineUtils.cpp
-    Utils/Timer.cpp
     Utils/VulkanDebugUtils.cpp
     ImGuiBackend.cpp
 )
@@ -97,9 +96,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Utils/MemoryUtils.cppm
             Utils/ImageUtils.cppm
             Utils/PipelineUtils.cppm
-            Utils/Timer.cppm
-            Utils/ThreadPool.cppm
-            Utils/CallbackList.cppm
             Utils/VulkanDebugUtils.cppm
             ImGuiBackend.cppm
     )

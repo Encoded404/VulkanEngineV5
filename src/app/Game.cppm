@@ -5,7 +5,7 @@ export module App.Game;
 import std;
 
 export import VulkanEngine.Game;
-import VulkanBackend.Utils.CallbackList;
+import VulkanShared.CallbackList;
 export import App.Components.SimpleControllerComponent;
 export import App.Components.TransformControlComponent;
 

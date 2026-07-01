@@ -5,7 +5,7 @@ export module VulkanEngine.Input;
 import std;
 
 import VulkanBackend.Event;
-import VulkanBackend.Utils.CallbackList;
+import VulkanShared.CallbackList;
 
 constexpr std::uint32_t UINT32_MAX =
     std::numeric_limits<std::uint32_t>::max();

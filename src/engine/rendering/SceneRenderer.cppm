@@ -13,7 +13,7 @@ import vulkan_hpp;
 
 export import VulkanBackend.Component;
 export import VulkanBackend.Runtime.VulkanBootstrap;
-export import VulkanBackend.Utils.CallbackList;
+export import VulkanShared.CallbackList;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
 export import VulkanEngine.StandardMeshPipeline;
@@ -34,7 +34,6 @@ public:
     static constexpr std::uint32_t BLOCK_ENTRIES = 256;
     static constexpr std::uint32_t MAX_BLOCKS = 1024;
     static constexpr std::uint32_t MAX_TECHNIQUES = 256;
-    static constexpr std::uint32_t DGC_MAX_SEQUENCES = 256;
 
     SceneRenderer() = default;
     ~SceneRenderer();
@@ -116,8 +115,6 @@ public:
     }
     void UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view);
 
-    void SetupTechniqueDgcCallback(VulkanEngine::TechniqueManager::TechniqueManager& tm);
-
     void DispatchExpand(vk::CommandBuffer cmd, std::uint32_t object_count,
                         const glm::mat4& view_proj, std::uint32_t frame_index);
 
@@ -126,15 +123,6 @@ public:
         const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
         return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
     }
-    [[nodiscard]] vk::Buffer GetDgcSequenceBuffer(std::uint32_t frame_index) const {
-        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<vk::Buffer>(*fr.dgc_sequence_buffer.GetBuffer());
-    }
-    [[nodiscard]] vk::Buffer GetDgcCountBuffer(std::uint32_t frame_index) const {
-        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
-        return static_cast<vk::Buffer>(*fr.dgc_count_buffer.GetBuffer());
-    }
-    [[nodiscard]] bool IsDgcAvailable() const { return dgc_available_; }
 
 private:
     struct TechniqueResult { std::uint32_t offset; std::uint32_t count; };
@@ -154,13 +142,6 @@ private:
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
         VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
         VulkanEngine::GpuResources::GpuBuffer tech_offsets_buffer{};
-
-        // DGC buffers (only used when DGC is available)
-        VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer dgc_sequence_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer dgc_count_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer dgc_preprocess_buffer{};
-        std::uint64_t dgc_preprocess_size = 0;
 
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
@@ -186,7 +167,6 @@ private:
     bool CreateHiZPipeline(VulkanEngine::Runtime::IVulkanBootstrap& backend);
     bool CreateOcclusionPipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
     bool CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
-    bool CreateDegeneratePipeline(const VulkanEngine::Runtime::IVulkanBootstrap& backend);
 
 
     void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, std::uint32_t binding,
@@ -255,16 +235,6 @@ private:
     // Bindless index buffer array (used by expand at set 5)
     std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
-
-    // DGC objects (only created when DGC is available)
-    bool dgc_available_ = false;
-    std::uint32_t dgc_max_sequence_count_ = 0;
-    std::unique_ptr<vk::raii::IndirectCommandsLayoutEXT> dgc_commands_layout_{};
-    std::unique_ptr<vk::raii::IndirectExecutionSetEXT> dgc_execution_set_{};
-    vk::raii::PipelineLayout dgc_degenerate_layout_ = nullptr;
-    vk::raii::Pipeline dgc_degenerate_pipeline_ = nullptr;
-
-    Utils::ScopedHandle<void(std::uint16_t, vk::Pipeline, vk::PipelineLayout)> dgc_technique_handle_{};
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 

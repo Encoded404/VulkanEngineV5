@@ -8,7 +8,7 @@ import std.compat;
 import vulkan_hpp;
 
 export import VulkanBackend.Runtime.VulkanBootstrap;
-export import VulkanBackend.Utils.CallbackList;
+export import VulkanShared.CallbackList;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.BaseTechnique;
 

@@ -54,11 +54,6 @@ public:
     [[nodiscard]] virtual bool AcquireNextImage(std::uint32_t frame_idx, std::uint32_t& out_image_index) = 0; // Modified
     [[nodiscard]] virtual bool Present(std::uint32_t frame_idx, std::uint32_t image_index, bool rendering_succeeded) = 0; // Modified
 
-    // DGC support
-    [[nodiscard]] virtual bool IsDgcAvailable() const = 0;
-    [[nodiscard]] virtual std::uint32_t GetMaxDgcSequenceCount() const = 0;
-    [[nodiscard]] virtual std::uint32_t GetMinDgcBufferOffsetAlignment() const = 0;
-
     virtual void Shutdown() = 0;
 };
 

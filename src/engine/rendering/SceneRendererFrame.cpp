@@ -440,63 +440,38 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         dev.updateDescriptorSets(w, nullptr);
     }
 
-    if (dgc_available_) {
-        {
-            const vk::DescriptorBufferInfo seq_bi(
-                *fr.dgc_sequence_buffer.GetBuffer(), 0, fr.dgc_sequence_buffer.GetSize());
-            vk::WriteDescriptorSet w2{};
-            w2.dstSet = fr.collect_write_set.GetHandle();
-            w2.dstBinding = 1;
-            w2.descriptorCount = 1;
-            w2.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w2.pBufferInfo = &seq_bi;
-            dev.updateDescriptorSets(w2, nullptr);
-        }
-        {
-            const vk::DescriptorBufferInfo cnt_bi(
-                *fr.dgc_count_buffer.GetBuffer(), 0, 4);
-            vk::WriteDescriptorSet w2{};
-            w2.dstSet = fr.collect_write_set.GetHandle();
-            w2.dstBinding = 2;
-            w2.descriptorCount = 1;
-            w2.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w2.pBufferInfo = &cnt_bi;
-            dev.updateDescriptorSets(w2, nullptr);
-        }
-    } else {
-        {
-            const vk::DescriptorBufferInfo cnt_bi(
-                *fr.tech_counts_buffer.GetBuffer(), 0, fr.tech_counts_buffer.GetSize());
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.collect_write_set.GetHandle();
-            w.dstBinding = 1;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w.pBufferInfo = &cnt_bi;
-            dev.updateDescriptorSets(w, nullptr);
-        }
-        {
-            const vk::DescriptorBufferInfo off_bi(
-                *fr.tech_offsets_buffer.GetBuffer(), 0, fr.tech_offsets_buffer.GetSize());
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.collect_write_set.GetHandle();
-            w.dstBinding = 2;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w.pBufferInfo = &off_bi;
-            dev.updateDescriptorSets(w, nullptr);
-        }
-        {
-            const vk::DescriptorBufferInfo cmd_bi(
-                *fr.technique_draw_commands.GetBuffer(), 0, fr.technique_draw_commands.GetSize());
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.collect_write_set.GetHandle();
-            w.dstBinding = 3;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eStorageBuffer;
-            w.pBufferInfo = &cmd_bi;
-            dev.updateDescriptorSets(w, nullptr);
-        }
+    {
+        const vk::DescriptorBufferInfo cnt_bi(
+            *fr.tech_counts_buffer.GetBuffer(), 0, fr.tech_counts_buffer.GetSize());
+        vk::WriteDescriptorSet w{};
+        w.dstSet = fr.collect_write_set.GetHandle();
+        w.dstBinding = 1;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &cnt_bi;
+        dev.updateDescriptorSets(w, nullptr);
+    }
+    {
+        const vk::DescriptorBufferInfo off_bi(
+            *fr.tech_offsets_buffer.GetBuffer(), 0, fr.tech_offsets_buffer.GetSize());
+        vk::WriteDescriptorSet w{};
+        w.dstSet = fr.collect_write_set.GetHandle();
+        w.dstBinding = 2;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &off_bi;
+        dev.updateDescriptorSets(w, nullptr);
+    }
+    {
+        const vk::DescriptorBufferInfo cmd_bi(
+            *fr.technique_draw_commands.GetBuffer(), 0, fr.technique_draw_commands.GetSize());
+        vk::WriteDescriptorSet w{};
+        w.dstSet = fr.collect_write_set.GetHandle();
+        w.dstBinding = 3;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &cmd_bi;
+        dev.updateDescriptorSets(w, nullptr);
     }
 
     // Pass 0: count visible indices per technique
@@ -540,7 +515,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
             {}, mb, {}, {});
     }
 
-    // Pass 2: write final draw data (DGC sequences or legacy draw commands)
+    // Pass 2: write final draw data (legacy draw commands)
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_);
     {
         const std::array<vk::DescriptorSet, 1> ds2{ fr.collect_write_set.GetHandle() };

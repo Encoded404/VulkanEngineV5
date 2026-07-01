@@ -60,49 +60,15 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
 
     frames_in_flight_ = frames_in_flight;
 
-    // Query DGC properties
-    {
-        vk::PhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props{};
-        dgc_props.sType = vk::StructureType::ePhysicalDeviceDeviceGeneratedCommandsPropertiesEXT;
-        vk::PhysicalDeviceProperties2 props2{};
-        props2.sType = vk::StructureType::ePhysicalDeviceProperties2;
-        props2.pNext = &dgc_props;
-        static_cast<vk::PhysicalDevice>(**physical_device_).getProperties2(&props2);
-        if (dgc_props.maxIndirectSequenceCount >= 1 &&
-            dgc_props.maxIndirectCommandsTokenCount >= 2 &&
-            dgc_props.maxIndirectCommandsIndirectStride >= 20 &&
-            (dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding & vk::ShaderStageFlagBits::eVertex)) {
-            dgc_available_ = true;
-            max_dgc_sequence_count_ = std::min(dgc_props.maxIndirectSequenceCount, 256u);
-        } else {
-            LOGIFACE_LOG(debug, std::string("DGC not available: missing vertex shader stage support via pipeline binding.") +
-                                            std::string("\nsupported = ") + std::bitset<32>(static_cast<std::uint32_t>(dgc_props.supportedIndirectCommandsShaderStagesPipelineBinding)).to_string() +
-                                            std::string("\nneeded    = ") + std::bitset<32>(static_cast<int>(vk::ShaderStageFlagBits::eVertex)).to_string());
-        }
-    }
-
     // Query available device extensions once
     bool has_debug_utils = false;
-    bool has_dgc_extension = false;
-    bool has_maintenance5 = false;
     {
         auto available_extensions = physical_device_->enumerateDeviceExtensionProperties();
         for (const auto& ext : available_extensions) {
             if (strcmp(ext.extensionName, vk::EXTDebugUtilsExtensionName) == 0) {
                 has_debug_utils = true;
             }
-            if (strcmp(ext.extensionName, vk::EXTDeviceGeneratedCommandsExtensionName) == 0) {
-                has_dgc_extension = true;
-            }
-            if (strcmp(ext.extensionName, "VK_KHR_maintenance5") == 0) {
-                has_maintenance5 = true;
-            }
         }
-    }
-
-    // Disable DGC if the required extensions are missing
-    if (dgc_available_ && (!has_dgc_extension || !has_maintenance5)) {
-        dgc_available_ = false;
     }
 
     try {
@@ -116,13 +82,6 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         if (has_debug_utils) {
             device_extensions.push_back(vk::EXTDebugUtilsExtensionName);
         }
-        if (dgc_available_) {
-            device_extensions.push_back("VK_KHR_maintenance5");
-            device_extensions.push_back(vk::EXTDeviceGeneratedCommandsExtensionName);
-        }
-
-        vk::PhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc_features{};
-        dgc_features.deviceGeneratedCommands = vk::True;
 
         vk::PhysicalDeviceVulkan11Features vulkan11_features{};
         vulkan11_features.shaderDrawParameters = vk::True;
@@ -144,10 +103,6 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         vulkan13_features.dynamicRendering = vk::True;
         vulkan13_features.synchronization2 = vk::True;
         vulkan12_features.pNext = &vulkan13_features;
-
-        if (dgc_available_) {
-            vulkan13_features.pNext = &dgc_features;
-        }
 
         vulkan11_features.pNext = &vulkan12_features;
 

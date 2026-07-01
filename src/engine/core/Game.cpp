@@ -130,8 +130,6 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         scene_renderer_->GetIndirectionLayout());
     }
 
-    scene_renderer_->SetupTechniqueDgcCallback(*technique_mgr_);
-
     MaterialManager::MaterialManager::Initialize(&staging_mgr_);
     MaterialManager::MaterialManager::Get().SetTechniqueManager(technique_mgr_.get());
 

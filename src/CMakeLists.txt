@@ -1,4 +1,5 @@
 # layered targets
+add_subdirectory(shared)
 add_subdirectory(backend)
 add_subdirectory(engine)
 add_subdirectory(app)
@@ -16,6 +17,7 @@ if(ENABLE_SANITIZERS)
   target_link_libraries(${APP_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(${ENGINE_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(${BACKEND_TARGET} PRIVATE project_sanitizers)
+  target_link_libraries(VulkanShared PRIVATE project_sanitizers)
 endif()
 
 # Sections optimization for dead-code stripping (gc-sections)
@@ -30,3 +32,4 @@ target_link_options(project_sections INTERFACE
 target_link_libraries(${APP_TARGET} PRIVATE project_sections)
 target_link_libraries(${ENGINE_TARGET} PRIVATE project_sections)
 target_link_libraries(${BACKEND_TARGET} PRIVATE project_sections)
+target_link_libraries(VulkanShared PRIVATE project_sections)

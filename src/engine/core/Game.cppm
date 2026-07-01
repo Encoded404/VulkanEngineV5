@@ -26,7 +26,7 @@ export import VulkanEngine.Application;
 export import VulkanEngine.Input;
 
 import VulkanBackend.Platform.SdlPlatform;
-import VulkanBackend.Utils.CallbackList;
+import VulkanShared.CallbackList;
 import VulkanEngine.MeshManager;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;

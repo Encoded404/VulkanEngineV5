@@ -7,7 +7,7 @@ import std;
 import vulkan_hpp;
 
 export import VulkanBackend.ImGui;
-import VulkanBackend.Utils.CallbackList;
+import VulkanShared.CallbackList;
 
 #ifndef UINT32_MAX
 constexpr std::uint32_t UINT32_MAX =

@@ -7,7 +7,7 @@ export module VulkanBackend.Platform.SdlPlatform;
 import std;
 
 import VulkanBackend.Event;
-import VulkanBackend.Utils.CallbackList;
+import VulkanShared.CallbackList;
 
 export namespace VulkanEngine::Platform {
 

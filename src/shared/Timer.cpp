@@ -1,11 +1,11 @@
 module;
 
-module VulkanBackend.Utils.Timer;
+module VulkanShared.Timer;
 
 import std;
 import std.compat;
 
-namespace VulkanEngine::Utils {
+namespace VulkanShared {
 
 Timer::Timer() noexcept
     : accumulated_(0)
@@ -80,4 +80,4 @@ std::int64_t Timer::Now() noexcept {
     ).count();
 }
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanShared

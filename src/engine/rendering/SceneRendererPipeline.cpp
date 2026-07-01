@@ -21,10 +21,7 @@ import Shaders.Engine.DepthPrepassFrag;
 import Shaders.Engine.HizGenComp;
 import Shaders.Engine.OcclusionCullComp;
 import Shaders.Engine.CollectCountCompactComp;
-import Shaders.Engine.CollectWriteDgcComp;
-import Shaders.Engine.CollectWriteLegacyComp;
-import Shaders.Engine.DegenerateVert;
-import Shaders.Engine.DegenerateFrag;
+import Shaders.Engine.CollectWriteComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 
 namespace VulkanEngine::SceneRenderer {
@@ -209,9 +206,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
         collect_write_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
         VulkanEngine::Utils::SetVulkanObjectName(dev, *collect_write_pipeline_layout_, "collect-write-pipeline-layout");
 
-        const vk::raii::ShaderModule mod = dgc_available_
-            ? Shaders::Engine::CollectWriteDgcComp::CreateModule(dev)
-            : Shaders::Engine::CollectWriteLegacyComp::CreateModule(dev);
+        const vk::raii::ShaderModule mod = Shaders::Engine::CollectWriteComp::CreateModule(dev);
         const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
         vk::ComputePipelineCreateInfo ci{};
         ci.stage = ss;
@@ -221,77 +216,6 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanEngine::Runtime::IVulkanB
     }
 
     LOGIFACE_LOG(debug, "Collect pipelines created");
-    return true;
-}
-
-bool SceneRenderer::CreateDegeneratePipeline(const VulkanEngine::Runtime::IVulkanBootstrap& be) {
-    LOGIFACE_LOG(debug, "Creating degenerate DGC pipeline...");
-    const auto& dev = be.GetDevice();
-
-    // Degenerate pipeline uses the same layout as technique pipelines:
-    // set 0: bindless (external), set 1: submesh vertex data, set 2: raw vertex, set 3: indirection
-    // But we don't have these layouts directly in SceneRenderer - we create a minimal layout
-    // that's compatible with what DGC expects.
-
-    // Build the shared pipeline layout matching technique pipelines
-    std::array<vk::DescriptorSetLayout, 4> set_layouts{
-        *empty_layout_,
-        *submesh_vertex_layout_,
-        *raw_vertex_layout_,
-        *indirection_layout_
-    };
-
-    constexpr std::uint32_t push_constant_size = 64;
-    constexpr vk::PushConstantRange push_range(vk::ShaderStageFlagBits::eVertex, 0, push_constant_size);
-
-    vk::PipelineLayoutCreateInfo layout_ci{};
-    layout_ci.setLayoutCount = static_cast<std::uint32_t>(set_layouts.size());
-    layout_ci.pSetLayouts = set_layouts.data();
-    layout_ci.pushConstantRangeCount = 1;
-    layout_ci.pPushConstantRanges = &push_range;
-
-    dgc_degenerate_layout_ = vk::raii::PipelineLayout(dev, layout_ci);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, dgc_degenerate_layout_, "degenerate-pipeline-layout");
-
-    // Load degenerate shaders
-    const vk::raii::ShaderModule vm = Shaders::Engine::DegenerateVert::CreateModule(dev);
-    const vk::raii::ShaderModule fm = Shaders::Engine::DegenerateFrag::CreateModule(dev);
-
-    std::array<vk::PipelineShaderStageCreateInfo, 2> stages{
-        vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, *vm, "main"),
-        vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, *fm, "main")
-    };
-
-    constexpr vk::PipelineVertexInputStateCreateInfo vi({}, 0, nullptr, 0, nullptr);
-    constexpr vk::PipelineInputAssemblyStateCreateInfo ia({}, vk::PrimitiveTopology::eTriangleList);
-    constexpr vk::PipelineViewportStateCreateInfo vs({}, 1, nullptr, 1, nullptr);
-    vk::PipelineRasterizationStateCreateInfo rs{};
-    rs.polygonMode = vk::PolygonMode::eFill;
-    rs.cullMode = vk::CullModeFlagBits::eNone;
-    rs.frontFace = vk::FrontFace::eCounterClockwise;
-    rs.lineWidth = 1.0f;
-    constexpr vk::PipelineMultisampleStateCreateInfo ms({}, vk::SampleCountFlagBits::e1);
-    constexpr vk::PipelineDepthStencilStateCreateInfo ds({}, false, false, vk::CompareOp::eLess);
-    constexpr vk::PipelineColorBlendAttachmentState cb{};
-    const vk::PipelineColorBlendStateCreateInfo cbs({}, false, vk::LogicOp::eCopy, cb);
-    constexpr std::array<vk::DynamicState, 2> dyn{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-    const vk::PipelineDynamicStateCreateInfo dys({}, dyn);
-
-    const vk::Format color_format = be.GetSurfaceFormat().format;
-    vk::PipelineRenderingCreateInfo ri{};
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachmentFormats = &color_format;
-    ri.depthAttachmentFormat = be.GetDepthFormat();
-    ri.stencilAttachmentFormat = vk::Format::eUndefined;
-
-    vk::GraphicsPipelineCreateInfo pi({}, stages, &vi, &ia, nullptr, &vs, &rs, &ms, &ds, &cbs, &dys,
-                                       dgc_degenerate_layout_, nullptr, 0, {}, 0);
-    pi.setPNext(&ri);
-
-    dgc_degenerate_pipeline_ = vk::raii::Pipeline(dev, nullptr, pi);
-    VulkanEngine::Utils::SetVulkanObjectName(dev, dgc_degenerate_pipeline_, "degenerate-pipeline");
-
-    LOGIFACE_LOG(debug, "Degenerate pipeline created");
     return true;
 }
 

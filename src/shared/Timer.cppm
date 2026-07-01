@@ -1,10 +1,10 @@
 module;
 
-export module VulkanBackend.Utils.Timer;
+export module VulkanShared.Timer;
 
 import std;
 
-export namespace VulkanEngine::Utils {
+export namespace VulkanShared {
 
 class Timer {
 public:

@@ -5,7 +5,7 @@ export module VulkanBackend.Component;
 import std;
 import std.compat;
 
-import VulkanBackend.Utils.ThreadPool;
+import VulkanShared.ThreadPool;
 
 export namespace VulkanEngine {
 

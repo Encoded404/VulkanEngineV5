@@ -13,6 +13,7 @@ import vulkan_hpp;
 import Shaders.Engine.MainIndirVert;
 import Shaders.Engine.StandardMeshFrag;
 import VulkanEngine.MeshManager;
+import VulkanEngine.EngineBootstrap;
 
 namespace VulkanEngine::Game {
 
@@ -23,12 +24,8 @@ GameEngine::~GameEngine() {
 }
 
 bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const GameConfig& config) {
-    bootstrap_ = ctx.bootstrap;
+    vk_backend_ = ctx.bootstrap;
     config_ = config;
-    auto& backend = ctx.bootstrap->GetBackend();
-
-    missing_texture_ = DefaultTextureFactory::DefaultTextureFactory::CreateCheckerboard(resource_manager_);
-    fallback_handle_ = ResourceHandle<TextureResource>(ResourceId{"checkerboard_default"}, &resource_manager_);
 
     vert_spv_holder_ = std::vector<std::uint32_t>{
         Shaders::Engine::MainIndirVert::GetSpirvWords().begin(),
@@ -37,38 +34,7 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
         Shaders::Engine::StandardMeshFrag::GetSpirvWords().begin(),
         Shaders::Engine::StandardMeshFrag::GetSpirvWords().end()};
 
-    bindless_mgr_ = std::make_unique<BindlessManager::BindlessManager>();
-    if (!bindless_mgr_->Initialize(backend)) {
-        return false;
-    }
-
-    GpuResources::HeapConfig heap_config{};
-    heap_config.block_size = ctx.geometry_buffer_size_mb << 20;
-    if (!vertex_heap_.Initialize(backend, heap_config, "vertex")) return false;
-    if (!index_heap_.Initialize(backend, heap_config, "index")) return false;
-    if (!staging_mgr_.Initialize(backend)) return false;
-
-    {
-        GpuResources::HeapConfig dynamic_heap_config{};
-        dynamic_heap_config.block_size = 32ULL << 20;
-        dynamic_heap_config.memory_flags =
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent;
-
-        for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT_DYN; ++i) {
-            if (!dynamic_vertex_heaps_[i].Initialize(backend, dynamic_heap_config,
-                "dynamic_vertex_fifo" + std::to_string(i))) return false;
-            if (!dynamic_index_heaps_[i].Initialize(backend, dynamic_heap_config,
-                "dynamic_index_fifo" + std::to_string(i))) return false;
-        }
-    }
-
-    mesh_manager_ = std::make_unique<MeshManager>();
-    if (!mesh_manager_->Initialize(backend, &vertex_heap_, &index_heap_,
-                                   &staging_mgr_,
-                                   dynamic_vertex_heaps_.data(),
-                                   dynamic_index_heaps_.data(),
-                                   FRAMES_IN_FLIGHT_DYN)) {
+    if (!bootstrap_.Initialize(ctx_, config, *ctx.bootstrap)) {
         return false;
     }
 
@@ -83,7 +49,7 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
         reinterpret_cast<const uint8_t*>(tex->GetPixels().data()),
         tex->GetWidth(), tex->GetHeight());
     if (gpu_tex.IsValid()) {
-        return bindless_mgr_->AllocateTextureSlot(std::move(gpu_tex), tex->GetId());
+        return ctx_.bindless_mgr->AllocateTextureSlot(std::move(gpu_tex), tex->GetId());
     }
     LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId().value + ", using fallback");
     return 0;
@@ -91,7 +57,7 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
 
 uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path) {
     auto tex_handle = SceneLoader::SceneLoader::LoadTextureFromPath(
-        resource_manager_, path, fallback_handle_);
+        ctx_.resource_manager, path, ctx_.fallback_handle);
     if (tex_handle.IsValid() && tex_handle->HasPixels()) {
         return UploadTextureToBindless(ctx, tex_handle.Get());
     }
@@ -105,13 +71,13 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     auto& backend = ctx.bootstrap->GetBackend();
 
     constexpr std::uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
-    scene_renderer_ = std::make_unique<SceneRenderer::SceneRenderer>();
-    if (!scene_renderer_->Initialize(backend, vertex_heap_, initial_indirection_entries)) {
+    ctx_.scene_renderer = std::make_unique<SceneRenderer::SceneRenderer>();
+    if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_indirection_entries)) {
         LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
         return false;
     }
 
-    technique_mgr_ = std::make_unique<TechniqueManager::TechniqueManager>();
+    ctx_.technique_mgr = std::make_unique<TechniqueManager::TechniqueManager>();
     {
         auto resolve_spv = [](const std::span<const std::uint32_t>& override_spv,
                               const std::vector<std::uint32_t>& default_spv) {
@@ -122,31 +88,31 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         };
         auto vert = resolve_spv(vert_override, vert_spv_holder_);
         auto frag = resolve_spv(frag_override, frag_spv_holder_);
-        main_technique_id_ = technique_mgr_->RegisterTechnique(
+        main_technique_id_ = ctx_.technique_mgr->RegisterTechnique(
             *ctx.bootstrap, vert, frag, config_.pipeline_config,
-        bindless_mgr_->GetLayout(),
-        scene_renderer_->GetSubmeshVertexDataLayout(),
-        scene_renderer_->GetRawVertexLayout(),
-        scene_renderer_->GetIndirectionLayout());
+        ctx_.bindless_mgr->GetLayout(),
+        ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+        ctx_.scene_renderer->GetRawVertexLayout(),
+        ctx_.scene_renderer->GetIndirectionLayout());
     }
 
-    MaterialManager::MaterialManager::Initialize(&staging_mgr_);
-    MaterialManager::MaterialManager::Get().SetTechniqueManager(technique_mgr_.get());
+    MaterialManager::MaterialManager::Initialize(&ctx_.staging_mgr);
+    MaterialManager::MaterialManager::Get().SetTechniqueManager(ctx_.technique_mgr.get());
 
     // Register fallback material (ID 0): main technique, bindless checkerboard
-    const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, missing_texture_.get());
+    const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, ctx_.missing_texture.get());
     MaterialManager::MaterialDefinition fallback_def{};
     fallback_def.technique_id = TechniqueManager::TechniqueId{main_technique_id_};
     fallback_def.texture_slot = BindlessManager::TextureSlot{static_cast<uint16_t>(fallback_slot)};
     fallback_def.blend_mode = MaterialManager::BlendMode::Opaque;
-    [[maybe_unused]] const auto fallback_mat_id = MaterialManager::MaterialManager::Get().RegisterMaterial(fallback_def, resource_manager_, *bindless_mgr_);
+    [[maybe_unused]] const auto fallback_mat_id = MaterialManager::MaterialManager::Get().RegisterMaterial(fallback_def, ctx_.resource_manager, *ctx_.bindless_mgr);
 
-    renderer_ = std::make_unique<Renderer::Renderer>();
-    renderer_->Initialize(*ctx.bootstrap, config_.renderer_config);
+    ctx_.renderer = std::make_unique<Renderer::Renderer>();
+    ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config);
 
     if (config_.enable_imgui) {
-        imgui_backend_ = VulkanBackend::ImGui::CreateImGuiBackend();
-        imgui_system_ = std::make_unique<ImGui::ImGuiSystem>(imgui_backend_);
+        ctx_.imgui_backend = VulkanBackend::ImGui::CreateImGuiBackend();
+        ctx_.imgui_system = std::make_unique<ImGui::ImGuiSystem>(ctx_.imgui_backend);
 
         const auto surface_format = backend.GetSurfaceFormat();
         VulkanBackend::ImGui::ImGuiBackendConfig imgui_backend_config{};
@@ -163,13 +129,13 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         imgui_init_info.queue = backend.GetGraphicsQueue();
         imgui_init_info.api_version = vk::ApiVersion13;
 
-        [[maybe_unused]] const bool imgui_ok = imgui_system_->Initialize(imgui_init_info);
+        [[maybe_unused]] const bool imgui_ok = ctx_.imgui_system->Initialize(imgui_init_info);
 
         auto& platform_backend = ctx.platform->GetBackend();
         imgui_event_token_ = platform_backend.GetSdlEventProcessors().Register(
             [this](void* sdl_event) {
-                if (imgui_system_ && imgui_system_->IsInitialized()) {
-                    imgui_system_->ProcessSDLEvent(sdl_event);
+                if (ctx_.imgui_system && ctx_.imgui_system->IsInitialized()) {
+                    ctx_.imgui_system->ProcessSDLEvent(sdl_event);
                 }
             });
     }
@@ -182,20 +148,20 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
     const std::vector<VulkanEngine::GpuResources::MeshData>& meshes) {
     std::vector<UploadedMesh> result;
 
-    if (!mesh_manager_) return result;
+    if (!ctx_.mesh_manager) return result;
 
     std::vector<VulkanEngine::SubMesh> all_submeshes;
     std::unordered_set<std::uint32_t> vertex_buffers_updated;
     std::unordered_set<std::uint32_t> index_buffers_updated;
 
     for (const auto& mesh_data : meshes) {
-        auto handle = mesh_manager_->UploadPersistent(mesh_data);
+        auto handle = ctx_.mesh_manager->UploadPersistent(mesh_data);
         if (!handle.IsValid()) {
             LOGIFACE_LOG(error, "UploadScene: failed to upload mesh");
             continue;
         }
 
-        const auto* info = mesh_manager_->GetMeshInfo(handle);
+        const auto* info = ctx_.mesh_manager->GetMeshInfo(handle);
         if (!info) continue;
 
         const std::uint32_t index_offset = static_cast<std::uint32_t>(
@@ -227,24 +193,24 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
 
         // Update SceneRenderer descriptors for new heap blocks (all frames)
         if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
-            if (info->vertex_allocation.buffer_index < vertex_heap_.GetBufferCount()) {
-                scene_renderer_->UpdateAllFrameVertexBufferArrayElements(
+            if (info->vertex_allocation.buffer_index < ctx_.vertex_heap.GetBufferCount()) {
+                ctx_.scene_renderer->UpdateAllFrameVertexBufferArrayElements(
                     info->vertex_allocation.buffer_index,
-                    vertex_heap_.GetBuffer(info->vertex_allocation.buffer_index),
-                    vertex_heap_.GetConfig().block_size);
+                    ctx_.vertex_heap.GetBuffer(info->vertex_allocation.buffer_index),
+                    ctx_.vertex_heap.GetConfig().block_size);
             }
         }
         if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
-            if (info->index_allocation.buffer_index < index_heap_.GetBufferCount()) {
-                scene_renderer_->UpdateAllFrameIndexBufferArrayElements(
+            if (info->index_allocation.buffer_index < ctx_.index_heap.GetBufferCount()) {
+                ctx_.scene_renderer->UpdateAllFrameIndexBufferArrayElements(
                     info->index_allocation.buffer_index,
-                    index_heap_.GetBuffer(info->index_allocation.buffer_index),
-                    index_heap_.GetConfig().block_size);
+                    ctx_.index_heap.GetBuffer(info->index_allocation.buffer_index),
+                    ctx_.index_heap.GetConfig().block_size);
             }
         }
     }
 
-    scene_renderer_->SetSubmeshes(all_submeshes);
+    ctx_.scene_renderer->SetSubmeshes(all_submeshes);
     scene_valid_ = true;
 
     return result;
@@ -275,8 +241,8 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     ctx.bootstrap->GetBackend().GetComponentRegistry().UpdateAllComponentsAsync(ctx.frame.delta_time);
 
-    if (!mesh_manager_) {
-        LOGIFACE_LOG(warn, "Game::FrameUpdate: mesh_manager_ is null, skipping ProcessFrame");
+    if (!ctx_.mesh_manager) {
+        LOGIFACE_LOG(warn, "Game::FrameUpdate: mesh_manager is null, skipping ProcessFrame");
         return;
     }
     if (!scene_valid_) {
@@ -286,20 +252,20 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
 
     {
         const std::uint32_t frame_index = ctx.frame.image_index % 3;
-        mesh_render_system_.ProcessFrame(
+        ctx_.mesh_render_system.ProcessFrame(
             ctx.bootstrap->GetBackend().GetComponentRegistry(),
-            mesh_registry_,
-            *mesh_manager_,
-            *scene_renderer_,
-            vertex_heap_,
-            index_heap_,
+            ctx_.mesh_registry,
+            *ctx_.mesh_manager,
+            *ctx_.scene_renderer,
+            ctx_.vertex_heap,
+            ctx_.index_heap,
             frame_index);
     }
 }
 
 void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext& ctx) {
-    if (!renderer_) {
-        LOGIFACE_LOG(warn, "Game::FrameRender: renderer_ is null, skipping");
+    if (!ctx_.renderer) {
+        LOGIFACE_LOG(warn, "Game::FrameRender: renderer is null, skipping");
         return;
     }
     if (!camera_) {
@@ -311,73 +277,38 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
         return;
     }
 
-    if (mesh_manager_) {
-        mesh_manager_->EndFrame(ctx.frame.image_index % 3);
+    if (ctx_.mesh_manager) {
+        ctx_.mesh_manager->EndFrame(ctx.frame.image_index % 3);
     }
 
     // Flush dirty material data to GPU before rendering
     MaterialManager::MaterialManager::Get().FlushDirtyMaterials();
 
-    renderer_->RenderFrame(*ctx.bootstrap,
-                           ctx.bootstrap->GetBackend().GetComponentRegistry(),
-                           *camera_,
-                           *technique_mgr_,
-                           *bindless_mgr_,
-                           *scene_renderer_,
-                           imgui_system_.get(),
-                           ctx.frame.image_index);
+    ctx_.renderer->RenderFrame(*ctx.bootstrap,
+                               ctx.bootstrap->GetBackend().GetComponentRegistry(),
+                               *camera_,
+                               *ctx_.technique_mgr,
+                               *ctx_.bindless_mgr,
+                               *ctx_.scene_renderer,
+                               ctx_.imgui_system.get(),
+                               ctx.frame.image_index);
 }
 
 void GameEngine::Shutdown() {
     if (!initialized_) return;
 
-    if (bootstrap_) {
-        try {
-            bootstrap_->GetBackend().GetDevice().waitIdle();
-        } catch (...) { 
-            LOGIFACE_LOG(warn, "Exception during GPU wait idle in Game shutdown");
-        }
+    if (vk_backend_) {
+        bootstrap_.Shutdown(ctx_, *vk_backend_);
     }
 
-    if (renderer_) {
-        renderer_->Shutdown();
-        renderer_.reset();
-    }
-    if (imgui_system_) {
-        imgui_system_->Shutdown();
-        imgui_system_.reset();
-    }
     imgui_event_token_ = {};
-    if (scene_renderer_) {
-        scene_renderer_->Shutdown();
-        scene_renderer_.reset();
-    }
-    mesh_registry_.Shutdown();
-    if (mesh_manager_) {
-        mesh_manager_->Shutdown();
-        mesh_manager_.reset();
-    }
-    for (auto& heap : dynamic_vertex_heaps_) heap.Shutdown();
-    for (auto& heap : dynamic_index_heaps_) heap.Shutdown();
-    staging_mgr_.Shutdown();
-    vertex_heap_.Shutdown();
-    index_heap_.Shutdown();
-    if (bindless_mgr_) {
-        bindless_mgr_->Shutdown();
-        bindless_mgr_.reset();
-    }
-    MaterialManager::MaterialManager::Shutdown();
-    if (technique_mgr_) {
-        technique_mgr_->Shutdown();
-        technique_mgr_.reset();
-    }
+
     if (scene_valid_) {
         scene_valid_ = false;
     }
 
     initialized_ = false;
-    bootstrap_ = nullptr;
+    vk_backend_ = nullptr;
 }
 
 } // namespace VulkanEngine::Game
-

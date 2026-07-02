@@ -96,6 +96,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     rendering/SceneRendererFrame.cpp
     rendering/BindlessManager/BindlessManager.cpp
     core/Game.cpp
+    core/EngineBootstrap.cpp
 )
 
 # Compile slang shaders to SPIR-V + generate C++20 modules with #embed
@@ -178,6 +179,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             rendering/BindlessManager/BindlessManager.cppm
             rendering/BindlessManager/TextureSlot.cppm
             core/Game.cppm
+            core/EngineContext.cppm
+            core/EngineBootstrap.cppm
     )
     # Generated slang shader modules
     if(_gen_shader_mods)

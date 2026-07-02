@@ -8,13 +8,14 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Component;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
+import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::SceneRenderer {
 
-class MainPass {
+class MainPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
     MainPass() = default;
-    ~MainPass() = default;
+    ~MainPass() override = default;
 
     void Execute(vk::CommandBuffer cmd,
                  VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
@@ -25,6 +26,11 @@ public:
                  vk::Buffer technique_draw_commands_buffer,
                  std::uint32_t width, std::uint32_t height,
                  std::uint32_t entity_count);
+
+    // IPipelinePass overrides
+    void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
+    void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                 vk::CommandBuffer cmd) override;
 };
 
 } // namespace VulkanEngine::SceneRenderer

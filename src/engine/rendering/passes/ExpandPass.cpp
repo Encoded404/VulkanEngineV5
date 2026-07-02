@@ -14,6 +14,7 @@ import Shaders.Engine.ExpandComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -101,5 +102,10 @@ void ExpandPass::Execute(vk::CommandBuffer cmd,
                        0, sizeof(ExpandPC), &pc);
     cmd.dispatch((cnt + 63) / 64, 1, 1);
 }
+
+void ExpandPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void ExpandPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                          vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

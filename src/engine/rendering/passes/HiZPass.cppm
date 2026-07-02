@@ -6,6 +6,7 @@ import std;
 import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
+import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -14,10 +15,10 @@ inline constexpr std::uint32_t HIZ_BATCH = 2;
 
 struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
 
-class HiZPass {
+class HiZPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
     HiZPass() = default;
-    ~HiZPass();
+    ~HiZPass() override;
 
     HiZPass(const HiZPass&) = delete;
     HiZPass& operator=(const HiZPass&) = delete;
@@ -34,6 +35,11 @@ public:
     [[nodiscard]] vk::DescriptorSetLayout GetDescriptorSetLayout() const {
         return *descriptor_layout_;
     }
+
+    // IPipelinePass overrides
+    void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
+    void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                 vk::CommandBuffer cmd) override;
 
 private:
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};

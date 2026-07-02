@@ -10,6 +10,7 @@ import vulkan_hpp;
 import Shaders.Engine.HizGenComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -104,5 +105,10 @@ void HiZPass::Execute(vk::CommandBuffer cmd,
                             {}, hiz_mb, {}, {});
     }
 }
+
+void HiZPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void HiZPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                       vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

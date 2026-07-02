@@ -7,6 +7,7 @@ import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
+import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -16,10 +17,10 @@ inline constexpr std::uint32_t MAX_BLOCKS = 1024;
 struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
 struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
 
-class CollectPass {
+class CollectPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
     CollectPass() = default;
-    ~CollectPass();
+    ~CollectPass() override;
     CollectPass(const CollectPass&) = delete;
     CollectPass& operator=(const CollectPass&) = delete;
 
@@ -41,6 +42,11 @@ public:
 
     [[nodiscard]] vk::DescriptorSetLayout GetCountCompactLayout() const { return *collect_layout_; }
     [[nodiscard]] vk::DescriptorSetLayout GetWriteLayout() const { return *write_layout_; }
+
+    // IPipelinePass overrides
+    void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
+    void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                 vk::CommandBuffer cmd) override;
 
 private:
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};

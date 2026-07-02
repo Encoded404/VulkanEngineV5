@@ -12,6 +12,7 @@ import Shaders.Engine.CollectWriteComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -229,5 +230,10 @@ void CollectPass::Execute(vk::CommandBuffer cmd,
     cmd.pushConstants(*write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute, 0, sizeof(WritePC), &pc2);
     cmd.dispatch(1, 1, 1);
 }
+
+void CollectPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void CollectPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                           vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

@@ -10,6 +10,7 @@ import logiface;
 import vulkan_hpp;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -85,5 +86,10 @@ void MainPass::Execute(vk::CommandBuffer cmd,
                      std::to_string(draw_cmd_offset));
     }
 }
+
+void MainPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void MainPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                        vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

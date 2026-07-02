@@ -6,15 +6,16 @@ import std;
 import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
+import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::SceneRenderer {
 
 struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; };
 
-class OcclusionPass {
+class OcclusionPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
     OcclusionPass() = default;
-    ~OcclusionPass();
+    ~OcclusionPass() override;
     OcclusionPass(const OcclusionPass&) = delete;
     OcclusionPass& operator=(const OcclusionPass&) = delete;
 
@@ -26,6 +27,11 @@ public:
                  std::uint32_t hiz_width, std::uint32_t hiz_height);
 
     [[nodiscard]] vk::DescriptorSetLayout GetDescriptorSetLayout() const { return *descriptor_layout_; }
+
+    // IPipelinePass overrides
+    void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
+    void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                 vk::CommandBuffer cmd) override;
 
 private:
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};

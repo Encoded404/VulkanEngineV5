@@ -10,6 +10,7 @@ import vulkan_hpp;
 import Shaders.Engine.DepthIndirVert;
 import Shaders.Engine.DepthPrepassFrag;
 import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -82,5 +83,10 @@ void DepthPrePass::Execute(vk::CommandBuffer cmd,
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout_, 0, ds, {});
     cmd.drawIndirect(draw_count_buffer, 0, 1, sizeof(vk::DrawIndirectCommand));
 }
+
+void DepthPrePass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void DepthPrePass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                            vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

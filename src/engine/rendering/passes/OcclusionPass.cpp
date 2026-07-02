@@ -10,6 +10,7 @@ import vulkan_hpp;
 import Shaders.Engine.OcclusionCullComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -95,5 +96,10 @@ void OcclusionPass::Execute(vk::CommandBuffer cmd, vk::DescriptorSet occlusion_s
                        0, sizeof(OccPC), &pc);
     cmd.dispatch((entity_count + 63) / 64, 1, 1);
 }
+
+void OcclusionPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+
+void OcclusionPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
+                             vk::CommandBuffer /*cmd*/) {}
 
 } // namespace VulkanEngine::SceneRenderer

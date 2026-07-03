@@ -105,6 +105,9 @@ public:
     [[nodiscard]] std::uint32_t GetCurrentEntityCount() const { return current_entity_count_; }
     void SetCurrentEntityCount(std::uint32_t count) { current_entity_count_ = count; }
 
+    [[nodiscard]] const glm::mat4& GetViewProj() const { return view_proj_; }
+    void SetViewProj(const glm::mat4& vp) { view_proj_ = vp; }
+
     [[nodiscard]] vk::Image GetHizImage(std::uint32_t frame_index) const {
         const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
         return static_cast<vk::Image>(*frame.hiz_image);
@@ -241,6 +244,7 @@ private:
 
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames_;
     std::uint32_t current_entity_count_ = 0;
+    glm::mat4 view_proj_{1.0f};
 };
 
 }

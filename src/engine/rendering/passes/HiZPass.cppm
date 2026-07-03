@@ -7,6 +7,7 @@ import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -17,7 +18,7 @@ struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32
 
 class HiZPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    HiZPass() = default;
+    HiZPass(SceneRenderer& sr);
     ~HiZPass() override;
 
     HiZPass(const HiZPass&) = delete;
@@ -42,6 +43,8 @@ public:
                  vk::CommandBuffer cmd) override;
 
 private:
+    SceneRenderer& scene_renderer_;
+
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> descriptor_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};

@@ -9,12 +9,13 @@ import VulkanBackend.Component;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
 class MainPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    MainPass() = default;
+    MainPass(SceneRenderer& sr);
     ~MainPass() override = default;
 
     void Execute(vk::CommandBuffer cmd,
@@ -31,6 +32,9 @@ public:
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;
+
+private:
+    SceneRenderer& scene_renderer_;
 };
 
 } // namespace VulkanEngine::SceneRenderer

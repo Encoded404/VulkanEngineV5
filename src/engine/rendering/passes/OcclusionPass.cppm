@@ -7,6 +7,7 @@ import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -14,7 +15,7 @@ struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWi
 
 class OcclusionPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    OcclusionPass() = default;
+    OcclusionPass(SceneRenderer& sr);
     ~OcclusionPass() override;
     OcclusionPass(const OcclusionPass&) = delete;
     OcclusionPass& operator=(const OcclusionPass&) = delete;
@@ -34,6 +35,8 @@ public:
                  vk::CommandBuffer cmd) override;
 
 private:
+    SceneRenderer& scene_renderer_;
+
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> descriptor_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};

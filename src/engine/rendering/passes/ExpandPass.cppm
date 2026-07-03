@@ -12,6 +12,8 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 
+import VulkanEngine.SceneRenderer;
+
 export namespace VulkanEngine::SceneRenderer {
 
 inline constexpr std::uint32_t MAX_BLOCKS = 1024;
@@ -20,7 +22,7 @@ struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32
 
 class ExpandPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    ExpandPass() = default;
+    ExpandPass(SceneRenderer& sr);
     ~ExpandPass() override;
 
     ExpandPass(const ExpandPass&) = delete;
@@ -46,6 +48,8 @@ public:
                  vk::CommandBuffer cmd) override;
 
 private:
+    SceneRenderer& scene_renderer_;
+
     std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> descriptor_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};

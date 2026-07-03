@@ -14,6 +14,8 @@ import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
 
+MainPass::MainPass(SceneRenderer& sr) : scene_renderer_(sr) {}
+
 void MainPass::Execute(vk::CommandBuffer cmd,
                         VulkanEngine::TechniqueManager::TechniqueManager& tm,
                         VulkanEngine::BindlessManager::BindlessManager& bm,

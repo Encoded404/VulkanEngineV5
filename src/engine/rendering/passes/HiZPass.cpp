@@ -11,9 +11,11 @@ import Shaders.Engine.HizGenComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
+HiZPass::HiZPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 HiZPass::~HiZPass() { Shutdown(); }
 
 bool HiZPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
@@ -106,9 +108,19 @@ void HiZPass::Execute(vk::CommandBuffer cmd,
     }
 }
 
-void HiZPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+void HiZPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
+    auto depth_buffer = ctx.ReadDepthBuffer();
+    auto hiz_image = ctx.ImportImage("hiz-image");
+    ctx.AddRead(depth_buffer, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
+    ctx.AddWrite(hiz_image);
+}
 
-void HiZPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
-                       vk::CommandBuffer /*cmd*/) {}
+void HiZPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                       vk::CommandBuffer cmd) {
+    scene_renderer_.DispatchHiZGen(cmd,
+        ctx.render_extent.width, ctx.render_extent.height,
+        ctx.frame_index, ctx.swapchain_image_index);
+}
 
 } // namespace VulkanEngine::SceneRenderer

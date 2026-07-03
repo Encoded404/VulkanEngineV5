@@ -8,6 +8,7 @@ import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -19,7 +20,7 @@ struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCou
 
 class CollectPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    CollectPass() = default;
+    CollectPass(SceneRenderer& sr);
     ~CollectPass() override;
     CollectPass(const CollectPass&) = delete;
     CollectPass& operator=(const CollectPass&) = delete;
@@ -49,6 +50,8 @@ public:
                  vk::CommandBuffer cmd) override;
 
 private:
+    SceneRenderer& scene_renderer_;
+
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
     std::unique_ptr<vk::raii::DescriptorSetLayout> write_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_pool_;

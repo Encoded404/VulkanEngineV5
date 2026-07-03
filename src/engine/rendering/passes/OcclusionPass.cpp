@@ -11,11 +11,13 @@ import Shaders.Engine.OcclusionCullComp;
 import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
 static constexpr std::uint32_t MAX_BLOCKS = 1024;
 
+OcclusionPass::OcclusionPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 OcclusionPass::~OcclusionPass() { Shutdown(); }
 
 bool OcclusionPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
@@ -97,9 +99,19 @@ void OcclusionPass::Execute(vk::CommandBuffer cmd, vk::DescriptorSet occlusion_s
     cmd.dispatch((entity_count + 63) / 64, 1, 1);
 }
 
-void OcclusionPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+void OcclusionPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
+    auto hiz_image = ctx.ImportImage("hiz-image");
+    auto scene_buffers = ctx.ImportBuffer("scene-buffers");
+    ctx.AddRead(hiz_image, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
+    ctx.AddRead(scene_buffers, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
+    ctx.AddWrite(scene_buffers);
+}
 
-void OcclusionPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
-                             vk::CommandBuffer /*cmd*/) {}
+void OcclusionPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                             vk::CommandBuffer cmd) {
+    scene_renderer_.DispatchOcclusion(cmd, ctx.frame_index);
+}
 
 } // namespace VulkanEngine::SceneRenderer

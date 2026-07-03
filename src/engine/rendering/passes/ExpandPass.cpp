@@ -15,16 +15,17 @@ import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
+ExpandPass::ExpandPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 ExpandPass::~ExpandPass() { Shutdown(); }
 
 bool ExpandPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
                          vk::DescriptorSetLayout bindless_index_layout) {
     const auto& dev = be.GetDevice();
 
-    // Descriptor set layout: 6 bindings (4 block arrays + 2 single buffers)
     {
         std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
         for (std::uint32_t i = 0; i < 4; ++i) {
@@ -45,13 +46,12 @@ bool ExpandPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *descriptor_layout_, "expand-layout");
 
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = 3; // FRAMES_IN_FLIGHT
+        pc.max_sets = 3;
         pc.max_storage_buffers = 3 * (MAX_BLOCKS * 4 + 2);
         descriptor_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         descriptor_pool_->SetDebugName(dev, "expand-pool");
     }
 
-    // Pipeline layout: set 0 = expand layout, set 1 = bindless index
     vk::PushConstantRange pr{};
     pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
     pr.size = sizeof(ExpandPC);
@@ -83,6 +83,13 @@ void ExpandPass::Shutdown() {
     descriptor_layout_.reset();
 }
 
+void ExpandPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
+    auto scene_buffers = ctx.ImportBuffer("scene-buffers");
+    auto draw_indirect = ctx.ImportBuffer("draw-indirect");
+    ctx.AddWrite(scene_buffers);
+    ctx.AddWrite(draw_indirect);
+}
+
 void ExpandPass::Execute(vk::CommandBuffer cmd,
                           vk::DescriptorSet expand_set,
                           vk::DescriptorSet bindless_index_set,
@@ -103,9 +110,12 @@ void ExpandPass::Execute(vk::CommandBuffer cmd,
     cmd.dispatch((cnt + 63) / 64, 1, 1);
 }
 
-void ExpandPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
-
-void ExpandPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
-                          vk::CommandBuffer /*cmd*/) {}
+void ExpandPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                          vk::CommandBuffer cmd) {
+    const std::uint32_t cnt = scene_renderer_.GetCurrentEntityCount();
+    if (cnt == 0) return;
+    scene_renderer_.DispatchExpand(cmd, cnt, scene_renderer_.GetViewProj(),
+                                   ctx.frame_index);
+}
 
 } // namespace VulkanEngine::SceneRenderer

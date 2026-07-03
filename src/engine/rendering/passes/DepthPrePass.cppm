@@ -6,12 +6,13 @@ import std;
 import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
 class DepthPrePass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
-    DepthPrePass() = default;
+    DepthPrePass(SceneRenderer& sr);
     ~DepthPrePass() override;
     DepthPrePass(const DepthPrePass&) = delete;
     DepthPrePass& operator=(const DepthPrePass&) = delete;
@@ -41,6 +42,8 @@ public:
                  vk::CommandBuffer cmd) override;
 
 private:
+    SceneRenderer& scene_renderer_;
+
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};
     std::unique_ptr<vk::raii::Pipeline> pipeline_{};
 };

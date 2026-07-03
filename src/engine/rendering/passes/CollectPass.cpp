@@ -13,6 +13,7 @@ import VulkanBackend.Utils.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
+import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -31,6 +32,7 @@ namespace {
     }
 }
 
+CollectPass::CollectPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 CollectPass::~CollectPass() { Shutdown(); }
 
 bool CollectPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
@@ -231,9 +233,18 @@ void CollectPass::Execute(vk::CommandBuffer cmd,
     cmd.dispatch(1, 1, 1);
 }
 
-void CollectPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+void CollectPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
+    auto scene_buffers = ctx.ImportBuffer("scene-buffers");
+    auto draw_indirect = ctx.ImportBuffer("draw-indirect");
+    ctx.AddRead(scene_buffers, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
+    ctx.AddWrite(scene_buffers);
+    ctx.AddWrite(draw_indirect);
+}
 
-void CollectPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
-                           vk::CommandBuffer /*cmd*/) {}
+void CollectPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
+                           vk::CommandBuffer cmd) {
+    scene_renderer_.DispatchCollect(cmd, ctx.frame_index);
+}
 
 } // namespace VulkanEngine::SceneRenderer

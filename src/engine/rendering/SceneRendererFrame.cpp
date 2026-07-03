@@ -56,8 +56,9 @@ namespace VulkanEngine::SceneRenderer {
 
 void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                                     VulkanEngine::ComponentRegistry& /*reg*/,
-                                    const glm::mat4& /*vm*/, const glm::mat4& /*pm*/,
+                                    const glm::mat4& vm, const glm::mat4& pm,
                                     std::uint32_t, std::uint32_t, std::uint32_t fi) {
+    view_proj_ = pm * vm;
     const std::uint32_t f = fi % FRAMES_IN_FLIGHT;
     auto& fr = frames_[f];
     const auto& dev = backend_->GetDevice();

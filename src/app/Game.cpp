@@ -86,11 +86,13 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const std::uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
     constexpr auto viking_blend = VulkanEngine::MaterialManager::BlendMode::Transparent;
 
-    const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialManager::Get().RegisterMaterial({
-        .technique_id = engine_game_.GetMainTechniqueId(),
-        .texture_slot = VulkanEngine::BindlessManager::TextureSlot{static_cast<uint16_t>(tex_slot)},
-        .blend_mode = viking_blend
-    }, engine_game_.GetResourceManager(), engine_game_.GetBindlessManager());
+    auto viking_handle = engine_game_.GetContext().GetMaterialManager().Register<VulkanEngine::TechniqueManager::DefaultMeshTechnique>(
+        viking_blend,
+        VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData{
+            .texture_slot = tex_slot,
+            .technique_id = engine_game_.GetMainTechniqueIdRaw()
+        });
+    const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialId{static_cast<std::uint16_t>(viking_handle.id())};
 
     // 4. Load meshes and register with MeshRegistry
     const std::vector<VulkanEngine::SceneLoader::MaterialId> viking_bindings = {viking_mat_id};

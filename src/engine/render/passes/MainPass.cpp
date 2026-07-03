@@ -45,47 +45,27 @@ void MainPass::Execute(vk::CommandBuffer cmd,
 
     for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
         auto* tech = tm.GetTechnique(t);
-        if (tech) {
-            auto pipeline = tech->GetPipeline();
-            auto layout = tech->GetPipelineLayout();
-            if (!pipeline || !layout) continue;
+        if (!tech) continue;
+        auto pipeline = tech->GetPipeline();
+        auto layout = tech->GetPipelineLayout();
+        if (!pipeline || !layout) continue;
 
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
-            std::array<vk::DescriptorSet, 16> ds{};
-            std::uint32_t slot = 0;
-            ds[slot++] = engine_set0;
-            ds[slot++] = engine_set1;
-            ds[slot++] = engine_set2;
-            ds[slot++] = engine_set3;
+        std::array<vk::DescriptorSet, 16> ds{};
+        std::uint32_t slot = 0;
+        ds[slot++] = engine_set0;
+        ds[slot++] = engine_set1;
+        ds[slot++] = engine_set2;
+        ds[slot++] = engine_set3;
 
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0,
-                                   vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()), {});
-
-            const vk::DeviceSize draw_cmd_offset =
-                static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
-            cmd.drawIndirect(technique_draw_commands_buffer, draw_cmd_offset, 1,
-                              sizeof(vk::DrawIndirectCommand));
-            continue;
-        }
-
-        // Legacy path
-        auto* pm = tm.GetGraphicsPipeline(t);
-        if (!pm) continue;
-        auto* pl = pm->GetPipeline();
-        auto* layout = pm->GetPipelineLayout();
-        if (!pl || !layout) continue;
-
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pl);
-        const std::array<vk::DescriptorSet, 4> ds{ engine_set0, engine_set1, engine_set2, engine_set3 };
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout, 0, ds, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0,
+                               vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()), {});
 
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
         cmd.drawIndirect(technique_draw_commands_buffer, draw_cmd_offset, 1,
                           sizeof(vk::DrawIndirectCommand));
-        LOGIFACE_LOG(trace, "  technique[" + std::to_string(t) + "] legacy drawIndirect offset=" +
-                     std::to_string(draw_cmd_offset));
     }
 }
 

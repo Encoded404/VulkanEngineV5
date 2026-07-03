@@ -15,68 +15,19 @@ import VulkanEngine.TechniqueManager;
 
 namespace VulkanEngine::MaterialManager {
 
-MaterialManager& MaterialManager::Get() {
-    static MaterialManager instance;
-    return instance;
-}
-
 void MaterialManager::Initialize(VulkanEngine::GpuResources::StagingManager* staging_mgr) {
-    auto& inst = Get();
-    inst.legacy_materials_.clear();
-    inst.materials_.clear();
-    inst.dirty_list_.clear();
-    inst.free_list_.clear();
-    inst.staging_mgr_ = staging_mgr;
+    materials_.clear();
+    dirty_list_.clear();
+    free_list_.clear();
+    staging_mgr_ = staging_mgr;
 }
 
 void MaterialManager::Shutdown() {
-    auto& inst = Get();
-    inst.legacy_materials_.clear();
-    inst.materials_.clear();
-    inst.dirty_list_.clear();
-    inst.free_list_.clear();
-    inst.staging_mgr_ = nullptr;
+    materials_.clear();
+    dirty_list_.clear();
+    free_list_.clear();
+    staging_mgr_ = nullptr;
 }
-
-// ── Legacy API ──
-
-MaterialId MaterialManager::RegisterMaterial(const MaterialDefinition& def,
-                                              VulkanEngine::ResourceManager& resource_mgr,
-                                              VulkanEngine::BindlessManager::BindlessManager& bindless_mgr) {
-    const auto id = static_cast<uint16_t>(legacy_materials_.size());
-    legacy_materials_.push_back(LegacyMaterialEntry{def});
-    LOGIFACE_LOG(debug, "Registered material ID " + std::to_string(id) + ": technique_id=" +
-                std::to_string(def.texture_slot.value) + " blend_mode=" + std::string(
-                    static_cast<std::size_t>(def.blend_mode) == 0 ? std::string_view{"Opaque"} :
-                    static_cast<std::size_t>(def.blend_mode) == 1 ? std::string_view{"Cutout"} :
-                    static_cast<std::size_t>(def.blend_mode) == 2 ? std::string_view{"Transparent"} :
-                    std::string_view{"Unknown"})
-               );
-
-    const auto* rid = bindless_mgr.GetTextureId(def.texture_slot.value);
-    if (rid != nullptr) {
-        auto* tex = resource_mgr.GetResource<VulkanEngine::TextureResource>(*rid);
-        if (tex != nullptr) {
-            ValidateTextureBlendMode(tex->GetAlphaAnalysis(), def.blend_mode, rid->value);
-        }
-    }
-
-    return MaterialId{id};
-}
-
-const MaterialDefinition& MaterialManager::GetMaterial(MaterialId id) const {
-    return legacy_materials_[id.value].def;
-}
-
-void MaterialManager::UpdateMaterialTextureSlot(MaterialId id, TextureSlot slot) {
-    legacy_materials_[id.value].def.texture_slot = slot;
-}
-
-void MaterialManager::UpdateMaterialTechnique(MaterialId id, TechniqueId tech_id) {
-    legacy_materials_[id.value].def.technique_id = tech_id;
-}
-
-// ── New API ──
 
 void MaterialManager::MarkDirty(MaterialId id) {
     if (id.value >= materials_.size()) return;

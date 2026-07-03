@@ -79,7 +79,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/ShaderLoader.cpp
     assets/DefaultTextures.cpp
     render/MeshUploadManager.cpp
-    render/MeshRendererSystem.cpp
     render/MeshGatherSystem.cpp
     render/MeshPipeline.cpp
     assets/SceneImport.cpp
@@ -149,7 +148,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             components/Camera.cppm
             components/MeshReference.cppm
             components/DynamicMesh.cppm
-            components/MeshRenderer.cppm
             assets/FileLoaders/Mesh/BinMeshAssembler.cppm
             assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm
@@ -171,7 +169,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/ShaderLoader.cppm
             assets/DefaultTextures.cppm
             render/MeshUploadManager.cppm
-            render/MeshRendererSystem.cppm
             render/MeshGatherSystem.cppm
             render/MeshPipeline.cppm
             assets/SceneImport.cppm
@@ -179,6 +176,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/Renderer.cppm
             render/techniques/TechniqueManager.cppm
             render/techniques/BaseTechnique.cppm
+            render/techniques/DefaultMeshTechnique.cppm
             render/techniques/TechniqueId.cppm
             render/materials/MaterialManager.cppm
             render/materials/MaterialId.cppm

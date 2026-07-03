@@ -238,64 +238,33 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                  " techniques=" + std::to_string(tm.GetTechniqueCount()));
 
     for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
-        // Try BaseTechnique first (new path)
         auto* tech = tm.GetTechnique(t);
-        if (tech) {
-            auto pipeline = tech->GetPipeline();
-            auto layout = tech->GetPipelineLayout();
-            if (!pipeline || !layout) continue;
+        if (!tech) continue;
+        auto pipeline = tech->GetPipeline();
+        auto layout = tech->GetPipelineLayout();
+        if (!pipeline || !layout) continue;
 
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
-            // Build descriptor set array for this technique
-            // Engine sets 0-3 at slots 0-3, then custom sets
-            std::array<vk::DescriptorSet, 16> ds{};
-            std::uint32_t slot = 0;
-            ds[slot++] = engine_set0;  // set 0: bindless textures
-            ds[slot++] = engine_set1;  // set 1: submesh vertex data
-            ds[slot++] = engine_set2;  // set 2: raw vertex buffers
-            ds[slot++] = engine_set3;  // set 3: indirection
+        std::array<vk::DescriptorSet, 16> ds{};
+        std::uint32_t slot = 0;
+        ds[slot++] = engine_set0;  // set 0: bindless textures
+        ds[slot++] = engine_set1;  // set 1: submesh vertex data
+        ds[slot++] = engine_set2;  // set 2: raw vertex buffers
+        ds[slot++] = engine_set3;  // set 3: indirection
 
-            // Custom sets (BlockArrays + Shared buffers)
-            // Note: GetDescriptorSet() for BlockArrays is not yet implemented;
-            // this is a placeholder for the full dynamic binding.
-            // For now, custom block arrays are not bound here.
-
-            cmd.bindDescriptorSets(
-                vk::PipelineBindPoint::eGraphics,
-                layout,
-                0,
-                vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()),
-                {}
-            );
-
-            const vk::DeviceSize draw_cmd_offset =
-                static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
-            cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
-                              draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
-            continue;
-        }
-
-        // Legacy path (GraphicsPipeline)
-        auto* pm = tm.GetGraphicsPipeline(t);
-        if (!pm) continue;
-        auto* pl = pm->GetPipeline();
-        auto* layout = pm->GetPipelineLayout();
-        if (!pl || !layout) continue;
-
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pl);
-
-        const std::array<vk::DescriptorSet, 4> ds{
-            engine_set0, engine_set1, engine_set2, engine_set3
-        };
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout, 0, ds, {});
+        cmd.bindDescriptorSets(
+            vk::PipelineBindPoint::eGraphics,
+            layout,
+            0,
+            vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()),
+            {}
+        );
 
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
         cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
                           draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
-        LOGIFACE_LOG(trace, "  technique[" + std::to_string(t) + "] drawIndirect offset=" +
-                     std::to_string(draw_cmd_offset));
     }
 }
 

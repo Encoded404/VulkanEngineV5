@@ -88,24 +88,29 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         };
         auto vert = resolve_spv(vert_override, vert_spv_holder_);
         auto frag = resolve_spv(frag_override, frag_spv_holder_);
-        main_technique_id_ = ctx_.technique_mgr->RegisterTechnique(
+
+        auto mesh_tech = std::make_unique<TechniqueManager::DefaultMeshTechnique>();
+        mesh_tech->CompileDefaultMesh(
             *ctx.bootstrap, vert, frag, config_.pipeline_config,
-        ctx_.bindless_mgr->GetLayout(),
-        ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-        ctx_.scene_renderer->GetRawVertexLayout(),
-        ctx_.scene_renderer->GetIndirectionLayout());
+            *ctx_.bindless_mgr->GetLayout(),
+            *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+            *ctx_.scene_renderer->GetRawVertexLayout(),
+            *ctx_.scene_renderer->GetIndirectionLayout());
+        auto tech_id = ctx_.technique_mgr->Register(std::move(mesh_tech));
+        main_technique_id_ = tech_id.value;
     }
 
-    MaterialManager::MaterialManager::Initialize(&ctx_.staging_mgr);
-    MaterialManager::MaterialManager::Get().SetTechniqueManager(ctx_.technique_mgr.get());
+    ctx_.material_mgr.Initialize(&ctx_.staging_mgr);
+    ctx_.material_mgr.SetTechniqueManager(ctx_.technique_mgr.get());
 
     // Register fallback material (ID 0): main technique, bindless checkerboard
     const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, ctx_.missing_texture.get());
-    MaterialManager::MaterialDefinition fallback_def{};
-    fallback_def.technique_id = TechniqueManager::TechniqueId{main_technique_id_};
-    fallback_def.texture_slot = BindlessManager::TextureSlot{static_cast<uint16_t>(fallback_slot)};
-    fallback_def.blend_mode = MaterialManager::BlendMode::Opaque;
-    [[maybe_unused]] const auto fallback_mat_id = MaterialManager::MaterialManager::Get().RegisterMaterial(fallback_def, ctx_.resource_manager, *ctx_.bindless_mgr);
+    [[maybe_unused]] auto fallback_handle = ctx_.material_mgr.Register<TechniqueManager::DefaultMeshTechnique>(
+        MaterialManager::BlendMode::Opaque,
+        TechniqueManager::DefaultMeshPerMaterialData{
+            .texture_slot = fallback_slot,
+            .technique_id = main_technique_id_
+        });
 
     ctx_.renderer = std::make_unique<Renderer::Renderer>();
     ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config);
@@ -259,6 +264,7 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
             *ctx_.scene_renderer,
             ctx_.vertex_heap,
             ctx_.index_heap,
+            ctx_.material_mgr,
             frame_index);
     }
 }
@@ -282,7 +288,7 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     }
 
     // Flush dirty material data to GPU before rendering
-    MaterialManager::MaterialManager::Get().FlushDirtyMaterials();
+    ctx_.material_mgr.FlushDirtyMaterials();
 
     ctx_.renderer->RenderFrame(*ctx.bootstrap,
                                ctx_.component_registry,

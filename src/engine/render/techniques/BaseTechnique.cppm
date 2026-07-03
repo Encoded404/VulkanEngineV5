@@ -107,7 +107,7 @@ public:
     // ── Shutdown — cleanup GPU resources ──
     void Shutdown();
 
-protected:
+public:
     BaseTechnique() = default;
 
     // ── Engine set usage (sets 0-3 are always bound at layout slots 0-3) ──

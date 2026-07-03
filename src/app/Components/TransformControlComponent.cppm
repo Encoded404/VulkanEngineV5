@@ -9,8 +9,6 @@ import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
-import VulkanEngine.BindlessManager.TextureSlot;
-import VulkanEngine.MaterialManager;
 
 export namespace App::Components {
 
@@ -27,8 +25,6 @@ public:
     glm::vec3 rotation_euler{0.0f, 0.0f, 0.0f};
     glm::quat rotation_quat{1.0f, 0.0f, 0.0f, 0.0f};
     int texture_slot = 0;
-
-    std::optional<VulkanEngine::MaterialManager::MaterialId> material_id{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     void Update(float /*delta_time*/) override {
@@ -39,17 +35,6 @@ public:
                 transform->rotation = glm::quat{glm::radians(rotation_euler)};
             } else {
                 transform->rotation = rotation_quat;
-            }
-        }
-
-        if (material_id.has_value()) {
-            auto& mat_mgr = VulkanEngine::MaterialManager::MaterialManager::Get();
-            auto& def = mat_mgr.GetMaterial(material_id.value());
-            auto current_slot = static_cast<int>(def.texture_slot.value);
-            if (current_slot != texture_slot) {
-                mat_mgr.UpdateMaterialTextureSlot(
-                    material_id.value(),
-                    VulkanEngine::BindlessManager::TextureSlot{static_cast<std::uint16_t>(texture_slot)});
             }
         }
     }

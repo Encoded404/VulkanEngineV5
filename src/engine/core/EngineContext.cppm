@@ -20,6 +20,7 @@ import VulkanBackend.ImGui;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.StandardMeshPipeline;
+import VulkanEngine.MaterialManager;
 
 export namespace VulkanEngine::Game {
 
@@ -63,6 +64,9 @@ struct EngineContext {
     std::unique_ptr<ImGui::ImGuiSystem> imgui_system;
     std::shared_ptr<VulkanBackend::ImGui::IImGuiBackend> imgui_backend;
 
+    // Material manager (no singleton — owned by context)
+    VulkanEngine::MaterialManager::MaterialManager material_mgr{};
+
     // Convenience accessors
     auto& GetBindlessManager() { return *bindless_mgr; }
     auto& GetSceneRenderer() { return *scene_renderer; }
@@ -72,6 +76,7 @@ struct EngineContext {
     auto& GetMeshRenderSystem() { return mesh_render_system; }
     auto& GetMeshRegistry() { return mesh_registry; }
     auto& GetComponentRegistry() { return component_registry; }
+    auto& GetMaterialManager() { return material_mgr; }
     auto& GetResourceManager() { return resource_manager; }
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }

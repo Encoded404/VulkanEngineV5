@@ -3,6 +3,7 @@ module;
 export module VulkanEngine.MaterialManager:MaterialHandle;
 
 import std;
+import std.compat;
 import VulkanEngine.TechniqueManager.TechniqueId;
 
 // ── Design ──
@@ -79,12 +80,12 @@ private:
     friend class MaterialManager;
 
     MaterialHandle(std::uint32_t id, MaterialEntry* entry,
-                   void (*mark_dirty)(std::uint32_t))
-        : id_(id), entry_(entry), mark_dirty_(mark_dirty) {}
+                   std::function<void(std::uint32_t)> mark_dirty)
+        : id_(id), entry_(entry), mark_dirty_(std::move(mark_dirty)) {}
 
     std::uint32_t id_ = 0;
     MaterialEntry* entry_ = nullptr;
-    void (*mark_dirty_)(std::uint32_t) = nullptr;
+    std::function<void(std::uint32_t)> mark_dirty_{};
 };
 
 } // namespace VulkanEngine::MaterialManager

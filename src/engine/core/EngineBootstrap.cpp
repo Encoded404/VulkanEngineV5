@@ -103,7 +103,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         ctx.bindless_mgr->Shutdown();
         ctx.bindless_mgr.reset();
     }
-    MaterialManager::MaterialManager::Shutdown();
+    ctx.material_mgr.Shutdown();
     if (ctx.technique_mgr) {
         ctx.technique_mgr->Shutdown();
         ctx.technique_mgr.reset();

@@ -27,33 +27,14 @@ export namespace VulkanEngine::MaterialManager {
     using TechniqueManager::TechniqueId;
     using BindlessManager::TextureSlot;
 
-// ── Old MaterialDefinition (kept for backward compatibility during migration) ──
-struct MaterialDefinition {
-    TechniqueId technique_id{0};
-    TextureSlot texture_slot{0};
-    BlendMode blend_mode{BlendMode::Opaque};
-};
-
 void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& alpha,
                               BlendMode mode,
                               std::string_view texture_name);
 
 class MaterialManager {
 public:
-    static MaterialManager& Get();
-    static void Initialize(VulkanEngine::GpuResources::StagingManager* staging_mgr = nullptr);
-    static void Shutdown();
-
-    // ── Legacy API (kept for backward compatibility) ──
-    [[nodiscard]] MaterialId RegisterMaterial(const MaterialDefinition& def,
-                                                VulkanEngine::ResourceManager& resource_mgr,
-                                                VulkanEngine::BindlessManager::BindlessManager& bindless_mgr);
-    [[nodiscard]] const MaterialDefinition& GetMaterial(MaterialId id) const;
-    void UpdateMaterialTextureSlot(MaterialId id, TextureSlot slot);
-    void UpdateMaterialTechnique(MaterialId id, TechniqueId tech_id);
-    [[nodiscard]] std::uint16_t GetMaterialCount() const { return static_cast<std::uint16_t>(legacy_materials_.size()); }
-
-    // ── New typed API ──
+    void Initialize(VulkanEngine::GpuResources::StagingManager* staging_mgr = nullptr);
+    void Shutdown();
 
     // Typed registration — technique type inferred from template.
     // Only PerMaterial binding data is passed; Shared data lives on the technique.
@@ -67,26 +48,6 @@ public:
         TechniqueId tech_id = technique_mgr_->template GetId<Tech>();
         auto* tech_ptr = technique_mgr_->GetTechnique(tech_id);
         assert(tech_ptr != nullptr && "Technique not registered for this type");
-
-        // Count PerMaterial bindings for argument validation
-        std::size_t per_material_count = 0;
-        for (std::size_t bi = 0; bi < tech_ptr->GetBindingCount(); ++bi) {
-            if (tech_ptr->GetBinding(bi).kind == TechniqueManager::BaseTechnique::BindingKind::PerMaterial)
-                ++per_material_count;
-        }
-        assert(sizeof...(Ts) == per_material_count &&
-               "Material data arg count must match PerMaterial binding count");
-
-        // Validate types match binding order
-        std::size_t idx = 0;
-        auto check_type = [&]<typename U>(const U&) {
-            assert(Tech::template HasBinding<U>() &&
-                   "Material data type not declared as PerMaterial by this technique");
-            assert(Tech::template GetOffset<U>() == idx &&
-                   "Material data types in wrong order");
-            idx += sizeof(U);
-        };
-        (check_type(data), ...);
 
         // ── Allocate material ID ──
         MaterialId id;
@@ -126,7 +87,6 @@ public:
                 }
             }
 
-            // Flush staging so the upload takes effect immediately
             staging_mgr_->Flush();
         }
 
@@ -134,7 +94,7 @@ public:
         materials_[id.value] = std::move(entry);
 
         return MaterialHandle<Tech>(id.value, entry_ptr,
-                                    [this](std::uint32_t mid) { MarkDirty(MaterialId{static_cast<std::uint16_t>(mid)}); });
+            [this](std::uint32_t mid) { MarkDirty(MaterialId{static_cast<std::uint16_t>(mid)}); });
     }
 
     // ── Batched GPU upload — called once per frame ──
@@ -159,17 +119,11 @@ public:
     MaterialManager(const MaterialManager&) = delete;
     MaterialManager& operator=(const MaterialManager&) = delete;
 
-private:
+    // Default constructible — owned by EngineContext
     MaterialManager() = default;
     ~MaterialManager() = default;
 
-    // ── Legacy storage ──
-    struct LegacyMaterialEntry {
-        MaterialDefinition def{};
-    };
-    std::vector<LegacyMaterialEntry> legacy_materials_{};
-
-    // ── New storage (pointer stability via unique_ptr) ──
+    // New typed storage (pointer stability via unique_ptr)
     std::vector<std::unique_ptr<MaterialEntry>> materials_{};
     std::vector<MaterialId> dirty_list_{};
     std::vector<MaterialId> free_list_{};

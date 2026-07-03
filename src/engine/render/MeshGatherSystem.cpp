@@ -24,6 +24,7 @@ import VulkanEngine.SceneRenderer;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.MaterialManager;
 import VulkanEngine.BindlessManager;
+import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 
 namespace VulkanEngine {
 
@@ -33,6 +34,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                      SceneRenderer::SceneRenderer& renderer,
                                      GpuResources::DeviceBufferHeap& vtx_heap,
                                      GpuResources::DeviceBufferHeap& idx_heap,
+                                     MaterialManager::MaterialManager& material_mgr,
                                      std::uint32_t frame_index) {
     // --- Phase 1: Collect static mesh entities ---
     std::vector<DrawEntity> static_ents;
@@ -187,13 +189,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 s2->index_start_packed = (index_buf_slot << 24) | sm.index_start;
                 s2->index_range = sm.index_count;
                 {
-                    const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                    // Packed: hi 16 = texture_slot (used as material_id by existing shaders),
-                    //         lo 16 = technique_id
-                    // Future: hi 16 = material_id when per-material StructuredBuffer is adopted.
+                    const auto& per_mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(sm.material_id);
                     s2->technique_material =
-                        (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
-                        mat_def.technique_id.value;
+                        (per_mat.texture_slot << 16) | per_mat.technique_id;
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
             }
@@ -294,12 +292,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->index_start_packed = packed_index;
                     s2->index_range = sm.index_count;
                     {
-                        const auto& mat_def = MaterialManager::MaterialManager::Get().GetMaterial(sm.material_id);
-                        // Packed: hi 16 = texture_slot (as material_id for existing shaders),
-                        //         lo 16 = technique_id
+                        const auto& per_mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(sm.material_id);
                         s2->technique_material =
-                            (static_cast<std::uint32_t>(mat_def.texture_slot.value) << 16) |
-                            mat_def.technique_id.value;
+                            (per_mat.texture_slot << 16) | per_mat.technique_id;
                     }
                     s2->vertex_info = packed_vertex;
                 } else {

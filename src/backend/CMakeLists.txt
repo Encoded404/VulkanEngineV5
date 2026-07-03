@@ -47,31 +47,31 @@ if(CMAKE_CONFIGURATION_TYPES)
 endif()
 
 set_source_files_properties(
-    Runtime/VulkanInstance.cpp
-    Runtime/VulkanDevice.cpp
-    Runtime/VulkanDispatchLoader.cpp
+    vulkan/VulkanInstance.cpp
+    vulkan/VulkanDevice.cpp
+    vulkan/DispatchLoader.cpp
     PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
 target_sources(${BACKEND_TARGET} PRIVATE
-    Event.cpp
-    Platform/SdlPlatform.cpp
-    Platform/SdlPlatformBackend.cpp
+    event/Event.cpp
+    platform/SdlWindow.cpp
+    platform/SdlWindowBackend.cpp
     RenderGraph/RenderGraph.cpp
-    RenderGraph/RenderGraphExecution.cpp
+    vulkan/RenderGraphExecutor.cpp
     RenderGraph/RenderGraphCompile.cpp
-    Runtime/FrameLoop.cpp
-    Runtime/VulkanBootstrap.cpp
-    Runtime/VulkanDispatchLoader.cpp
-    Runtime/VulkanBootstrapBackend.cpp
-    Runtime/VulkanInstance.cpp
-    Runtime/VulkanDevice.cpp
-    Runtime/VulkanSwapchain.cpp
-    Utils/MemoryUtils.cpp
-    Utils/ImageUtils.cpp
-    Utils/PipelineUtils.cpp
-    Utils/VulkanDebugUtils.cpp
-    ImGuiBackend.cpp
+    vulkan/FramePacer.cpp
+    vulkan/VulkanBootstrap.cpp
+    vulkan/DispatchLoader.cpp
+    vulkan/VulkanBootstrapBackend.cpp
+    vulkan/VulkanInstance.cpp
+    vulkan/VulkanDevice.cpp
+    vulkan/VulkanSwapchain.cpp
+    vulkan/MemoryUtils.cpp
+    vulkan/ImageUtils.cpp
+    vulkan/PipelineBuilder.cpp
+    vulkan/DebugUtils.cpp
+    imgui/ImGuiVulkanBackend.cpp
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -79,25 +79,24 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            Component.cppm
-            Event.cppm
-            Platform/SdlPlatform.cppm
-            Platform/SdlPlatformBackend.cppm
+            event/Event.cppm
+            platform/SdlWindow.cppm
+            platform/SdlWindowBackend.cppm
             RenderGraph/RenderGraph.cppm
             RenderGraph/GraphExecutionContext.cppm
-            RenderGraph/GraphExecutionBridge.cppm
-            Runtime/FrameLoop.cppm
-            Runtime/CommonTypes.cppm
-            Runtime/VulkanBootstrap.cppm
-            Runtime/VulkanBootstrapBackend.cppm
-            Runtime/VulkanInstance.cppm
-            Runtime/VulkanDevice.cppm
-            Runtime/VulkanSwapchain.cppm
-            Utils/MemoryUtils.cppm
-            Utils/ImageUtils.cppm
-            Utils/PipelineUtils.cppm
-            Utils/VulkanDebugUtils.cppm
-            ImGuiBackend.cppm
+            vulkan/RenderGraphContext.cppm
+            vulkan/FramePacer.cppm
+            vulkan/CommonTypes.cppm
+            vulkan/VulkanBootstrap.cppm
+            vulkan/VulkanBootstrapBackend.cppm
+            vulkan/VulkanInstance.cppm
+            vulkan/VulkanDevice.cppm
+            vulkan/VulkanSwapchain.cppm
+            vulkan/MemoryUtils.cppm
+            vulkan/ImageUtils.cppm
+            vulkan/PipelineBuilder.cppm
+            vulkan/DebugUtils.cppm
+            imgui/ImGuiVulkanBackend.cppm
     )
 endif()
 

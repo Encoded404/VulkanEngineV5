@@ -9,7 +9,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Component;
+export import VulkanEngine.ECS.ComponentRegistry;
 export import VulkanBackend.Runtime.VulkanBootstrap;
 export import VulkanShared.CallbackList;
 export import VulkanEngine.Components.Transform;

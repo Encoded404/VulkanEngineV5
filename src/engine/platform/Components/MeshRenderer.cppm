@@ -2,7 +2,7 @@ module;
 
 export module VulkanEngine.Components.MeshRenderer;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 
 export namespace VulkanEngine::Components {

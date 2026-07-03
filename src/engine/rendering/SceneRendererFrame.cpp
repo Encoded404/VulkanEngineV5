@@ -15,7 +15,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshReference;
 import VulkanEngine.GpuResources;

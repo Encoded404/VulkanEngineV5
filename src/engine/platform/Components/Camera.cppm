@@ -5,7 +5,7 @@ module;
 
 export module VulkanEngine.Components.Camera;
 
-export import VulkanBackend.Component;
+export import VulkanEngine.ECS.ComponentRegistry;
 
 import std;
 

@@ -6,7 +6,7 @@ import std;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Component;
+export import VulkanEngine.ECS.ComponentRegistry;
 export import VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanBackend::Runtime {

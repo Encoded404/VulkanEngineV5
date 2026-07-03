@@ -7,7 +7,7 @@ export module App.Components.TransformControlComponent;
 
 import std;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.BindlessManager.TextureSlot;
 import VulkanEngine.MaterialManager;

@@ -191,6 +191,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             rendering/BindlessManager/TextureSlot.cppm
             core/Game.cppm
             core/EngineContext.cppm
+            ecs/ComponentRegistry.cppm
             core/EngineBootstrap.cppm
             rendering/passes/ExpandPass.cppm
             rendering/passes/HiZPass.cppm

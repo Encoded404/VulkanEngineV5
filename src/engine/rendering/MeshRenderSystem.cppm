@@ -5,7 +5,7 @@ export module VulkanEngine.MeshRenderSystem;
 
 import std;
 
-export import VulkanBackend.Component;
+export import VulkanEngine.ECS.ComponentRegistry;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
 export import VulkanEngine.Components.DynamicMesh;

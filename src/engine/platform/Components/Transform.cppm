@@ -7,7 +7,7 @@ export module VulkanEngine.Components.Transform;
 
 import std;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 
 export namespace VulkanEngine::Components {
 

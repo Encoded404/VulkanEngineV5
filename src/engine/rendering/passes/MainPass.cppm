@@ -5,7 +5,7 @@ export module VulkanEngine.Render.Passes.MainPass;
 import std;
 import vulkan_hpp;
 import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.PipelinePass;

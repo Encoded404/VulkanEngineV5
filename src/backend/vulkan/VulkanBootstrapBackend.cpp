@@ -10,7 +10,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanBackend.Runtime.VulkanInstance;
 import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanSwapchain;

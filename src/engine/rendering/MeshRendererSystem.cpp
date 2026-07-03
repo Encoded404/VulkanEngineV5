@@ -8,7 +8,7 @@ module VulkanEngine.MeshDrawRecorder;
 
 import vulkan_hpp;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshRenderer;
 import VulkanEngine.GpuResources;

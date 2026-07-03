@@ -5,7 +5,7 @@ import std;
 import logiface;
 import test_logging;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 
 namespace {
 // Compile-time schema used to verify field metadata extraction in the tests.

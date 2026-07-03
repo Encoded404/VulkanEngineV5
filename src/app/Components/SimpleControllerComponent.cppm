@@ -16,7 +16,7 @@ import std;
 import logiface;
 
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Input;
 import VulkanEngine.Components.Transform;
 

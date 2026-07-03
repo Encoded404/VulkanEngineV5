@@ -10,7 +10,7 @@ add_executable(backend_tests
   event_system_tests.cpp
   component_system_tests.cpp
 )
-target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET})
+target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET} ${ENGINE_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_sources(backend_tests PRIVATE

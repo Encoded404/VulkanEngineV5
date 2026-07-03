@@ -4,7 +4,7 @@ export module VulkanEngine.Components.MeshReference;
 
 import std;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 
 constexpr std::uint32_t UINT32_MAX =
     std::numeric_limits<std::uint32_t>::max();

@@ -4,7 +4,7 @@ export module VulkanEngine.Components.DynamicMesh;
 
 import std;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.MeshManager;
 

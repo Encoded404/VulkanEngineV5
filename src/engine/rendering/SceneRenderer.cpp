@@ -11,7 +11,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Component;
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanBackend.Runtime.VulkanBootstrap;
 import VulkanBackend.Utils.MemoryUtils;
 import VulkanBackend.Utils.VulkanDebugUtils;

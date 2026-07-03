@@ -1,6 +1,6 @@
 module;
 
-export module VulkanBackend.Component;
+export module VulkanEngine.ECS.ComponentRegistry;
 
 import std;
 import std.compat;

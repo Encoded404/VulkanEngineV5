@@ -83,7 +83,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             platform/SdlWindow.cppm
             platform/SdlWindowBackend.cppm
             RenderGraph/RenderGraph.cppm
-            RenderGraph/GraphExecutionContext.cppm
+            vulkan/GraphExecutionContext.cppm
             vulkan/RenderGraphContext.cppm
             vulkan/FramePacer.cppm
             vulkan/CommonTypes.cppm

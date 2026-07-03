@@ -200,6 +200,10 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddCustomPass(
         // TODO: Populate FrameContext with per-frame data from user_data.
         // The user_data is passed through from RenderPipeline::Execute()
         // and will contain frame-specific resources (descriptor sets, etc.).
+        // Required fields to populate:
+        //   - view_proj: camera view-projection matrix (consumed by ExpandPass)
+        //   - render_extent: current swapchain extent
+        //   - frame_index, swapchain_image_index: from Renderer::RenderFrame()
         const VulkanEngine::PipelinePass::FrameContext frame_ctx{};
         pass_ptr->Execute(frame_ctx, cmd);
     };

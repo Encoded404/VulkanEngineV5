@@ -1,7 +1,5 @@
 module;
 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <logging/logging_macros.hpp>
 
@@ -31,7 +29,7 @@ bool ExpandPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
         for (std::uint32_t i = 0; i < 4; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].descriptorCount = SceneRenderer::MAX_BLOCKS;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
         for (std::uint32_t i = 4; i < 6; ++i) {
@@ -47,7 +45,7 @@ bool ExpandPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
 
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = 3;
-        pc.max_storage_buffers = 3 * (MAX_BLOCKS * 4 + 2);
+        pc.max_storage_buffers = 3 * (SceneRenderer::MAX_BLOCKS * 4 + 2);
         descriptor_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         descriptor_pool_->SetDebugName(dev, "expand-pool");
     }
@@ -114,7 +112,7 @@ void ExpandPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                           vk::CommandBuffer cmd) {
     const std::uint32_t cnt = scene_renderer_.GetCurrentEntityCount();
     if (cnt == 0) return;
-    scene_renderer_.DispatchExpand(cmd, cnt, scene_renderer_.GetViewProj(),
+    scene_renderer_.DispatchExpand(cmd, cnt, ctx.view_proj,
                                    ctx.frame_index);
 }
 

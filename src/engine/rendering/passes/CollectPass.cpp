@@ -43,7 +43,7 @@ bool CollectPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
     {
         std::array<vk::DescriptorSetLayoutBinding, 4> bs{};
         bs[0].binding = 0; bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = MAX_BLOCKS; bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        bs[0].descriptorCount = SceneRenderer::MAX_BLOCKS; bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
         for (std::uint32_t i = 1; i < 4; ++i) {
             bs[i].binding = i; bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1; bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
@@ -52,7 +52,7 @@ bool CollectPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
             dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT; pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS + 3);
+        pc.max_sets = FRAMES_IN_FLIGHT; pc.max_storage_buffers = FRAMES_IN_FLIGHT * (SceneRenderer::MAX_BLOCKS + 3);
         collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_pool_->SetDebugName(dev, "collect-pool");
     }

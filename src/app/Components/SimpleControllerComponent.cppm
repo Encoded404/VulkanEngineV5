@@ -1,7 +1,6 @@
 module;
+#include <glm/glm.hpp>
 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_RADIANS
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtx/string_cast.hpp> // NOLINT(misc-include-cleaner)

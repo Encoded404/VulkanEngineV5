@@ -51,6 +51,11 @@ target_compile_options(${ENGINE_TARGET} PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
 )
 
+target_compile_definitions(${ENGINE_TARGET} PUBLIC
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+)
+
 if(CMAKE_CONFIGURATION_TYPES)
     target_compile_options(${ENGINE_TARGET} PRIVATE
         "$<$<CONFIG:Debug>:-g>"

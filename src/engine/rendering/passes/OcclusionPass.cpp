@@ -15,7 +15,7 @@ import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
-static constexpr std::uint32_t MAX_BLOCKS = 1024;
+// Uses SceneRenderer::MAX_BLOCKS defined in VulkanEngine.SceneRenderer
 
 OcclusionPass::OcclusionPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 OcclusionPass::~OcclusionPass() { Shutdown(); }
@@ -28,7 +28,7 @@ bool OcclusionPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].descriptorCount = SceneRenderer::MAX_BLOCKS;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
         bs[3].binding = 3;
@@ -37,7 +37,7 @@ bool OcclusionPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
         bs[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
         bs[4].binding = 4;
         bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[4].descriptorCount = MAX_BLOCKS;
+        bs[4].descriptorCount = SceneRenderer::MAX_BLOCKS;
         bs[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
         descriptor_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
@@ -45,7 +45,7 @@ bool OcclusionPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
 
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = 3;
-        pc.max_storage_buffers = 3 * MAX_BLOCKS * 4;
+        pc.max_storage_buffers = 3 * SceneRenderer::MAX_BLOCKS * 4;
         pc.max_sampled_images = 3;
         pc.max_combined_image_samplers = 3;
         descriptor_pool_ = GpuResources::DescriptorPool::Create(be, pc);

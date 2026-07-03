@@ -1,6 +1,7 @@
 module;
 
 #include <cassert> // NOLINT(misc-include-cleaner)
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.PipelinePass;
 
@@ -67,6 +68,9 @@ struct FrameContext {
     vk::Extent2D render_extent{};
     std::uint32_t frame_index = 0;
     std::uint32_t swapchain_image_index = 0;
+
+    // Camera data (populated by the renderer before dispatching passes)
+    glm::mat4 view_proj{1.0f};
 
     // Engine-standard descriptor sets (sets 0-3)
     BindlessTextureSet bindless_textures{};
@@ -192,6 +196,16 @@ private:
 };
 
 // ── IPipelinePass — abstract base for all pipeline passes ──
+//
+// NOTE: Pass classes currently expose two Execute() overloads:
+//   1. A legacy execute(cmd, params...) taking explicit Vulkan handles,
+//      called directly by SceneRenderer::Dispatch*() methods.
+//   2. Execute(const FrameContext&, vk::CommandBuffer) — the IPipelinePass
+//      override, which delegates to SceneRenderer::Dispatch*().
+//
+// TODO(cleanup): Once the render graph fully takes over pass dispatch,
+// the legacy execute() methods should be made private (friend SceneRenderer)
+// or removed entirely in favor of FrameContext-driven execution.
 class IPipelinePass {
 public:
     virtual ~IPipelinePass() = default;

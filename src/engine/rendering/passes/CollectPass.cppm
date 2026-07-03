@@ -13,7 +13,6 @@ import VulkanEngine.SceneRenderer;
 export namespace VulkanEngine::SceneRenderer {
 
 inline constexpr std::uint32_t MAX_TECHNIQUES = 256;
-inline constexpr std::uint32_t MAX_BLOCKS = 1024;
 
 struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
 struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };

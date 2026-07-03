@@ -1,8 +1,6 @@
 module;
+#include <glm/glm.hpp>
 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_RADIANS
-#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.Components.Transform;

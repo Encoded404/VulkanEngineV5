@@ -1,7 +1,5 @@
 module;
 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 
 export module VulkanEngine.Render.Passes.ExpandPass;
@@ -15,8 +13,6 @@ import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
-
-inline constexpr std::uint32_t MAX_BLOCKS = 1024;
 
 struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
 

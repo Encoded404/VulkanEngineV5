@@ -13,9 +13,6 @@ find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
 
-# fastgltf as a git submodule, built with C++20 modules + import std;
-# We copy the source to the build directory and patch it there so the
-# submodule tree is never modified.
 include(PatchFastgltfSubmodule)
 patch_fastgltf_submodule(
     SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/fastgltf"
@@ -37,23 +34,18 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     imgui::imgui
 )
 
-target_include_directories(${ENGINE_TARGET} PUBLIC
-    ${Stb_INCLUDE_DIR}
-)
+target_include_directories(${ENGINE_TARGET} PUBLIC ${Stb_INCLUDE_DIR})
+target_include_directories(${ENGINE_TARGET} PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
-target_include_directories(${ENGINE_TARGET} PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+target_compile_definitions(${ENGINE_TARGET} PUBLIC
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
 )
 
 target_compile_options(${ENGINE_TARGET} PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
     $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
-)
-
-target_compile_definitions(${ENGINE_TARGET} PUBLIC
-    GLM_FORCE_DEPTH_ZERO_TO_ONE
-    GLM_FORCE_RADIANS
 )
 
 if(CMAKE_CONFIGURATION_TYPES)
@@ -67,55 +59,59 @@ if(CMAKE_CONFIGURATION_TYPES)
 endif()
 
 target_sources(${ENGINE_TARGET} PRIVATE
-    platform/Input.cpp
-    gpu/GpuResources/BlockBuffer.cpp
+    input/InputSystem.cpp
+    gpu/BlockArray.cpp
     assets/FileLoaders/Mesh/MeshLoaderBase.cpp
     assets/FileLoaders/Textures/TextureLoaders.cpp
     assets/FileLoaders/Textures/TextureLoaders.cppm
-    assets/ResourceSystem/ResourceSystem.cpp
-    assets/ResourceSystem/TextureResource.cpp
-    platform/ImGuiSystem.cpp
-    rendering/RenderPipeline.cpp
-    rendering/PipelinePass.cpp
-    rendering/TechniqueManager/BaseTechnique.cpp
-    gpu/GpuResources/GpuBuffer.cpp
-    gpu/GpuResources/GpuTexture.cpp
-    gpu/GpuResources/GpuDescriptorSet.cpp
-    gpu/GpuResources/StagingManager.cpp
-    gpu/GpuResources/DeviceBufferHeap.cpp
-    gpu/GpuResources/TlsfAllocator.cpp
+    assets/ResourceCache.cpp
+    assets/TextureResource.cpp
+    ui/ImGuiSystem.cpp
+    render/Pipeline.cpp
+    render/PipelinePass.cpp
+    render/techniques/BaseTechnique.cpp
+    gpu/Buffer.cpp
+    gpu/Texture.cpp
+    gpu/DescriptorSet.cpp
+    gpu/StagingRing.cpp
+    gpu/BufferHeap.cpp
+    gpu/TlsfAllocator.cpp
     assets/ShaderLoader.cpp
-    rendering/DefaultResources.cpp
-    rendering/MeshManager/MeshManager.cpp
-    rendering/MeshRendererSystem.cpp
-    rendering/MeshRenderSystem.cpp
-    rendering/StandardMeshPipeline.cpp
-    assets/SceneLoader.cpp
-    assets/MeshRegistry.cpp
-    platform/Components/DynamicMesh.cpp
-    rendering/Renderer.cpp
-    rendering/TechniqueManager/TechniqueManager.cpp
-    rendering/MaterialManager/MaterialManager.cpp
-    rendering/SceneRenderer.cpp
-    rendering/SceneRendererPipeline.cpp
-    rendering/SceneRendererFrame.cpp
-    rendering/BindlessManager/BindlessManager.cpp
-    core/Game.cpp
+    assets/DefaultTextures.cpp
+    render/MeshUploadManager.cpp
+    render/MeshRendererSystem.cpp
+    render/MeshGatherSystem.cpp
+    render/MeshPipeline.cpp
+    assets/SceneImport.cpp
+    assets/MeshCache.cpp
+    components/DynamicMesh.cpp
+    render/Renderer.cpp
+    render/techniques/TechniqueManager.cpp
+    render/materials/MaterialManager.cpp
+    render/SceneRenderer.cpp
+    render/SceneRendererPipeline.cpp
+    render/SceneRendererFrame.cpp
+    render/bindless/BindlessManager.cpp
+    core/GameEngine.cpp
     core/EngineBootstrap.cpp
-    rendering/passes/ExpandPass.cpp
-    rendering/passes/HiZPass.cpp
-    rendering/passes/OcclusionPass.cpp
-    rendering/passes/CollectPass.cpp
-    rendering/passes/DepthPrePass.cpp
-    rendering/passes/MainPass.cpp
+    render/passes/ExpandPass.cpp
+    render/passes/HiZPass.cpp
+    render/passes/OcclusionPass.cpp
+    render/passes/CollectPass.cpp
+    render/passes/DepthPrePass.cpp
+    render/passes/MainPass.cpp
+    render/passes/ExpandPass.cppm
+    render/passes/HiZPass.cppm
+    render/passes/OcclusionPass.cppm
+    render/passes/CollectPass.cppm
+    render/passes/DepthPrePass.cppm
+    render/passes/MainPass.cppm
 )
 
-# Compile slang shaders to SPIR-V + generate C++20 modules with #embed
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
 include(SlangSpirVCompiler)
 set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine")
-set(_shader_opt_level
-    "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
+set(_shader_opt_level "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 add_slang_shaders(
     TARGET      ${ENGINE_TARGET}_shaders
     OUTPUT_DIR  ${_shader_gen_dir}
@@ -142,65 +138,64 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            platform/Input.cppm
+            input/InputSystem.cppm
             assets/MeshTypes.cppm
-            assets/ResourceSystem/ResourceSystem.cppm
-            assets/ResourceSystem/TextureResource.cppm
-            core/Application.cppm
+            assets/ResourceCache.cppm
+            assets/TextureResource.cppm
             core/Startup.cppm
-            platform/Components/Transform.cppm
-            platform/Components/MeshRenderer.cppm
-            platform/Components/Camera.cppm
-            platform/Components/MeshReference.cppm
-            platform/Components/DynamicMesh.cppm
+            core/Application.cppm
+            ecs/ComponentRegistry.cppm
+            components/Transform.cppm
+            components/Camera.cppm
+            components/MeshReference.cppm
+            components/DynamicMesh.cppm
+            components/MeshRenderer.cppm
             assets/FileLoaders/Mesh/BinMeshAssembler.cppm
             assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm
             assets/FileLoaders/Mesh/ObjMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshMagicLoader.cppm
             assets/FileLoaders/Textures/TextureLoaders.cppm
-            platform/ImGuiSystem.cppm
-            rendering/RenderPipeline.cppm
-            rendering/PipelinePass.cppm
-        gpu/GpuResources/GpuResources.cppm
-        gpu/GpuResources/GpuBuffer.cppm
-        gpu/GpuResources/BlockBuffer.cppm
-        gpu/GpuResources/GpuTexture.cppm
-        gpu/GpuResources/GpuDescriptorSet.cppm
-        gpu/GpuResources/StagingManager.cppm
-        gpu/GpuResources/DeviceBufferHeap.cppm
-        gpu/GpuResources/TlsfAllocator.cppm
-        gpu/GpuResources/MeshData.cppm
-        assets/ShaderLoader.cppm
-        rendering/DefaultResources.cppm
-        rendering/MeshManager/MeshManager.cppm
-            rendering/MeshRendererSystem.cppm
-            rendering/MeshRenderSystem.cppm
-            rendering/StandardMeshPipeline.cppm
-            assets/SceneLoader.cppm
-            assets/MeshRegistry.cppm
-            rendering/Renderer.cppm
-            rendering/TechniqueManager/TechniqueManager.cppm
-            rendering/TechniqueManager/BaseTechnique.cppm
-            rendering/TechniqueManager/TechniqueId.cppm
-            rendering/MaterialManager/MaterialManager.cppm
-            rendering/MaterialManager/MaterialId.cppm
-            rendering/MaterialManager/MaterialHandle.cppm
-            rendering/SceneRenderer.cppm
-            rendering/BindlessManager/BindlessManager.cppm
-            rendering/BindlessManager/TextureSlot.cppm
-            core/Game.cppm
+            ui/ImGuiSystem.cppm
+            render/Pipeline.cppm
+            render/PipelinePass.cppm
+            gpu/GpuResources.cppm
+            gpu/Buffer.cppm
+            gpu/BlockArray.cppm
+            gpu/Texture.cppm
+            gpu/DescriptorSet.cppm
+            gpu/StagingRing.cppm
+            gpu/BufferHeap.cppm
+            gpu/TlsfAllocator.cppm
+            gpu/MeshData.cppm
+            assets/ShaderLoader.cppm
+            assets/DefaultTextures.cppm
+            render/MeshUploadManager.cppm
+            render/MeshRendererSystem.cppm
+            render/MeshGatherSystem.cppm
+            render/MeshPipeline.cppm
+            assets/SceneImport.cppm
+            assets/MeshCache.cppm
+            render/Renderer.cppm
+            render/techniques/TechniqueManager.cppm
+            render/techniques/BaseTechnique.cppm
+            render/techniques/TechniqueId.cppm
+            render/materials/MaterialManager.cppm
+            render/materials/MaterialId.cppm
+            render/materials/MaterialHandle.cppm
+            render/SceneRenderer.cppm
+            render/bindless/BindlessManager.cppm
+            render/bindless/TextureSlot.cppm
+            core/GameEngine.cppm
             core/EngineContext.cppm
-            ecs/ComponentRegistry.cppm
             core/EngineBootstrap.cppm
-            rendering/passes/ExpandPass.cppm
-            rendering/passes/HiZPass.cppm
-            rendering/passes/OcclusionPass.cppm
-            rendering/passes/CollectPass.cppm
-            rendering/passes/DepthPrePass.cppm
-            rendering/passes/MainPass.cppm
+            render/passes/ExpandPass.cppm
+            render/passes/HiZPass.cppm
+            render/passes/OcclusionPass.cppm
+            render/passes/CollectPass.cppm
+            render/passes/DepthPrePass.cppm
+            render/passes/MainPass.cppm
     )
-    # Generated slang shader modules
     if(_gen_shader_mods)
         target_sources(${ENGINE_TARGET} PUBLIC
             FILE_SET CXX_MODULES
@@ -210,10 +205,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     endif()
 endif()
 
-# Link shared ShaderReflection module (OBJECT library from SlangSpriVCompilerHelper)
 target_link_libraries(${ENGINE_TARGET} PUBLIC slang_shared_reflection)
 
 if(COMMAND enable_target_clang_tidy)
     enable_target_clang_tidy(${ENGINE_TARGET})
 endif()
-

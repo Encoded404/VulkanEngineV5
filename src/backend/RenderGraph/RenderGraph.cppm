@@ -1,5 +1,9 @@
 module;
 
+// TODO(Phase 6): Move to src/engine/render_graph/ and rename module to VulkanEngine.RenderGraph.
+// Currently stays in backend target to avoid cascading import updates; Phase 6 handles
+// module renames and consumer updates as part of target restructuring.
+
 export module VulkanBackend.RenderGraph;
 
 import std;

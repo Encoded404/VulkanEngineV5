@@ -1,3 +1,8 @@
+// Ownership transferred from VulkanBootstrapBackend (backend) to EngineContext (engine)
+// in Phase 4. The backend stored this as dead storage — it never called any ECS methods.
+// EngineContext now owns the registry directly; consumers access it via ctx_.component_registry
+// instead of the removed ctx.bootstrap->GetBackend().GetComponentRegistry() chain.
+
 module;
 
 export module VulkanEngine.ECS.ComponentRegistry;

@@ -23,9 +23,6 @@ public:
     uint32_t produced_height = 720; // NOLINT(misc-non-private-member-variables-in-classes)
     uint32_t current_frames_in_flight = 2; // NOLINT(misc-non-private-member-variables-in-classes)
 
-    [[nodiscard]] VulkanEngine::ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
-    [[nodiscard]] const VulkanEngine::ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
-
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig&) override { return instance_result; }
     [[nodiscard]] bool SelectPhysicalDevice() override { return physical_device_result; }
     [[nodiscard]] bool CreateLogicalDevice(uint32_t frames_in_flight) override {
@@ -71,7 +68,6 @@ public:
     void Shutdown() override { shutdown_called = true; }
 
 private:
-    VulkanEngine::ComponentRegistry component_registry_{};
 };
 
 TEST(VulkanBootstrapTest, InitializeBuildsRuntimeSkeletonState) {

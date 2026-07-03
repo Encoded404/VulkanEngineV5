@@ -6,7 +6,6 @@ import std;
 
 import vulkan_hpp;
 
-export import VulkanEngine.ECS.ComponentRegistry;
 export import VulkanBackend.Runtime.CommonTypes;
 
 export namespace VulkanBackend::Runtime {
@@ -14,9 +13,6 @@ export namespace VulkanBackend::Runtime {
 class IVulkanBootstrap {
 public:
     virtual ~IVulkanBootstrap() = default;
-
-    [[nodiscard]] virtual VulkanEngine::ComponentRegistry& GetComponentRegistry() = 0;
-    [[nodiscard]] virtual const VulkanEngine::ComponentRegistry& GetComponentRegistry() const = 0;
 
     [[nodiscard]] virtual bool CreateInstance(const VulkanBootstrapConfig& config) = 0;
     [[nodiscard]] virtual bool SelectPhysicalDevice() = 0;

@@ -239,7 +239,7 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
 }
 
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
-    ctx.bootstrap->GetBackend().GetComponentRegistry().UpdateAllComponentsAsync(ctx.frame.delta_time);
+    ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.delta_time);
 
     if (!ctx_.mesh_manager) {
         LOGIFACE_LOG(warn, "Game::FrameUpdate: mesh_manager is null, skipping ProcessFrame");
@@ -253,7 +253,7 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
     {
         const std::uint32_t frame_index = ctx.frame.image_index % 3;
         ctx_.mesh_render_system.ProcessFrame(
-            ctx.bootstrap->GetBackend().GetComponentRegistry(),
+            ctx_.component_registry,
             ctx_.mesh_registry,
             *ctx_.mesh_manager,
             *ctx_.scene_renderer,
@@ -285,7 +285,7 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     MaterialManager::MaterialManager::Get().FlushDirtyMaterials();
 
     ctx_.renderer->RenderFrame(*ctx.bootstrap,
-                               ctx.bootstrap->GetBackend().GetComponentRegistry(),
+                               ctx_.component_registry,
                                *camera_,
                                *ctx_.technique_mgr,
                                *ctx_.bindless_mgr,

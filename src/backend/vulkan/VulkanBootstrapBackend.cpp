@@ -10,7 +10,6 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanEngine.ECS.ComponentRegistry;
 import VulkanBackend.Runtime.VulkanInstance;
 import VulkanBackend.Runtime.VulkanDevice;
 import VulkanBackend.Runtime.VulkanSwapchain;
@@ -22,9 +21,6 @@ namespace {
 
 class DefaultVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
-    [[nodiscard]] VulkanEngine::ComponentRegistry& GetComponentRegistry() override { return component_registry_; }
-    [[nodiscard]] const VulkanEngine::ComponentRegistry& GetComponentRegistry() const override { return component_registry_; }
-
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig& config) override {
         instance_ = std::make_unique<VulkanInstance>();
         return instance_->Initialize(config);
@@ -223,7 +219,6 @@ public:
     }
 
 private:
-    VulkanEngine::ComponentRegistry component_registry_{};
     std::unique_ptr<VulkanInstance> instance_{};
     std::unique_ptr<VulkanDevice> device_{};
     std::unique_ptr<VulkanSwapchain> swapchain_{};

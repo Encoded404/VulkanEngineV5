@@ -1,3 +1,6 @@
+// TODO(Phase 6): Move to src/engine/render_graph/ with module rename.
+// Deferred from Phase 4 — see RenderGraph.cppm for details.
+
 module;
 
 #include <logging/logging_macros.hpp>

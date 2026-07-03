@@ -108,31 +108,31 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.MarkSceneValid();
 
     // 5. Create camera
-    auto& backend = ctx.bootstrap->GetBackend();
-    engine_game_.CreateCamera(backend.GetComponentRegistry());
+    auto& component_registry = engine_game_.GetContext().GetComponentRegistry();
+    engine_game_.CreateCamera(component_registry);
 
     // 6. Create game entities with simplified MeshReference
     {
-        auto& entity = backend.GetComponentRegistry().CreateEntity();
-        backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::Transform>(entity);
-        auto& mesh_ref = backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::MeshReference>(entity);
+        auto& entity = component_registry.CreateEntity();
+        component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
+        auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.loaded_mesh_id = viking_id;
 
-        auto& debug_comp = backend.GetComponentRegistry().AddComponent<App::Components::TransformControlComponent>(entity);
+        auto& debug_comp = component_registry.AddComponent<App::Components::TransformControlComponent>(entity);
         debug_comp.position = glm::vec3{0.0f, 0.0f, 0.0f};
     }
     {
-        auto& entity = backend.GetComponentRegistry().CreateEntity();
-        backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::Transform>(entity);
-        auto& mesh_ref = backend.GetComponentRegistry().AddComponent<VulkanEngine::Components::MeshReference>(entity);
+        auto& entity = component_registry.CreateEntity();
+        component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
+        auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.loaded_mesh_id = monkey_id;
-        backend.GetComponentRegistry().AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
+        component_registry.AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
     }
 
     // 7. Register ImGui debug UI
     auto* imgui = engine_game_.GetImGuiSystem();
     if (imgui) {
-        imgui_draw_handle_ = imgui->draw_callbacks.Register([&registry = backend.GetComponentRegistry()]() {
+        imgui_draw_handle_ = imgui->draw_callbacks.Register([&registry = component_registry]() {
             auto debug_comps = registry.GetAll<App::Components::TransformControlComponent>();
             if (debug_comps.empty()) return;
 

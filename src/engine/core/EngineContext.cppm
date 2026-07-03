@@ -5,6 +5,7 @@ export module VulkanEngine.EngineContext;
 import std;
 import vulkan_hpp;
 
+import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.TechniqueManager;
@@ -51,6 +52,7 @@ struct EngineContext {
     std::unique_ptr<MeshManager> mesh_manager;
     MeshRenderSystem mesh_render_system;
     MeshRegistry mesh_registry;
+    VulkanEngine::ComponentRegistry component_registry{};
 
     // Assets
     ResourceManager resource_manager;
@@ -69,6 +71,7 @@ struct EngineContext {
     auto& GetMeshManager() { return *mesh_manager; }
     auto& GetMeshRenderSystem() { return mesh_render_system; }
     auto& GetMeshRegistry() { return mesh_registry; }
+    auto& GetComponentRegistry() { return component_registry; }
     auto& GetResourceManager() { return resource_manager; }
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }

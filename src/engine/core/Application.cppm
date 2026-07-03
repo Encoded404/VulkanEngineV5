@@ -1,3 +1,7 @@
+// TODO(Phase 6): Move to src/runtime/ target. Currently in engine target to avoid
+// CMake FILE_SET BASE_DIRS restrictions (files outside BASE_DIRS are rejected).
+// Phase 6 creates a standalone src/runtime/ CMake target as the 3-layer integration point.
+
 module;
 
 #include <SDL3/SDL_video.h>

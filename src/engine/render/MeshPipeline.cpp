@@ -11,8 +11,8 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 
 namespace VulkanEngine::StandardMeshPipeline {
@@ -20,7 +20,7 @@ namespace VulkanEngine::StandardMeshPipeline {
 GraphicsPipeline::GraphicsPipeline() = default;
 GraphicsPipeline::~GraphicsPipeline() = default;
 
-void GraphicsPipeline::Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   const std::vector<std::uint32_t>& vertex_spirv,
                                   const std::vector<std::uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
@@ -80,7 +80,7 @@ const vk::DescriptorSetLayout* GraphicsPipeline::GetDescriptorSetLayout() const 
     return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr;
 }
 
-void GraphicsPipeline::CreateDescriptorSetLayout(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorSetLayout(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorSetLayout");
 
     const auto& device = bootstrap.GetBackend().GetDevice();
@@ -96,7 +96,7 @@ void GraphicsPipeline::CreateDescriptorSetLayout(VulkanBackend::Runtime::VulkanB
     LOGIFACE_LOG(trace, "leaving CreateDescriptorSetLayout successfully");
 }
 
-void GraphicsPipeline::CreateDescriptorPool(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
+void GraphicsPipeline::CreateDescriptorPool(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap) {
     LOGIFACE_LOG(trace, "entering CreateDescriptorPool");
 
     VulkanEngine::GpuResources::DescriptorPoolConfig config{};
@@ -108,7 +108,7 @@ void GraphicsPipeline::CreateDescriptorPool(VulkanBackend::Runtime::VulkanBootst
     LOGIFACE_LOG(trace, "leaving CreateDescriptorPool successfully");
 }
 
-void GraphicsPipeline::CreatePipeline(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+void GraphicsPipeline::CreatePipeline(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                       const std::vector<std::uint32_t>& vertex_spirv,
                                       const std::vector<std::uint32_t>& fragment_spirv,
                                       const PipelineConfig& config) {
@@ -202,7 +202,7 @@ void GraphicsPipeline::CreatePipeline(VulkanBackend::Runtime::VulkanBootstrap& b
 }
 
 void GraphicsPipeline::CreatePipelineWithLayout(
-        VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+        VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         const std::vector<std::uint32_t>& vertex_spirv,
         const std::vector<std::uint32_t>& fragment_spirv,
         const PipelineConfig& config,

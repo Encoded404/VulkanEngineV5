@@ -1,13 +1,13 @@
 module;
 
-export module VulkanBackend.Runtime.VulkanBootstrapBackend;
+export module VulkanBackend.Vulkan.VulkanBootstrapBackend;
 
 import std;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 [[nodiscard]] std::shared_ptr<IVulkanBootstrap> CreateVulkanBootstrapBackend();
 
-}  // namespace VulkanBackend::Runtime
+}  // namespace VulkanBackend::Vulkan

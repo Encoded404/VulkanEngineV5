@@ -7,13 +7,13 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 
 export namespace VulkanEngine::GpuResources {
 
 class GpuTexture {
 public:
-    static GpuTexture CreateFromPixels(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    static GpuTexture CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                        const std::uint8_t* pixels,
                                        std::uint32_t width,
                                        std::uint32_t height,

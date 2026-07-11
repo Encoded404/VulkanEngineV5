@@ -4,7 +4,7 @@ export module VulkanEngine.Render.Passes.HiZPass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
@@ -24,7 +24,7 @@ public:
     HiZPass(const HiZPass&) = delete;
     HiZPass& operator=(const HiZPass&) = delete;
 
-    bool Create(VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
     void Shutdown();
 
     void Execute(vk::CommandBuffer cmd,

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-import VulkanBackend.RenderGraph;
-import VulkanBackend.RenderGraph.GraphExecutionContext;
+import VulkanEngine.RenderGraph;
+import VulkanBackend.Vulkan.GraphExecutionContext;
 
 namespace {
 

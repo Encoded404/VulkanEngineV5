@@ -3,17 +3,17 @@ module;
 export module VulkanEngine.EngineBootstrap;
 
 import VulkanEngine.EngineContext;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
-export namespace VulkanEngine::Game {
+export namespace VulkanEngine {
 
 class EngineBootstrap {
 public:
     bool Initialize(EngineContext& ctx,
                     const GameConfig& config,
-                    VulkanBackend::Runtime::VulkanBootstrap& backend);
+                    VulkanBackend::Vulkan::VulkanBootstrap& backend);
     void Shutdown(EngineContext& ctx,
-                  VulkanBackend::Runtime::VulkanBootstrap& backend);
+                  VulkanBackend::Vulkan::VulkanBootstrap& backend);
 };
 
-} // namespace VulkanEngine::Game
+} // namespace VulkanEngine

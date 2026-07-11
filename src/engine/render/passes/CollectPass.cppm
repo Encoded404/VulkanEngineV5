@@ -4,7 +4,7 @@ export module VulkanEngine.Render.Passes.CollectPass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
@@ -24,7 +24,7 @@ public:
     CollectPass(const CollectPass&) = delete;
     CollectPass& operator=(const CollectPass&) = delete;
 
-    bool Create(VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
     void Shutdown();
 
     void Execute(vk::CommandBuffer cmd,

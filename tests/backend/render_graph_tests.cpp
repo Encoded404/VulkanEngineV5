@@ -5,7 +5,8 @@
 import std;
 
 import vulkan_hpp;
-import VulkanBackend.RenderGraph;
+import VulkanEngine.RenderGraph;
+import VulkanBackend.Vulkan.RenderGraphExecutor;
 
 namespace {
 
@@ -103,7 +104,7 @@ TEST(RenderGraphTest, CompiledGraphExecutesCallbacksInOrder) {
     const auto result = builder.Compile();
     ASSERT_TRUE(result.success);
 
-    result.Execute(nullptr, {});
+    VulkanBackend::Vulkan::ExecuteRenderGraph(result, nullptr, {});
 
     ASSERT_EQ(call_order.size(), 2u);
     EXPECT_EQ(call_order[0], 1);

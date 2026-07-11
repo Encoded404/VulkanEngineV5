@@ -8,7 +8,7 @@ import std;
 import logiface;
 import vulkan_hpp;
 import Shaders.Engine.HizGenComp;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
@@ -18,7 +18,7 @@ namespace VulkanEngine::SceneRenderer {
 HiZPass::HiZPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 HiZPass::~HiZPass() { Shutdown(); }
 
-bool HiZPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool HiZPass::Create(VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     const auto& dev = be.GetDevice();
 
     // Descriptor set layout: 3 bindings (sampled image, sampler, storage images)

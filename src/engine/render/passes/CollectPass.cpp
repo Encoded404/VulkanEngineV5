@@ -9,7 +9,7 @@ import logiface;
 import vulkan_hpp;
 import Shaders.Engine.CollectCountCompactComp;
 import Shaders.Engine.CollectWriteComp;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
@@ -35,7 +35,7 @@ namespace {
 CollectPass::CollectPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 CollectPass::~CollectPass() { Shutdown(); }
 
-bool CollectPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool CollectPass::Create(VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     const auto& dev = be.GetDevice();
     static constexpr std::uint32_t FRAMES_IN_FLIGHT = 3;
 

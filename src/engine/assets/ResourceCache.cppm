@@ -182,7 +182,7 @@ struct ResourceId {
 
             auto handle = fm.LoadFile<T>(info, std::make_shared<Asm>(resource_id));
 
-            std::shared_ptr<std::promise<ResourceHandle<T>>> out_promise = std::make_shared<std::promise<ResourceHandle<T>>>();
+            const std::shared_ptr<std::promise<ResourceHandle<T>>> out_promise = std::make_shared<std::promise<ResourceHandle<T>>>();
             auto out_fut = out_promise->get_future().share();
 
             auto handle_box = std::make_shared<std::decay_t<decltype(handle)>>(std::move(handle));
@@ -201,7 +201,7 @@ struct ResourceId {
                 refCounts_[type_idx][resource_id.value].refCount = 1;
             }
 
-            std::shared_future<std::shared_ptr<T>> internal_fut = handle_box->GetFuture();
+            const std::shared_future<std::shared_ptr<T>> internal_fut = handle_box->GetFuture();
             std::shared_ptr<T> res_ptr;
             try {
                 res_ptr = internal_fut.get();

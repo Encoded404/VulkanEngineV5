@@ -7,16 +7,16 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.MemoryUtils;
-import VulkanBackend.Utils.ImageUtils;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.MemoryUtils;
+import VulkanBackend.Vulkan.ImageUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 namespace VulkanEngine::GpuResources {
 
 namespace {
 
-void CreateBufferResource(const VulkanBackend::Runtime::IVulkanBootstrap & backend,
+void CreateBufferResource(const VulkanBackend::Vulkan::IVulkanBootstrap & backend,
                           std::uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
@@ -40,7 +40,7 @@ void CreateBufferResource(const VulkanBackend::Runtime::IVulkanBootstrap & backe
 
 } // namespace
 
-GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                         const uint8_t* pixels,
                                         std::uint32_t width,
                                         std::uint32_t height,

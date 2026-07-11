@@ -7,8 +7,8 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.RenderGraph;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanEngine.RenderGraph;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace VulkanEngine::PipelinePass {
 
@@ -72,7 +72,7 @@ std::uint32_t PassSetupContext::GetRenderHeight() const {
 
 // ── FrameContext implementation ──
 
-VulkanEngine::RenderGraph::ResourceHandle FrameContext::GetResource(std::string_view name) const {
+VulkanEngine::RenderGraph::ResourceHandle FrameContext::GetResource(std::string_view /*name*/) const {
     // Resources are resolved through the compiled render graph's resource lifetime table.
     // This is used by custom passes to get handles for resources declared in Setup().
     return VulkanEngine::RenderGraph::ResourceHandle{};

@@ -7,8 +7,8 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
-export import VulkanBackend.Utils.VulkanDebugUtils;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanDebugUtils;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuTexture;
 
@@ -31,7 +31,7 @@ export namespace VulkanEngine::GpuResources {
     class DescriptorPool : public std::enable_shared_from_this<DescriptorPool> {
     public:
         static std::shared_ptr<DescriptorPool> Create(
-            VulkanBackend::Runtime::IVulkanBootstrap& backend,
+            VulkanBackend::Vulkan::IVulkanBootstrap& backend,
             const DescriptorPoolConfig& config = {});
 
         ~DescriptorPool();
@@ -47,18 +47,18 @@ export namespace VulkanEngine::GpuResources {
 
         [[nodiscard]] vk::DescriptorSetLayout* GetLayout() { return descriptor_set_layout_ ? const_cast<vk::DescriptorSetLayout*>(&**descriptor_set_layout_) : nullptr; }
         [[nodiscard]] const vk::DescriptorSetLayout* GetLayout() const { return descriptor_set_layout_ ? &**descriptor_set_layout_ : nullptr; }
-        [[nodiscard]] VulkanBackend::Runtime::IVulkanBootstrap* GetBackend() { return backend_; }
-        [[nodiscard]] const VulkanBackend::Runtime::IVulkanBootstrap* GetBackend() const { return backend_; }
+        [[nodiscard]] VulkanBackend::Vulkan::IVulkanBootstrap* GetBackend() { return backend_; }
+        [[nodiscard]] const VulkanBackend::Vulkan::IVulkanBootstrap* GetBackend() const { return backend_; }
 
     private:
         friend class GpuDescriptorSet;
 
         DescriptorPool() = default;
 
-        void Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend, const DescriptorPoolConfig& config);
+        void Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend, const DescriptorPoolConfig& config);
         void FreeDescriptorSet(vk::DescriptorSet set) const;
 
-        VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
+        VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
         std::unique_ptr<vk::raii::DescriptorPool> pool_;
         std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_set_layout_;
         DescriptorPoolConfig config_{};
@@ -114,20 +114,20 @@ export namespace VulkanEngine::GpuResources {
         friend class DescriptorPool;
 
         static GpuDescriptorSet Create(
-            VulkanBackend::Runtime::IVulkanBootstrap* backend,
+            VulkanBackend::Vulkan::IVulkanBootstrap* backend,
             std::shared_ptr<DescriptorPool> pool,
             vk::DescriptorSet set,
             vk::DescriptorSetLayout layout);
 
         GpuDescriptorSet(
-            VulkanBackend::Runtime::IVulkanBootstrap* backend,
+            VulkanBackend::Vulkan::IVulkanBootstrap* backend,
             std::shared_ptr<DescriptorPool> pool,
             vk::DescriptorSet set,
             vk::DescriptorSetLayout layout);
 
         void Destroy();
 
-        VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
+        VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
         std::shared_ptr<DescriptorPool> pool_;
         vk::DescriptorSet descriptor_set_ = nullptr;
         vk::DescriptorSetLayout layout_ = nullptr;

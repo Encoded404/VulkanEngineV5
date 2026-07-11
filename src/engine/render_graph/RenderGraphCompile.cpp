@@ -1,17 +1,25 @@
-// TODO(Phase 6): Move to src/engine/render_graph/ with module rename.
-// Deferred from Phase 4 — see RenderGraph.cppm for details.
-
 module;
 
 
-module VulkanBackend.RenderGraph;
+module VulkanEngine.RenderGraph;
 
 import std;
 import std.compat;
 
 import vulkan_hpp;
 
+
 namespace VulkanEngine::RenderGraph {
+
+// Module-linkage helpers (defined in RenderGraph.cpp)
+using RenderGraph::ResourceHandle;
+using ReadInfo = RenderGraphBuilder::ReadInfo;
+using RenderGraph::ResourceKind;
+using RenderGraph::ResourceState;
+
+[[maybe_unused]] bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state);
+[[maybe_unused]] bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value);
+[[maybe_unused]] bool ContainsReadResource(const std::vector<ReadInfo>& reads, ResourceHandle value);
 
 CompiledRenderGraph RenderGraphBuilder::Compile() const {
     CompiledRenderGraph result{};

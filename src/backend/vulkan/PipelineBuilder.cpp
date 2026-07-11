@@ -1,6 +1,6 @@
 module;
 
-module VulkanBackend.Utils.PipelineUtils;
+module VulkanBackend.Vulkan.PipelineUtils;
 
 import std;
 

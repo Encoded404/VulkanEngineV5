@@ -9,7 +9,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.TechniqueId;
 export import VulkanEngine.GpuResources.BlockArray;
@@ -17,6 +17,15 @@ export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuResources.StagingManager;
 
 export namespace VulkanEngine::TechniqueManager {
+
+// ── PipelineFlags — per-technique pass participation hints ──
+// SceneRenderer checks these flags when dispatching GPU passes.
+// Zero runtime overhead beyond a single branch per technique per frame.
+struct PipelineFlags {
+    bool participates_in_depth_pass = true;  // writes depth → occludes others
+    bool receives_occlusion = true;          // gets culled by HiZ (set false for transparents)
+    bool participates_in_collect = true;     // generates indirect draw commands
+};
 
 // ── BaseTechnique — abstract base for all rendering techniques ──
 class BaseTechnique {
@@ -104,6 +113,19 @@ public:
     [[nodiscard]] vk::Pipeline GetPipeline() const { return pipeline_; }
     [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return pipeline_layout_; }
 
+    // ── Custom descriptor sets (technique-owned BlockArray/Shared bindings at sets 4+) ──
+    [[nodiscard]] std::span<const vk::DescriptorSet> GetCustomDescriptorSets() const {
+        return { custom_descriptor_set_handles_.data(), custom_descriptor_set_handles_.size() };
+    }
+
+    // ── Material packing — each technique defines how to pack material_id into StaticEntry.technique_material ──
+    // Default implementation uses TechniquePacking::Pack(material_id, technique_id).
+    // Override for custom per-material data encoding (e.g., packing texture_slot for legacy shaders).
+    [[nodiscard]] virtual uint32_t PackMaterialData(uint32_t material_id) const;
+
+    // ── Pass participation flags — see PipelineFlags struct above ──
+    PipelineFlags pipeline_flags{}; // NOLINT(misc-non-private-member-variables-in-classes)
+
     // ── Shutdown — cleanup GPU resources ──
     void Shutdown();
 
@@ -117,27 +139,27 @@ public:
     // T is the C++ data type; set/binding are user-specified (per-technique scope).
     // Debug assert fires if set+binding already declared within this technique.
     template<typename T>
-    void DeclarePerMaterial(std::uint32_t set, std::uint32_t binding) {
+    void DeclarePerMaterial(const std::uint32_t set, const std::uint32_t binding) {
         ValidateNoBindingCollision(set, binding);
-        BindingDecl decl{set, binding, BindingKind::PerMaterial, sizeof(T), std::type_index(typeid(T))};
+        const BindingDecl decl{set, binding, BindingKind::PerMaterial, sizeof(T), std::type_index(typeid(T))};
         DeclareBindingImpl(decl);
     }
 
     // ── Declare a Shared binding ──
     template<typename T>
-    void DeclareShared(std::uint32_t set, std::uint32_t binding) {
+    void DeclareShared(const std::uint32_t set, const std::uint32_t binding) {
         ValidateNoBindingCollision(set, binding);
-        BindingDecl decl{set, binding, BindingKind::Shared, 0, std::type_index(typeid(T))};
+        const BindingDecl decl{set, binding, BindingKind::Shared, 0, std::type_index(typeid(T))};
         DeclareBindingImpl(decl);
     }
 
     // ── Set technique ID (called by TechniqueManager during registration) ──
-    void SetId(TechniqueId id) { id_ = id; }
+    void SetId(const TechniqueId id) { id_ = id; }
 
     // ── Compilation (separate from constructor) ──
     // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
-    void Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+    void Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                  std::span<const std::uint32_t> vert_spv,
                  std::span<const std::uint32_t> frag_spv,
                  const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
@@ -155,6 +177,12 @@ private:
 
     vk::raii::PipelineLayout pipeline_layout_ = nullptr;
     vk::raii::Pipeline pipeline_ = nullptr;
+
+    // Descriptor pool + sets for custom bindings (sets 4+)
+    vk::raii::DescriptorPool descriptor_pool_ = nullptr;
+    std::vector<vk::raii::DescriptorSet> custom_descriptor_sets_;
+    std::vector<vk::DescriptorSet> custom_descriptor_set_handles_;  // non-owning views for accessor
+    std::vector<vk::raii::DescriptorSetLayout> custom_set_layouts_;  // was local in Compile() — fixes lifetime bug
 
     void DeclareBindingImpl(BindingDecl decl);
     void ValidateNoBindingCollision(std::uint32_t set, std::uint32_t binding) const;

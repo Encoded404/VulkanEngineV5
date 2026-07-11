@@ -20,14 +20,14 @@ import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import VulkanEngine.EngineContext;
 
-namespace VulkanEngine::Game {
+namespace VulkanEngine {
 
 bool EngineBootstrap::Initialize(EngineContext& ctx,
                                   const GameConfig& config,
-                                  VulkanBackend::Runtime::VulkanBootstrap& backend) {
+                                  VulkanBackend::Vulkan::VulkanBootstrap& backend) {
     auto& vk_backend = backend.GetBackend();
 
-    ctx.missing_texture = DefaultTextureFactory::DefaultTextureFactory::CreateCheckerboard(ctx.resource_manager);
+    ctx.missing_texture = DefaultTextureFactory::CreateCheckerboard(ctx.resource_manager);
     ctx.fallback_handle = ResourceHandle<TextureResource>(ResourceId{"checkerboard_default"}, &ctx.resource_manager);
 
     ctx.bindless_mgr = std::make_unique<BindlessManager::BindlessManager>();
@@ -69,7 +69,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 }
 
 void EngineBootstrap::Shutdown(EngineContext& ctx,
-                                VulkanBackend::Runtime::VulkanBootstrap& backend) {
+                                VulkanBackend::Vulkan::VulkanBootstrap& backend) {
     try {
         backend.GetBackend().GetDevice().waitIdle();
     } catch (...) {
@@ -110,4 +110,4 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     }
 }
 
-} // namespace VulkanEngine::Game
+} // namespace VulkanEngine

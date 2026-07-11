@@ -4,7 +4,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanBackend.Runtime.VulkanSwapchain;
+module VulkanBackend.Vulkan.VulkanSwapchain;
 
 import std;
 import std.compat;
@@ -12,12 +12,12 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.CommonTypes;
-import VulkanBackend.Runtime.VulkanDevice;
-import VulkanBackend.Runtime.VulkanInstance;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.CommonTypes;
+import VulkanBackend.Vulkan.VulkanDevice;
+import VulkanBackend.Vulkan.VulkanInstance;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
-namespace VulkanBackend::Runtime {
+namespace VulkanBackend::Vulkan {
 
 namespace {
 
@@ -190,4 +190,4 @@ bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevic
     return Initialize(instance, device, preferred_image_count, present_mode);
 }
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

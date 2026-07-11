@@ -1,11 +1,8 @@
-// TODO(Phase 6): Move to src/engine/render_graph/ with module rename.
-// Deferred from Phase 4 — see RenderGraph.cppm for details.
-
 module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanBackend.RenderGraph;
+module VulkanEngine.RenderGraph;
 
 import std;
 import std.compat;
@@ -14,140 +11,43 @@ import logiface;
 
 import vulkan_hpp;
 
+using VulkanEngine::RenderGraph::ResourceHandle;
+using ReadInfo = VulkanEngine::RenderGraph::RenderGraphBuilder::ReadInfo;
+using VulkanEngine::RenderGraph::PassHandle;
+using VulkanEngine::RenderGraph::ResourceKind;
+using VulkanEngine::RenderGraph::ResourceState;
+using VulkanEngine::RenderGraph::PipelineStageIntent;
+using VulkanEngine::RenderGraph::AccessIntent;
+using VulkanEngine::RenderGraph::ImageLayoutIntent;
+
+
+
 namespace VulkanEngine::RenderGraph {
 
-bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value) {
+// we cant use internal linkage, because we are using modules they need to be visible at module level, not only TU level.
+// NOLINTBEGIN(misc-use-internal-linkage)
+
+[[maybe_unused]] bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value) {
     return std::ranges::find(handles, value) != handles.end();
 }
 
-bool ContainsReadResource(const std::vector<RenderGraphBuilder::ReadInfo>& reads, ResourceHandle value) {
-    return std::ranges::find_if(reads, [value](const RenderGraphBuilder::ReadInfo& r) { return r.resource == value; }) != reads.end();
+[[maybe_unused]] bool ContainsReadResource(const std::vector<ReadInfo>& reads, ResourceHandle value) {
+    return std::ranges::find_if(reads, [value](const ReadInfo& r) { return r.resource == value; }) != reads.end();
 }
 
-bool ContainsDependency(const std::vector<std::pair<PassHandle, PassHandle>>& deps,
+[[maybe_unused]] bool ContainsDependency(const std::vector<std::pair<PassHandle, PassHandle>>& deps,
                         const std::pair<PassHandle, PassHandle>& value) {
     return std::ranges::find(deps, value) != deps.end();
 }
 
-bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state) {
+[[maybe_unused]] bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state) {
     if (kind == ResourceKind::Image) {
         return state.has_image_layout;
     }
     return !state.has_image_layout;
 }
 
-vk::PipelineStageFlags IntentToPipelineStage(PipelineStageIntent intent, AccessIntent access) {
-    switch (intent) {
-        case PipelineStageIntent::None:
-        case PipelineStageIntent::TopOfPipe:
-            return vk::PipelineStageFlagBits::eTopOfPipe;
-        case PipelineStageIntent::BottomOfPipe:
-            return vk::PipelineStageFlagBits::eBottomOfPipe;
-        case PipelineStageIntent::Transfer:
-            return vk::PipelineStageFlagBits::eTransfer;
-        case PipelineStageIntent::ColorAttachment:
-            return vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        case PipelineStageIntent::DepthAttachment:
-            return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
-        case PipelineStageIntent::VertexShader:
-            return vk::PipelineStageFlagBits::eVertexShader;
-        case PipelineStageIntent::IndirectDraw:
-            return vk::PipelineStageFlagBits::eDrawIndirect;
-        case PipelineStageIntent::FragmentShader:
-            return access == AccessIntent::Write
-                       ? vk::PipelineStageFlagBits::eColorAttachmentOutput
-                       : vk::PipelineStageFlagBits::eFragmentShader;
-        case PipelineStageIntent::ComputeShader:
-            return vk::PipelineStageFlagBits::eComputeShader;
-        case PipelineStageIntent::Present:
-            return vk::PipelineStageFlagBits::eBottomOfPipe;
-        default:
-            return vk::PipelineStageFlagBits::eTopOfPipe;
-    }
-}
-
-vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessIntent access) {
-    if (access == AccessIntent::None) {
-        return {};
-    }
-
-    switch (stage) {
-        case PipelineStageIntent::Transfer:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eTransferWrite
-                       : vk::AccessFlagBits::eTransferRead;
-        case PipelineStageIntent::ColorAttachment:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eColorAttachmentWrite
-                       : vk::AccessFlagBits::eColorAttachmentRead;
-        case PipelineStageIntent::DepthAttachment:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eDepthStencilAttachmentWrite
-                       : vk::AccessFlagBits::eDepthStencilAttachmentRead;
-        case PipelineStageIntent::VertexShader:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eShaderWrite
-                       : vk::AccessFlagBits::eShaderRead;
-        case PipelineStageIntent::IndirectDraw:
-            return vk::AccessFlagBits::eIndirectCommandRead;
-        case PipelineStageIntent::FragmentShader:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eColorAttachmentWrite
-                       : vk::AccessFlagBits::eShaderRead;
-        case PipelineStageIntent::ComputeShader:
-            return access == AccessIntent::Write
-                       ? vk::AccessFlagBits::eShaderWrite
-                       : vk::AccessFlagBits::eShaderRead;
-        /*case PipelineStageIntent::Present:
-            return {};*/
-        default:
-            return {};
-    }
-}
-
-vk::ImageLayout IntentToImageLayout(ImageLayoutIntent intent) {
-    switch (intent) {
-        case ImageLayoutIntent::Undefined:
-            return vk::ImageLayout::eUndefined;
-        case ImageLayoutIntent::General:
-            return vk::ImageLayout::eGeneral;
-        case ImageLayoutIntent::ColorAttachment:
-            return vk::ImageLayout::eColorAttachmentOptimal;
-        case ImageLayoutIntent::DepthAttachment:
-            return vk::ImageLayout::eDepthAttachmentOptimal;
-        case ImageLayoutIntent::DepthReadOnly:
-            return vk::ImageLayout::eDepthReadOnlyOptimal;
-        case ImageLayoutIntent::ShaderReadOnly:
-            return vk::ImageLayout::eShaderReadOnlyOptimal;
-        case ImageLayoutIntent::TransferSource:
-            return vk::ImageLayout::eTransferSrcOptimal;
-        case ImageLayoutIntent::TransferDestination:
-            return vk::ImageLayout::eTransferDstOptimal;
-        case ImageLayoutIntent::Present:
-            return vk::ImageLayout::ePresentSrcKHR;
-        default:
-            return vk::ImageLayout::eUndefined;
-    }
-}
-
-vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
-    switch (format) {
-        case vk::Format::eD16Unorm:
-        case vk::Format::eD32Sfloat:
-        case vk::Format::eD16UnormS8Uint:
-        case vk::Format::eD24UnormS8Uint:
-        case vk::Format::eD32SfloatS8Uint:
-            return vk::ImageAspectFlagBits::eDepth;
-        default:
-            return vk::ImageAspectFlagBits::eColor;
-    }
-}
-
-bool StatesEqual(const ResourceState& a, const ResourceState& b) {
-    if (a.has_image_layout != b.has_image_layout) return false;
-    if (a.has_image_layout && a.layout != b.layout) return false;
-    return a.stage == b.stage && a.access == b.access;
-}
+// NOLINTEND(misc-use-internal-linkage)
 
 ResourceHandle RenderGraphBuilder::CreateTransientResource(std::string name, ResourceKind kind) {
     const std::uint32_t index = static_cast<std::uint32_t>(resources_.size());

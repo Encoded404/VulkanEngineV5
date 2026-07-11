@@ -20,10 +20,15 @@ struct StaticEntry {
 [[vk::binding(1, 0)]]
 StructuredBuffer<StaticEntry> staticMeshes[];
 
+// TechniquePacking constants — MUST match C++ TechniquePacking in TechniqueManager.cppm
+static const uint kTechniqueBits = 12;
+static const uint kTechniqueMask = (1u << kTechniqueBits) - 1;
+
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    float4x4 modelMatrix;   // world matrix for per-vertex world-space position computation
 };
 
 [[vk::binding(2, 0)]]
@@ -92,15 +97,17 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     uint indexRange = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexRange;
     uint techniqueMaterial = staticMeshes[NonUniformResourceIndex(block)][elemIndex].techniqueMaterial;
-    uint techId = techniqueMaterial & 0xFFFFu;
-    uint matId  = techniqueMaterial >> 16;
+    uint techId = techniqueMaterial & kTechniqueMask;
+    uint matId  = techniqueMaterial >> kTechniqueBits;
 
     float maxScaleVal = max(abs(scale.x), max(abs(scale.y), abs(scale.z)));
-    float4x4 mvp = mul(modelMat(position, rotation, scale), pushConstant.vp);
+    float4x4 model = modelMat(position, rotation, scale);
+    float4x4 mvp = mul(model, pushConstant.vp);
 
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].MVP = mvp;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].maxScale = maxScaleVal;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].materialId = matId;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].modelMatrix = model;
 
     uint drawOffset;
     InterlockedAdd(drawCounter[0], indexRange, drawOffset); // allocate range in the indirect draw buffer

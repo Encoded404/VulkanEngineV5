@@ -1,15 +1,10 @@
-// TODO(Phase 6): Move to src/runtime/ target. Currently in engine target to avoid
-// CMake FILE_SET BASE_DIRS restrictions (files outside BASE_DIRS are rejected).
-// Phase 6 creates a standalone src/runtime/ CMake target as the 3-layer integration point.
-
 module;
 
 #include <SDL3/SDL_video.h>
 
-// logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
-export module VulkanEngine.Application;
+export module Runtime.Application;
 
 import std;
 
@@ -18,13 +13,14 @@ import logiface;
 import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanBackend.Platform.SdlPlatformBackend;
-import VulkanBackend.Runtime.FrameLoop;
+import VulkanBackend.Vulkan.FrameLoop;
 import VulkanShared.CallbackList;
 import VulkanShared.Timer;
 import VulkanEngine.Input;
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Runtime.VulkanBootstrapBackend;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrapBackend;
 import VulkanEngine.Startup;
+import VulkanEngine.Application;
 
 #ifndef UINT32_MAX
 constexpr std::uint32_t UINT32_MAX =
@@ -33,64 +29,12 @@ constexpr std::uint32_t UINT32_MAX =
 
 export namespace VulkanEngine::Application {
 
-struct ApplicationFrameState {
-    VulkanBackend::Runtime::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    float delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
-    bool render_success = true; // NOLINT(misc-non-private-member-variables-in-classes)
-};
-
-struct ApplicationContext {
-    VulkanBackend::Platform::SdlPlatform* platform = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanBackend::Runtime::FrameLoop* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanBackend::Runtime::VulkanBootstrap* bootstrap = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Input::InputSystem* input_system = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    SDL_Window* window = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    const VulkanBackend::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
-    ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
-};
-
-struct ApplicationConfig {
-    std::string app_name = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::string log_level = "info"; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanBackend::Platform::PlatformConfig platform_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanBackend::Runtime::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanBackend::Runtime::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
-};
-
-struct ApplicationHooks {
-    VulkanShared::CallbackList<bool(ApplicationContext&)> on_setup{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanShared::CallbackList<void(ApplicationContext&)> on_pre_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::function<bool()> should_filter_mouse_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::function<bool()> should_filter_keyboard_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanShared::OrderedCallbackList<void(ApplicationContext&)> on_frame_update{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanShared::OrderedCallbackList<void(ApplicationContext&)> on_frame_render{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanShared::CallbackList<void(ApplicationContext&)> on_shutdown{}; // NOLINT(misc-non-private-member-variables-in-classes)
-};
-
-[[nodiscard]] std::string_view PlatformStatusToString(VulkanBackend::Platform::PlatformStatus status) {
-    using VulkanBackend::Platform::PlatformStatus;
-    switch (status) {
-        case PlatformStatus::Ok: return "Ok";
-        case PlatformStatus::NotInitialized: return "NotInitialized";
-        case PlatformStatus::BackendInitFailed: return "BackendInitFailed";
-        case PlatformStatus::WindowCreateFailed: return "WindowCreateFailed";
-        case PlatformStatus::QuitRequested: return "QuitRequested";
-        case PlatformStatus::FatalError: return "FatalError";
-    }
-    return "unknown";
-}
-
 // NOLINTBEGIN
-[[nodiscard]] int RunApplication(const ApplicationConfig& config, const ApplicationHooks& hooks) {
+[[nodiscard]] inline int RunApplication(const ApplicationConfig& config, const ApplicationHooks& hooks) {
     std::unique_ptr<VulkanBackend::Platform::SdlPlatform> platform{};
-    std::shared_ptr<VulkanBackend::Runtime::IVulkanBootstrap> vk_backend{};
-    std::unique_ptr<VulkanBackend::Runtime::VulkanBootstrap> bootstrap{};
-    std::unique_ptr<VulkanBackend::Runtime::FrameLoop> runtime{};
+    std::shared_ptr<VulkanBackend::Vulkan::IVulkanBootstrap> vk_backend{};
+    std::unique_ptr<VulkanBackend::Vulkan::VulkanBootstrap> bootstrap{};
+    std::unique_ptr<VulkanBackend::Vulkan::FrameLoop> runtime{};
     VulkanEngine::Input::InputSystem input_system{};
     ApplicationContext context{};
     bool platform_initialized = false;
@@ -163,8 +107,8 @@ struct ApplicationHooks {
             return fail("Native SDL window handle is null");
         }
 
-        vk_backend = VulkanBackend::Runtime::CreateVulkanBootstrapBackend();
-        bootstrap = std::make_unique<VulkanBackend::Runtime::VulkanBootstrap>(vk_backend);
+        vk_backend = VulkanBackend::Vulkan::CreateVulkanBootstrapBackend();
+        bootstrap = std::make_unique<VulkanBackend::Vulkan::VulkanBootstrap>(vk_backend);
         auto bootstrap_config = config.bootstrap_config;
         bootstrap_config.native_window_handle = window;
         if (!bootstrap->Initialize(bootstrap_config)) {
@@ -172,7 +116,7 @@ struct ApplicationHooks {
         }
         bootstrap_initialized = true;
 
-        runtime = std::make_unique<VulkanBackend::Runtime::FrameLoop>();
+        runtime = std::make_unique<VulkanBackend::Vulkan::FrameLoop>();
         if (!runtime->Initialize(config.runtime_config)) {
             return fail("Runtime shell initialization failed");
         }
@@ -235,8 +179,8 @@ struct ApplicationHooks {
 
             runtime->NotifyWindowMinimized(context.platform_state->minimized);
             context.frame.runtime_frame = runtime->BeginFrame();
-            if (context.frame.runtime_frame.status == VulkanBackend::Runtime::RuntimeStatus::Minimized ||
-                context.frame.runtime_frame.status == VulkanBackend::Runtime::RuntimeStatus::ShutdownRequested) {
+            if (context.frame.runtime_frame.status == VulkanBackend::Vulkan::RuntimeStatus::Minimized ||
+                context.frame.runtime_frame.status == VulkanBackend::Vulkan::RuntimeStatus::ShutdownRequested) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(config.minimized_sleep_ms));
                 continue;
             }
@@ -246,13 +190,13 @@ struct ApplicationHooks {
             }
 
             const auto bootstrap_frame = bootstrap->BeginFrame();
-            if (bootstrap_frame.status == VulkanBackend::Runtime::BootstrapStatus::SwapchainOutOfDate) {
+            if (bootstrap_frame.status == VulkanBackend::Vulkan::BootstrapStatus::SwapchainOutOfDate) {
                 if (!bootstrap->RecreateSwapchain()) {
                     return fail("Swapchain recreation failed");
                 }
                 continue;
             }
-            if (bootstrap_frame.status != VulkanBackend::Runtime::BootstrapStatus::Ok) {
+            if (bootstrap_frame.status != VulkanBackend::Vulkan::BootstrapStatus::Ok) {
                 return fail("Vulkan bootstrap entered non-OK frame status");
             }
 
@@ -291,9 +235,3 @@ struct ApplicationHooks {
 // NOLINTEND
 
 } // namespace VulkanEngine::Application
-
-
-
-
-
-

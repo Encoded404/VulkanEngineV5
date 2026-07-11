@@ -1,6 +1,6 @@
 module;
 
-export module VulkanBackend.Utils.ImageUtils;
+export module VulkanBackend.Vulkan.ImageUtils;
 
 import std;
 import std.compat;

@@ -1,6 +1,6 @@
 module;
 
-export module VulkanBackend.Utils.PipelineUtils;
+export module VulkanBackend.Vulkan.PipelineUtils;
 
 import std;
 import std.compat;

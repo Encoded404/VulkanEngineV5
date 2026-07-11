@@ -5,11 +5,11 @@ import std;
 import std.compat;
 
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace {
 
-using namespace VulkanBackend::Runtime;
+using namespace VulkanBackend::Vulkan;
 
 class FakeVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
@@ -29,7 +29,7 @@ public:
         current_frames_in_flight = frames_in_flight;
         return logical_device_result;
     }
-    [[nodiscard]] bool CreateSwapchain(uint32_t, VulkanBackend::Runtime::PresentMode, uint32_t& out_image_count) override {
+    [[nodiscard]] bool CreateSwapchain(uint32_t, VulkanBackend::Vulkan::PresentMode, uint32_t& out_image_count) override {
         out_image_count = produced_swapchain_image_count;
         return swapchain_result;
     }

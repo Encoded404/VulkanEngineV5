@@ -7,15 +7,15 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.MemoryUtils;
-import VulkanBackend.Utils.ImageUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.MemoryUtils;
+import VulkanBackend.Vulkan.ImageUtils;
 
 namespace VulkanEngine::GpuResources {
 
 namespace {
 
-void CreateBufferResource(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+void CreateBufferResource(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                           std::uint64_t size,
                           vk::BufferUsageFlags usage,
                           vk::MemoryPropertyFlags properties,
@@ -39,7 +39,7 @@ void CreateBufferResource(VulkanBackend::Runtime::IVulkanBootstrap& backend,
 
 } // namespace
 
-GpuBuffer GpuBuffer::Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+GpuBuffer GpuBuffer::Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                             std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,

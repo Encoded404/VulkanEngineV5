@@ -1,6 +1,6 @@
 module;
 
-export module VulkanBackend.Utils.VulkanDebugUtils;
+export module VulkanBackend.Vulkan.VulkanDebugUtils;
 
 import std;
 import std.compat;

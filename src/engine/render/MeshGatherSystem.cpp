@@ -1,6 +1,6 @@
 module;
-#include <glm/glm.hpp>
 
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 
 #include <logging/logging_macros.hpp>
@@ -23,8 +23,8 @@ import VulkanEngine.MeshManager;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
-import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 
 namespace VulkanEngine {
 
@@ -189,9 +189,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 s2->index_start_packed = (index_buf_slot << 24) | sm.index_start;
                 s2->index_range = sm.index_count;
                 {
-                    const auto& per_mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(sm.material_id);
-                    s2->technique_material =
-                        (per_mat.texture_slot << 16) | per_mat.technique_id;
+                    auto* tech = material_mgr.GetTechniqueForMaterial(sm.material_id);
+                    s2->technique_material = tech->PackMaterialData(sm.material_id.value);
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
             }
@@ -292,9 +291,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->index_start_packed = packed_index;
                     s2->index_range = sm.index_count;
                     {
-                        const auto& per_mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(sm.material_id);
-                        s2->technique_material =
-                            (per_mat.texture_slot << 16) | per_mat.technique_id;
+                        auto* tech = material_mgr.GetTechniqueForMaterial(sm.material_id);
+                        s2->technique_material = tech->PackMaterialData(sm.material_id.value);
                     }
                     s2->vertex_info = packed_vertex;
                 } else {

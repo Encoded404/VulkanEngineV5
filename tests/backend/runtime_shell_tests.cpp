@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-import VulkanBackend.Runtime.FrameLoop;
+import VulkanBackend.Vulkan.FrameLoop;
 
 namespace {
 
-using namespace VulkanBackend::Runtime;
+using namespace VulkanBackend::Vulkan;
 
 TEST(FrameLoopTest, ResizeAndOutOfDateStatusesAreReported) {
     FrameLoop runtime{};

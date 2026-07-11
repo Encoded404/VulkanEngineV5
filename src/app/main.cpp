@@ -5,6 +5,7 @@ import std;
 
 import App.Game;
 import VulkanEngine.Application;
+import Runtime.Application;
 
 int main(int argc, char* const argv[]) {
     CLI::App app{"VulkanEngineV5 Demo"};

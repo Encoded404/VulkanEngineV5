@@ -57,9 +57,6 @@ target_sources(${BACKEND_TARGET} PRIVATE
     event/Event.cpp
     platform/SdlWindow.cpp
     platform/SdlWindowBackend.cpp
-    RenderGraph/RenderGraph.cpp
-    vulkan/RenderGraphExecutor.cpp
-    RenderGraph/RenderGraphCompile.cpp
     vulkan/FramePacer.cpp
     vulkan/VulkanBootstrap.cpp
     vulkan/DispatchLoader.cpp
@@ -71,6 +68,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     vulkan/ImageUtils.cpp
     vulkan/PipelineBuilder.cpp
     vulkan/DebugUtils.cpp
+    vulkan/RenderGraphExecutor.cpp
     imgui/ImGuiVulkanBackend.cpp
 )
 
@@ -82,7 +80,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             event/Event.cppm
             platform/SdlWindow.cppm
             platform/SdlWindowBackend.cppm
-            RenderGraph/RenderGraph.cppm
             vulkan/GraphExecutionContext.cppm
             vulkan/RenderGraphContext.cppm
             vulkan/FramePacer.cppm
@@ -96,6 +93,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             vulkan/ImageUtils.cppm
             vulkan/PipelineBuilder.cppm
             vulkan/DebugUtils.cppm
+            vulkan/RenderGraphExecutor.cppm
             imgui/ImGuiVulkanBackend.cppm
     )
 endif()

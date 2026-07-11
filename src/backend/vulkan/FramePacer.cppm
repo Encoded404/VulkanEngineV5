@@ -1,10 +1,10 @@
 module;
 
-export module VulkanBackend.Runtime.FrameLoop;
+export module VulkanBackend.Vulkan.FrameLoop;
 
 import std;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 enum class RuntimeStatus : std::uint8_t {
     Ok,
@@ -51,4 +51,4 @@ private:
     RuntimeStatus pending_status_ = RuntimeStatus::Ok;
 };
 
-}  // namespace VulkanBackend::Runtime
+}  // namespace VulkanBackend::Vulkan

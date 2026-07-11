@@ -2,11 +2,11 @@ module;
 
 #include <SDL3/SDL_video.h>
 
-export module VulkanBackend.Runtime.CommonTypes;
+export module VulkanBackend.Vulkan.CommonTypes;
 
 import std;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 enum class PresentMode : std::uint8_t {
     Mailbox,
@@ -49,4 +49,4 @@ struct VulkanBootstrapState {
     BootstrapStatus status = BootstrapStatus::NotInitialized;
 };
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

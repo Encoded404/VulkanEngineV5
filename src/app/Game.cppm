@@ -4,7 +4,7 @@ export module App.Game;
 
 import std;
 
-export import VulkanEngine.Game;
+export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
 export import App.Components.SimpleControllerComponent;
 export import App.Components.TransformControlComponent;
@@ -51,7 +51,7 @@ private:
     std::filesystem::path model_path_{};
     std::filesystem::path texture_path_{};
 
-    VulkanEngine::Game::GameEngine engine_game_{};
+    VulkanEngine::GameEngine engine_game_{};
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};
 };
 

@@ -4,7 +4,7 @@ module;
 
 #include <vulkan/vulkan_hpp_macros.hpp>
 
-module VulkanBackend.Runtime.VulkanDevice;
+module VulkanBackend.Vulkan.VulkanDevice;
 
 import std;
 import std.compat;
@@ -13,11 +13,11 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanInstance;
-import VulkanBackend.Runtime.CommonTypes;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanInstance;
+import VulkanBackend.Vulkan.CommonTypes;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
-namespace VulkanBackend::Runtime {
+namespace VulkanBackend::Vulkan {
 
 bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
     if (physical_device_) return true;
@@ -183,4 +183,4 @@ void VulkanDevice::Shutdown() {
     frames_in_flight_ = 0;
 }
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

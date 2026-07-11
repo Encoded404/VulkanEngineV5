@@ -7,8 +7,8 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.RenderGraph;
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanEngine.RenderGraph;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.PipelinePass;
 
 export namespace VulkanEngine::RenderPipeline {
@@ -36,7 +36,7 @@ public:
     RenderPipeline();
     ~RenderPipeline() override;
 
-    void Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap);
+    void Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap);
     void Shutdown();
 
     // ── IResourceRegistry overrides ──
@@ -84,7 +84,7 @@ private:
     void DeallocateTransients();
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index);
 
-    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
 

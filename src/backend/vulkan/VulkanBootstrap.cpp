@@ -2,14 +2,14 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanBackend.Runtime.VulkanBootstrap;
+module VulkanBackend.Vulkan.VulkanBootstrap;
 
 import std;
 import std.compat;
 
 import logiface;
 
-namespace VulkanBackend::Runtime {
+namespace VulkanBackend::Vulkan {
 
 VulkanBootstrap::VulkanBootstrap(std::shared_ptr<IVulkanBootstrap> backend)
     : backend_(std::move(backend)) {}
@@ -167,4 +167,4 @@ const VulkanBootstrapState& VulkanBootstrap::GetSnapshot() const {
     return snapshot_;
 }
 
-}  // namespace VulkanBackend::Runtime
+}  // namespace VulkanBackend::Vulkan

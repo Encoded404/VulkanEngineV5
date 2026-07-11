@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
-import VulkanBackend.RenderGraph;
-import VulkanBackend.RenderGraph.GraphExecutionBridge;
-import VulkanBackend.Runtime.FrameLoop;
+import VulkanEngine.RenderGraph;
+import VulkanBackend.Vulkan.GraphExecutionBridge;
+import VulkanBackend.Vulkan.FrameLoop;
 
 namespace {
 
 using namespace VulkanEngine::RenderGraph;
-using namespace VulkanBackend::Runtime;
+using namespace VulkanBackend::Vulkan;
 
 TEST(GraphExecutionBridgeTest, RuntimeFrameMapsToGraphExecutionContext) {
     const RuntimeFrameInfo runtime_frame{

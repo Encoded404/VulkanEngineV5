@@ -9,7 +9,7 @@ import std;
 import logiface;
 import vulkan_hpp;
 import Shaders.Engine.ExpandComp;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.PipelinePass;
@@ -20,7 +20,7 @@ namespace VulkanEngine::SceneRenderer {
 ExpandPass::ExpandPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 ExpandPass::~ExpandPass() { Shutdown(); }
 
-bool ExpandPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
+bool ExpandPass::Create(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                          vk::DescriptorSetLayout bindless_index_layout) {
     const auto& dev = be.GetDevice();
 

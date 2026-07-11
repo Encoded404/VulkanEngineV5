@@ -11,8 +11,8 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 
 namespace VulkanEngine::BindlessManager {
@@ -21,7 +21,7 @@ BindlessManager::~BindlessManager() {
     Shutdown();
 }
 
-bool BindlessManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend) {
+bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend) {
     backend_ = &backend;
     const auto& device = backend.GetDevice();
 

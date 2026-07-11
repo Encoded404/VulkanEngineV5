@@ -1,14 +1,14 @@
 module;
 
-export module VulkanBackend.RenderGraph.GraphExecutionBridge;
+export module VulkanBackend.Vulkan.GraphExecutionBridge;
 
-export import VulkanBackend.RenderGraph.GraphExecutionContext;
-import VulkanBackend.Runtime.FrameLoop;
+export import VulkanBackend.Vulkan.GraphExecutionContext;
+import VulkanBackend.Vulkan.FrameLoop;
 
 export namespace VulkanEngine::RenderGraph {
 
 [[nodiscard]] inline GraphExecutionContext CreateGraphExecutionContext(
-    const VulkanBackend::Runtime::RuntimeFrameInfo& runtime_frame,
+    const VulkanBackend::Vulkan::RuntimeFrameInfo& runtime_frame,
     ImportedFrameResources imported_resources) {
     return GraphExecutionContext{
         .frame_index = runtime_frame.frame_index,

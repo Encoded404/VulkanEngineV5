@@ -105,6 +105,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/CollectPass.cppm
     render/passes/DepthPrePass.cppm
     render/passes/MainPass.cppm
+    render_graph/RenderGraph.cpp
+    render_graph/RenderGraphCompile.cpp
 )
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
@@ -142,7 +144,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
             core/Startup.cppm
-            core/Application.cppm
+            core/ApplicationContext.cppm
             ecs/ComponentRegistry.cppm
             components/Transform.cppm
             components/Camera.cppm
@@ -187,6 +189,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             core/GameEngine.cppm
             core/EngineContext.cppm
             core/EngineBootstrap.cppm
+            render_graph/RenderGraph.cppm
             render/passes/ExpandPass.cppm
             render/passes/HiZPass.cppm
             render/passes/OcclusionPass.cppm

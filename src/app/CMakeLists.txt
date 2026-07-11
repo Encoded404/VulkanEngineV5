@@ -44,7 +44,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     endif()
 endif()
 
-target_link_libraries(${APP_TARGET} PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET} slang_shared_reflection)
+target_link_libraries(${APP_TARGET} PRIVATE ${RUNTIME_TARGET} slang_shared_reflection)
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)

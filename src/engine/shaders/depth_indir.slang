@@ -3,6 +3,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    float4x4 modelMatrix;   // unused by depth pass, must match main_indir size
 };
 
 [[vk::binding(0, 1)]]

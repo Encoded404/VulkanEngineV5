@@ -1,6 +1,6 @@
 module;
-#include <glm/glm.hpp>
 
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.Components.Camera;

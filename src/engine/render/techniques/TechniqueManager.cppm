@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanShared.CallbackList;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.BaseTechnique;
@@ -19,6 +19,25 @@ constexpr std::uint16_t UINT16_MAX =
 #endif
 
 export namespace VulkanEngine::TechniqueManager {
+
+// ── Configurable bit packing for StaticEntry.technique_material ──
+// Change TECHNIQUE_BITS to redistribute bits between material_id and technique_id.
+// Keep in sync with kTechniqueBits in expand.slang.
+namespace TechniquePacking {
+    inline constexpr uint32_t TECHNIQUE_BITS  = 12;              // → 4096 techniques max
+    inline constexpr uint32_t MATERIAL_BITS   = 32 - TECHNIQUE_BITS;  // → 1M materials max
+    inline constexpr uint32_t TECHNIQUE_MASK  = (1u << TECHNIQUE_BITS) - 1;
+
+    constexpr uint32_t Pack(uint32_t material_id, uint32_t technique_id) {
+        return (material_id << TECHNIQUE_BITS) | (technique_id & TECHNIQUE_MASK);
+    }
+    constexpr uint32_t UnpackTechnique(uint32_t packed) {
+        return packed & TECHNIQUE_MASK;
+    }
+    constexpr uint32_t UnpackMaterial(uint32_t packed) {
+        return packed >> TECHNIQUE_BITS;
+    }
+}
 
 class TechniqueManager {
 public:
@@ -51,9 +70,8 @@ public:
 
     // Get technique ID by type
     template<typename Tech>
-    TechniqueId GetId() const {
-        auto it = type_to_id_.find(std::type_index(typeid(Tech)));
-        if (it != type_to_id_.end()) return it->second;
+    [[nodiscard]] TechniqueId GetId() const {
+        if (const auto it = type_to_id_.find(std::type_index(typeid(Tech))); it != type_to_id_.end()) return it->second;
         return TechniqueId{UINT16_MAX};
     }
 

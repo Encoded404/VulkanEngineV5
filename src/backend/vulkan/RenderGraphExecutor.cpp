@@ -1,56 +1,47 @@
 module;
 
-
-module VulkanBackend.RenderGraph;
+module VulkanBackend.Vulkan.RenderGraphExecutor;
 
 import std;
 import std.compat;
 
 import vulkan_hpp;
 
-namespace VulkanEngine::RenderGraph {
+import VulkanShared.RenderGraphTypes;
+
+using VulkanEngine::RenderGraph::ResourceState;
+using VulkanEngine::RenderGraph::PipelineStageIntent;
+using VulkanEngine::RenderGraph::AccessIntent;
+using VulkanEngine::RenderGraph::ImageLayoutIntent;
+
+namespace VulkanBackend::Vulkan {
 
 namespace {
-    static void BeginPassLabel(vk::CommandBuffer cmd, vk::Device /*dev*/, const std::string& name) {
-        vk::DebugUtilsLabelEXT label{};
-        label.pLabelName = name.c_str();
-        cmd.beginDebugUtilsLabelEXT(label);
-    }
 
-    static void EndPassLabel(vk::CommandBuffer cmd, vk::Device /*dev*/) {
-        cmd.endDebugUtilsLabelEXT();
-    }
+static void BeginPassLabel(vk::CommandBuffer cmd, const std::string& name) {
+    vk::DebugUtilsLabelEXT label{};
+    label.pLabelName = name.c_str();
+    cmd.beginDebugUtilsLabelEXT(label);
 }
 
-void CompiledRenderGraph::SetImportedResourceState(std::uint32_t resource_index, ResourceState state) const {
-    if (resource_index < initial_states.size()) {
-        initial_states[resource_index] = state;
-        has_initial_state[resource_index] = true;
-    }
+static void EndPassLabel(vk::CommandBuffer cmd) {
+    cmd.endDebugUtilsLabelEXT();
 }
 
-void CompiledRenderGraph::SetResourceImage(std::uint32_t resource_index, vk::Image image) {
-    if (resource_index < resource_images.size()) {
-        resource_images[resource_index] = image;
-    }
-}
+} // anonymous namespace
 
-void CompiledRenderGraph::SetResourceFormat(std::uint32_t resource_index, vk::Format format) {
-    if (resource_index < resource_formats.size()) {
-        resource_formats[resource_index] = format;
-    }
-}
-
-void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer command_buffer) const {
-    if (!success) {
+void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
+                         const void* user_data,
+                         vk::CommandBuffer command_buffer) {
+    if (!graph.success) {
         return;
     }
 
-    std::vector<ResourceState> current_states = initial_states;
-    std::vector<bool> has_state = has_initial_state;
+    std::vector<ResourceState> current_states = graph.initial_states;
+    std::vector<bool> has_state = graph.has_initial_state;
 
-    for (const auto& pass : passes) {
-        BeginPassLabel(command_buffer, device, pass.name);
+    for (const auto& pass : graph.passes) {
+        BeginPassLabel(command_buffer, pass.name);
 
         if (!pass.pre_pass_transitions.empty()) {
             std::vector<vk::ImageMemoryBarrier> image_barriers;
@@ -59,13 +50,13 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
 
             for (const auto& transition : pass.pre_pass_transitions) {
-                const auto& res_info = resource_info[transition.resource_index];
+                const auto& res_info = graph.resource_info[transition.resource_index];
 
-                if (res_info.kind == ResourceKind::Image) {
+                if (res_info.kind == VulkanEngine::RenderGraph::ResourceKind::Image) {
                     if (!has_state[transition.resource_index]) {
                         const ResourceState undefined_state = ResourceState::ImageState(
                             PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                            QueueType::Graphics, ImageLayoutIntent::Undefined);
+                            VulkanEngine::RenderGraph::QueueType::Graphics, ImageLayoutIntent::Undefined);
                         current_states[transition.resource_index] = undefined_state;
                         has_state[transition.resource_index] = true;
                     }
@@ -73,25 +64,25 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     const auto& from = current_states[transition.resource_index];
                     const auto& to = transition.target_state;
 
-                    if (!StatesEqual(from, to)) {
+                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
                         vk::ImageMemoryBarrier barrier{};
-                        barrier.image = resource_images[transition.resource_index];
-                        barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
-                        barrier.oldLayout = IntentToImageLayout(from.layout);
-                        barrier.newLayout = IntentToImageLayout(to.layout);
+                        barrier.image = graph.resource_images[transition.resource_index];
+                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
+                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
+                        barrier.oldLayout = VulkanEngine::RenderGraph::IntentToImageLayout(from.layout);
+                        barrier.newLayout = VulkanEngine::RenderGraph::IntentToImageLayout(to.layout);
                         barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
                         barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
 
-                        const auto format = resource_formats[transition.resource_index];
+                        const auto format = graph.resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
-                            FormatToAspectFlags(format),
+                            VulkanEngine::RenderGraph::FormatToAspectFlags(format),
                             0, vk::RemainingMipLevels,
                             0, vk::RemainingArrayLayers
                         };
 
-                        src_stage |= IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= IntentToPipelineStage(to.stage, to.access);
+                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
+                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
 
                         image_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
@@ -99,7 +90,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                 } else {
                     if (!has_state[transition.resource_index]) {
                         const ResourceState undefined_state = ResourceState::BufferState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None, QueueType::Graphics);
+                            PipelineStageIntent::TopOfPipe, AccessIntent::None, VulkanEngine::RenderGraph::QueueType::Graphics);
                         current_states[transition.resource_index] = undefined_state;
                         has_state[transition.resource_index] = true;
                     }
@@ -107,13 +98,13 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     const auto& from = current_states[transition.resource_index];
                     const auto& to = transition.target_state;
 
-                    if (!StatesEqual(from, to)) {
+                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
                         vk::MemoryBarrier barrier{};
-                        barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
+                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
+                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
 
-                        src_stage |= IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= IntentToPipelineStage(to.stage, to.access);
+                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
+                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
 
                         memory_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
@@ -152,8 +143,8 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
         }
 
         if (pass.attachment_setup.has_value()) {
-            if (pass.attachment_setup->auto_begin_rendering) { // NOLINT(bugprone-unchecked-optional-access)
-                const auto& setup = *pass.attachment_setup; // NOLINT(bugprone-unchecked-optional-access)
+            if (pass.attachment_setup->auto_begin_rendering) {
+                const auto& setup = *pass.attachment_setup;
 
                 std::vector<vk::RenderingAttachmentInfo> color_attachments;
                 color_attachments.reserve(setup.color_attachments.size());
@@ -172,12 +163,12 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                 std::optional<vk::RenderingAttachmentInfo> depth_attachment;
                 if (setup.depth_attachment.has_value()) {
                     depth_attachment = vk::RenderingAttachmentInfo{};
-                    depth_attachment->imageView = setup.depth_attachment->image_view; // NOLINT(bugprone-unchecked-optional-access)
+                    depth_attachment->imageView = setup.depth_attachment->image_view;
                     depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-                    depth_attachment->loadOp = setup.depth_attachment->load_op; // NOLINT(bugprone-unchecked-optional-access)
-                    depth_attachment->storeOp = setup.depth_attachment->store_op; // NOLINT(bugprone-unchecked-optional-access)
-                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) { // NOLINT(bugprone-unchecked-optional-access)
-                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth); // NOLINT(bugprone-unchecked-optional-access)
+                    depth_attachment->loadOp = setup.depth_attachment->load_op;
+                    depth_attachment->storeOp = setup.depth_attachment->store_op;
+                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) {
+                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth);
                     }
                 }
 
@@ -198,7 +189,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             pass.execute.callback(user_data, command_buffer);
         }
 
-        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) { // NOLINT(bugprone-unchecked-optional-access)
+        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) {
             command_buffer.endRendering();
         }
 
@@ -209,13 +200,13 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
 
             for (const auto& transition : pass.post_pass_transitions) {
-                const auto& res_info = resource_info[transition.resource_index];
+                const auto& res_info = graph.resource_info[transition.resource_index];
 
-                if (res_info.kind == ResourceKind::Image) {
+                if (res_info.kind == VulkanEngine::RenderGraph::ResourceKind::Image) {
                     if (!has_state[transition.resource_index]) {
                         const ResourceState undefined_state = ResourceState::ImageState(
                             PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                            QueueType::Graphics, ImageLayoutIntent::Undefined);
+                            VulkanEngine::RenderGraph::QueueType::Graphics, ImageLayoutIntent::Undefined);
                         current_states[transition.resource_index] = undefined_state;
                         has_state[transition.resource_index] = true;
                     }
@@ -223,25 +214,25 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     const auto& from = current_states[transition.resource_index];
                     const auto& to = transition.target_state;
 
-                    if (!StatesEqual(from, to)) {
+                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
                         vk::ImageMemoryBarrier barrier{};
-                        barrier.image = resource_images[transition.resource_index];
-                        barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
-                        barrier.oldLayout = IntentToImageLayout(from.layout);
-                        barrier.newLayout = IntentToImageLayout(to.layout);
+                        barrier.image = graph.resource_images[transition.resource_index];
+                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
+                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
+                        barrier.oldLayout = VulkanEngine::RenderGraph::IntentToImageLayout(from.layout);
+                        barrier.newLayout = VulkanEngine::RenderGraph::IntentToImageLayout(to.layout);
                         barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
                         barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
 
-                        const auto format = resource_formats[transition.resource_index];
+                        const auto format = graph.resource_formats[transition.resource_index];
                         barrier.subresourceRange = {
-                            FormatToAspectFlags(format),
+                            VulkanEngine::RenderGraph::FormatToAspectFlags(format),
                             0, vk::RemainingMipLevels,
                             0, vk::RemainingArrayLayers
                         };
 
-                        src_stage |= IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= IntentToPipelineStage(to.stage, to.access);
+                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
+                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
 
                         image_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
@@ -249,7 +240,7 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                 } else {
                     if (!has_state[transition.resource_index]) {
                         const ResourceState undefined_state = ResourceState::BufferState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None, QueueType::Graphics);
+                            PipelineStageIntent::TopOfPipe, AccessIntent::None, VulkanEngine::RenderGraph::QueueType::Graphics);
                         current_states[transition.resource_index] = undefined_state;
                         has_state[transition.resource_index] = true;
                     }
@@ -257,13 +248,13 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
                     const auto& from = current_states[transition.resource_index];
                     const auto& to = transition.target_state;
 
-                    if (!StatesEqual(from, to)) {
+                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
                         vk::MemoryBarrier barrier{};
-                        barrier.srcAccessMask = IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = IntentToAccessFlags(to.stage, to.access);
+                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
+                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
 
-                        src_stage |= IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= IntentToPipelineStage(to.stage, to.access);
+                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
+                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
 
                         memory_barriers.push_back(barrier);
                         current_states[transition.resource_index] = to;
@@ -301,8 +292,8 @@ void CompiledRenderGraph::Execute(const void* user_data, vk::CommandBuffer comma
             }
         }
 
-        EndPassLabel(command_buffer, device);
+        EndPassLabel(command_buffer);
     }
 }
 
-}  // namespace VulkanEngine::RenderGraph
+} // namespace VulkanBackend::Vulkan

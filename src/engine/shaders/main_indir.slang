@@ -3,6 +3,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    float4x4 modelMatrix;   // world matrix for per-vertex world-space position
 };
 
 [[vk::binding(0, 1)]]
@@ -29,6 +30,7 @@ struct VSOutput {
     [[vk::location(0)]] float3 outN : TEXCOORD0;
     [[vk::location(1)]] float2 outT : TEXCOORD1;
     [[vk::location(2)]] uint outM : TEXCOORD2;
+    [[vk::location(3)]] float3 outW : TEXCOORD3;    // world-space position
     float4 position : SV_Position;
 };
 
@@ -51,6 +53,7 @@ VSOutput main(uint vertexId : SV_VertexID) {
     result.outM = info.materialId;
     result.outN = n;
     result.outT = t;
+    result.outW = mul(float4(p, 1.0), info.modelMatrix).xyz;
     result.position = mul(float4(p, 1.0), info.MVP);
     return result;
 }

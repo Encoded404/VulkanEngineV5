@@ -1,12 +1,12 @@
 module;
 
-#include <glm/glm.hpp>
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.Render.Passes.ExpandPass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 
@@ -24,7 +24,7 @@ public:
     ExpandPass(const ExpandPass&) = delete;
     ExpandPass& operator=(const ExpandPass&) = delete;
 
-    bool Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                 vk::DescriptorSetLayout bindless_index_layout);
     void Shutdown();
 

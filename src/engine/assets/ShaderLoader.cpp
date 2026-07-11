@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace VulkanEngine::ShaderLoader {
 
@@ -29,13 +29,13 @@ std::vector<std::uint32_t> ShaderLoader::LoadSpirv(const std::filesystem::path& 
     return words;
 }
 
-vk::raii::ShaderModule ShaderLoader::CreateModule(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+vk::raii::ShaderModule ShaderLoader::CreateModule(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                                    const std::filesystem::path& path) {
     auto spirv = LoadSpirv(path);
     return CreateModuleFromSpirv(backend, spirv);
 }
 
-vk::raii::ShaderModule ShaderLoader::CreateModuleFromSpirv(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+vk::raii::ShaderModule ShaderLoader::CreateModuleFromSpirv(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                                             std::span<const std::uint32_t> spirv) {
     vk::ShaderModuleCreateInfo const info({}, spirv.size() * sizeof(std::uint32_t), spirv.data());
     return vk::raii::ShaderModule(backend.GetDevice(), info);

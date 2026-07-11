@@ -4,7 +4,7 @@ export module VulkanEngine.SceneLoader;
 
 import std;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.ResourceSystem;
 export import VulkanEngine.ResourceSystem.TextureResource;
 export import VulkanEngine.FileLoaders.Mesh.MeshMagicLoader;
@@ -49,49 +49,46 @@ struct CombinedScene {
     std::vector<VulkanEngine::SubMesh> submeshes{};
 };
 
-class SceneLoader {
-public:
-    [[nodiscard]] static LoadedMeshData CreateFallbackQuad();
+[[nodiscard]] LoadedMeshData CreateFallbackQuad();
 
-    [[nodiscard]] static LoadedMeshData LoadMeshFromFile(
-        const std::filesystem::path& models_dir,
-        const std::vector<MaterialId>* material_bindings = nullptr);
+[[nodiscard]] LoadedMeshData LoadMeshFromFile(
+    const std::filesystem::path& models_dir,
+    const std::vector<MaterialId>* material_bindings = nullptr);
 
-    [[nodiscard]] static LoadedMeshData LoadMeshFromFilePath(
-        const std::filesystem::path& file_path,
-        const std::vector<MaterialId>* material_bindings = nullptr);
+[[nodiscard]] LoadedMeshData LoadMeshFromFilePath(
+    const std::filesystem::path& file_path,
+    const std::vector<MaterialId>* material_bindings = nullptr);
 
-    [[nodiscard]] static std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
-    ConvertToVertices(const LoadedMeshData& mesh);
+[[nodiscard]] std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
+ConvertToVertices(const LoadedMeshData& mesh);
 
-    [[nodiscard]] static VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
-    LoadTexture(VulkanEngine::ResourceManager& resource_manager,
-                const std::filesystem::path& textures_dir,
-                const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback);
+[[nodiscard]] VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
+LoadTexture(VulkanEngine::ResourceManager& resource_manager,
+            const std::filesystem::path& textures_dir,
+            const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback);
 
-    [[nodiscard]] static VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
-    LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
-                        const std::filesystem::path& texture_path,
-                        const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback);
+[[nodiscard]] VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
+LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
+                    const std::filesystem::path& texture_path,
+                    const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback);
 
-    [[nodiscard]] static bool LoadAllMeshes(const std::filesystem::path& models_dir,
-                                             std::vector<LoadedMeshData>& out_meshes,
-                                             std::vector<std::string>& out_names,
-                                             const std::vector<MaterialId>* material_bindings = nullptr);
+[[nodiscard]] bool LoadAllMeshes(const std::filesystem::path& models_dir,
+                                 std::vector<LoadedMeshData>& out_meshes,
+                                 std::vector<std::string>& out_names,
+                                 const std::vector<MaterialId>* material_bindings = nullptr);
 
-    [[nodiscard]] static CombinedScene UploadCombined(
-        VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
-        VulkanEngine::GpuResources::StagingManager& staging_mgr,
-        VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
-        VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
-        const std::vector<LoadedMeshData>& meshes);
+[[nodiscard]] CombinedScene UploadCombined(
+    VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+    VulkanEngine::GpuResources::StagingManager& staging_mgr,
+    VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
+    VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
+    const std::vector<LoadedMeshData>& meshes);
 
-    [[nodiscard]] static VulkanEngine::GpuResources::MeshData LoadMeshData(
-        const std::filesystem::path& file_path,
-        const std::vector<MaterialId>* material_bindings = nullptr);
+[[nodiscard]] VulkanEngine::GpuResources::MeshData LoadMeshData(
+    const std::filesystem::path& file_path,
+    const std::vector<MaterialId>* material_bindings = nullptr);
 
-    [[nodiscard]] static VulkanEngine::GpuResources::MeshData ToMeshData(
-        const LoadedMeshData& loaded);
-};
+[[nodiscard]] VulkanEngine::GpuResources::MeshData ToMeshData(
+    const LoadedMeshData& loaded);
 
 }

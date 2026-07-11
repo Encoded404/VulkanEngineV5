@@ -2,7 +2,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanEngine.Game;
+module VulkanEngine.GameEngine;
 
 import std;
 import std.compat;
@@ -15,7 +15,7 @@ import Shaders.Engine.StandardMeshFrag;
 import VulkanEngine.MeshManager;
 import VulkanEngine.EngineBootstrap;
 
-namespace VulkanEngine::Game {
+namespace VulkanEngine {
 
 GameEngine::~GameEngine() {
     if (initialized_) {
@@ -56,7 +56,7 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
 }
 
 uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path) {
-    auto tex_handle = SceneLoader::SceneLoader::LoadTextureFromPath(
+    auto tex_handle = SceneLoader::LoadTextureFromPath(
         ctx_.resource_manager, path, ctx_.fallback_handle);
     if (tex_handle.IsValid() && tex_handle->HasPixels()) {
         return UploadTextureToBindless(ctx, tex_handle.Get());
@@ -108,12 +108,14 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     [[maybe_unused]] auto fallback_handle = ctx_.material_mgr.Register<TechniqueManager::DefaultMeshTechnique>(
         MaterialManager::BlendMode::Opaque,
         TechniqueManager::DefaultMeshPerMaterialData{
-            .texture_slot = fallback_slot,
-            .technique_id = main_technique_id_
+            .albedo_texture = fallback_slot,
+            .roughness_factor = 1.0f,
+            .metallic_factor = 0.0f,
+            .ao_factor = 1.0f
         });
 
     ctx_.renderer = std::make_unique<Renderer::Renderer>();
-    ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config);
+    ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer);
 
     if (config_.enable_imgui) {
         ctx_.imgui_backend = VulkanBackend::ImGui::CreateImGuiBackend();
@@ -229,7 +231,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadSceneFromFiles(
     mesh_data_list.reserve(file_paths.size());
 
     for (const auto& path : file_paths) {
-        auto md = SceneLoader::SceneLoader::LoadMeshData(path, material_bindings);
+        auto md = SceneLoader::LoadMeshData(path, material_bindings);
         mesh_data_list.push_back(std::move(md));
     }
 
@@ -317,4 +319,4 @@ void GameEngine::Shutdown() {
     vk_backend_ = nullptr;
 }
 
-} // namespace VulkanEngine::Game
+} // namespace VulkanEngine

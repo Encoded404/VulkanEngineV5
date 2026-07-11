@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 
 import VulkanEngine.GpuResources.StagingManager;
@@ -39,7 +39,7 @@ public:
     BlockArray(BlockArray&&) noexcept;
     BlockArray& operator=(BlockArray&&) noexcept;
 
-    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend, const Config& cfg);
+    bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend, const Config& cfg);
 
     void Shutdown();
 
@@ -65,7 +65,7 @@ public:
 private:
     bool AddBlock();
 
-    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     Config cfg_{};
     std::vector<GpuBuffer> blocks_;
     std::vector<void*> mappings_;

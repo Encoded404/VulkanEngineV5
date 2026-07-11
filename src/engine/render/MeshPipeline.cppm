@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
 
 export namespace VulkanEngine::StandardMeshPipeline {
@@ -61,7 +61,7 @@ public:
     GraphicsPipeline();
     ~GraphicsPipeline();
 
-    void Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+    void Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                     const std::vector<std::uint32_t>& vertex_spirv,
                     const std::vector<std::uint32_t>& fragment_spirv,
                     const PipelineConfig& config = {},
@@ -81,7 +81,7 @@ public:
     // ── New: Create pipeline with pre-built layout (used by BaseTechnique::Compile()) ──
     // Creates a graphics pipeline using an externally provided VkPipelineLayout,
     // descriptor set layouts, and push constant ranges. Does NOT create its own layout.
-    void CreatePipelineWithLayout(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+    void CreatePipelineWithLayout(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   const std::vector<std::uint32_t>& vertex_spirv,
                                   const std::vector<std::uint32_t>& fragment_spirv,
                                   const PipelineConfig& config,
@@ -89,14 +89,14 @@ public:
                                   vk::PipelineLayout external_pipeline_layout);
 
 private:
-    void CreatePipeline(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+    void CreatePipeline(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                         const std::vector<std::uint32_t>& vertex_spirv,
                         const std::vector<std::uint32_t>& fragment_spirv,
                         const PipelineConfig& config);
-    void CreateDescriptorSetLayout(VulkanBackend::Runtime::VulkanBootstrap& bootstrap);
-    void CreateDescriptorPool(VulkanBackend::Runtime::VulkanBootstrap& bootstrap);
+    void CreateDescriptorSetLayout(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap);
+    void CreateDescriptorPool(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap);
 
-    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     PipelineConfig config_{};
     vk::DescriptorSetLayout* external_layout_ = nullptr;
     vk::DescriptorSetLayout* object_data_layout_ = nullptr;

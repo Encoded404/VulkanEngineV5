@@ -1,6 +1,6 @@
 module;
 
-export module VulkanEngine.Game;
+export module VulkanEngine.GameEngine;
 
 import std;
 
@@ -33,7 +33,7 @@ import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.EngineBootstrap;
 
-export namespace VulkanEngine::Game {
+export namespace VulkanEngine {
 
 class GameEngine {
 public:
@@ -102,7 +102,7 @@ private:
 
     VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
 
-    VulkanBackend::Runtime::VulkanBootstrap* vk_backend_ = nullptr;
+    VulkanBackend::Vulkan::VulkanBootstrap* vk_backend_ = nullptr;
     GameConfig config_{};
 
     Components::Camera* camera_ = nullptr;
@@ -115,4 +115,4 @@ private:
     std::vector<std::uint32_t> frag_spv_holder_;
 };
 
-} // namespace VulkanEngine::Game
+} // namespace VulkanEngine

@@ -11,15 +11,15 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuTexture;
 
 namespace VulkanEngine::GpuResources {
 
 std::shared_ptr<DescriptorPool> DescriptorPool::Create(
-    VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    VulkanBackend::Vulkan::IVulkanBootstrap& backend,
     const DescriptorPoolConfig& config) {
     // clang-tidy false positive (clang-analyzer-core.uninitialized.Assign):
     // When constructing a shared_ptr to a type deriving from enable_shared_from_this,
@@ -46,7 +46,7 @@ DescriptorPool::~DescriptorPool() {
     backend_ = nullptr;
 }
 
-void DescriptorPool::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend, const DescriptorPoolConfig& config) {
+void DescriptorPool::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend, const DescriptorPoolConfig& config) {
     LOGIFACE_LOG(trace, "entering DescriptorPool::Initialize");
     backend_ = &backend;
     config_ = config;
@@ -109,7 +109,7 @@ GpuDescriptorSet DescriptorPool::Allocate(vk::DescriptorSetLayout layout) {
 }
 
 GpuDescriptorSet::GpuDescriptorSet(
-    VulkanBackend::Runtime::IVulkanBootstrap* backend,
+    VulkanBackend::Vulkan::IVulkanBootstrap* backend,
     std::shared_ptr<DescriptorPool> pool,
     const vk::DescriptorSet set,
     const vk::DescriptorSetLayout layout)
@@ -194,7 +194,7 @@ void GpuDescriptorSet::SetDebugName(const vk::raii::Device& dev, const std::stri
 }
 
 GpuDescriptorSet GpuDescriptorSet::Create(
-    VulkanBackend::Runtime::IVulkanBootstrap* backend,
+    VulkanBackend::Vulkan::IVulkanBootstrap* backend,
     std::shared_ptr<DescriptorPool> pool,
     const vk::DescriptorSet set,
     const vk::DescriptorSetLayout layout) {

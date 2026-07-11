@@ -8,8 +8,8 @@ export namespace VulkanEngine::MaterialManager {
 
 struct MaterialId {
     MaterialId() = default;
-    explicit MaterialId(std::uint16_t v) : value(v) {}
-    std::uint16_t value{0}; // NOLINT(misc-non-private-member-variables-in-classes)
+    explicit MaterialId(std::uint32_t v) : value(v) {}
+    std::uint32_t value{0}; // NOLINT(misc-non-private-member-variables-in-classes)
     bool operator==(const MaterialId& o) const = default;
 };
 

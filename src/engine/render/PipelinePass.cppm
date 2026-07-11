@@ -10,8 +10,10 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.RenderGraph;
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanEngine.RenderGraph;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
+export import VulkanEngine.TechniqueManager;
+export import VulkanEngine.BindlessManager;
 
 export namespace VulkanEngine::PipelinePass {
 
@@ -81,6 +83,14 @@ struct FrameContext {
     // Common GPU resources
     DepthPyramid    depth_pyramid{};
     DepthBufferView depth_buffer{};
+
+    // Scene-level data
+    VulkanEngine::TechniqueManager::TechniqueManager* techniques = nullptr;
+    VulkanEngine::BindlessManager::BindlessManager* bindless = nullptr;
+    vk::Buffer technique_draw_commands_buffer = nullptr;
+    std::uint32_t entity_count = 0;
+    std::uint32_t render_width = 0;
+    std::uint32_t render_height = 0;
 
     // Pipeline layout for push constants (set per-pass by PassSetupContext)
     vk::PipelineLayout pipeline_layout = nullptr;

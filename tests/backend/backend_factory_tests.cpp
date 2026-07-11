@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import VulkanBackend.Platform.SdlPlatformBackend;
-import VulkanBackend.Runtime.VulkanBootstrapBackend;
+import VulkanBackend.Vulkan.VulkanBootstrapBackend;
 
 namespace {
 
@@ -11,7 +11,7 @@ TEST(BackendFactoryTest, SdlFactoryReturnsBackendInstance) {
 }
 
 TEST(BackendFactoryTest, VulkanFactoryReturnsBackendInstance) {
-    const auto backend = VulkanBackend::Runtime::CreateVulkanBootstrapBackend();
+    const auto backend = VulkanBackend::Vulkan::CreateVulkanBootstrapBackend();
     EXPECT_NE(backend, nullptr);
 }
 

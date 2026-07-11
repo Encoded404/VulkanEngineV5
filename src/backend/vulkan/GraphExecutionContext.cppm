@@ -1,10 +1,10 @@
 module;
 
-export module VulkanBackend.RenderGraph.GraphExecutionContext;
+export module VulkanBackend.Vulkan.GraphExecutionContext;
 
 import std;
 
-import VulkanBackend.RenderGraph;
+import VulkanShared.RenderGraphTypes;
 
 export namespace VulkanEngine::RenderGraph {
 

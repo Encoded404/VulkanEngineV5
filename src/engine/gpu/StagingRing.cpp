@@ -11,8 +11,8 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
 
 #ifndef UINT64_MAX
@@ -26,7 +26,7 @@ StagingManager::~StagingManager() {
     Shutdown();
 }
 
-bool StagingManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+bool StagingManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                  std::uint64_t slot_size,
                                  std::uint32_t slot_count) {
     if (slot_count == 0 || slot_size == 0) return false;
@@ -133,6 +133,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
             slot.cmd_buffer.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
             slot.bump_offset = 0;
             slot.busy = true;
+            slot.submitted = false;
             current_slot_ = (idx + 1) % static_cast<std::uint32_t>(slots_.size());
             return slot;
         }
@@ -152,6 +153,7 @@ StagingManager::Slot& StagingManager::AcquireSlot() {
         slot.cmd_buffer.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
         slot.bump_offset = 0;
         slot.busy = true;
+        slot.submitted = false;
         auto& ret = slots_[current_slot_];
         current_slot_ = (current_slot_ + 1) % static_cast<std::uint32_t>(slots_.size());
         return ret;
@@ -226,6 +228,7 @@ void StagingManager::Flush() {
     bool has_work = false;
     for (auto& slot : slots_) {
         if (!slot.busy) continue;
+        if (slot.submitted) continue;  // already ended+submitted in a previous Flush call
 
         slot.cmd_buffer.end();
 
@@ -234,6 +237,7 @@ void StagingManager::Flush() {
         submit.pCommandBuffers = &*slot.cmd_buffer;
 
         backend_->GetGraphicsQueue().submit(submit, *slot.fence);
+        slot.submitted = true;
         has_work = true;
     }
 
@@ -252,6 +256,8 @@ void StagingManager::WaitForSlot(std::uint32_t slot_index) {
         }
     }
     slot.busy = false;
+    slot.submitted = false;
+    slot.submitted = false;
 }
 
 void StagingManager::WaitForAll() {

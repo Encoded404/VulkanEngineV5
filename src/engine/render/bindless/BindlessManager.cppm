@@ -7,7 +7,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
 import VulkanEngine.ResourceSystem;
 
@@ -21,7 +21,7 @@ public:
     BindlessManager(const BindlessManager&) = delete;
     BindlessManager& operator=(const BindlessManager&) = delete;
 
-    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
     void Shutdown();
 
     [[nodiscard]] std::uint32_t AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id);
@@ -34,7 +34,7 @@ public:
 private:
     void UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture);
 
-    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     std::unique_ptr<vk::raii::DescriptorSetLayout> layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> pool_{};
     vk::raii::DescriptorSet descriptor_set_{nullptr};

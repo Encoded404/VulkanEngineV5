@@ -1,6 +1,6 @@
 module;
-#include <glm/glm.hpp>
 
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 #include <logging/logging_macros.hpp>
 
@@ -20,7 +20,7 @@ import Shaders.Engine.HizGenComp;
 import Shaders.Engine.OcclusionCullComp;
 import Shaders.Engine.CollectCountCompactComp;
 import Shaders.Engine.CollectWriteComp;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
@@ -32,7 +32,7 @@ namespace VulkanEngine::SceneRenderer {
 
     } // anonymous namespace
 
-bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating expand pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -57,7 +57,7 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Runtime::IVulkanBo
     return true;
 }
 
-bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Runtime::IVulkanBootstrap& be,
+bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                          const vk::PipelineRasterizationStateCreateInfo& rs) {
     LOGIFACE_LOG(debug, "Creating depth pipeline...");
     const auto& dev = be.GetDevice();
@@ -95,7 +95,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Runtime::IVulkanBootstrap
     return true;
 }
 
-bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating HIZ pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -140,7 +140,7 @@ bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Runtime::IVulkanBootstrap& 
     return true;
 }
 
-bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating occlusion pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -164,7 +164,7 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Runtime::IVulka
     return true;
 }
 
-bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     LOGIFACE_LOG(debug, "Creating collect pipelines...");
     const auto& dev = be.GetDevice();
 

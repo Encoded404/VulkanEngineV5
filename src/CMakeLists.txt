@@ -1,7 +1,10 @@
+set(RUNTIME_TARGET "EngineRuntime")
+
 # layered targets
 add_subdirectory(shared)
 add_subdirectory(backend)
 add_subdirectory(engine)
+add_subdirectory(runtime)
 add_subdirectory(app)
 
 # Sanitizers interface for Debug builds
@@ -15,6 +18,7 @@ if(ENABLE_SANITIZERS)
     $<$<CONFIG:Debug>:-fsanitize=address,undefined>
   )
   target_link_libraries(${APP_TARGET} PRIVATE project_sanitizers)
+  target_link_libraries(${RUNTIME_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(${ENGINE_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(${BACKEND_TARGET} PRIVATE project_sanitizers)
   target_link_libraries(VulkanShared PRIVATE project_sanitizers)
@@ -30,6 +34,7 @@ target_link_options(project_sections INTERFACE
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
 )
 target_link_libraries(${APP_TARGET} PRIVATE project_sections)
+target_link_libraries(${RUNTIME_TARGET} PRIVATE project_sections)
 target_link_libraries(${ENGINE_TARGET} PRIVATE project_sections)
 target_link_libraries(${BACKEND_TARGET} PRIVATE project_sections)
 target_link_libraries(VulkanShared PRIVATE project_sections)

@@ -45,7 +45,7 @@ class MaterialHandle {
 public:
     // ── Read access: const ref, never dirties, constexpr offset ──
     template<typename T>
-    const T& read() const {
+    const T& Read() const {
         static_assert(Tech::template HasBinding<T>(),
                       "Technique does not declare a PerMaterial binding for this type");
         constexpr std::size_t off = Tech::template GetOffset<T>();
@@ -55,7 +55,7 @@ public:
     // ── Write access: lambda-based, no reference escape possible ──
     // After func() returns: dirty flag set, per-binding dirty mask updated, MarkDirty called.
     template<typename T, typename Func>
-    void modify(Func&& func) {
+    void Modify(Func&& func) {
         static_assert(Tech::template HasBinding<T>(),
                       "Technique does not declare a PerMaterial binding for this type");
         constexpr std::size_t off = Tech::template GetOffset<T>();
@@ -67,8 +67,8 @@ public:
     }
 
     // ── Accessors ──
-    [[nodiscard]] std::uint32_t id() const { return id_; }
-    [[nodiscard]] bool valid() const { return entry_ != nullptr; }
+    [[nodiscard]] std::uint32_t Id() const { return id_; }
+    [[nodiscard]] bool Valid() const { return entry_ != nullptr; }
 
     // Copyable — all copies point to the same MaterialEntry
     MaterialHandle(const MaterialHandle&) = default;

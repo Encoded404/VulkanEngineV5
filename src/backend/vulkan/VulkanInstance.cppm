@@ -2,15 +2,15 @@ module;
 
 #include <SDL3/SDL_video.h>
 
-export module VulkanBackend.Runtime.VulkanInstance;
+export module VulkanBackend.Vulkan.VulkanInstance;
 
 import std;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.CommonTypes;
+import VulkanBackend.Vulkan.CommonTypes;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 class VulkanInstance {
 public:
@@ -28,4 +28,4 @@ private:
     std::unique_ptr<vk::raii::SurfaceKHR> surface_{};
 };
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

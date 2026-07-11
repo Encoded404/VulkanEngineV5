@@ -12,7 +12,7 @@ import VulkanEngine.ResourceSystem.TextureResource;
 
 namespace VulkanEngine::DefaultTextureFactory {
 
-std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateCheckerboard(
+std::shared_ptr<VulkanEngine::TextureResource> CreateCheckerboard(
     VulkanEngine::ResourceManager&  /*manager*/,
     const VulkanEngine::CheckerboardConfig& config) {
     const std::uint32_t pixel_count = config.size * config.size * 4;
@@ -36,7 +36,7 @@ std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateChec
         vk::Format::eR8G8B8A8Unorm, std::move(pixels));
 }
 
-std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateWhiteTexture(
+std::shared_ptr<VulkanEngine::TextureResource> CreateWhiteTexture(
     VulkanEngine::ResourceManager&  manager) {
     VulkanEngine::CheckerboardConfig white_config{};
     white_config.color1 = {255, 255, 255, 255};
@@ -44,7 +44,7 @@ std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateWhit
     return CreateCheckerboard(manager, white_config);
 }
 
-std::shared_ptr<VulkanEngine::TextureResource> DefaultTextureFactory::CreateSolidColorTexture(
+std::shared_ptr<VulkanEngine::TextureResource> CreateSolidColorTexture(
     VulkanEngine::ResourceManager&  /*manager*/,
     const std::array<uint8_t, 4>& color) {
     std::vector<std::byte> pixels(4);

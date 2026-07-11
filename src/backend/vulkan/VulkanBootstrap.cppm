@@ -1,14 +1,14 @@
 module;
 
-export module VulkanBackend.Runtime.VulkanBootstrap;
+export module VulkanBackend.Vulkan.VulkanBootstrap;
 
 import std;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.CommonTypes;
+export import VulkanBackend.Vulkan.CommonTypes;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 class IVulkanBootstrap {
 public:
@@ -86,4 +86,4 @@ private:
     bool initialized_ = false;
 };
 
-}  // namespace VulkanBackend::Runtime
+}  // namespace VulkanBackend::Vulkan

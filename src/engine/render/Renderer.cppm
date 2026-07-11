@@ -9,7 +9,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.ECS.ComponentRegistry;
 export import VulkanEngine.RenderPipeline;
 export import VulkanEngine.StandardMeshPipeline;
@@ -19,6 +19,12 @@ export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.ImGui;
+import VulkanEngine.Render.Passes.ExpandPass;
+import VulkanEngine.Render.Passes.DepthPrePass;
+import VulkanEngine.Render.Passes.HiZPass;
+import VulkanEngine.Render.Passes.OcclusionPass;
+import VulkanEngine.Render.Passes.CollectPass;
+import VulkanEngine.Render.Passes.MainPass;
 
 export namespace VulkanEngine::Renderer {
 
@@ -36,12 +42,13 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    bool Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
-                    const RendererConfig& config);
+    bool Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+                    const RendererConfig& config,
+                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer);
 
     void Shutdown();
 
-    void RenderFrame(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+    void RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                      VulkanEngine::ComponentRegistry& registry,
                      const VulkanEngine::Components::Camera& camera,
                      VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
@@ -50,21 +57,35 @@ public:
                      VulkanEngine::ImGui::ImGuiSystem* imgui,
                      std::uint32_t image_index);
 
+    struct FrameRenderContext {
+        VulkanEngine::ComponentRegistry& registry;
+        const VulkanEngine::Components::Camera& camera;
+        VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr;
+        VulkanEngine::BindlessManager::BindlessManager& bindless_mgr;
+        VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer;
+        VulkanEngine::ImGui::ImGuiSystem* imgui = nullptr;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::uint32_t image_index = 0;
+        std::uint32_t frame_counter = 0;
+        glm::mat4 view_proj{1.0f};
+    };
+
 private:
-    VulkanBackend::Runtime::VulkanBootstrap* bootstrap_ = nullptr;
+    VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     std::unique_ptr<VulkanEngine::RenderPipeline::RenderPipeline> pipeline_{};
 
-    VulkanEngine::ComponentRegistry* current_registry_ = nullptr;
-    const VulkanEngine::Components::Camera* current_camera_ = nullptr;
-    VulkanEngine::TechniqueManager::TechniqueManager* current_technique_mgr_ = nullptr;
-    VulkanEngine::BindlessManager::BindlessManager* current_bindless_mgr_ = nullptr;
-    VulkanEngine::SceneRenderer::SceneRenderer* current_scene_renderer_ = nullptr;
-    VulkanEngine::ImGui::ImGuiSystem* current_imgui_ = nullptr;
+    // Pass classes
+    VulkanEngine::SceneRenderer::SceneRenderer* scene_renderer_ = nullptr;
+    std::unique_ptr<VulkanEngine::SceneRenderer::ExpandPass> expand_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::DepthPrePass> depth_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::HiZPass> hiz_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::OcclusionPass> occlusion_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::CollectPass> collect_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::MainPass> main_pass_{};
+
+    FrameRenderContext* current_ctx_ = nullptr;
     vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};
-    std::uint32_t current_width_ = 0;
-    std::uint32_t current_height_ = 0;
-    std::uint32_t current_image_index_ = 0;
-    glm::mat4 current_view_proj_{1.0f};
     std::uint32_t frame_counter_ = 0;
     std::uint32_t last_swapchain_image_count_ = 0;
 

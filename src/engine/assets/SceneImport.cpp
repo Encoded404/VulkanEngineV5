@@ -52,7 +52,7 @@ namespace {
 
 }
 
-LoadedMeshData SceneLoader::CreateFallbackQuad() {
+LoadedMeshData CreateFallbackQuad() {
     LOGIFACE_LOG(trace, "CreateFallbackQuad: 4 vertices, 6 indices, 1 submesh");
     LoadedMeshData data{
         .positions = { -1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f },
@@ -68,7 +68,7 @@ LoadedMeshData SceneLoader::CreateFallbackQuad() {
     return data;
 }
 
-LoadedMeshData SceneLoader::LoadMeshFromFile(const std::filesystem::path& models_dir,
+LoadedMeshData LoadMeshFromFile(const std::filesystem::path& models_dir,
                                               const std::vector<MaterialId>* material_bindings) {
     const auto mesh_path = FindFirstFileWithExtension(models_dir, VulkanEngine::FileLoaders::Mesh::KnownMeshExtensions());
     if (!mesh_path.empty()) {
@@ -95,7 +95,7 @@ LoadedMeshData SceneLoader::LoadMeshFromFile(const std::filesystem::path& models
     return CreateFallbackQuad();
 }
 
-LoadedMeshData SceneLoader::LoadMeshFromFilePath(const std::filesystem::path& file_path,
+LoadedMeshData LoadMeshFromFilePath(const std::filesystem::path& file_path,
                                                     const std::vector<MaterialId>* material_bindings) {
     try {
         auto mesh = VulkanEngine::FileLoaders::Mesh::LoadMeshFromFile(file_path, material_bindings).get();
@@ -120,7 +120,7 @@ LoadedMeshData SceneLoader::LoadMeshFromFilePath(const std::filesystem::path& fi
 }
 
 VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
-SceneLoader::LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
+LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
                                   const std::filesystem::path& texture_path,
                                   const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback) {
     if (texture_path.empty()) return fallback;
@@ -128,7 +128,7 @@ SceneLoader::LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager
     return (handle.IsValid() && handle->IsLoaded()) ? handle : fallback;
 }
 
-bool SceneLoader::LoadAllMeshes(const std::filesystem::path& models_dir,
+bool LoadAllMeshes(const std::filesystem::path& models_dir,
                                   std::vector<LoadedMeshData>& out_meshes,
                                   std::vector<std::string>& out_names,
                                   const std::vector<MaterialId>* material_bindings) {
@@ -159,7 +159,7 @@ bool SceneLoader::LoadAllMeshes(const std::filesystem::path& models_dir,
 }
 
 VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>
-SceneLoader::LoadTexture(VulkanEngine::ResourceManager& resource_manager,
+LoadTexture(VulkanEngine::ResourceManager& resource_manager,
                           const std::filesystem::path& textures_dir,
                           const VulkanEngine::ResourceHandle<VulkanEngine::TextureResource>& fallback) {
     const auto texture_path = FindFirstFileWithExtension(textures_dir, {".ktx2", ".ktx", ".png", ".jpg", ".jpeg"});
@@ -169,7 +169,7 @@ SceneLoader::LoadTexture(VulkanEngine::ResourceManager& resource_manager,
 }
 
 std::vector<VulkanEngine::StandardMeshPipeline::Vertex>
-SceneLoader::ConvertToVertices(const LoadedMeshData& mesh) {
+ConvertToVertices(const LoadedMeshData& mesh) {
     std::vector<VulkanEngine::StandardMeshPipeline::Vertex> vertices{};
     const std::size_t vertex_count = mesh.positions.size() / 3U;
     if (vertex_count == 0U) return vertices;
@@ -190,8 +190,8 @@ SceneLoader::ConvertToVertices(const LoadedMeshData& mesh) {
     return vertices;
 }
 
-CombinedScene SceneLoader::UploadCombined(
-    VulkanBackend::Runtime::VulkanBootstrap& /*bootstrap*/,
+CombinedScene UploadCombined(
+    VulkanBackend::Vulkan::VulkanBootstrap& /*bootstrap*/,
     VulkanEngine::GpuResources::StagingManager& staging_mgr,
     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
     VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
@@ -328,14 +328,14 @@ CombinedScene SceneLoader::UploadCombined(
     return scene;
 }
 
-VulkanEngine::GpuResources::MeshData SceneLoader::LoadMeshData(
+VulkanEngine::GpuResources::MeshData LoadMeshData(
     const std::filesystem::path& file_path,
     const std::vector<MaterialId>* material_bindings) {
     auto loaded = LoadMeshFromFilePath(file_path, material_bindings);
     return ToMeshData(loaded);
 }
 
-VulkanEngine::GpuResources::MeshData SceneLoader::ToMeshData(
+VulkanEngine::GpuResources::MeshData ToMeshData(
     const LoadedMeshData& loaded) {
     VulkanEngine::GpuResources::MeshData result{};
     result.vertices = ConvertToVertices(loaded);

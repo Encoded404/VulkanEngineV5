@@ -33,6 +33,7 @@ public:
 template<typename T>
 struct FieldDescriptor {
     using value_type = T;
+    ~FieldDescriptor() = default;
 
     std::string_view name{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };

@@ -69,9 +69,16 @@ void MainPass::Execute(vk::CommandBuffer cmd,
     }
 }
 
-void MainPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {}
+void MainPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& /*ctx*/) {
+    // Resource declarations are handled by the Renderer's AddPass() calls.
+    // When integrated fully via AddCustomPass, this will declare reads/writes.
+}
 
 void MainPass::Execute(const VulkanEngine::PipelinePass::FrameContext& /*ctx*/,
-                        vk::CommandBuffer /*cmd*/) {}
+                        vk::CommandBuffer /*cmd*/) {
+    // Main pass rendering is dispatched directly by Renderer's inline lambda
+    // (via SceneRenderer::Render). When SceneRendererFrame.cpp is refactored
+    // into this pass class, this method will call the rendering logic directly.
+}
 
 } // namespace VulkanEngine::SceneRenderer

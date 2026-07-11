@@ -15,38 +15,38 @@ import VulkanEngine.TechniqueManager;
 
 namespace VulkanEngine::MaterialManager {
 
-void MaterialManager::Initialize(VulkanEngine::GpuResources::StagingManager* staging_mgr) {
-    materials_.clear();
-    dirty_list_.clear();
-    free_list_.clear();
-    staging_mgr_ = staging_mgr;
+void MaterialManager::Initialize(GpuResources::StagingManager* staging_mgr) {
+    Materials.clear();
+    Dirty_list.clear();
+    Free_list.clear();
+    this->staging_mgr = staging_mgr;
 }
 
 void MaterialManager::Shutdown() {
-    materials_.clear();
-    dirty_list_.clear();
-    free_list_.clear();
-    staging_mgr_ = nullptr;
+    Materials.clear();
+    Dirty_list.clear();
+    Free_list.clear();
+    staging_mgr = nullptr;
 }
 
 void MaterialManager::MarkDirty(MaterialId id) {
-    if (id.value >= materials_.size()) return;
-    auto& entry = materials_[id.value];
+    if (id.value >= Materials.size()) return;
+    auto& entry = Materials[id.value];
     if (entry && !entry->dirty) {
         entry->dirty = true;
-        dirty_list_.push_back(id);
+        Dirty_list.push_back(id);
     }
 }
 
 void MaterialManager::Destroy(MaterialId id) {
-    if (id.value >= materials_.size()) return;
-    materials_[id.value].reset();
-    free_list_.push_back(id);
+    if (id.value >= Materials.size()) return;
+    Materials[id.value].reset();
+    Free_list.push_back(id);
 }
 
 void MaterialManager::FlushDirtyMaterials() {
-    if (dirty_list_.empty()) return;  // ← common case: zero work
-    if (!staging_mgr_) return;
+    if (Dirty_list.empty()) return;  // ← common case: zero work
+    if (!staging_mgr) return;
 
     // Phase 1: allocate staging for all dirty materials
     struct PendingUpload {
@@ -55,14 +55,14 @@ void MaterialManager::FlushDirtyMaterials() {
         VulkanEngine::GpuResources::StagingSlice slice;
     };
     std::vector<PendingUpload> pending;
-    pending.reserve(dirty_list_.size());
+    pending.reserve(Dirty_list.size());
 
-    for (MaterialId id : dirty_list_) {
-        if (id.value >= materials_.size()) continue;
-        auto& entry = materials_[id.value];
+    for (const MaterialId id : Dirty_list) {
+        if (id.value >= Materials.size()) continue;
+        auto& entry = Materials[id.value];
         if (!entry || !entry->dirty) continue;
 
-        auto slice = staging_mgr_->Allocate(
+        auto slice = staging_mgr->Allocate(
             static_cast<std::uint64_t>(entry->cpu_data.size()), 256);
         std::memcpy(slice.data, entry->cpu_data.data(), entry->cpu_data.size());
         pending.push_back({id, entry.get(), slice});
@@ -74,8 +74,8 @@ void MaterialManager::FlushDirtyMaterials() {
         // Note: In full implementation, we'd look up the technique from p.entry->technique_id
         // and iterate bindings. For now, we just flush the full cpu_data.
         // The technique lookup requires TechniqueManager which is set via SetTechniqueManager.
-        if (technique_mgr_) {
-            auto* tech = technique_mgr_->GetTechnique(p.entry->technique_id);
+        if (technique_mgr) {
+            auto* tech = technique_mgr->GetTechnique(p.entry->technique_id);
             if (tech) {
                 std::uint32_t mask = p.entry->dirty_bindings;
                 for (std::size_t bi = 0; bi < tech->GetBindingCount(); ++bi) {
@@ -86,7 +86,7 @@ void MaterialManager::FlushDirtyMaterials() {
                     if (mask & 1u) {
                         auto* ba = tech->GetBlockArray(bi);
                         if (ba) {
-                            staging_mgr_->RecordBufferCopy(p.slice,
+                            staging_mgr->RecordBufferCopy(p.slice,
                                 ba->GetBlockArray(p.id.value / 256),
                                 ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % 256)));
                         }
@@ -99,8 +99,8 @@ void MaterialManager::FlushDirtyMaterials() {
         p.entry->dirty_bindings = 0;
     }
 
-    staging_mgr_->Flush();
-    dirty_list_.clear();
+    staging_mgr->Flush();
+    Dirty_list.clear();
 }
 
 void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& alpha,

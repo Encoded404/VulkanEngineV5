@@ -6,9 +6,10 @@ import std;
 
 import vulkan_hpp;
 
-import VulkanBackend.RenderGraph;
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanEngine.RenderGraph;
+import VulkanBackend.Vulkan.RenderGraphExecutor;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 namespace VulkanEngine::RenderPipeline {
 
@@ -43,7 +44,7 @@ vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
 RenderPipeline::RenderPipeline() = default;
 RenderPipeline::~RenderPipeline() = default;
 
-void RenderPipeline::Initialize(VulkanBackend::Runtime::VulkanBootstrap& bootstrap) {
+void RenderPipeline::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap) {
     bootstrap_ = &bootstrap;
     initialized_ = true;
 
@@ -275,45 +276,24 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     auto resolved_graph = compiled_graph_;
 
     if (!bootstrap_) return;
-    const std::uint32_t sc_count = bootstrap_->GetSnapshot().swapchain_image_count;
-    if (swapchain_image_presented_.size() != sc_count) {
-        swapchain_image_presented_.assign(sc_count, false);
-        swapchain_depth_initialized_.assign(sc_count, false);
-    }
 
-    const bool backbuffer_was_presented = swapchain_image_presented_[image_index];
     resolved_graph.SetImportedResourceState(backbuffer_resource_index_,
         VulkanEngine::RenderGraph::ResourceState::ImageState(
-            backbuffer_was_presented
-                ? VulkanEngine::RenderGraph::PipelineStageIntent::BottomOfPipe
-                : VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
+            VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
             VulkanEngine::RenderGraph::QueueType::Graphics,
-            backbuffer_was_presented
-                ? VulkanEngine::RenderGraph::ImageLayoutIntent::Present
-                : VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
+            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
     resolved_graph.SetImportedResourceState(depth_buffer_resource_index_,
         VulkanEngine::RenderGraph::ResourceState::ImageState(
-            swapchain_depth_initialized_[image_index]
-                ? VulkanEngine::RenderGraph::PipelineStageIntent::DepthAttachment
-                : VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
+            VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
             VulkanEngine::RenderGraph::QueueType::Graphics,
-            swapchain_depth_initialized_[image_index]
-                ? VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment
-                : VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
+            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
     ResolveResources(resolved_graph, image_index);
 
-    if (bootstrap_) {
-        resolved_graph.SetDevice(*bootstrap_->GetBackend().GetDevice());
-    }
-
-    resolved_graph.Execute(user_data, command_buffer);
-
-    swapchain_image_presented_[image_index] = true;
-    swapchain_depth_initialized_[image_index] = true;
+    VulkanBackend::Vulkan::ExecuteRenderGraph(resolved_graph, user_data, command_buffer);
 }
 
 void RenderPipeline::AllocateTransients() {

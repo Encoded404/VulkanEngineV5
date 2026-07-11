@@ -1,6 +1,5 @@
 module;
-#include <glm/glm.hpp>
-
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 export module VulkanEngine.SceneRenderer;
 
@@ -10,7 +9,7 @@ import std.compat;
 import vulkan_hpp;
 
 export import VulkanEngine.ECS.ComponentRegistry;
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanShared.CallbackList;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
@@ -39,7 +38,7 @@ public:
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-    bool Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
                     std::uint32_t total_index_count);
     void Shutdown();
@@ -163,19 +162,19 @@ private:
         vk::raii::ImageView hiz_full_view = vk::raii::ImageView(nullptr);
     };
 
-    bool CreateExpandPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
-    bool CreateDepthPipeline(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    bool CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
+    bool CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                              const vk::PipelineRasterizationStateCreateInfo& rasterization);
-    bool CreateHiZPipeline(VulkanBackend::Runtime::IVulkanBootstrap& backend);
-    bool CreateOcclusionPipeline(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
-    bool CreateCollectPipelines(const VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
+    bool CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
+    bool CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
 
 
     void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, std::uint32_t binding,
                                       VulkanEngine::GpuResources::BlockArray& block_buf,
                                       vk::DescriptorType desc_type);
 
-    VulkanBackend::Runtime::IVulkanBootstrap* backend_ = nullptr;
+    VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
 
     // Set 1: SubmeshVertexData blocks
     std::unique_ptr<vk::raii::DescriptorSetLayout> submesh_vertex_layout_{};

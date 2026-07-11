@@ -1,3 +1,3 @@
 module;
 
-module VulkanBackend.Utils.VulkanDebugUtils;
+module VulkanBackend.Vulkan.VulkanDebugUtils;

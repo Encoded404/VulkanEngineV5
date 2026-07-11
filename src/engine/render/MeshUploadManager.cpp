@@ -11,7 +11,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.GpuResources.StagingManager;
 import VulkanEngine.GpuResources.MeshData;
@@ -23,7 +23,7 @@ MeshManager::~MeshManager() {
     Shutdown();
 }
 
-bool MeshManager::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+bool MeshManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                               VulkanEngine::GpuResources::StagingManager* staging_mgr,

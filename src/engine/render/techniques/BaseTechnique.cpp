@@ -12,24 +12,38 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuResources.StagingManager;
 
+namespace {
+    VulkanEngine::TechniqueManager::TechniqueId s_next_technique_id{0};
+
+    constexpr uint32_t kTechniqueBits  = 12;
+    constexpr uint32_t kTechniqueMask  = (1u << kTechniqueBits) - 1;
+}
+
 namespace VulkanEngine::TechniqueManager {
 
-static TechniqueId s_next_technique_id{0};
-
 void BaseTechnique::Shutdown() {
+    custom_descriptor_sets_.clear();   // must clear before pool destructs
+    custom_descriptor_set_handles_.clear();
+    descriptor_pool_ = nullptr;
+    custom_set_layouts_.clear();
     block_arrays_.clear();
     shared_buffers_.clear();
     shared_cpu_data_.clear();
     pipeline_ = nullptr;
     pipeline_layout_ = nullptr;
     bindings_.clear();
+}
+
+uint32_t BaseTechnique::PackMaterialData(uint32_t material_id) const {
+    // Default: pack material_id and technique_id into a single uint32
+    return (material_id << kTechniqueBits) | (id_.value & kTechniqueMask);
 }
 
 void BaseTechnique::ValidateNoBindingCollision(std::uint32_t set, std::uint32_t binding) const {
@@ -67,15 +81,15 @@ std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() con
     // Sort by set number for deterministic layout
     std::vector<BindingGroup> groups;
     groups.reserve(group_map.size());
-    for (auto& [set, group] : group_map) {
+    for (auto &group: group_map | std::views::values) {
         groups.push_back(std::move(group));
     }
-    std::sort(groups.begin(), groups.end(),
-              [](const BindingGroup& a, const BindingGroup& b) { return a.set < b.set; });
+    std::ranges::sort(groups,
+                      [](const BindingGroup& a, const BindingGroup& b) { return a.set < b.set; });
     return groups;
 }
 
-void BaseTechnique::Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
+void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                             std::span<const std::uint32_t> vert_spv,
                             std::span<const std::uint32_t> frag_spv,
                             const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
@@ -133,8 +147,10 @@ void BaseTechnique::Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
     // ── 3. Determine push constant ranges ──
     // Default: 64 bytes, vertex-only (matching existing behavior)
     std::vector<vk::PushConstantRange> push_constant_ranges;
-    push_constant_ranges.push_back(
-        vk::PushConstantRange(vk::ShaderStageFlagBits::eVertex, 0, 64));
+    // 0-63: vertex data (VP matrix, unused by current shaders)
+    // 64-127: fragment data (lighting: sun dir, sun color, camera pos)
+    push_constant_ranges.emplace_back(
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, 128);
 
     // ── 4. Create VkPipelineLayout ──
     vk::PipelineLayoutCreateInfo layout_info{};
@@ -232,6 +248,75 @@ void BaseTechnique::Compile(VulkanBackend::Runtime::VulkanBootstrap& bootstrap,
 
             // Allocate technique-local CPU buffer
             shared_cpu_data_.emplace_back(decl.stride > 0 ? decl.stride : 64, std::byte{0});
+        }
+    }
+
+    // ── 8. Store custom set layouts as members (fixes lifetime bug — were local in Step 2) ──
+    custom_set_layouts_ = std::move(custom_set_layouts);
+
+    // ── 9. Create descriptor pool and sets for custom bindings ──
+    // Pre-allocate at least 1 block in each PerMaterial BlockArray so descriptors point to valid memory.
+    for (auto& ba : block_arrays_) {
+        ba.EnsureCapacity(1);
+    }
+
+    // Calculate total descriptor count needed
+    std::uint32_t total_descriptors = 0;
+    for (const auto& [set, bindings] : custom_groups) {
+        total_descriptors += static_cast<std::uint32_t>(bindings.size());
+    }
+
+    if (total_descriptors > 0) {
+        const vk::DescriptorPoolSize pool_size(
+            vk::DescriptorType::eStorageBuffer, total_descriptors);
+        const vk::DescriptorPoolCreateInfo pool_info(
+            vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            total_descriptors, pool_size);
+        descriptor_pool_ = vk::raii::DescriptorPool(device, pool_info);
+
+        custom_descriptor_sets_.clear();
+        custom_descriptor_sets_.reserve(custom_groups.size());
+        custom_descriptor_set_handles_.clear();
+        custom_descriptor_set_handles_.reserve(custom_groups.size());
+
+        for (std::size_t gi = 0; gi < custom_groups.size(); ++gi) {
+            const vk::DescriptorSetAllocateInfo alloc_info(
+                *descriptor_pool_, *custom_set_layouts_[gi]);
+            std::vector<vk::raii::DescriptorSet> ds_vector = device.allocateDescriptorSets(alloc_info);
+            vk::raii::DescriptorSet ds = std::move(ds_vector[0]);
+            const vk::DescriptorSet raw_ds = *ds;
+
+            for (const auto* decl : custom_groups[gi].bindings) {
+                // Find the index in bindings_ matching this decl
+                const std::size_t binding_idx = static_cast<std::size_t>(decl - bindings_.data());
+                vk::DescriptorBufferInfo buf_info;
+
+                if (decl->kind == BindingKind::PerMaterial) {
+                    // Count PerMaterial bindings up to binding_idx to find block_arrays_ index
+                    std::size_t pm_count = 0;
+                    for (std::size_t i = 0; i < binding_idx; ++i) {
+                        if (bindings_[i].kind == BindingKind::PerMaterial) ++pm_count;
+                    }
+                    buf_info = vk::DescriptorBufferInfo(
+                        block_arrays_[pm_count].GetBlockArray(0), 0,
+                        block_arrays_[pm_count].BlockSize());
+                } else /* Shared */ {
+                    // Count Shared bindings up to binding_idx to find shared_buffers_ index
+                    std::size_t sh_count = 0;
+                    for (std::size_t i = 0; i < binding_idx; ++i) {
+                        if (bindings_[i].kind == BindingKind::Shared) ++sh_count;
+                    }
+                    buf_info = vk::DescriptorBufferInfo(
+                        *shared_buffers_[sh_count].GetBuffer(), 0, vk::WholeSize);
+                }
+
+                const vk::WriteDescriptorSet write(raw_ds, decl->binding, 0, 1,
+                    vk::DescriptorType::eStorageBuffer, nullptr, &buf_info);
+                device.updateDescriptorSets(write, nullptr);
+            }
+
+            custom_descriptor_set_handles_.push_back(raw_ds);
+            custom_descriptor_sets_.push_back(std::move(ds));
         }
     }
 }

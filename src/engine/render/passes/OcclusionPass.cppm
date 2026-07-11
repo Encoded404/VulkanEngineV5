@@ -4,7 +4,7 @@ export module VulkanEngine.Render.Passes.OcclusionPass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
@@ -20,7 +20,7 @@ public:
     OcclusionPass(const OcclusionPass&) = delete;
     OcclusionPass& operator=(const OcclusionPass&) = delete;
 
-    bool Create(VulkanBackend::Runtime::IVulkanBootstrap& backend);
+    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
     void Shutdown();
 
     void Execute(vk::CommandBuffer cmd, vk::DescriptorSet occlusion_set,

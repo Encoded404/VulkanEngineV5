@@ -12,9 +12,9 @@ import logiface;
 import vulkan_hpp;
 
 import VulkanEngine.ECS.ComponentRegistry;
-import VulkanBackend.Runtime.VulkanBootstrap;
-import VulkanBackend.Utils.MemoryUtils;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanBackend.Vulkan.MemoryUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.StandardMeshPipeline;
 
@@ -24,7 +24,7 @@ SceneRenderer::~SceneRenderer() {
     Shutdown();
 }
 
-bool SceneRenderer::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& be,
+bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 VulkanEngine::GpuResources::DeviceBufferHeap& vh,
                                 std::uint32_t tic) {
     backend_ = &be;
@@ -383,7 +383,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.submesh_vertex_data.Initialize(be,
-                make_block_config(80, BLOCK_ENTRIES,
+                make_block_config(144, BLOCK_ENTRIES,   // sizeof(VertEntry) = 144 (expanded with modelMatrix)
                     vk::BufferUsageFlagBits::eTransferSrc,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
             fr.submesh_cull.Initialize(be,

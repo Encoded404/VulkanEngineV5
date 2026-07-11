@@ -2,6 +2,6 @@ module;
 
 #include <vulkan/vulkan_hpp_macros.hpp>
 
-export module VulkanBackend.Runtime.VulkanDispatchLoaderStorage;
+export module VulkanBackend.Vulkan.VulkanDispatchLoaderStorage;
 
 import vulkan_hpp;

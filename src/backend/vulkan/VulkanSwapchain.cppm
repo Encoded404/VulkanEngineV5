@@ -1,16 +1,16 @@
 module;
 
-export module VulkanBackend.Runtime.VulkanSwapchain;
+export module VulkanBackend.Vulkan.VulkanSwapchain;
 
 import std;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.CommonTypes;
-import VulkanBackend.Runtime.VulkanDevice;
-import VulkanBackend.Runtime.VulkanInstance;
+import VulkanBackend.Vulkan.CommonTypes;
+import VulkanBackend.Vulkan.VulkanDevice;
+import VulkanBackend.Vulkan.VulkanInstance;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 class VulkanSwapchain {
 public:
@@ -52,4 +52,4 @@ private:
     [[nodiscard]] bool CreateDepthResources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device);
 };
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

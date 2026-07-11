@@ -1,6 +1,6 @@
 module;
-#include <glm/glm.hpp>
 
+#include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/matrix_transform.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
 
@@ -201,7 +201,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
                             VulkanEngine::ComponentRegistry&,
                             VulkanEngine::TechniqueManager::TechniqueManager& tm,
                             VulkanEngine::BindlessManager::BindlessManager& bm,
-                            const glm::mat4&, const glm::mat4&,
+                            const glm::mat4& proj, const glm::mat4& view,
                             std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
     if (!w || !h) return;
     if (!current_entity_count_) {
@@ -237,9 +237,26 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     LOGIFACE_LOG(trace, "RenderMain: submesh_count=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(tm.GetTechniqueCount()));
 
-    for (uint16_t t = 0; t < tm.GetTechniqueCount(); ++t) {
+    // ── Per-frame lighting data ──
+    // Pushed at offset 64 in the 128-byte push constant block (bytes 64-127, fragment stage).
+    struct alignas(16) LightingPC {
+        float sun_dir[4];
+        float sun_color[4];
+        float cam_pos[4];
+    };
+    const glm::mat4 inv_view = glm::inverse(view);
+    LightingPC lighting{};
+    lighting.sun_dir[0] = 0.5f; lighting.sun_dir[1] = -0.707f; lighting.sun_dir[2] = 0.5f;
+    lighting.sun_color[0] = 1.0f; lighting.sun_color[1] = 0.95f; lighting.sun_color[2] = 0.9f; lighting.sun_color[3] = 2.0f;
+    lighting.cam_pos[0] = inv_view[3][0];
+    lighting.cam_pos[1] = inv_view[3][1];
+    lighting.cam_pos[2] = inv_view[3][2];
+
+    for (uint32_t t = 0; t < static_cast<uint32_t>(tm.GetTechniqueCount()); ++t) {
         auto* tech = tm.GetTechnique(t);
         if (!tech) continue;
+        if (!tech->pipeline_flags.participates_in_collect) continue;
+
         auto pipeline = tech->GetPipeline();
         auto layout = tech->GetPipelineLayout();
         if (!pipeline || !layout) continue;
@@ -253,6 +270,11 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         ds[slot++] = engine_set2;  // set 2: raw vertex buffers
         ds[slot++] = engine_set3;  // set 3: indirection
 
+        // Bind technique custom descriptor sets (BlockArray/Shared buffers) at slots 4+
+        for (const auto& tech_ds : tech->GetCustomDescriptorSets()) {
+            ds[slot++] = tech_ds;
+        }
+
         cmd.bindDescriptorSets(
             vk::PipelineBindPoint::eGraphics,
             layout,
@@ -260,6 +282,11 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()),
             {}
         );
+
+        // Push fragment lighting data at offset 0 (bytes 0-47 of push constant block)
+        cmd.pushConstants(layout,
+                          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                          sizeof(LightingPC), &lighting);
 
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);

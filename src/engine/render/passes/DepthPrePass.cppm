@@ -4,7 +4,7 @@ export module VulkanEngine.Render.Passes.DepthPrePass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
 
@@ -17,7 +17,7 @@ public:
     DepthPrePass(const DepthPrePass&) = delete;
     DepthPrePass& operator=(const DepthPrePass&) = delete;
 
-    bool Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                 vk::DescriptorSetLayout empty_layout,
                 vk::DescriptorSetLayout submesh_vertex_layout,
                 vk::DescriptorSetLayout raw_vertex_layout,

@@ -6,7 +6,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanBackend.Runtime.VulkanInstance;
+module VulkanBackend.Vulkan.VulkanInstance;
 
 import std;
 import logiface;
@@ -15,7 +15,7 @@ import vulkan_hpp;
 
 import VulkanShared.Timer;
 
-namespace VulkanBackend::Runtime {
+namespace VulkanBackend::Vulkan {
 
 bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     if (instance_) return true;
@@ -79,4 +79,4 @@ void VulkanInstance::Shutdown() {
     window_ = nullptr;
 }
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

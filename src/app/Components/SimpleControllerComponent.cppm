@@ -1,13 +1,13 @@
 module;
-#include <glm/glm.hpp>
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtx/string_cast.hpp> // NOLINT(misc-include-cleaner)
+
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 
-// logging_macros.hpp has no <memory> include, safe in GMF.
 #include <logging/logging_macros.hpp>
 
 export module App.Components.SimpleControllerComponent;

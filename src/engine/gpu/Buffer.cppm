@@ -7,13 +7,13 @@ import std.compat;
 
 import vulkan_hpp;
 
-export import VulkanBackend.Runtime.VulkanBootstrap;
+export import VulkanBackend.Vulkan.VulkanBootstrap;
 
 export namespace VulkanEngine::GpuResources {
 
 class GpuBuffer {
 public:
-    static GpuBuffer Create(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+    static GpuBuffer Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                             std::uint64_t size,
                             vk::BufferUsageFlags usage,
                             vk::MemoryPropertyFlags properties,

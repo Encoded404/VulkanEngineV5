@@ -11,7 +11,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 
 namespace VulkanEngine::GpuResources {
@@ -20,7 +20,7 @@ DeviceBufferHeap::~DeviceBufferHeap() {
     Shutdown();
 }
 
-bool DeviceBufferHeap::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend,
+bool DeviceBufferHeap::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                    const HeapConfig& config,
                                    const std::string& debug_name) {
     backend_ = &backend;

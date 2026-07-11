@@ -1,14 +1,14 @@
 module;
 
-export module VulkanBackend.Runtime.VulkanDevice;
+export module VulkanBackend.Vulkan.VulkanDevice;
 
 import std;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanInstance;
+import VulkanBackend.Vulkan.VulkanInstance;
 
-export namespace VulkanBackend::Runtime {
+export namespace VulkanBackend::Vulkan {
 
 class VulkanDevice {
 public:
@@ -47,4 +47,4 @@ private:
     std::uint32_t frames_in_flight_ = 0;
 };
 
-} // namespace VulkanBackend::Runtime
+} // namespace VulkanBackend::Vulkan

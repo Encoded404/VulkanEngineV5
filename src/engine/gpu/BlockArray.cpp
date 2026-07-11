@@ -8,7 +8,7 @@ import std.compat;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanBootstrap;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuResources.StagingManager;
 
@@ -21,7 +21,7 @@ BlockArray::~BlockArray() {
 BlockArray::BlockArray(BlockArray&&) noexcept = default;
 BlockArray& BlockArray::operator=(BlockArray&&) noexcept = default;
 
-bool BlockArray::Initialize(VulkanBackend::Runtime::IVulkanBootstrap& backend, const Config& cfg) {
+bool BlockArray::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend, const Config& cfg) {
     if (cfg.entry_size == 0) return false;
     if (cfg.entries_per_block == 0) return false;
     backend_ = &backend;

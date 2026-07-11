@@ -2,7 +2,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module VulkanBackend.Runtime.VulkanBootstrapBackend;
+module VulkanBackend.Vulkan.VulkanBootstrapBackend;
 
 import std;
 
@@ -10,12 +10,12 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanBackend.Runtime.VulkanInstance;
-import VulkanBackend.Runtime.VulkanDevice;
-import VulkanBackend.Runtime.VulkanSwapchain;
+import VulkanBackend.Vulkan.VulkanInstance;
+import VulkanBackend.Vulkan.VulkanDevice;
+import VulkanBackend.Vulkan.VulkanSwapchain;
 import VulkanShared.Timer;
 
-namespace VulkanBackend::Runtime {
+namespace VulkanBackend::Vulkan {
 
 namespace {
 
@@ -232,4 +232,4 @@ std::shared_ptr<IVulkanBootstrap> CreateVulkanBootstrapBackend() {
     return std::make_shared<DefaultVulkanBootstrapBackend>();
 }
 
-}  // namespace VulkanBackend::Runtime
+}  // namespace VulkanBackend::Vulkan

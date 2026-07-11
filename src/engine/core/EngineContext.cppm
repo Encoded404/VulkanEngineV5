@@ -22,7 +22,7 @@ import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.MaterialManager;
 
-export namespace VulkanEngine::Game {
+export namespace VulkanEngine {
 
 inline constexpr std::uint32_t FRAMES_IN_FLIGHT_DYN = 3;
 
@@ -38,6 +38,8 @@ struct GameConfig {
 };
 
 struct EngineContext {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+
     // GPU resources (constructed in order)
     GpuResources::StagingManager staging_mgr;
     GpuResources::DeviceBufferHeap vertex_heap;
@@ -87,6 +89,8 @@ struct EngineContext {
 
     ImGui::ImGuiSystem* GetImGuiSystem() { return imgui_system.get(); }
     VulkanBackend::ImGui::IImGuiBackend* GetImGuiBackend() { return imgui_backend.get(); }
+
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
-} // namespace VulkanEngine::Game
+} // namespace VulkanEngine

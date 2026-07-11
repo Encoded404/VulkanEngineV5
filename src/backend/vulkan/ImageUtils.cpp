@@ -1,7 +1,7 @@
 module;
 
 
-module VulkanBackend.Utils.ImageUtils;
+module VulkanBackend.Vulkan.ImageUtils;
 
 import std;
 import std.compat;

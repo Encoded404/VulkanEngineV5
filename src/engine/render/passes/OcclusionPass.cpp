@@ -8,7 +8,7 @@ import std;
 import logiface;
 import vulkan_hpp;
 import Shaders.Engine.OcclusionCullComp;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
@@ -20,7 +20,7 @@ namespace VulkanEngine::SceneRenderer {
 OcclusionPass::OcclusionPass(SceneRenderer& sr) : scene_renderer_(sr) {}
 OcclusionPass::~OcclusionPass() { Shutdown(); }
 
-bool OcclusionPass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be) {
+bool OcclusionPass::Create(VulkanBackend::Vulkan::IVulkanBootstrap& be) {
     const auto& dev = be.GetDevice();
 
     {

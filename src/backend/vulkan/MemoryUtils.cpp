@@ -1,6 +1,6 @@
 module;
 
-module VulkanBackend.Utils.MemoryUtils;
+module VulkanBackend.Vulkan.MemoryUtils;
 
 import std;
 import std.compat;

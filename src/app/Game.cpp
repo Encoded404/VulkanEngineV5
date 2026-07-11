@@ -13,7 +13,7 @@ import std;
 
 import vulkan_hpp;
 
-import VulkanEngine.Game;
+import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
 import App.Components.SimpleControllerComponent;
 import App.Components.TransformControlComponent;
@@ -57,7 +57,7 @@ DemoGame::~DemoGame() = default;
 
 bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
-    VulkanEngine::Game::GameConfig config{};
+    VulkanEngine::GameConfig config{};
     config.enable_imgui = true;
     config.renderer_config.clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
 
@@ -86,20 +86,24 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const std::uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
     constexpr auto viking_blend = VulkanEngine::MaterialManager::BlendMode::Transparent;
 
+    constexpr auto pbr_roughness = 0.6f;
+    constexpr auto pbr_metallic = 0.0f;
     auto viking_handle = engine_game_.GetContext().GetMaterialManager().Register<VulkanEngine::TechniqueManager::DefaultMeshTechnique>(
         viking_blend,
         VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData{
-            .texture_slot = tex_slot,
-            .technique_id = engine_game_.GetMainTechniqueIdRaw()
+            .albedo_texture = tex_slot,
+            .roughness_factor = pbr_roughness,
+            .metallic_factor = pbr_metallic,
+            .ao_factor = 1.0f
         });
-    const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialId{static_cast<std::uint16_t>(viking_handle.id())};
+    const auto viking_mat_id = VulkanEngine::MaterialManager::MaterialId{viking_handle.Id()};
 
     // 4. Load meshes and register with MeshRegistry
     const std::vector<VulkanEngine::SceneLoader::MaterialId> viking_bindings = {viking_mat_id};
 
-    auto viking_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshData(
+    auto viking_mesh = VulkanEngine::SceneLoader::LoadMeshData(
         exe_dir_ / "models" / "viking_room.obj", &viking_bindings);
-    auto monkey_mesh = VulkanEngine::SceneLoader::SceneLoader::LoadMeshData(
+    auto monkey_mesh = VulkanEngine::SceneLoader::LoadMeshData(
         exe_dir_ / "models" / "simple-monkey.bin", nullptr);
 
     auto& mesh_registry = engine_game_.GetMeshRegistry();

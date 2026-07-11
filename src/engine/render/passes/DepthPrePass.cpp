@@ -9,7 +9,7 @@ import logiface;
 import vulkan_hpp;
 import Shaders.Engine.DepthIndirVert;
 import Shaders.Engine.DepthPrepassFrag;
-import VulkanBackend.Utils.VulkanDebugUtils;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneRenderer;
 
@@ -18,7 +18,7 @@ namespace VulkanEngine::SceneRenderer {
 DepthPrePass::DepthPrePass(SceneRenderer& sr) : scene_renderer_(sr) {}
 DepthPrePass::~DepthPrePass() { Shutdown(); }
 
-bool DepthPrePass::Create(VulkanBackend::Runtime::IVulkanBootstrap& be,
+bool DepthPrePass::Create(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                            vk::DescriptorSetLayout empty_layout,
                            vk::DescriptorSetLayout submesh_vertex_layout,
                            vk::DescriptorSetLayout raw_vertex_layout,

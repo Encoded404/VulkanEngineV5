@@ -22,6 +22,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             CallbackList.cppm
             ThreadPool.cppm
             Timer.cppm
+            render_graph/RenderGraphTypes.cppm
     )
 endif()
 

@@ -3,8 +3,33 @@ Texture2D<float4> allTextures[];
 [[vk::binding(0, 0)]]
 SamplerState defaultSampler;
 
-// ── Per-material data (set 4, binding 0) ──
-// Matches CPU DefaultMeshPerMaterialData: 24 bytes, no padding
+// Camera position (fragment-stage push constant, 16 bytes at offset 0)
+[[vk::push_constant]]
+float4 camera_position;
+
+// Scene header (set 4, binding 0)
+struct SceneHeader {
+    float4 ambient_color;
+    float4 sun_direction;
+    float4 sun_color;
+    uint light_count;
+};
+
+[[vk::binding(0, 4)]]
+StructuredBuffer<SceneHeader> sceneHeader;
+
+// Light array (set 4, binding 1) — BlockArray-backed unbounded array
+struct Light {
+    float4 position;
+    float4 color;
+    float4 direction;
+    float4 params;
+};
+
+[[vk::binding(1, 4)]]
+StructuredBuffer<Light> sceneLights[];
+
+// Per-material data (set 5, binding 0)
 struct MaterialData {
     uint albedo_texture;
     uint normal_texture;
@@ -14,17 +39,8 @@ struct MaterialData {
     float ao_factor;
 };
 
-[[vk::binding(0, 4)]]
+[[vk::binding(0, 5)]]
 StructuredBuffer<MaterialData> materialBuffer[];
-
-// ── Per-frame lighting data via push constants ──
-struct LightingPC {
-    float4 sun_direction;    // xyz = direction to sun, w = unused
-    float4 sun_color;        // rgb = color, w = intensity
-    float4 camera_position;  // xyz = world-space camera, w = unused
-};
-[[vk::push_constant]]
-ConstantBuffer<LightingPC> lighting;
 
 struct PSInput {
     [[vk::location(0)]] float3 normal : TEXCOORD0;
@@ -33,7 +49,7 @@ struct PSInput {
     [[vk::location(3)]] float3 worldPos : TEXCOORD3;
 };
 
-// ── Cook-Torrance BRDF ──
+// Cook-Torrance BRDF
 
 static const float PI = 3.14159265359;
 
@@ -64,7 +80,7 @@ float4 main(PSInput input) : SV_TARGET {
     uint elem  = input.materialId % 256u;
     MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
 
-    // ── Sample textures ──
+    // Sample textures
     float3 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
         .Sample(defaultSampler, input.texCoord).rgb;
 
@@ -77,32 +93,43 @@ float4 main(PSInput input) : SV_TARGET {
     float roughness = max(orm.g, 0.04);
     float metallic = orm.b;
 
-    // ── Vectors ──
+    // Vectors
     float3 N = normalize(input.normal);
-    float3 V = normalize(lighting.camera_position.xyz - input.worldPos);
-    float3 L = normalize(-lighting.sun_direction.xyz);
-    float3 H = normalize(V + L);
-    float NdotV = max(dot(N, V), 0.001);
-    float NdotL = max(dot(N, L), 0.001);
-    float NdotH = max(dot(N, H), 0.001);
+    float3 V = normalize(camera_position.xyz - input.worldPos);
 
-    // ── Cook-Torrance BRDF ──
+    // Cook-Torrance BRDF
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
 
-    float D = D_GGX(NdotH, roughness);
-    float G = G_Smith(NdotV, NdotL, roughness);
-    float3 F = F_Schlick(F0, max(dot(H, V), 0.0));
+    float3 combined_direct = float3(0.0, 0.0, 0.0);
+    const uint lc = sceneHeader[0].light_count;
 
-    float3 kD = (1.0 - F) * (1.0 - metallic);
-    float3 specular = D * G * F / (4.0 * NdotV * NdotL + 0.0001);
-    float3 diffuse = kD * albedo / PI;
+    // Accumulate all lights
+    for (uint li = 0; li < lc; li++) {
+        uint lblock = li / 256u;
+        uint lelem  = li % 256u;
+        Light lt = sceneLights[NonUniformResourceIndex(lblock)][lelem];
 
-    float3 direct = (diffuse + specular) * NdotL
-                    * lighting.sun_color.rgb * lighting.sun_color.w;
+        float3 L = normalize(-lt.direction.xyz);
+        float3 H = normalize(V + L);
+        float NdotV = max(dot(N, V), 0.001);
+        float NdotL = max(dot(N, L), 0.001);
+        float NdotH = max(dot(N, H), 0.001);
 
-    // ── Ambient (placeholder — replaced with IBL when cubemap system lands) ──
-    float3 ambient = albedo * ao * 0.03;
+        float D = D_GGX(NdotH, roughness);
+        float G = G_Smith(NdotV, NdotL, roughness);
+        float3 F = F_Schlick(F0, max(dot(H, V), 0.0));
 
-    float3 color = ambient + direct;
+        float3 kD = (1.0 - F) * (1.0 - metallic);
+        float3 specular = D * G * F / (4.0 * NdotV * NdotL + 0.0001);
+        float3 diffuse = kD * albedo / PI;
+
+        combined_direct += (diffuse + specular) * NdotL
+                          * lt.color.rgb * lt.color.w;
+    }
+
+    // Ambient
+    float3 ambient = albedo * ao * sceneHeader[0].ambient_color.rgb * sceneHeader[0].ambient_color.a;
+
+    float3 color = ambient + combined_direct;
     return float4(color, 1.0);
 }

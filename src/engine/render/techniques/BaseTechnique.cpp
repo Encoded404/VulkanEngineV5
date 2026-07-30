@@ -63,10 +63,10 @@ void BaseTechnique::DeclareBindingImpl(BindingDecl decl) {
 }
 
 std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() const {
-    // Group custom bindings (set >= 4) by set number
+    // Group custom bindings (set >= 5) by set number
     std::unordered_map<std::uint32_t, BindingGroup> group_map;
     for (const auto& decl : bindings_) {
-        if (decl.set >= 4) {
+        if (decl.set >= 5) {
             auto it = group_map.find(decl.set);
             if (it == group_map.end()) {
                 BindingGroup bg{decl.set, {}};
@@ -96,16 +96,18 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                             vk::DescriptorSetLayout bindless_layout,
                             vk::DescriptorSetLayout submesh_vertex_layout,
                             vk::DescriptorSetLayout raw_vertex_layout,
-                            vk::DescriptorSetLayout indirection_layout) {
+                            vk::DescriptorSetLayout indirection_layout,
+                            vk::DescriptorSetLayout scene_uniform_layout) {
     const auto& device = bootstrap.GetBackend().GetDevice();
 
     // ── 1. Build descriptor set layout array ──
-    // Engine sets 0-3 are always at layout slots 0-3
+    // Engine sets 0-4 are always at layout slots 0-4
     std::vector<vk::DescriptorSetLayout> set_layouts = {
         bindless_layout,           // set 0: bindless textures
         submesh_vertex_layout,     // set 1: submesh vertex data
         raw_vertex_layout,         // set 2: raw vertex buffers
         indirection_layout,        // set 3: indirection data
+        scene_uniform_layout,      // set 4: scene uniforms (lighting, camera)
     };
 
     // ── 2. Group custom bindings by set number and create descriptor set layouts ──
@@ -145,12 +147,10 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     }
 
     // ── 3. Determine push constant ranges ──
-    // Default: 64 bytes, vertex-only (matching existing behavior)
+    // Camera position (fragment stage, 16 bytes at offset 0).
     std::vector<vk::PushConstantRange> push_constant_ranges;
-    // 0-63: vertex data (VP matrix, unused by current shaders)
-    // 64-127: fragment data (lighting: sun dir, sun color, camera pos)
     push_constant_ranges.emplace_back(
-        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, 128);
+        vk::ShaderStageFlagBits::eFragment, 0, 16);
 
     // ── 4. Create VkPipelineLayout ──
     vk::PipelineLayoutCreateInfo layout_info{};

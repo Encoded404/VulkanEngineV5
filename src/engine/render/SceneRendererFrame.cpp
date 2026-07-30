@@ -237,20 +237,12 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     LOGIFACE_LOG(trace, "RenderMain: submesh_count=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(tm.GetTechniqueCount()));
 
-    // ── Per-frame lighting data ──
-    // Pushed at offset 64 in the 128-byte push constant block (bytes 64-127, fragment stage).
-    struct alignas(16) LightingPC {
-        float sun_dir[4];
-        float sun_color[4];
-        float cam_pos[4];
-    };
+    // Scene uniform set (set 4) — lighting data (device-local storage)
+    const vk::DescriptorSet scene_uniform_set = GetSceneUniformSet();
+
+    // Camera position for fragment shader (push constant at offset 0)
     const glm::mat4 inv_view = glm::inverse(view);
-    LightingPC lighting{};
-    lighting.sun_dir[0] = 0.5f; lighting.sun_dir[1] = -0.707f; lighting.sun_dir[2] = 0.5f;
-    lighting.sun_color[0] = 1.0f; lighting.sun_color[1] = 0.95f; lighting.sun_color[2] = 0.9f; lighting.sun_color[3] = 2.0f;
-    lighting.cam_pos[0] = inv_view[3][0];
-    lighting.cam_pos[1] = inv_view[3][1];
-    lighting.cam_pos[2] = inv_view[3][2];
+    float camera_pos[4] = {inv_view[3][0], inv_view[3][1], inv_view[3][2], 0.0f};
 
     for (uint32_t t = 0; t < static_cast<uint32_t>(tm.GetTechniqueCount()); ++t) {
         auto* tech = tm.GetTechnique(t);
@@ -269,8 +261,9 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         ds[slot++] = engine_set1;  // set 1: submesh vertex data
         ds[slot++] = engine_set2;  // set 2: raw vertex buffers
         ds[slot++] = engine_set3;  // set 3: indirection
+        ds[slot++] = scene_uniform_set;  // set 4: scene uniforms (lighting, camera)
 
-        // Bind technique custom descriptor sets (BlockArray/Shared buffers) at slots 4+
+        // Bind technique custom descriptor sets (BlockArray/Shared buffers) at slots 5+
         for (const auto& tech_ds : tech->GetCustomDescriptorSets()) {
             ds[slot++] = tech_ds;
         }
@@ -283,10 +276,8 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             {}
         );
 
-        // Push fragment lighting data at offset 0 (bytes 0-47 of push constant block)
-        cmd.pushConstants(layout,
-                          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                          sizeof(LightingPC), &lighting);
+        // Camera position (fragment-stage push constant at offset 0, 16 bytes)
+        cmd.pushConstants(layout, vk::ShaderStageFlagBits::eFragment, 0, 16, camera_pos);
 
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);

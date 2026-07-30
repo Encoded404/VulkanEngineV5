@@ -618,6 +618,71 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         hiz_mip_count_ = mip_levels;
     }
 
+    // ── Lighting system (descriptor set 4) ──
+    {
+        const vk::ShaderStageFlags stages = vk::ShaderStageFlagBits::eVertex |
+                                             vk::ShaderStageFlagBits::eFragment;
+
+        // Binding 0: SceneHeader (single storage buffer)
+        const vk::DescriptorSetLayoutBinding header_binding(0, vk::DescriptorType::eStorageBuffer,
+                                                             1, stages);
+        // Binding 1: Light[] BlockArray (array of storage buffers, partially bound)
+        const vk::DescriptorSetLayoutBinding lights_binding(1, vk::DescriptorType::eStorageBuffer,
+                                                             MAX_LIGHT_BLOCKS, stages);
+
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {header_binding, lights_binding};
+        std::array<vk::DescriptorBindingFlags, 2> flags_arr{};
+        flags_arr[1] = vk::DescriptorBindingFlagBits::ePartiallyBound;
+        const vk::DescriptorSetLayoutBindingFlagsCreateInfo flags_info(
+            static_cast<std::uint32_t>(flags_arr.size()), flags_arr.data());
+
+        const vk::DescriptorSetLayoutCreateInfo layout_info({}, bindings, &flags_info);
+        scene_uniform_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_info);
+
+        // Pool: 1 header buffer + MAX_LIGHT_BLOCKS light block buffers
+        std::vector<vk::DescriptorPoolSize> pool_sizes = {
+            {vk::DescriptorType::eStorageBuffer, 1 + MAX_LIGHT_BLOCKS}};
+        scene_uniform_pool_ = std::make_unique<vk::raii::DescriptorPool>(
+            dev, vk::DescriptorPoolCreateInfo{
+                vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1, pool_sizes});
+
+        vk::DescriptorSetAllocateInfo alloc_ci{};
+        alloc_ci.descriptorPool = **scene_uniform_pool_;
+        alloc_ci.descriptorSetCount = 1;
+        alloc_ci.pSetLayouts = &**scene_uniform_layout_;
+        auto sets = dev.allocateDescriptorSets(alloc_ci);
+        scene_uniform_set_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
+
+        // Create device-local header buffer
+        scene_header_buffer_ = GpuResources::GpuBuffer::Create(
+            *backend_, sizeof(SceneHeader),
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, nullptr);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, scene_header_buffer_.GetBuffer(),
+                                                     "scene-header-buffer");
+
+        // Write header buffer to descriptor set binding 0
+        const vk::DescriptorBufferInfo header_buf_info(
+            static_cast<vk::Buffer>(*scene_header_buffer_.GetBuffer()), 0,
+            sizeof(SceneHeader));
+        vk::WriteDescriptorSet header_write{};
+        header_write.dstSet = **scene_uniform_set_;
+        header_write.dstBinding = 0;
+        header_write.descriptorCount = 1;
+        header_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        header_write.pBufferInfo = &header_buf_info;
+        dev.updateDescriptorSets(header_write, nullptr);
+
+        // Initialize BlockArray for lights
+        GpuResources::BlockArray::Config light_cfg{};
+        light_cfg.entry_size = sizeof(Light);
+        light_cfg.entries_per_block = LIGHTS_PER_BLOCK;
+        light_cfg.memory_mode = GpuResources::MemoryMode::DeviceLocal;
+        light_cfg.memory = vk::MemoryPropertyFlagBits::eDeviceLocal;
+        light_cfg.extra_usage = vk::BufferUsageFlagBits::eTransferDst; // NOLINT
+        scene_light_blocks_.Initialize(*backend_, light_cfg);
+    }
+
     LOGIFACE_LOG(info, "SceneRenderer initialized");
     return true;
 }
@@ -636,6 +701,11 @@ void SceneRenderer::Shutdown() {
         fr.submesh_vertex_data.Shutdown();
         fr.submesh_cull.Shutdown();
     }
+    scene_light_blocks_.Shutdown();
+    scene_header_buffer_ = GpuResources::GpuBuffer{};
+    scene_uniform_set_.reset();
+    scene_uniform_pool_.reset();
+    scene_uniform_layout_.reset();
     backend_ = nullptr;
 }
 
@@ -757,6 +827,46 @@ SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(std::uint32_t
         &fr.bounding_spheres,
         &fr.bounding_obb
     };
+}
+
+void SceneRenderer::UploadLighting(const SceneHeader& header,
+                                    std::span<const Light> lights,
+                                    GpuResources::StagingManager& staging) {
+    if (!backend_) return;
+
+    // Grow BlockArray to fit all lights
+    scene_light_blocks_.EnsureCapacity(static_cast<std::uint32_t>(lights.size()));
+
+    // Stage the header buffer
+    {
+        auto header_slice = staging.Allocate(sizeof(SceneHeader));
+        std::memcpy(header_slice.data, &header, sizeof(SceneHeader));
+        staging.RecordBufferCopy(header_slice,
+                                 static_cast<vk::Buffer>(*scene_header_buffer_.GetBuffer()), 0);
+    }
+
+    // Stage each light via BlockArray::UploadEntry (uses staging internally)
+    for (std::size_t i = 0; i < lights.size(); ++i) {
+        scene_light_blocks_.UploadEntry(static_cast<std::uint32_t>(i), &lights[i],
+                                         sizeof(Light), staging);
+    }
+
+    // Write BlockArray buffers to descriptor set binding 1
+    const auto& dev = backend_->GetDevice();
+    for (std::uint32_t bi = 0; bi < scene_light_blocks_.BlockCount(); ++bi) {
+        const vk::DescriptorBufferInfo buf_info(scene_light_blocks_.GetBlockArray(bi),
+                                                 0, scene_light_blocks_.BlockSize());
+        vk::WriteDescriptorSet w{};
+        w.dstSet = **scene_uniform_set_;
+        w.dstBinding = 1;
+        w.dstArrayElement = bi;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &buf_info;
+        dev.updateDescriptorSets(w, nullptr);
+    }
+
+    staging.Flush();
 }
 
 } // namespace VulkanEngine::SceneRenderer

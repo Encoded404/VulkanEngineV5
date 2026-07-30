@@ -24,9 +24,9 @@ struct DefaultMeshPerMaterialData {
 class DefaultMeshTechnique final : public BaseTechnique {
 public:
     DefaultMeshTechnique() {
-        // Set 4 = first technique custom set (engine sets 0-3 are reserved).
+        // Set 5 = first technique custom set (engine sets 0-4 are reserved).
         // Binding 0 = first (only) PerMaterial binding for this technique.
-        DeclarePerMaterial<DefaultMeshPerMaterialData>(4, 0);
+        DeclarePerMaterial<DefaultMeshPerMaterialData>(5, 0);
     }
 
     // ── MaterialHandle<Tech> requires these static helpers ──
@@ -58,9 +58,11 @@ public:
                             vk::DescriptorSetLayout bindless_layout,
                             vk::DescriptorSetLayout submesh_vertex_layout,
                             vk::DescriptorSetLayout raw_vertex_layout,
-                            vk::DescriptorSetLayout indirection_layout) {
+                            vk::DescriptorSetLayout indirection_layout,
+                            vk::DescriptorSetLayout scene_uniform_layout = nullptr) {
         Compile(bootstrap, vert_spv, frag_spv, config,
-                bindless_layout, submesh_vertex_layout, raw_vertex_layout, indirection_layout);
+                bindless_layout, submesh_vertex_layout, raw_vertex_layout, indirection_layout,
+                scene_uniform_layout);
     }
 
     [[nodiscard]] std::uint32_t PackMaterialData(std::uint32_t material_id) const override {

@@ -166,7 +166,8 @@ public:
                  vk::DescriptorSetLayout bindless_layout,
                  vk::DescriptorSetLayout submesh_vertex_layout,
                  vk::DescriptorSetLayout raw_vertex_layout,
-                 vk::DescriptorSetLayout indirection_layout);
+                 vk::DescriptorSetLayout indirection_layout,
+                 vk::DescriptorSetLayout scene_uniform_layout = nullptr);
 
 private:
     TechniqueId id_{};

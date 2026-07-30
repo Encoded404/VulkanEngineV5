@@ -1,6 +1,7 @@
 module;
 
 #include <logging/logging_macros.hpp>
+#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
 module VulkanEngine.GameEngine;
 
@@ -95,13 +96,36 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
             *ctx_.bindless_mgr->GetLayout(),
             *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
             *ctx_.scene_renderer->GetRawVertexLayout(),
-            *ctx_.scene_renderer->GetIndirectionLayout());
+            *ctx_.scene_renderer->GetIndirectionLayout(),
+            ctx_.scene_renderer->GetSceneUniformLayout());
         auto tech_id = ctx_.technique_mgr->Register(std::move(mesh_tech));
         main_technique_id_ = tech_id.value;
     }
 
     ctx_.material_mgr.Initialize(&ctx_.staging_mgr);
     ctx_.material_mgr.SetTechniqueManager(ctx_.technique_mgr.get());
+
+    // Upload initial lighting data via staging
+    {
+        SceneRenderer::SceneHeader header{};
+        header.ambient_color[0] = 0.03f; header.ambient_color[1] = 0.03f;
+        header.ambient_color[2] = 0.03f; header.ambient_color[3] = 1.0f;
+        header.sun_direction[0] = 0.5f; header.sun_direction[1] = -0.707f;
+        header.sun_direction[2] = 0.5f;
+        header.sun_color[0] = 1.0f; header.sun_color[1] = 0.95f;
+        header.sun_color[2] = 0.9f; header.sun_color[3] = 2.0f;
+
+        SceneRenderer::Light sun_light{};
+        sun_light.direction[0] = 0.5f; sun_light.direction[1] = -0.707f;
+        sun_light.direction[2] = 0.5f;
+        sun_light.color[0] = 1.0f; sun_light.color[1] = 0.95f;
+        sun_light.color[2] = 0.9f; sun_light.color[3] = 2.0f;
+        sun_light.position[3] = 0.0f; // type = directional
+
+        std::array<SceneRenderer::Light, 1> lights = {sun_light};
+        header.light_count = 1;
+        ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_mgr);
+    }
 
     // Register fallback material (ID 0): main technique, bindless checkerboard
     const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, ctx_.missing_texture.get());

@@ -22,6 +22,24 @@ export import VulkanEngine.GpuResources.BlockArray;
 
 export namespace VulkanEngine::SceneRenderer {
 
+// ── Scene uniform data (replaces push-constant lighting) ──
+struct alignas(16) Light {
+    float position[4];
+    float color[4];
+    float direction[4];
+    float params[4];
+};
+
+struct alignas(16) SceneHeader {
+    float ambient_color[4];
+    float sun_direction[4];
+    float sun_color[4];
+    std::uint32_t light_count = 0;
+};
+
+constexpr std::uint32_t LIGHTS_PER_BLOCK = 256;
+constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;
+
 class SceneRenderer {
 public:
     static constexpr std::uint32_t FRAMES_IN_FLIGHT = 3;
@@ -123,6 +141,17 @@ public:
         const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
         return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
     }
+
+    // ── Lighting system (descriptor set 4) — binding 0 = SceneHeader, binding 1 = Light[] BlockArray ──
+    [[nodiscard]] vk::DescriptorSetLayout GetSceneUniformLayout() const {
+        return *scene_uniform_layout_;
+    }
+    [[nodiscard]] vk::DescriptorSet GetSceneUniformSet() const {
+        return *scene_uniform_set_;
+    }
+    void UploadLighting(const SceneHeader& header,
+                        std::span<const Light> lights,
+                        VulkanEngine::GpuResources::StagingManager& staging);
 
 private:
     struct TechniqueResult { std::uint32_t offset; std::uint32_t count; };
@@ -236,6 +265,13 @@ private:
     // Bindless index buffer array (used by expand at set 5)
     std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
+
+    // Lighting system (set 4)
+    VulkanEngine::GpuResources::GpuBuffer scene_header_buffer_{};
+    VulkanEngine::GpuResources::BlockArray scene_light_blocks_{};
+    std::unique_ptr<vk::raii::DescriptorSetLayout> scene_uniform_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> scene_uniform_pool_{};
+    std::unique_ptr<vk::raii::DescriptorSet> scene_uniform_set_{};
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 

@@ -43,19 +43,28 @@
       "name": "debug",
       "displayName": "Build Debug",
       "configurePreset": "default",
-      "configuration": "Debug"
+      "configuration": "Debug",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
     },
     {
       "name": "release",
       "displayName": "Build Release",
       "configurePreset": "default",
-      "configuration": "Release"
+      "configuration": "Release",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
     },
     {
       "name": "relwithdebinfo",
       "displayName": "Build RelWithDebInfo",
       "configurePreset": "default",
-      "configuration": "RelWithDebInfo"
+      "configuration": "RelWithDebInfo",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
     }
   ],
   "testPresets": [

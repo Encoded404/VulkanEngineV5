@@ -14,6 +14,10 @@ target_link_libraries(app_tests PRIVATE
 )
 target_compile_options(app_tests PRIVATE -Wno-c23-extensions)
 
+target_compile_definitions(app_tests PRIVATE
+    VKENGINE_SLANG_SOURCE_ROOT="${CMAKE_SOURCE_DIR}/src/app/shaders/"
+)
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_sources(app_tests PRIVATE
     FILE_SET CXX_MODULES

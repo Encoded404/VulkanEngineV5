@@ -33,6 +33,11 @@ namespace VulkanEngine::SceneRenderer {
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
         static constexpr std::uint32_t HIZ_BATCH = 2;
 
+        template<typename Handle>
+        std::uint64_t HandleToU64(Handle h) {
+            return reinterpret_cast<std::uint64_t>(static_cast<typename Handle::CType>(h));
+        }
+
         static void WriteBlocks(vk::DescriptorSet ds, std::uint32_t binding,
                                 GpuResources::BlockArray& buf,
                                 vk::DescriptorType desc_type,
@@ -171,8 +176,8 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 
 void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
     auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
-    if (!depth_pipeline_) {
-        LOGIFACE_LOG(warn, "DepthPrepass: depth_pipeline_ is null, skipping");
+    if (!depth_slot_.Get()) {
+        LOGIFACE_LOG(warn, "DepthPrepass: depth pipeline is null, skipping");
         return;
     }
     if (!current_entity_count_) {
@@ -184,7 +189,9 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
                                      -static_cast<float>(h), 0, 1));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *depth_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
+    LOGIFACE_LOG(trace, std::format("DepthPrepass: bound pipeline 0x{:x}",
+                                    HandleToU64(depth_slot_.Get())));
     const std::array<vk::DescriptorSet, 4> ds{
         empty_sets_[fi % FRAMES_IN_FLIGHT].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
@@ -251,9 +258,14 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
         auto pipeline = tech->GetPipeline();
         auto layout = tech->GetPipelineLayout();
-        if (!pipeline || !layout) continue;
+        if (!pipeline || !layout) {
+            LOGIFACE_LOG(trace, std::format("RenderMain: technique {} missing pipeline or layout, skipping", t));
+            continue;
+        }
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+        LOGIFACE_LOG(trace, std::format("RenderMain: technique {} bound pipeline 0x{:x}",
+                                        t, HandleToU64(pipeline)));
 
         std::array<vk::DescriptorSet, 16> ds{};
         std::uint32_t slot = 0;
@@ -281,6 +293,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
+        LOGIFACE_LOG(trace, std::format("RenderMain: drawIndirect technique={} offset={}", t, draw_cmd_offset));
         cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
                           draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
     }
@@ -294,7 +307,7 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
         return;
     }
     LOGIFACE_LOG(trace, "DispatchExpand: submeshes=" + std::to_string(cnt));
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *expand_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, expand_slot_.Get());
     const std::array<vk::DescriptorSet, 2> ds{
         fr.expand_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.bindless_index_set)
@@ -326,7 +339,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
     }
     LOGIFACE_LOG(trace, "DispatchHiZGen: " + std::to_string(w) + "x" + std::to_string(h) +
                  " mips=" + std::to_string(hiz_mip_count_));
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *hiz_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, hiz_slot_.Get());
     const std::array<vk::DescriptorSet, 1> ds{ fr.hiz_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *hiz_pipeline_layout_,
                              0, ds, {});
@@ -359,7 +372,7 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
     }
     LOGIFACE_LOG(trace, "DispatchOcclusion: submeshes=" + std::to_string(current_entity_count_));
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *occlusion_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, occlusion_slot_.Get());
     const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occlusion_pipeline_layout_,
                              0, ds, {});
@@ -466,7 +479,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     }
 
     // Pass 0: count visible indices per technique
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *collect_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_slot_.Get());
     {
         const std::array<vk::DescriptorSet, 1> ds1{ fr.collect_set.GetHandle() };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
@@ -507,7 +520,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     }
 
     // Pass 2: write final draw data (legacy draw commands)
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_);
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_write_slot_.Get());
     {
         const std::array<vk::DescriptorSet, 1> ds2{ fr.collect_write_set.GetHandle() };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_layout_,

@@ -41,7 +41,6 @@ public:
                                              vk::MemoryPropertyFlags required_properties = vk::MemoryPropertyFlags{});
 
     static vk::DeviceSize CalculateAlignedBufferSize(vk::DeviceSize size, vk::DeviceSize min_alignment);
-    static vk::DeviceSize GetNonCoherentAtomSize(vk::PhysicalDevice physical_device);
 };
 
 } // namespace VulkanBackend::Vulkan

@@ -49,7 +49,71 @@ endif()
 # if this is not set by the user cmake will decide
 set(OUTPUT_PATH "${CMAKE_BINARY_DIR}/bin")
 
+# ── Strip ccache shim directories from PATH before compiler detection ──
+# Distros like Fedora put the ccache wrapper directory first in PATH, so a
+# bare `clang++` can resolve to the ccache shim. ccache's cache key does
+# not cover C++ module BMI/IFC contents: after a module interface changes
+# it can return objects compiled against the stale interface (ODR
+# corruption). Compiler detection runs inside project(), so sanitize PATH
+# here — CMake then finds the real compiler automatically, with no
+# per-configure flags and no platform-specific preset. This is a no-op on
+# systems without ccache shims; the guard after project() still rejects
+# explicit launcher/compiler usage.
+if(DEFINED ENV{PATH})
+	if(CMAKE_HOST_WIN32)
+		set(_ccache_path_sep ";")
+	else()
+		set(_ccache_path_sep ":")
+	endif()
+	string(REPLACE "${_ccache_path_sep}" ";" _ccache_path_list "$ENV{PATH}")
+	set(_ccache_clean_path "")
+	foreach(_dir IN LISTS _ccache_path_list)
+		if(NOT _dir MATCHES "(^|[/\\])[^/\\]*ccache$")
+			list(APPEND _ccache_clean_path "${_dir}")
+		endif()
+	endforeach()
+	list(JOIN _ccache_clean_path "${_ccache_path_sep}" _ccache_sanitized_path)
+	set(ENV{PATH} "${_ccache_sanitized_path}")
+	unset(_ccache_path_sep)
+	unset(_ccache_path_list)
+	unset(_ccache_clean_path)
+	unset(_ccache_sanitized_path)
+endif()
+
 project(${PROJECT_NAME} VERSION 1.0 LANGUAGES CXX)
+
+# ── ccache is unsupported (C++20/23 modules) ────────────────────────────
+# Safety net for the PATH sanitization above: reject ccache in the compiler
+# invocation outright. ccache's cache key does not cover module BMI/IFC
+# contents, so it can serve objects compiled against a stale module
+# interface — silent ODR corruption. Covers an explicit
+# -DCMAKE_CXX_COMPILER_LAUNCHER=ccache and a compiler explicitly pointing at
+# a ccache wrapper (checked by name, resolved symlinks, and directory).
+if(CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache")
+	message(FATAL_ERROR
+		"ccache is unsupported in this C++ modules project (stale module-object "
+		"hazard). Configure without the launcher, e.g.:\n"
+		"  cmake --preset default\n"
+		"or unset CMAKE_CXX_COMPILER_LAUNCHER and reconfigure.")
+endif()
+get_filename_component(_no_ccache_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(_no_ccache_name "${CMAKE_CXX_COMPILER}" NAME)
+file(REAL_PATH "${CMAKE_CXX_COMPILER}" _no_ccache_real)
+get_filename_component(_no_ccache_real_name "${_no_ccache_real}" NAME)
+if(_no_ccache_name MATCHES "ccache"
+		OR _no_ccache_real_name MATCHES "ccache"
+		OR _no_ccache_dir MATCHES "(^|[/\\])[^/\\]*ccache$")
+	message(FATAL_ERROR
+		"The C++ compiler resolves to a ccache wrapper (${CMAKE_CXX_COMPILER}).\n"
+		"ccache is unsupported in this C++ modules project (see above). Configure "
+		"with the real compiler, e.g.:\n"
+		"  cmake --preset default\n"
+		"or -DCMAKE_CXX_COMPILER=/usr/bin/clang++ (adjust for your platform).")
+endif()
+unset(_no_ccache_dir)
+unset(_no_ccache_name)
+unset(_no_ccache_real)
+unset(_no_ccache_real_name)
 
 # CMAKE_CXX_MODULE_STD was already set before project() to point at libc++'s
 # module files.  We still set it to ON here: the ON flag tells CMake to
@@ -118,7 +182,30 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # find vulkan
-find_package( Vulkan 1.4.350 QUIET )
+#
+# The Vulkan loader comes from vcpkg's vulkan-loader port, which exports a
+# CONFIG package (VulkanLoader) with proper per-configuration imported
+# locations: Debug links the debug loader (debug/lib), Release and
+# RelWithDebInfo link the release one (lib). Prefer that target over the
+# module-mode FindVulkan below: FindVulkan resolves a single generic library
+# location at configure time, and vcpkg's multi-config prefix ordering makes
+# it pick the *debug* loader for every configuration (including Release),
+# which also creates a cycle in CMake's runtime-search-path ordering together
+# with release-only packages such as shader-slang ("Cannot generate a safe
+# runtime search path" warnings).
+#
+# Other packages reference the loader by the name Vulkan::Vulkan (e.g. imgui's
+# CMake config hard-links it), so re-export the per-configuration target under
+# that name. The module-mode find_package(Vulkan) below is kept for the
+# headers and the Vulkan::HppModule C++ module target; it skips creating
+# Vulkan::Vulkan because the target already exists.
+find_package(VulkanLoader CONFIG REQUIRED)
+add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
+set_property(TARGET Vulkan::Vulkan PROPERTY
+	INTERFACE_LINK_LIBRARIES Vulkan::Loader
+)
+
+find_package( Vulkan 1.3.0 QUIET )
 
 # manually create module target if it was not previously provided
 if( NOT TARGET Vulkan::HppModule )
@@ -138,13 +225,6 @@ if( NOT TARGET Vulkan::HppModule )
 endif()
 
 target_compile_definitions( Vulkan-HppModule PUBLIC VULKAN_HPP_DISPATCH_LOADER_DYNAMIC )
-
-find_program(CCACHE_PROGRAM ccache)
-
-if(CCACHE_PROGRAM)
-	#set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM}) # we dont use the c compiler rn
-	set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
-endif()
 
 # Enable CTest at the top level so `ctest` discovers tests
 include(CTest)
@@ -208,7 +288,6 @@ message("finding SlangSpriVCompilerHelper")
 add_subdirectory("${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper" SlangSpriVCompilerHelper)
 
 option(CLANG_TIDY_ENABLED "Enable Clang-Tidy static analysis" ON)
-option(SYSTEM_VULKAN "Use system Vulkan loader instead of vcpkg's" ON)
 # disable Clang-Tidy if not using Clang or GCC
 if(CLANG_TIDY_ENABLED AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set(CLANG_TIDY_ENABLED OFF)

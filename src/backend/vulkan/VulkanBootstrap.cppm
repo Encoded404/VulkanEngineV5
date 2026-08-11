@@ -7,6 +7,7 @@ import std;
 import vulkan_hpp;
 
 export import VulkanBackend.Vulkan.CommonTypes;
+export import VulkanBackend.Vulkan.VulkanCapabilities;
 
 export namespace VulkanBackend::Vulkan {
 
@@ -27,6 +28,11 @@ public:
     [[nodiscard]] virtual const vk::raii::Queue& GetGraphicsQueue() const = 0;
     [[nodiscard]] virtual std::uint32_t GetGraphicsQueueFamily() const = 0;
     [[nodiscard]] virtual const vk::raii::CommandPool& GetCommandPool() const = 0;
+
+    // Capabilities snapshot (device domain) + bootstrap error state
+    [[nodiscard]] virtual const VulkanCapabilities& GetCapabilities() const = 0;
+    [[nodiscard]] virtual const std::string& GetErrorMessage() const = 0;
+    [[nodiscard]] virtual bool HasUnmetRequirements() const = 0;
 
     // Modified to accept frame_idx
     [[nodiscard]] virtual const vk::raii::Fence& GetInFlightFence(std::uint32_t frame_idx) const = 0;

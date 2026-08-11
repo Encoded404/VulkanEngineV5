@@ -9,6 +9,7 @@ import std;
 import vulkan_hpp;
 
 import VulkanBackend.Vulkan.CommonTypes;
+import VulkanBackend.Vulkan.VulkanCapabilities;
 
 export namespace VulkanBackend::Vulkan {
 
@@ -20,12 +21,14 @@ public:
     [[nodiscard]] const vk::raii::Instance& GetInstance() const { return *instance_; }
     [[nodiscard]] const vk::raii::SurfaceKHR& GetSurface() const { return *surface_; }
     [[nodiscard]] SDL_Window* GetWindow() const { return window_; }
+    [[nodiscard]] const VulkanInstanceCapabilities& GetCapabilities() const { return capabilities_; }
 
 private:
     SDL_Window* window_ = nullptr;
     std::unique_ptr<vk::detail::DynamicLoader> loader_{};
     std::unique_ptr<vk::raii::Instance> instance_{};
     std::unique_ptr<vk::raii::SurfaceKHR> surface_{};
+    VulkanInstanceCapabilities capabilities_{};
 };
 
 } // namespace VulkanBackend::Vulkan

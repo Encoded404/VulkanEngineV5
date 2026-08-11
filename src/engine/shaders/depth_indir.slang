@@ -38,3 +38,4 @@ float4 main(uint vertexId : SV_VertexID) : SV_Position {
     float3 p = float3(vert.px, vert.py, vert.pz);
     return mul(float4(p, 1.0), submeshInfo[NonUniformResourceIndex(block)][elemIndex].MVP);
 }
+

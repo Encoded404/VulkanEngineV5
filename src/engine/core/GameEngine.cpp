@@ -11,10 +11,9 @@ import logiface;
 
 import vulkan_hpp;
 
-import Shaders.Engine.MainIndirVert;
-import Shaders.Engine.StandardMeshFrag;
 import VulkanEngine.MeshManager;
 import VulkanEngine.EngineBootstrap;
+import VulkanEngine.ShaderWatcher;
 
 namespace VulkanEngine {
 
@@ -27,13 +26,6 @@ GameEngine::~GameEngine() {
 bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const GameConfig& config) {
     vk_backend_ = ctx.bootstrap;
     config_ = config;
-
-    vert_spv_holder_ = std::vector<std::uint32_t>{
-        Shaders::Engine::MainIndirVert::GetSpirvWords().begin(),
-        Shaders::Engine::MainIndirVert::GetSpirvWords().end()};
-    frag_spv_holder_ = std::vector<std::uint32_t>{
-        Shaders::Engine::StandardMeshFrag::GetSpirvWords().begin(),
-        Shaders::Engine::StandardMeshFrag::GetSpirvWords().end()};
 
     if (!bootstrap_.Initialize(ctx_, config, *ctx.bootstrap)) {
         return false;
@@ -67,32 +59,26 @@ uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& 
 }
 
 bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
-                              std::span<const std::uint32_t> vert_override,
-                              std::span<const std::uint32_t> frag_override) {
+                              ShaderSystem::ShaderId vert_id,
+                              ShaderSystem::ShaderId frag_id,
+                              ShaderSystem::ShaderManager* shader_mgr) {
     auto& backend = ctx.bootstrap->GetBackend();
 
     constexpr std::uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
     ctx_.scene_renderer = std::make_unique<SceneRenderer::SceneRenderer>();
-    if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_indirection_entries)) {
+    if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_indirection_entries,
+                                           ctx_.GetShaderManager(), ctx_.GetPipelineFactory(),
+                                           ctx_.GetShaderIds())) {
         LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
         return false;
     }
 
     ctx_.technique_mgr = std::make_unique<TechniqueManager::TechniqueManager>();
     {
-        auto resolve_spv = [](const std::span<const std::uint32_t>& override_spv,
-                              const std::vector<std::uint32_t>& default_spv) {
-            if (!override_spv.empty()) {
-                return std::vector<std::uint32_t>{override_spv.begin(), override_spv.end()};
-            }
-            return default_spv;
-        };
-        auto vert = resolve_spv(vert_override, vert_spv_holder_);
-        auto frag = resolve_spv(frag_override, frag_spv_holder_);
-
         auto mesh_tech = std::make_unique<TechniqueManager::DefaultMeshTechnique>();
         mesh_tech->CompileDefaultMesh(
-            *ctx.bootstrap, vert, frag, config_.pipeline_config,
+            *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
+            vert_id, frag_id, config_.pipeline_config,
             *ctx_.bindless_mgr->GetLayout(),
             *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
             *ctx_.scene_renderer->GetRawVertexLayout(),
@@ -170,6 +156,22 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                 }
             });
     }
+
+    // ── Flush pipeline cache (warm data persists across runs) ──
+    ctx_.shader_manager->FlushCache();
+
+    // ── Start shader file watching ──
+    ctx_.shader_watcher = std::make_unique<ShaderSystem::ShaderWatcher>(*ctx_.shader_manager);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.expand_comp);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.occlusion_cull_comp);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.hiz_gen_comp);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.collect_count_compact_comp);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.collect_write_comp);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.main_indir_vert);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.depth_indir_vert);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.standard_mesh_frag);
+    ctx_.shader_watcher->Watch(ctx_.shader_ids.depth_prepass_frag);
+    ctx_.shader_watcher->Start();
 
     return true;
 }

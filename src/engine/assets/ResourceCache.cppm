@@ -9,6 +9,8 @@ import std;
 
 import logiface;
 import FileLoader;
+import FileLoader.DefaultFileReadStrategy;
+import VulkanShared.ThreadPool;
 
 export namespace VulkanEngine {
 
@@ -87,6 +89,11 @@ struct ResourceId {
 
         std::unordered_map<std::type_index,
                            std::unordered_map<std::string, InProgressEntry>> inProgress_;
+
+        FileLoader::FileManager file_manager_{
+            std::make_shared<FileLoader::DefaultFileReadStrategy>(),
+            [](auto work) { static_cast<void>(VulkanShared::ThreadPool::Global().Enqueue(std::move(work))); }
+        };
 
     public:
         enum class LoadSpeed {
@@ -175,12 +182,11 @@ struct ResourceId {
                 }
             };
 
-            static FileLoader::FileManager fm;
             FileLoader::FileLoadInfo info;
             info.path = path;
             info.initial_read_rate_bytes_per_sec = rate;
 
-            auto handle = fm.LoadFile<T>(info, std::make_shared<Asm>(resource_id));
+            auto handle = file_manager_.LoadFile<T>(info, std::make_shared<Asm>(resource_id));
 
             const std::shared_ptr<std::promise<ResourceHandle<T>>> out_promise = std::make_shared<std::promise<ResourceHandle<T>>>();
             auto out_fut = out_promise->get_future().share();
@@ -309,12 +315,11 @@ struct ResourceId {
                 }
             };
 
-            static FileLoader::FileManager fm;
             FileLoader::FileLoadInfo info;
             info.path = path;
             info.initial_read_rate_bytes_per_sec = rate;
 
-            auto handle = fm.LoadFile<T>(info, std::make_shared<Asm>(resource_id));
+            auto handle = file_manager_.LoadFile<T>(info, std::make_shared<Asm>(resource_id));
 
             auto handle_box = std::make_shared<std::decay_t<decltype(handle)>>(std::move(handle));
             std::shared_future<std::shared_ptr<T>> internal_fut = handle_box->GetFuture();

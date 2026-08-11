@@ -579,7 +579,6 @@ private:
     std::vector<std::unique_ptr<Entity>> entities_{};
     Entity::EntityId next_entity_id_ = 0;
     mutable std::mutex mutex_{};
-    VulkanShared::ThreadPool thread_pool_{};
 
 public:
     [[nodiscard]] Entity& CreateEntity() {
@@ -625,7 +624,7 @@ public:
         }
 
         const std::size_t component_count = components.size();
-        thread_pool_.ParallelFor(component_count,
+        VulkanShared::ThreadPool::Global().ParallelFor(component_count,
             [delta_time, components = std::move(components)](const std::size_t index) mutable {
                 components[index]->DispatchUpdate(delta_time);
             });

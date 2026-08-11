@@ -15,6 +15,8 @@ export import VulkanEngine.TechniqueManager.TechniqueId;
 export import VulkanEngine.GpuResources.BlockArray;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
 
 export namespace VulkanEngine::TechniqueManager {
 
@@ -110,8 +112,8 @@ public:
     }
 
     // ── GPU resource access ──
-    [[nodiscard]] vk::Pipeline GetPipeline() const { return pipeline_; }
-    [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return pipeline_layout_; }
+    [[nodiscard]] vk::Pipeline GetPipeline() const { return pipeline_slot_.Get(); }
+    [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return *pipeline_layout_; }
 
     // ── Custom descriptor sets (technique-owned BlockArray/Shared bindings at sets 4+) ──
     [[nodiscard]] std::span<const vk::DescriptorSet> GetCustomDescriptorSets() const {
@@ -160,8 +162,10 @@ public:
     // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
     void Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
-                 std::span<const std::uint32_t> vert_spv,
-                 std::span<const std::uint32_t> frag_spv,
+                 ShaderSystem::ShaderManager& shader_mgr,
+                 ShaderSystem::PipelineFactory& pipeline_factory,
+                 ShaderSystem::ShaderId vert_id,
+                 ShaderSystem::ShaderId frag_id,
                  const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                  vk::DescriptorSetLayout bindless_layout,
                  vk::DescriptorSetLayout submesh_vertex_layout,
@@ -177,7 +181,7 @@ private:
     std::vector<std::vector<std::byte>> shared_cpu_data_;                    // one per Shared binding (technique-local)
 
     vk::raii::PipelineLayout pipeline_layout_ = nullptr;
-    vk::raii::Pipeline pipeline_ = nullptr;
+    ShaderSystem::PipelineSlot pipeline_slot_;
 
     // Descriptor pool + sets for custom bindings (sets 4+)
     vk::raii::DescriptorPool descriptor_pool_ = nullptr;

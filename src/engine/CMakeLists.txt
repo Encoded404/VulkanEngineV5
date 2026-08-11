@@ -25,6 +25,13 @@ add_subdirectory(${_patched_fastgltf_dir} ${CMAKE_CURRENT_BINARY_DIR}/fastgltf)
 find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
+option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation" ON)
+if(VKENGINE_HOT_RELOAD)
+    find_package(slang CONFIG REQUIRED)
+    target_link_libraries(${ENGINE_TARGET} PRIVATE slang::slang)
+    target_compile_definitions(${ENGINE_TARGET} PRIVATE VKENGINE_HOT_RELOAD=1)
+endif()
+
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     Vulkan::HppModule
     KTX::ktx
@@ -40,6 +47,10 @@ target_include_directories(${ENGINE_TARGET} PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(${ENGINE_TARGET} PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE
     GLM_FORCE_RADIANS
+)
+
+target_compile_definitions(${ENGINE_TARGET} PRIVATE
+    VKENGINE_SLANG_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/shaders/"
 )
 
 target_compile_options(${ENGINE_TARGET} PRIVATE
@@ -90,6 +101,10 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/SceneRenderer.cpp
     render/SceneRendererPipeline.cpp
     render/SceneRendererFrame.cpp
+    render/ShaderManager.cpp
+    render/CompilerEngine.cpp
+    render/PipelineFactory.cpp
+    render/ShaderWatcher.cpp
     render/bindless/BindlessManager.cpp
     core/GameEngine.cpp
     core/EngineBootstrap.cpp
@@ -132,6 +147,15 @@ add_slang_shaders(
         DepthPrepassFrag        depth_prepass.slang        fragment main
 )
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
+
+add_custom_target(deploy_engine_shaders ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_shader_gen_dir}/*.spv" "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
+    DEPENDS ${ENGINE_TARGET}_shaders
+    COMMENT "Deploying engine SPIR-V shaders"
+)
+
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shaders SLANG_CPPM_FILES)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -186,6 +210,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/SceneRenderer.cppm
             render/bindless/BindlessManager.cppm
             render/bindless/TextureSlot.cppm
+            render/ShaderManager.cppm
+            render/CompilerEngine.cppm
+            render/GplPolicy.cppm
+            render/PipelineFactory.cppm
+            render/ShaderWatcher.cppm
+            render/ShaderRegistration.cppm
             core/GameEngine.cppm
             core/EngineContext.cppm
             core/EngineBootstrap.cppm

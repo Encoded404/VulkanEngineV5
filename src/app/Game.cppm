@@ -6,6 +6,7 @@ import std;
 
 export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
+import VulkanEngine.GplPolicy;
 export import App.Components.SimpleControllerComponent;
 export import App.Components.TransformControlComponent;
 
@@ -21,7 +22,9 @@ class DemoGame {
 public:
     DemoGame(RenderMode render_mode, const std::filesystem::path& executable_path,
              const std::filesystem::path model_path = {},
-             const std::filesystem::path texture_path = {});
+             const std::filesystem::path texture_path = {},
+             VulkanEngine::ShaderSystem::GplPolicy gpl_policy = VulkanEngine::ShaderSystem::GplPolicy::Auto,
+             VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto);
     ~DemoGame();
 
     DemoGame(const DemoGame&) = delete;
@@ -50,6 +53,9 @@ private:
     std::filesystem::path exe_dir_{};
     std::filesystem::path model_path_{};
     std::filesystem::path texture_path_{};
+
+    VulkanEngine::ShaderSystem::GplPolicy gpl_policy_ = VulkanEngine::ShaderSystem::GplPolicy::Auto;
+    VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure_ = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
 
     VulkanEngine::GameEngine engine_game_{};
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};

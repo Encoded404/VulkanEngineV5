@@ -15,21 +15,27 @@ import vulkan_hpp;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
+import VulkanEngine.GplPolicy;
 import App.Components.SimpleControllerComponent;
 import App.Components.TransformControlComponent;
 import Shaders.Engine.StandardMeshFrag;
 import Shaders.App.NormalsFrag;
 import Shaders.App.SolidFrag;
+import VulkanEngine.ShaderManager;
 
 namespace App::Game {
 
 DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
                    std::filesystem::path model_path,
-                   std::filesystem::path texture_path)
+                   std::filesystem::path texture_path,
+                   VulkanEngine::ShaderSystem::GplPolicy gpl_policy,
+                   VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure)
     : render_mode_(render_mode)
     , exe_dir_(executable_path.parent_path())
     , model_path_(std::move(model_path))
-    , texture_path_(std::move(texture_path)) {
+    , texture_path_(std::move(texture_path))
+    , gpl_policy_(gpl_policy)
+    , gpl_structure_(gpl_structure) {
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -60,25 +66,36 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     VulkanEngine::GameConfig config{};
     config.enable_imgui = true;
     config.renderer_config.clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
+    config.shader_data_dir = (exe_dir_ / "data" / "shaders").string();
+    config.gpl_policy = gpl_policy_;
+    config.gpl_structure = gpl_structure_;
 
     if (!engine_game_.Setup(ctx, config)) {
         return false;
     }
 
-    // 2. Select fragment shader and init renderer
-    std::span<const std::uint32_t> frag_spv;
+    // 2. Register app shaders and select fragment shader
+    auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
+    auto standard_frag_id = engine_game_.GetContext().GetShaderIds().standard_mesh_frag;
+
+    auto normals_frag_id = Shaders::App::NormalsFrag::Register(shader_mgr, config.shader_data_dir);
+    auto solid_frag_id = Shaders::App::SolidFrag::Register(shader_mgr, config.shader_data_dir);
+
+    VulkanEngine::ShaderSystem::ShaderId frag_id;
     switch (render_mode_) {
         case RenderMode::Normals:
-            frag_spv = Shaders::App::NormalsFrag::GetSpirvWords();
+            frag_id = normals_frag_id;
             break;
         case RenderMode::NoTextures:
-            frag_spv = Shaders::App::SolidFrag::GetSpirvWords();
+            frag_id = solid_frag_id;
             break;
         default:
-            frag_spv = Shaders::Engine::StandardMeshFrag::GetSpirvWords();
+            frag_id = standard_frag_id;
             break;
     }
-    if (!engine_game_.InitRenderer(ctx, {}, frag_spv)) {
+
+    auto vert_id = engine_game_.GetContext().GetShaderIds().main_indir_vert;
+    if (!engine_game_.InitRenderer(ctx, vert_id, frag_id, &shader_mgr)) {
         return false;
     }
 

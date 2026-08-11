@@ -53,6 +53,10 @@ public:
 
     [[nodiscard]] uint32_t GetFramesInFlight() const override { return current_frames_in_flight; }
 
+    [[nodiscard]] const VulkanCapabilities& GetCapabilities() const override { throw std::runtime_error("Fake"); }
+    [[nodiscard]] const std::string& GetErrorMessage() const override { static const std::string dummy; return dummy; }
+    [[nodiscard]] bool HasUnmetRequirements() const override { return false; }
+
     [[nodiscard]] const vk::raii::SwapchainKHR& GetSwapchain() const override { throw std::runtime_error("Fake"); }
     [[nodiscard]] const std::vector<vk::Image>& GetSwapchainImages() const override { static const std::vector<vk::Image> dummy; return dummy; }
     [[nodiscard]] const std::vector<vk::raii::ImageView>& GetSwapchainImageViews() const override { static const std::vector<vk::raii::ImageView> dummy; return dummy; }

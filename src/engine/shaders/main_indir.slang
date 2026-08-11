@@ -57,3 +57,5 @@ VSOutput main(uint vertexId : SV_VertexID) {
     result.position = mul(float4(p, 1.0), info.MVP);
     return result;
 }
+
+

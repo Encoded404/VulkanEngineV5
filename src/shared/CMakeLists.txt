@@ -20,6 +20,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
             CallbackList.cppm
+            FileIO.cppm
             ThreadPool.cppm
             Timer.cppm
             render_graph/RenderGraphTypes.cppm

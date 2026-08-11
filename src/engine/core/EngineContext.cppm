@@ -21,6 +21,11 @@ import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.GplPolicy;
+import VulkanEngine.ShaderWatcher;
+import VulkanEngine.ShaderRegistration;
 
 export namespace VulkanEngine {
 
@@ -35,6 +40,10 @@ struct GameConfig {
     Renderer::RendererConfig renderer_config{};
     std::uint64_t geometry_buffer_size_mb = 128;
     bool enable_imgui = true;
+    std::string shader_data_dir;
+    std::string shader_cache_dir = "data/cache";
+    VulkanEngine::ShaderSystem::GplPolicy gpl_policy = VulkanEngine::ShaderSystem::GplPolicy::Auto;
+    VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
 };
 
 struct EngineContext {
@@ -69,6 +78,12 @@ struct EngineContext {
     // Material manager (no singleton — owned by context)
     VulkanEngine::MaterialManager::MaterialManager material_mgr{};
 
+    // Shader system
+    std::unique_ptr<ShaderSystem::ShaderManager> shader_manager;
+    std::unique_ptr<ShaderSystem::PipelineFactory> pipeline_factory;
+    std::unique_ptr<ShaderSystem::ShaderWatcher> shader_watcher;
+    EngineShaderIds shader_ids{};
+
     // Convenience accessors
     auto& GetBindlessManager() { return *bindless_mgr; }
     auto& GetSceneRenderer() { return *scene_renderer; }
@@ -80,6 +95,9 @@ struct EngineContext {
     auto& GetComponentRegistry() { return component_registry; }
     auto& GetMaterialManager() { return material_mgr; }
     auto& GetResourceManager() { return resource_manager; }
+    auto& GetShaderManager() { return *shader_manager; }
+    auto& GetPipelineFactory() { return *pipeline_factory; }
+    auto& GetShaderIds() { return shader_ids; }
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }

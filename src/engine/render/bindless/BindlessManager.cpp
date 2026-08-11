@@ -25,11 +25,8 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     backend_ = &backend;
     const auto& device = backend.GetDevice();
 
-    // Query device limits for update-after-bind descriptors
-    auto props = backend.GetPhysicalDevice().getProperties2<
-        vk::PhysicalDeviceProperties2,
-        vk::PhysicalDeviceDescriptorIndexingProperties>();
-    const auto& indexing_props = props.get<vk::PhysicalDeviceDescriptorIndexingProperties>();
+    // Query device limits for update-after-bind descriptors (from the capabilities snapshot)
+    const auto& indexing_props = backend.GetCapabilities().GetDescriptorIndexingProperties();
     const std::uint32_t max_samplers = indexing_props.maxDescriptorSetUpdateAfterBindSampledImages;
 
     LOGIFACE_LOG(debug, "maxDescriptorSetUpdateAfterBindSamplers=" + std::to_string(max_samplers));

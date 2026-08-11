@@ -32,6 +32,8 @@ import VulkanEngine.MeshManager;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.EngineBootstrap;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.ShaderWatcher;
 
 export namespace VulkanEngine {
 
@@ -47,8 +49,9 @@ public:
     std::uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path);
 
     bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
-                      std::span<const std::uint32_t> vert_override = {},
-                      std::span<const std::uint32_t> frag_override = {});
+                      ShaderSystem::ShaderId vert_id = 0,
+                      ShaderSystem::ShaderId frag_id = 0,
+                      ShaderSystem::ShaderManager* shader_mgr = nullptr);
 
     struct UploadedMesh {
         std::uint32_t first_submesh = 0;
@@ -110,9 +113,6 @@ private:
     std::uint16_t main_technique_id_ = 0;
     bool scene_valid_ = false;
     bool initialized_ = false;
-
-    std::vector<std::uint32_t> vert_spv_holder_;
-    std::vector<std::uint32_t> frag_spv_holder_;
 };
 
 } // namespace VulkanEngine

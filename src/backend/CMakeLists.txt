@@ -6,20 +6,6 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
-if(SYSTEM_VULKAN)
-  find_library(SYSTEM_VULKAN_LIB NAMES vulkan PATHS /usr/lib64 /usr/lib NO_DEFAULT_PATH)
-  find_path(SYSTEM_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h PATHS /usr/include NO_DEFAULT_PATH)
-  if(SYSTEM_VULKAN_LIB AND SYSTEM_VULKAN_INCLUDE_DIR)
-    message(STATUS "Overriding vcpkg Vulkan with system: ${SYSTEM_VULKAN_LIB}")
-    set_target_properties(Vulkan::Vulkan PROPERTIES
-      IMPORTED_LOCATION "${SYSTEM_VULKAN_LIB}"
-      INTERFACE_INCLUDE_DIRECTORIES "${SYSTEM_VULKAN_INCLUDE_DIR}"
-    )
-  else()
-    message(WARNING "System Vulkan not found at /usr, using vcpkg Vulkan")
-  endif()
-endif()
-
 target_link_libraries(${BACKEND_TARGET} PRIVATE
     SDL3::SDL3
     imgui::imgui
@@ -64,6 +50,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     vulkan/VulkanInstance.cpp
     vulkan/VulkanDevice.cpp
     vulkan/VulkanSwapchain.cpp
+    vulkan/VulkanCapabilities.cpp
     vulkan/MemoryUtils.cpp
     vulkan/ImageUtils.cpp
     vulkan/PipelineBuilder.cpp
@@ -88,6 +75,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             vulkan/VulkanBootstrapBackend.cppm
             vulkan/VulkanInstance.cppm
             vulkan/VulkanDevice.cppm
+            vulkan/VulkanCapabilities.cppm
             vulkan/VulkanSwapchain.cppm
             vulkan/MemoryUtils.cppm
             vulkan/ImageUtils.cppm

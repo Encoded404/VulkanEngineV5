@@ -19,6 +19,9 @@ import VulkanEngine.MaterialManager;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import VulkanEngine.EngineContext;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.ShaderWatcher;
 
 namespace VulkanEngine {
 
@@ -65,6 +68,17 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         return false;
     }
 
+    ctx.shader_manager = std::make_unique<ShaderSystem::ShaderManager>(
+        vk_backend.GetDevice(), vk_backend.GetCapabilities(),
+        config.shader_cache_dir);
+    ctx.pipeline_factory = std::make_unique<ShaderSystem::PipelineFactory>(
+        vk_backend.GetDevice(), vk_backend.GetCapabilities(),
+        ctx.shader_manager->GetPipelineCacheRAII(), config.gpl_policy, config.gpl_structure);
+
+    if (!config.shader_data_dir.empty()) {
+        ctx.shader_ids.RegisterAll(*ctx.shader_manager, config.shader_data_dir);
+    }
+
     return true;
 }
 
@@ -74,6 +88,14 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         backend.GetBackend().GetDevice().waitIdle();
     } catch (...) {
         LOGIFACE_LOG(warn, "Exception during GPU wait idle in EngineBootstrap shutdown");
+    }
+
+    if (ctx.shader_watcher) {
+        ctx.shader_watcher->Stop();
+        ctx.shader_watcher.reset();
+    }
+    if (ctx.pipeline_factory) {
+        ctx.pipeline_factory.reset();
     }
 
     if (ctx.renderer) {
@@ -88,6 +110,10 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     if (ctx.scene_renderer) {
         ctx.scene_renderer->Shutdown();
         ctx.scene_renderer.reset();
+    }
+
+    if (ctx.shader_manager) {
+        ctx.shader_manager.reset();
     }
     ctx.mesh_registry.Shutdown();
     if (ctx.mesh_manager) {

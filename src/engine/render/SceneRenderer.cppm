@@ -19,6 +19,9 @@ export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.GpuResources.BlockArray;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.ShaderRegistration;
 
 export namespace VulkanEngine::SceneRenderer {
 
@@ -58,7 +61,10 @@ public:
 
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
-                    std::uint32_t total_index_count);
+                    std::uint32_t total_index_count,
+                    ShaderSystem::ShaderManager& shader_mgr,
+                    ShaderSystem::PipelineFactory& pipeline_factory,
+                    const EngineShaderIds& shader_ids);
     void Shutdown();
 
     [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexDataLayout() const;
@@ -191,12 +197,29 @@ private:
         vk::raii::ImageView hiz_full_view = vk::raii::ImageView(nullptr);
     };
 
-    bool CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
+    bool CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                              ShaderSystem::ShaderManager& shader_mgr,
+                              ShaderSystem::PipelineFactory& pipeline_factory,
+                              ShaderSystem::ShaderId shader_id);
     bool CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                             ShaderSystem::ShaderManager& shader_mgr,
+                             ShaderSystem::PipelineFactory& pipeline_factory,
+                             ShaderSystem::ShaderId vert_id,
+                             ShaderSystem::ShaderId frag_id,
                              const vk::PipelineRasterizationStateCreateInfo& rasterization);
-    bool CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& backend);
-    bool CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
-    bool CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& backend);
+    bool CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                           ShaderSystem::ShaderManager& shader_mgr,
+                           ShaderSystem::PipelineFactory& pipeline_factory,
+                           ShaderSystem::ShaderId shader_id);
+    bool CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                  ShaderSystem::ShaderManager& shader_mgr,
+                                  ShaderSystem::PipelineFactory& pipeline_factory,
+                                  ShaderSystem::ShaderId shader_id);
+    bool CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                 ShaderSystem::ShaderManager& shader_mgr,
+                                 ShaderSystem::PipelineFactory& pipeline_factory,
+                                 ShaderSystem::ShaderId count_id,
+                                 ShaderSystem::ShaderId write_id);
 
 
     void UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set, std::uint32_t binding,
@@ -222,24 +245,25 @@ private:
     std::unique_ptr<vk::raii::DescriptorSetLayout> expand_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> expand_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> expand_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> expand_pipeline_{};
+    ShaderSystem::PipelineSlot expand_slot_;
+
 
     // Set 5: Occlusion compute (blocks + Hi-Z)
     std::unique_ptr<vk::raii::DescriptorSetLayout> occlusion_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occlusion_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> occlusion_pipeline_{};
+    ShaderSystem::PipelineSlot occlusion_slot_;
 
     // Set 6: Collect count + compact (cull blocks + indirections + intermediate)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> collect_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> collect_pipeline_{};
+    ShaderSystem::PipelineSlot collect_count_slot_;
     // Collect write shaders (use separate layout)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_write_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_write_pool_;
     std::unique_ptr<vk::raii::PipelineLayout> collect_write_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> collect_write_pipeline_{};
+    ShaderSystem::PipelineSlot collect_write_slot_;
 
     std::unique_ptr<vk::raii::Sampler> depth_sampler_{};
     std::unique_ptr<vk::raii::Sampler> hiz_sampler_{};
@@ -255,11 +279,11 @@ private:
     std::vector<VulkanEngine::GpuResources::GpuDescriptorSet> empty_sets_{};
 
     std::unique_ptr<vk::raii::PipelineLayout> depth_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> depth_pipeline_{};
+    ShaderSystem::PipelineSlot depth_slot_;
 
     std::unique_ptr<vk::raii::DescriptorSetLayout> hiz_layout_{};
     std::unique_ptr<vk::raii::PipelineLayout> hiz_pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> hiz_pipeline_{};
+    ShaderSystem::PipelineSlot hiz_slot_;
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> hiz_pool_;
 
     // Bindless index buffer array (used by expand at set 5)

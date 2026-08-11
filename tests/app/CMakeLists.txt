@@ -3,7 +3,9 @@ find_package(CLI11 CONFIG REQUIRED)
 
 add_executable(app_tests
   example_tests.cpp
+  overrides_tests.cpp
   ${CMAKE_SOURCE_DIR}/src/app/Game.cpp
+  ${CMAKE_SOURCE_DIR}/src/app/Overrides.cpp
 )
 target_link_libraries(app_tests PRIVATE
   ${ENGINE_TARGET}
@@ -26,6 +28,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       ${CMAKE_SOURCE_DIR}/src/app/Components/SimpleControllerComponent.cppm
       ${CMAKE_SOURCE_DIR}/src/app/Components/TransformControlComponent.cppm
       ${CMAKE_SOURCE_DIR}/src/app/Game.cppm
+      ${CMAKE_SOURCE_DIR}/src/app/Overrides.cppm
   )
 
   target_sources(app_tests PRIVATE

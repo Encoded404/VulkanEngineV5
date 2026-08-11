@@ -1,20 +1,13 @@
 module;
 
-#include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
-
 export module VulkanEngine.Render.Passes.ExpandPass;
 
 import std;
 import vulkan_hpp;
-import VulkanBackend.Vulkan.VulkanBootstrap;
-import VulkanEngine.GpuResources;
 import VulkanEngine.PipelinePass;
-
 import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
-
-struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
 
 class ExpandPass : public VulkanEngine::PipelinePass::IPipelinePass {
 public:
@@ -24,32 +17,12 @@ public:
     ExpandPass(const ExpandPass&) = delete;
     ExpandPass& operator=(const ExpandPass&) = delete;
 
-    bool Create(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
-                vk::DescriptorSetLayout bindless_index_layout);
-    void Shutdown();
-
-    void Execute(vk::CommandBuffer cmd,
-                 vk::DescriptorSet expand_set,
-                 vk::DescriptorSet bindless_index_set,
-                 std::uint32_t object_count,
-                 const glm::mat4& view_proj);
-
-    [[nodiscard]] vk::DescriptorSetLayout GetDescriptorSetLayout() const {
-        return *descriptor_layout_;
-    }
-
-    // IPipelinePass overrides
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;
 
 private:
     SceneRenderer& scene_renderer_;
-
-    std::unique_ptr<vk::raii::DescriptorSetLayout> descriptor_layout_{};
-    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> descriptor_pool_;
-    std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};
-    std::unique_ptr<vk::raii::Pipeline> pipeline_{};
 };
 
 } // namespace VulkanEngine::SceneRenderer

@@ -7,15 +7,18 @@ import std;
 import vulkan_hpp;
 
 import VulkanBackend.Vulkan.VulkanInstance;
+import VulkanBackend.Vulkan.CommonTypes;
+import VulkanBackend.Vulkan.VulkanCapabilities;
 
 export namespace VulkanBackend::Vulkan {
 
 class VulkanDevice {
 public:
-    // New method for physical device selection
+    // New method for physical device selection (hard-floor check + one-time capability query)
     [[nodiscard]] bool SelectPhysicalDevice(const VulkanInstance& instance);
     // Modified method for logical device creation and resource setup
-    [[nodiscard]] bool CreateLogicalDeviceAndResources(std::uint32_t frames_in_flight);
+    [[nodiscard]] bool CreateLogicalDeviceAndResources(std::uint32_t frames_in_flight,
+                                                       const VulkanBootstrapConfig& config);
     void Shutdown();
 
     [[nodiscard]] bool IsValid() const { return device_ != nullptr; }
@@ -32,6 +35,8 @@ public:
 
     [[nodiscard]] std::uint32_t GetFramesInFlight() const { return frames_in_flight_; }
 
+    [[nodiscard]] const VulkanCapabilities& GetCapabilities() const { return capabilities_; }
+
 private:
     std::unique_ptr<vk::raii::PhysicalDevice> physical_device_{};
     std::unique_ptr<vk::raii::Device> device_{};
@@ -45,6 +50,10 @@ private:
     std::vector<std::unique_ptr<vk::raii::Fence>> in_flight_fences_{};
 
     std::uint32_t frames_in_flight_ = 0;
+
+    const VulkanInstance* instance_ = nullptr;
+    VulkanCapabilities capabilities_{};
+    SupportedDeviceState supported_{};
 };
 
 } // namespace VulkanBackend::Vulkan

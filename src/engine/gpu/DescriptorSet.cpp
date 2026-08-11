@@ -185,12 +185,7 @@ void GpuDescriptorSet::Destroy() {
 void GpuDescriptorSet::SetDebugName(const vk::raii::Device& dev, const std::string& name) const {
     if (!descriptor_set_) return;
 
-    vk::DebugUtilsObjectNameInfoEXT info{};
-    info.sType = vk::StructureType::eDebugUtilsObjectNameInfoEXT;
-    info.objectType = vk::ObjectType::eDescriptorSet;
-    info.objectHandle = reinterpret_cast<uint64_t>(static_cast<vk::DescriptorSet::CType>(descriptor_set_));
-    info.pObjectName = name.c_str();
-    dev.setDebugUtilsObjectNameEXT(info);
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, descriptor_set_, vk::ObjectType::eDescriptorSet, name);
 }
 
 GpuDescriptorSet GpuDescriptorSet::Create(

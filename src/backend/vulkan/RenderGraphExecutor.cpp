@@ -1,13 +1,18 @@
 module;
 
+#include <logging/logging_macros.hpp>
+
 module VulkanBackend.Vulkan.RenderGraphExecutor;
 
 import std;
 import std.compat;
 
+import logiface;
+
 import vulkan_hpp;
 
 import VulkanShared.RenderGraphTypes;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 using VulkanEngine::RenderGraph::ResourceState;
 using VulkanEngine::RenderGraph::PipelineStageIntent;
@@ -15,20 +20,6 @@ using VulkanEngine::RenderGraph::AccessIntent;
 using VulkanEngine::RenderGraph::ImageLayoutIntent;
 
 namespace VulkanBackend::Vulkan {
-
-namespace {
-
-static void BeginPassLabel(vk::CommandBuffer cmd, const std::string& name) {
-    vk::DebugUtilsLabelEXT label{};
-    label.pLabelName = name.c_str();
-    cmd.beginDebugUtilsLabelEXT(label);
-}
-
-static void EndPassLabel(vk::CommandBuffer cmd) {
-    cmd.endDebugUtilsLabelEXT();
-}
-
-} // anonymous namespace
 
 void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
                          const void* user_data,
@@ -41,7 +32,7 @@ void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& gr
     std::vector<bool> has_state = graph.has_initial_state;
 
     for (const auto& pass : graph.passes) {
-        BeginPassLabel(command_buffer, pass.name);
+        BeginDebugUtilsLabel(command_buffer, pass.name);
 
         if (!pass.pre_pass_transitions.empty()) {
             std::vector<vk::ImageMemoryBarrier> image_barriers;
@@ -186,6 +177,7 @@ void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& gr
         }
 
         if (pass.execute.callback) {
+            LOGIFACE_LOG(trace, std::format("RenderGraphExecutor: executing pass '{}'", pass.name));
             pass.execute.callback(user_data, command_buffer);
         }
 
@@ -292,7 +284,7 @@ void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& gr
             }
         }
 
-        EndPassLabel(command_buffer);
+        EndDebugUtilsLabel(command_buffer);
     }
 }
 

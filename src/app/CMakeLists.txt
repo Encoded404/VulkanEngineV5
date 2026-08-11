@@ -2,6 +2,7 @@ add_executable(${APP_TARGET})
 target_sources(${APP_TARGET} PRIVATE
     main.cpp
     Game.cpp
+    Overrides.cpp
 )
 
 # Compile slang shaders to SPIR-V + generate C++20 modules with #embed
@@ -22,6 +23,15 @@ add_slang_shaders(
         SolidFrag    solid.slang    fragment main
 )
 add_dependencies(${APP_TARGET} ${APP_TARGET}_shaders)
+
+add_custom_target(deploy_app_shaders ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_shader_gen_dir}/*.spv" "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
+    DEPENDS ${APP_TARGET}_shaders
+    COMMENT "Deploying app SPIR-V shaders"
+)
+
 get_target_property(_gen_shader_mods ${APP_TARGET}_shaders SLANG_CPPM_FILES)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -32,6 +42,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             Components/SimpleControllerComponent.cppm
             Components/TransformControlComponent.cppm
             Game.cppm
+            Overrides.cppm
     )
 
     # Register generated slang shader module files
@@ -56,10 +67,6 @@ target_link_libraries(${APP_TARGET} PRIVATE
 )
 
 set_target_properties(${APP_TARGET} PROPERTIES OUTPUT_NAME ${APP_TARGET})
-
-if(SYSTEM_VULKAN)
-  set_target_properties(${APP_TARGET} PROPERTIES BUILD_RPATH "/usr/lib64")
-endif()
 
 if(OUTPUT_PATH)
     set_target_properties(${APP_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_PATH})
@@ -88,6 +95,10 @@ target_compile_definitions(${APP_TARGET}
         $<$<BOOL:${ENABLE_LOGGING}>:LOGIFACE_ENABLE_LOGGING=1>
         $<$<NOT:$<BOOL:${ENABLE_LOGGING}>>:LOGIFACE_ENABLE_LOGGING=0>
         LOGIFACE_DEFAULT_TO_FUNCTION=1
+)
+
+target_compile_definitions(${APP_TARGET} PRIVATE
+    VKENGINE_SLANG_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/shaders/"
 )
 
 if(COMMAND enable_target_clang_tidy)

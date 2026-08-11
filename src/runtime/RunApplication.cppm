@@ -112,7 +112,11 @@ export namespace VulkanEngine::Application {
         auto bootstrap_config = config.bootstrap_config;
         bootstrap_config.native_window_handle = window;
         if (!bootstrap->Initialize(bootstrap_config)) {
-            return fail("Vulkan bootstrap initialization failed");
+            std::string bootstrap_message = "Vulkan bootstrap initialization failed";
+            if (!bootstrap->GetSnapshot().error_message.empty()) {
+                bootstrap_message += ": " + bootstrap->GetSnapshot().error_message;
+            }
+            return fail(bootstrap_message);
         }
         bootstrap_initialized = true;
 

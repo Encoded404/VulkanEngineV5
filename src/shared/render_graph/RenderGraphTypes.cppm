@@ -327,18 +327,13 @@ inline vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessInte
             case PipelineStageIntent::DepthAttachment:
                 return vk::AccessFlagBits::eDepthStencilAttachmentWrite;
             case PipelineStageIntent::VertexShader:
-                return is_write ? vk::AccessFlagBits::eShaderWrite
-                                : vk::AccessFlagBits::eShaderRead;
             case PipelineStageIntent::FragmentShader:
-                return is_write ? vk::AccessFlagBits::eShaderWrite
-                                : vk::AccessFlagBits::eShaderRead;
             case PipelineStageIntent::ComputeShader:
                 return is_write ? vk::AccessFlagBits::eShaderWrite
                                 : vk::AccessFlagBits::eShaderRead;
             case PipelineStageIntent::IndirectDraw:
                 return vk::AccessFlagBits::eIndirectCommandRead;
             case PipelineStageIntent::Present:
-                return {};
             default:
                 return {};
         }

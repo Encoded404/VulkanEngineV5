@@ -153,9 +153,4 @@ vk::DeviceSize MemoryUtils::CalculateAlignedBufferSize(vk::DeviceSize size, vk::
     return AlignedSize(size, min_alignment);
 }
 
-vk::DeviceSize MemoryUtils::GetNonCoherentAtomSize(vk::PhysicalDevice physical_device) {
-    const vk::PhysicalDeviceProperties properties = physical_device.getProperties();
-    return properties.limits.nonCoherentAtomSize;
-}
-
 } // namespace VulkanBackend::Vulkan

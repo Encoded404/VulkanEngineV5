@@ -29,9 +29,6 @@ function(setup_test_target TARGET)
   target_link_options(${TARGET} PRIVATE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
   )
-  if(SYSTEM_VULKAN)
-    set_target_properties(${TARGET} PROPERTIES BUILD_RPATH "/usr/lib64")
-  endif()
   gtest_discover_tests(${TARGET}
     PROPERTIES
       ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"

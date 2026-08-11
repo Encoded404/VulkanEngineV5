@@ -9,13 +9,31 @@ module;
 module VulkanBackend.Vulkan.VulkanInstance;
 
 import std;
+import std.compat;
+
 import logiface;
 
 import vulkan_hpp;
 
 import VulkanShared.Timer;
 
+import VulkanBackend.Vulkan.VulkanCapabilities;
+import VulkanBackend.Vulkan.VulkanDebugUtils;
+
 namespace VulkanBackend::Vulkan {
+
+namespace {
+
+bool IsNameSupported(const std::vector<vk::ExtensionProperties>& available, std::string_view name) {
+    for (const auto& ext : available) {
+        if (std::string_view(ext.extensionName) == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     if (instance_) return true;
@@ -29,24 +47,122 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     loader_ = std::make_unique<vk::detail::DynamicLoader>();
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*loader_);
 
-    std::uint32_t extension_count = 0;
-    const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
+    VulkanInstanceCapabilitiesBuilder builder{capabilities_};
+
+    // 1. Enumerate instance extensions + layers once.
+    std::vector<vk::ExtensionProperties> available_extensions;
+    std::vector<vk::LayerProperties> available_layers;
+    try {
+        const vk::raii::Context context{};
+        available_extensions = context.enumerateInstanceExtensionProperties();
+        available_layers = context.enumerateInstanceLayerProperties();
+    } catch (const std::exception& ex) {
+        LOGIFACE_LOG(error, "instance extension enumeration failed: " + std::string(ex.what()));
+        return false;
+    }
+
+    const auto is_force_disabled = [&config](std::string_view name) {
+        for (const auto& disabled : config.force_disabled_extensions) {
+            if (disabled == name) return true;
+        }
+        return false;
+    };
+
+    // 2. SDL-provided extensions (required by contract).
+    std::uint32_t sdl_extension_count = 0;
+    const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_extension_count);
     if (!sdl_extensions) {
         LOGIFACE_LOG(error, "SDL_Vulkan_GetInstanceExtensions failed");
         return false;
     }
 
-    std::vector<const char*> instance_extensions(sdl_extensions, sdl_extensions + extension_count);
-    std::vector<const char*> instance_layers{};
+    std::vector<std::string> requested_names;
+    for (std::uint32_t i = 0; i < sdl_extension_count; ++i) {
+        const std::string name{sdl_extensions[i]};
+        if (!IsNameSupported(available_extensions, name)) {
+            builder.SetRequirementsUnmet();
+            builder.AppendError("required instance extension not supported: " + name);
+        }
+        requested_names.push_back(name);
+    }
+
+    // 3-4. Engine catalog + app requests (validated, deduped against SDL).
+    const auto add_request = [&](const std::string& name, bool required, std::string_view source) {
+        for (const auto& requested : requested_names) {
+            if (requested == name) return;   // dedupe
+        }
+        if (!IsNameSupported(available_extensions, name)) {
+            if (required) {
+                builder.SetRequirementsUnmet();
+                builder.AppendError("required " + std::string(source) + " instance extension not supported: " + name);
+            } else {
+                LOGIFACE_LOG(warn, "optional instance extension unavailable, skipping: " + name);
+            }
+            return;
+        }
+        requested_names.push_back(name);
+    };
+
+    bool app_wants_debug_utils = false;
+    bool app_debug_utils_required = false;
+    for (const auto& request : config.instance_extensions) {
+        if (request.name == "VK_EXT_debug_utils") {
+            app_wants_debug_utils = true;
+            app_debug_utils_required = request.required;
+        }
+    }
+    if (config.enable_validation || app_wants_debug_utils) {
+        add_request("VK_EXT_debug_utils", app_debug_utils_required, "engine-catalog");
+    }
+    for (const auto& request : config.instance_extensions) {
+        if (request.name == "VK_EXT_debug_utils") continue;   // handled with the catalog entry
+        add_request(request.name, request.required, "app");
+    }
+
+    // 5. Validation layer (optional debug aid).
+    std::vector<const char*> instance_layers;
     if (config.enable_validation) {
-        instance_layers.push_back("VK_LAYER_KHRONOS_validation");
-        instance_extensions.push_back(vk::EXTDebugUtilsExtensionName);
+        bool layer_available = false;
+        for (const auto& layer : available_layers) {
+            if (std::string_view(layer.layerName) == "VK_LAYER_KHRONOS_validation") {
+                layer_available = true;
+                break;
+            }
+        }
+        if (layer_available) {
+            instance_layers.push_back("VK_LAYER_KHRONOS_validation");
+        } else {
+            LOGIFACE_LOG(warn, "validation layer VK_LAYER_KHRONOS_validation not available, continuing without it");
+        }
+    }
+
+    // 6. Apply force-disabled extensions to the final request set.
+    for (auto it = requested_names.begin(); it != requested_names.end();) {
+        if (is_force_disabled(*it)) {
+            LOGIFACE_LOG(warn, "force-disabled instance extension: " + *it);
+            it = requested_names.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 7. Fail before creation if any required instance requirement is unmet.
+    if (capabilities_.HasUnmetRequirements()) {
+        LOGIFACE_LOG(error, "instance requirements unmet: " + capabilities_.GetErrorMessage());
+        return false;
+    }
+
+    // 8. Create the instance.
+    std::vector<const char*> instance_extension_names;
+    instance_extension_names.reserve(requested_names.size());
+    for (const auto& name : requested_names) {
+        instance_extension_names.push_back(name.c_str());
     }
 
     constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion13);
     const vk::InstanceCreateInfo instance_info({}, &app_info,
         static_cast<std::uint32_t>(instance_layers.size()), instance_layers.data(),
-        static_cast<std::uint32_t>(instance_extensions.size()), instance_extensions.data());
+        static_cast<std::uint32_t>(instance_extension_names.size()), instance_extension_names.data());
 
     try {
         instance_ = std::make_unique<vk::raii::Instance>(vk::raii::Context{}, instance_info);
@@ -56,6 +172,17 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         instance_.reset();
         return false;
     }
+
+    // 9. Record enabled names/IDs into the snapshot.
+    for (const auto& name : requested_names) {
+        builder.AddExtensionName(name);
+        if (name == "VK_EXT_debug_utils") {
+            builder.SetExtensionEnabled(InstanceExtension::DebugUtils);
+        }
+    }
+
+    // 10. Debug-utils global gate (set once, before any naming calls).
+    SetDebugUtilsEnabled(capabilities_.IsInstanceExtensionEnabled(InstanceExtension::DebugUtils));
 
     VkSurfaceKHR raw_surface = nullptr;
     if (!SDL_Vulkan_CreateSurface(window_, static_cast<VkInstance>(**instance_), nullptr, &raw_surface)) {

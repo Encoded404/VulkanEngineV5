@@ -13,13 +13,6 @@ import logiface;
 
 import vulkan_hpp;
 
-import Shaders.Engine.ExpandComp;
-import Shaders.Engine.DepthIndirVert;
-import Shaders.Engine.DepthPrepassFrag;
-import Shaders.Engine.HizGenComp;
-import Shaders.Engine.OcclusionCullComp;
-import Shaders.Engine.CollectCountCompactComp;
-import Shaders.Engine.CollectWriteComp;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 namespace VulkanEngine::SceneRenderer {
@@ -32,7 +25,10 @@ namespace VulkanEngine::SceneRenderer {
 
     } // anonymous namespace
 
-bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                          ShaderSystem::ShaderManager& shader_mgr,
+                                          ShaderSystem::PipelineFactory& pipeline_factory,
+                                          ShaderSystem::ShaderId shader_id) {
     LOGIFACE_LOG(debug, "Creating expand pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -46,18 +42,24 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBoo
     li.pPushConstantRanges = &pr;
     expand_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_pipeline_layout_, "expand-pipeline-layout");
-    const vk::raii::ShaderModule mod = Shaders::Engine::ExpandComp::CreateModule(dev);
-    const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
-    vk::ComputePipelineCreateInfo ci{};
-    ci.stage = ss;
-    ci.layout = *expand_pipeline_layout_;
-    expand_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_pipeline_, "expand-pipeline");
+
+    ShaderSystem::ComputePipelineDesc desc{};
+    desc.shader = shader_id;
+    desc.layout = *expand_pipeline_layout_;
+    auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+    if (result.has_value()) {
+        expand_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, expand_slot_.Get(), "expand-pipeline");
+    }
     LOGIFACE_LOG(debug, "Expand pipeline created");
     return true;
 }
 
 bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                         ShaderSystem::ShaderManager& shader_mgr,
+                                         ShaderSystem::PipelineFactory& pipeline_factory,
+                                         ShaderSystem::ShaderId vert_id,
+                                         ShaderSystem::ShaderId frag_id,
                                          const vk::PipelineRasterizationStateCreateInfo& rs) {
     LOGIFACE_LOG(debug, "Creating depth pipeline...");
     const auto& dev = be.GetDevice();
@@ -69,33 +71,35 @@ bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap&
     li.pSetLayouts = sl.data();
     depth_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *depth_pipeline_layout_, "depth-prepass-pipeline-layout");
-    const vk::raii::ShaderModule vm = Shaders::Engine::DepthIndirVert::CreateModule(dev);
-    const vk::raii::ShaderModule fm = Shaders::Engine::DepthPrepassFrag::CreateModule(dev);
-    std::array<vk::PipelineShaderStageCreateInfo, 2> ss{
-        vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vm, "main"},
-        vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fm, "main"}
-    };
-    constexpr vk::PipelineVertexInputStateCreateInfo vi({}, 0, nullptr, 0, nullptr);
-    constexpr vk::PipelineInputAssemblyStateCreateInfo ia({}, vk::PrimitiveTopology::eTriangleList);
-    constexpr vk::PipelineViewportStateCreateInfo vs({}, 1, nullptr, 1, nullptr);
-    constexpr vk::PipelineMultisampleStateCreateInfo ms({}, vk::SampleCountFlagBits::e1);
-    constexpr vk::PipelineDepthStencilStateCreateInfo ds({}, true, true, vk::CompareOp::eLess);
-    constexpr vk::PipelineColorBlendAttachmentState cb{};
-    const vk::PipelineColorBlendStateCreateInfo cbs({}, false, vk::LogicOp::eCopy, cb);
-    constexpr std::array<vk::DynamicState, 2> dyn{ vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-    const vk::PipelineDynamicStateCreateInfo dys({}, dyn);
-    vk::PipelineRenderingCreateInfo ri{};
-    ri.depthAttachmentFormat = be.GetDepthFormat();
-    vk::GraphicsPipelineCreateInfo pi({}, ss, &vi, &ia, nullptr, &vs, &rs, &ms, &ds, &cbs, &dys,
-                                       *depth_pipeline_layout_, nullptr, 0, {}, 0);
-    pi.setPNext(&ri);
-    depth_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, pi);
-    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *depth_pipeline_, "depth-prepass-pipeline");
+
+    ShaderSystem::GraphicsPipelineDesc desc{};
+    desc.vertex_shader = vert_id;
+    desc.fragment_shader = frag_id;
+    desc.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+    desc.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, vk::PrimitiveTopology::eTriangleList);
+    desc.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
+    desc.rasterization = rs;
+    desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, vk::SampleCountFlagBits::e1);
+    desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, true, true, vk::CompareOp::eLess);
+    // Depth-only pass: no color attachments, so the blend state must not declare any.
+    desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, 0, nullptr);
+    desc.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+    desc.layout = *depth_pipeline_layout_;
+    desc.depth_format = be.GetDepthFormat();
+
+    auto result = pipeline_factory.CreateGraphics(desc, shader_mgr);
+    if (result.has_value()) {
+        depth_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, depth_slot_.Get(), "depth-prepass-pipeline");
+    }
     LOGIFACE_LOG(debug, "Depth pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                       ShaderSystem::ShaderManager& shader_mgr,
+                                       ShaderSystem::PipelineFactory& pipeline_factory,
+                                       ShaderSystem::ShaderId shader_id) {
     LOGIFACE_LOG(debug, "Creating HIZ pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -129,18 +133,23 @@ bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& b
     li.pPushConstantRanges = &pr;
     hiz_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_pipeline_layout_, "hiz-gen-pipeline-layout");
-    const vk::raii::ShaderModule mod = Shaders::Engine::HizGenComp::CreateModule(dev);
-    const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
-    vk::ComputePipelineCreateInfo ci{};
-    ci.stage = ss;
-    ci.layout = *hiz_pipeline_layout_;
-    hiz_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_pipeline_, "hiz-gen-pipeline");
+
+    ShaderSystem::ComputePipelineDesc desc{};
+    desc.shader = shader_id;
+    desc.layout = *hiz_pipeline_layout_;
+    auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+    if (result.has_value()) {
+        hiz_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, hiz_slot_.Get(), "hiz-gen-pipeline");
+    }
     LOGIFACE_LOG(debug, "HiZ pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                              ShaderSystem::ShaderManager& shader_mgr,
+                                              ShaderSystem::PipelineFactory& pipeline_factory,
+                                              ShaderSystem::ShaderId shader_id) {
     LOGIFACE_LOG(debug, "Creating occlusion pipeline...");
     const auto& dev = be.GetDevice();
     vk::PushConstantRange pr{};
@@ -153,22 +162,27 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkan
     li.pPushConstantRanges = &pr;
     occlusion_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_pipeline_layout_, "occlusion-pipeline-layout");
-    const vk::raii::ShaderModule mod = Shaders::Engine::OcclusionCullComp::CreateModule(dev);
-    const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
-    vk::ComputePipelineCreateInfo ci{};
-    ci.stage = ss;
-    ci.layout = *occlusion_pipeline_layout_;
-    occlusion_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_pipeline_, "occlusion-pipeline");
+
+    ShaderSystem::ComputePipelineDesc desc{};
+    desc.shader = shader_id;
+    desc.layout = *occlusion_pipeline_layout_;
+    auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+    if (result.has_value()) {
+        occlusion_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, occlusion_slot_.Get(), "occlusion-pipeline");
+    }
     LOGIFACE_LOG(debug, "Occlusion pipeline created");
     return true;
 }
 
-bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& be) {
+bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                             ShaderSystem::ShaderManager& shader_mgr,
+                                             ShaderSystem::PipelineFactory& pipeline_factory,
+                                             ShaderSystem::ShaderId count_id,
+                                             ShaderSystem::ShaderId write_id) {
     LOGIFACE_LOG(debug, "Creating collect pipelines...");
     const auto& dev = be.GetDevice();
 
-    // collect_count and collect_compact share the same pipeline layout (set 6)
     {
         vk::PushConstantRange pr{};
         pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
@@ -181,17 +195,16 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
         collect_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_pipeline_layout_, "collect-count-pipeline-layout");
 
-        // Load collect_count_compact.comp (handles both pass 0 and pass 1)
-        const vk::raii::ShaderModule mod = Shaders::Engine::CollectCountCompactComp::CreateModule(dev);
-        const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
-        vk::ComputePipelineCreateInfo ci{};
-        ci.stage = ss;
-        ci.layout = *collect_pipeline_layout_;
-        collect_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_pipeline_, "collect-count-pipeline");
+        ShaderSystem::ComputePipelineDesc desc{};
+        desc.shader = count_id;
+        desc.layout = *collect_pipeline_layout_;
+        auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+        if (result.has_value()) {
+            collect_count_slot_.Swap(std::move(result.value()), 0);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, collect_count_slot_.Get(), "collect-count-pipeline");
+        }
     }
 
-    // collect_write pipeline (set 7)
     {
         vk::PushConstantRange pr{};
         pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
@@ -204,13 +217,14 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
         collect_write_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_pipeline_layout_, "collect-write-pipeline-layout");
 
-        const vk::raii::ShaderModule mod = Shaders::Engine::CollectWriteComp::CreateModule(dev);
-        const vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, *mod, "main");
-        vk::ComputePipelineCreateInfo ci{};
-        ci.stage = ss;
-        ci.layout = *collect_write_pipeline_layout_;
-        collect_write_pipeline_ = std::make_unique<vk::raii::Pipeline>(dev, nullptr, ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_pipeline_, "collect-write-pipeline");
+        ShaderSystem::ComputePipelineDesc desc{};
+        desc.shader = write_id;
+        desc.layout = *collect_write_pipeline_layout_;
+        auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+        if (result.has_value()) {
+            collect_write_slot_.Swap(std::move(result.value()), 0);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, collect_write_slot_.Get(), "collect-write-pipeline");
+        }
     }
 
     LOGIFACE_LOG(debug, "Collect pipelines created");

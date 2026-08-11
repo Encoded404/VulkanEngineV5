@@ -18,6 +18,7 @@ enum class PresentMode : std::uint8_t {
 enum class BootstrapStatus : std::uint8_t {
     Ok,
     NotInitialized,
+    RequirementsUnmet,
     InstanceCreationFailed,
     DeviceSelectionFailed,
     DeviceCreationFailed,
@@ -25,6 +26,11 @@ enum class BootstrapStatus : std::uint8_t {
     SwapchainOutOfDate,
     DeviceLost,
     FatalError
+};
+
+struct ExtensionRequest {
+    std::string name;
+    bool required = false;   // missing ⇒ startup failure; else warn + skip
 };
 
 struct VulkanBootstrapConfig {
@@ -36,6 +42,9 @@ struct VulkanBootstrapConfig {
     std::uint32_t preferred_swapchain_image_count = 3;
     PresentMode present_mode = PresentMode::Mailbox;
     SDL_Window* native_window_handle = nullptr;
+    std::vector<ExtensionRequest> instance_extensions;   // additive, validated
+    std::vector<ExtensionRequest> device_extensions;     // additive, validated
+    std::vector<std::string> force_disabled_extensions;  // test degradation paths
 };
 
 struct VulkanBootstrapState {
@@ -47,6 +56,7 @@ struct VulkanBootstrapState {
     std::uint32_t swapchain_width = 0;
     std::uint32_t swapchain_height = 0;
     BootstrapStatus status = BootstrapStatus::NotInitialized;
+    std::string error_message;
 };
 
 } // namespace VulkanBackend::Vulkan

@@ -9,6 +9,8 @@ import vulkan_hpp;
 import VulkanEngine.TechniqueManager.BaseTechnique;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
 
 export namespace VulkanEngine::TechniqueManager {
 
@@ -52,15 +54,17 @@ public:
 
     // Compile the default mesh pipeline with the given SPIR-V and engine layouts
     void CompileDefaultMesh(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
-                            std::span<const std::uint32_t> vert_spv,
-                            std::span<const std::uint32_t> frag_spv,
+                            ShaderSystem::ShaderManager& shader_mgr,
+                            ShaderSystem::PipelineFactory& pipeline_factory,
+                            ShaderSystem::ShaderId vert_id,
+                            ShaderSystem::ShaderId frag_id,
                             const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                             vk::DescriptorSetLayout bindless_layout,
                             vk::DescriptorSetLayout submesh_vertex_layout,
                             vk::DescriptorSetLayout raw_vertex_layout,
                             vk::DescriptorSetLayout indirection_layout,
                             vk::DescriptorSetLayout scene_uniform_layout = nullptr) {
-        Compile(bootstrap, vert_spv, frag_spv, config,
+        Compile(bootstrap, shader_mgr, pipeline_factory, vert_id, frag_id, config,
                 bindless_layout, submesh_vertex_layout, raw_vertex_layout, indirection_layout,
                 scene_uniform_layout);
     }

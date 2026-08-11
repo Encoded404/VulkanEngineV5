@@ -28,20 +28,29 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
     snapshot_ = VulkanBootstrapState{};
 
     if (!backend_->CreateInstance(config_)) {
-        snapshot_.status = BootstrapStatus::InstanceCreationFailed;
+        snapshot_.status = backend_->HasUnmetRequirements()
+            ? BootstrapStatus::RequirementsUnmet
+            : BootstrapStatus::InstanceCreationFailed;
+        snapshot_.error_message = backend_->GetErrorMessage();
         backend_->Shutdown();
         return false;
     }
     snapshot_.instance_ready = true;
 
     if (!backend_->SelectPhysicalDevice()) {
-        snapshot_.status = BootstrapStatus::DeviceSelectionFailed;
+        snapshot_.status = backend_->HasUnmetRequirements()
+            ? BootstrapStatus::RequirementsUnmet
+            : BootstrapStatus::DeviceSelectionFailed;
+        snapshot_.error_message = backend_->GetErrorMessage();
         backend_->Shutdown();
         return false;
     }
 
     if (!backend_->CreateLogicalDevice(config_.frames_in_flight)) {
-        snapshot_.status = BootstrapStatus::DeviceCreationFailed;
+        snapshot_.status = backend_->HasUnmetRequirements()
+            ? BootstrapStatus::RequirementsUnmet
+            : BootstrapStatus::DeviceCreationFailed;
+        snapshot_.error_message = backend_->GetErrorMessage();
         backend_->Shutdown();
         return false;
     }

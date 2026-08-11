@@ -24,19 +24,23 @@ namespace {
 
     constexpr uint32_t kTechniqueBits  = 12;
     constexpr uint32_t kTechniqueMask  = (1u << kTechniqueBits) - 1;
+
+    template<typename Handle>
+    std::uint64_t HandleToU64(Handle h) {
+        return reinterpret_cast<std::uint64_t>(static_cast<typename Handle::CType>(h));
+    }
 }
 
 namespace VulkanEngine::TechniqueManager {
 
 void BaseTechnique::Shutdown() {
-    custom_descriptor_sets_.clear();   // must clear before pool destructs
+    custom_descriptor_sets_.clear();
     custom_descriptor_set_handles_.clear();
     descriptor_pool_ = nullptr;
     custom_set_layouts_.clear();
     block_arrays_.clear();
     shared_buffers_.clear();
     shared_cpu_data_.clear();
-    pipeline_ = nullptr;
     pipeline_layout_ = nullptr;
     bindings_.clear();
 }
@@ -90,15 +94,19 @@ std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() con
 }
 
 void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
-                            std::span<const std::uint32_t> vert_spv,
-                            std::span<const std::uint32_t> frag_spv,
+                            ShaderSystem::ShaderManager& shader_mgr,
+                            ShaderSystem::PipelineFactory& pipeline_factory,
+                            ShaderSystem::ShaderId vert_id,
+                            ShaderSystem::ShaderId frag_id,
                             const VulkanEngine::StandardMeshPipeline::PipelineConfig& config,
                             vk::DescriptorSetLayout bindless_layout,
                             vk::DescriptorSetLayout submesh_vertex_layout,
                             vk::DescriptorSetLayout raw_vertex_layout,
                             vk::DescriptorSetLayout indirection_layout,
-                            vk::DescriptorSetLayout scene_uniform_layout) {
+                             vk::DescriptorSetLayout scene_uniform_layout) {
     const auto& device = bootstrap.GetBackend().GetDevice();
+    LOGIFACE_LOG(debug, std::format("BaseTechnique: compiling technique (vert={}, frag={})",
+                                    vert_id, frag_id));
 
     // ── 1. Build descriptor set layout array ──
     // Engine sets 0-4 are always at layout slots 0-4
@@ -162,49 +170,41 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_layout_ = vk::raii::PipelineLayout(device, layout_info);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_layout_, "base-technique-layout");
 
-    // ── 5. Create pipeline directly (reusing GraphicsPipeline's pipeline creation pattern) ──
+    // ── 5. Create pipeline via PipelineFactory ──
     {
-        const vk::ShaderModuleCreateInfo vert_info({}, vert_spv.size() * sizeof(std::uint32_t), vert_spv.data());
-        const vk::raii::ShaderModule vert_module(device, vert_info);
+        const vk::Format surface_format = bootstrap.GetBackend().GetSurfaceFormat().format;
+        const vk::Format depth_format = bootstrap.GetBackend().GetDepthFormat();
 
-        const vk::ShaderModuleCreateInfo frag_info({}, frag_spv.size() * sizeof(std::uint32_t), frag_spv.data());
-        const vk::raii::ShaderModule frag_module(device, frag_info);
-
-        std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
-            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, *vert_module, "main"),
-            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, *frag_module, "main")
-        };
-
-        // Use SSBO pulling (no vertex bindings)
-        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input({}, 0, nullptr, 0, nullptr);
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, config.primitive_topology);
-        constexpr vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
-        const vk::PipelineRasterizationStateCreateInfo rasterization({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
-        const vk::PipelineMultisampleStateCreateInfo multisample({}, config.sample_count);
-        const vk::PipelineDepthStencilStateCreateInfo depth_stencil({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
-
+        ShaderSystem::GraphicsPipelineDesc desc{};
+        desc.vertex_shader = vert_id;
+        desc.fragment_shader = frag_id;
+        desc.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+        desc.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, config.primitive_topology);
+        desc.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
+        desc.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
+        desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
+        desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
         const vk::PipelineColorBlendAttachmentState color_blend_attachment(
             config.blend_enable,
             config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
             config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-        const vk::PipelineColorBlendStateCreateInfo color_blend({}, false, vk::LogicOp::eCopy, color_blend_attachment);
+        desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, color_blend_attachment);
+        desc.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        desc.layout = *pipeline_layout_;
+        desc.color_formats = { surface_format };
+        desc.depth_format = depth_format;
 
-        std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-        const vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
-
-        const vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
-        vk::PipelineRenderingCreateInfo rendering_info{};
-        rendering_info.colorAttachmentCount = 1;
-        rendering_info.pColorAttachmentFormats = &format;
-        rendering_info.depthAttachmentFormat = bootstrap.GetBackend().GetDepthFormat();
-        rendering_info.stencilAttachmentFormat = vk::Format::eUndefined;
-
-        vk::GraphicsPipelineCreateInfo pipeline_info({}, stages, &vertex_input, &input_assembly, nullptr, &viewport_state, &rasterization, &multisample, &depth_stencil, &color_blend, &dynamic_state, *pipeline_layout_, nullptr, 0, {}, 0);
-        pipeline_info.setPNext(&rendering_info);
-
-        pipeline_ = vk::raii::Pipeline(device, nullptr, pipeline_info);
-        VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_, "technique-pipeline");
+        auto result = pipeline_factory.CreateGraphics(desc, shader_mgr);
+        if (!result.has_value()) {
+            LOGIFACE_LOG(error, "BaseTechnique: pipeline creation failed");
+        } else {
+            pipeline_slot_.Swap(std::move(result.value()), 0);
+            VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_slot_.Get(), vk::ObjectType::ePipeline, "technique-pipeline");
+            LOGIFACE_LOG(debug, std::format("BaseTechnique: pipeline ready: 0x{:x} (layout 0x{:x})",
+                                            HandleToU64(pipeline_slot_.Get()),
+                                            HandleToU64(*pipeline_layout_)));
+        }
     }
 
     // ── 6. Create BlockArrays for PerMaterial bindings ──

@@ -26,7 +26,10 @@ SceneRenderer::~SceneRenderer() {
 
 bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 VulkanEngine::GpuResources::DeviceBufferHeap& vh,
-                                std::uint32_t tic) {
+                                std::uint32_t tic,
+                                ShaderSystem::ShaderManager& shader_mgr,
+                                ShaderSystem::PipelineFactory& pipeline_factory,
+                                const EngineShaderIds& shader_ids) {
     backend_ = &be;
     const auto& dev = be.GetDevice();
     const std::uint32_t idxc = std::max(tic, 1u);
@@ -326,7 +329,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     }
 
     // Create all compute/graphics pipelines
-    if (!CreateExpandPipeline(be)) return false;
+    if (!CreateExpandPipeline(be, shader_mgr, pipeline_factory, shader_ids.expand_comp)) return false;
 
     {
         vk::PipelineRasterizationStateCreateInfo rs{};
@@ -334,12 +337,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         rs.cullMode = vk::CullModeFlagBits::eFront;
         rs.frontFace = vk::FrontFace::eClockwise;
         rs.lineWidth = 1.0f;
-        if (!CreateDepthPipeline(be, rs)) return false;
+        if (!CreateDepthPipeline(be, shader_mgr, pipeline_factory, shader_ids.depth_indir_vert, shader_ids.depth_prepass_frag, rs)) return false;
     }
 
-    if (!CreateHiZPipeline(be)) return false;
-    if (!CreateOcclusionPipeline(be)) return false;
-    if (!CreateCollectPipelines(be)) return false;
+    if (!CreateHiZPipeline(be, shader_mgr, pipeline_factory, shader_ids.hiz_gen_comp)) return false;
+    if (!CreateOcclusionPipeline(be, shader_mgr, pipeline_factory, shader_ids.occlusion_cull_comp)) return false;
+    if (!CreateCollectPipelines(be, shader_mgr, pipeline_factory, shader_ids.collect_count_compact_comp, shader_ids.collect_write_comp)) return false;
 
     // Per-frame ring resources
     {

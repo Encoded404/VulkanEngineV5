@@ -22,21 +22,38 @@ namespace {
 class DefaultVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
     [[nodiscard]] bool CreateInstance(const VulkanBootstrapConfig& config) override {
+        config_ = config;
         instance_ = std::make_unique<VulkanInstance>();
-        return instance_->Initialize(config);
+        if (!instance_->Initialize(config)) {
+            error_message_ = instance_->GetCapabilities().GetErrorMessage();
+            requirements_unmet_ = instance_->GetCapabilities().HasUnmetRequirements();
+            return false;
+        }
+        return true;
     }
 
     [[nodiscard]] bool SelectPhysicalDevice() override {
         if (!instance_) return false; // Ensure instance is initialized
         device_ = std::make_unique<VulkanDevice>();
-        // Phase 1: Select the physical device.
-        return device_->SelectPhysicalDevice(*instance_);
+        // Phase 1: Select the physical device (hard-floor check + one-time capability query).
+        if (!device_->SelectPhysicalDevice(*instance_)) {
+            error_message_ = device_->GetCapabilities().GetErrorMessage();
+            requirements_unmet_ = device_->GetCapabilities().HasUnmetRequirements();
+            return false;
+        }
+        return true;
     }
 
     [[nodiscard]] bool CreateLogicalDevice(std::uint32_t frames_in_flight) override {
         if (!device_ || !instance_) return false; // Ensure device and instance are initialized
         // Phase 2: Create the logical device and all associated resources using the correct frame count.
-        return device_->CreateLogicalDeviceAndResources(frames_in_flight);
+        if (!device_->CreateLogicalDeviceAndResources(frames_in_flight, config_)) {
+            error_message_ = device_->GetCapabilities().GetErrorMessage();
+            requirements_unmet_ = device_->GetCapabilities().HasUnmetRequirements();
+            return false;
+        }
+        LOGIFACE_LOG(info, device_->GetCapabilities().Summarize(instance_->GetCapabilities()));
+        return true;
     }
 
     [[nodiscard]] bool CreateSwapchain(const std::uint32_t preferred_image_count, const PresentMode present_mode, std::uint32_t& out_image_count) override {
@@ -74,6 +91,10 @@ public:
     [[nodiscard]] const vk::raii::Queue& GetGraphicsQueue() const override { return device_->GetGraphicsQueue(); }
     [[nodiscard]] std::uint32_t GetGraphicsQueueFamily() const override { return device_->GetGraphicsQueueFamily(); }
     [[nodiscard]] const vk::raii::CommandPool& GetCommandPool() const override { return device_->GetCommandPool(); }
+
+    [[nodiscard]] const VulkanCapabilities& GetCapabilities() const override { return device_->GetCapabilities(); }
+    [[nodiscard]] const std::string& GetErrorMessage() const override { return error_message_; }
+    [[nodiscard]] bool HasUnmetRequirements() const override { return requirements_unmet_; }
 
     [[nodiscard]] const vk::raii::Fence& GetInFlightFence(std::uint32_t frame_idx) const override { return device_->GetInFlightFence(frame_idx); }
     [[nodiscard]] const vk::raii::Semaphore& GetImageAvailableSemaphore(std::uint32_t frame_idx) const override { return device_->GetImageAvailableSemaphore(frame_idx); }
@@ -224,6 +245,9 @@ private:
     std::unique_ptr<VulkanSwapchain> swapchain_{};
     std::vector<std::unique_ptr<vk::raii::Semaphore>> render_finished_semaphores_{};
     std::uint32_t current_image_index_ = 0;
+    VulkanBootstrapConfig config_{};
+    std::string error_message_{};
+    bool requirements_unmet_ = false;
 };
 
 }  // namespace

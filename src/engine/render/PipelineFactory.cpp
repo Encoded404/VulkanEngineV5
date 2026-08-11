@@ -399,7 +399,7 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
             [this](auto& map, std::uint64_t key, ShaderId shader_id, std::uint64_t shader_version,
                    auto&& create) -> std::pair<std::shared_ptr<vk::raii::Pipeline>, bool> {
             {
-                std::shared_lock lock(shared_->mutex);
+                const std::shared_lock lock(shared_->mutex);
                 const auto it = map.find(key);
                 if (it != map.end()) {
                     return {it->second.pipeline, false};
@@ -409,7 +409,7 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
             bool created = false;
             std::shared_ptr<vk::raii::Pipeline> winner;
             {
-                std::unique_lock lock(shared_->mutex);
+                const std::unique_lock lock(shared_->mutex);
                 const auto [it, inserted] =
                     map.try_emplace(key, SharedLibraries::LibraryEntry{shader_id, shader_version, lib});
                 winner = it->second.pipeline;
@@ -576,7 +576,7 @@ void PipelineFactory::InvalidateShader(ShaderId id) {
     // Only drop the shared-cache reference. Linked pipelines keep their
     // libraries alive through the PipelineProduct shared_ptr, so fast-linked
     // pipelines stay valid; the next creation compiles fresh libraries.
-    std::unique_lock lock(shared_->mutex);
+    const std::unique_lock lock(shared_->mutex);
     const auto matches_shader = [id](const auto& entry) { return entry.second.shader_id == id; };
     std::erase_if(shared_->pre_raster, matches_shader);
     std::erase_if(shared_->fragment_shader, matches_shader);

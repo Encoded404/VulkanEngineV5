@@ -11,8 +11,10 @@ enum class ResourceKind : std::uint8_t {
 };
 
 struct ResourceHandle {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t generation = 0;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsValid() const noexcept {
         return index != std::numeric_limits<std::uint32_t>::max();
@@ -22,8 +24,10 @@ struct ResourceHandle {
 };
 
 struct PassHandle {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t generation = 0;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsValid() const noexcept {
         return index != std::numeric_limits<std::uint32_t>::max();
@@ -244,6 +248,7 @@ struct ResourceLifetime {
 // ── Compiled render graph (execution plan) ──
 
 struct CompiledRenderGraph {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     bool success = false;
     std::vector<CompileDiagnostic> diagnostics{};
     std::vector<CompiledPass> passes{};
@@ -253,6 +258,7 @@ struct CompiledRenderGraph {
     mutable std::vector<bool> has_initial_state{};
     std::vector<vk::Image> resource_images{};
     std::vector<vk::Format> resource_formats{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     void SetImportedResourceState(std::uint32_t resource_index, ResourceState state) const {
         if (resource_index < initial_states.size()) {

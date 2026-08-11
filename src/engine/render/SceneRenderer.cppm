@@ -25,6 +25,7 @@ import VulkanEngine.ShaderRegistration;
 
 export namespace VulkanEngine::SceneRenderer {
 
+// NOLINTBEGIN(modernize-avoid-c-arrays)
 // ── Scene uniform data (replaces push-constant lighting) ──
 struct alignas(16) Light {
     float position[4];
@@ -39,6 +40,7 @@ struct alignas(16) SceneHeader {
     float sun_color[4];
     std::uint32_t light_count = 0;
 };
+// NOLINTEND(modernize-avoid-c-arrays)
 
 constexpr std::uint32_t LIGHTS_PER_BLOCK = 256;
 constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;

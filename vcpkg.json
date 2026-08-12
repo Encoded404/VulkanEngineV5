@@ -10,6 +10,10 @@
         },
         "vulkan-headers",
         {
+            "name": "vulkan-loader",
+            "features": [ "wayland", "xcb", "xlib" ]
+        },
+        {
             "name": "ktx",
             "features": [ "vulkan" ]
         },

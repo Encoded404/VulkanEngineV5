@@ -25,6 +25,7 @@
           "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         },
         "USE_LIBCPP": "ON",
+        "CLANG_TIDY_ENABLED": "OFF",
         "VCPKG_TARGET_TRIPLET": "x64-linux-libcxx",
         "CMAKE_CXX_COMPILER_LAUNCHER": ""
       },

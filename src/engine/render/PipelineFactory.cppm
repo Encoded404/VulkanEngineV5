@@ -87,10 +87,15 @@ public:
                         std::function<std::optional<PipelineProduct>(ShaderManager&)> rebuild_fn,
                         std::uint32_t frame_index);
 
+    bool PollAndRebuild(ShaderManager& shaders, ShaderId vert_id, ShaderId frag_id,
+                        std::function<std::optional<PipelineProduct>(ShaderManager&)> rebuild_fn,
+                        std::uint32_t frame_index);
+
 private:
     PipelineProduct current_;
     std::array<std::vector<PipelineProduct>, kMaxFramesInFlight> retiring_;
-    std::uint64_t last_shader_version_{0};
+    std::uint64_t last_vert_version_{0};
+    std::uint64_t last_frag_version_{0};
 };
 
 class PipelineFactory {

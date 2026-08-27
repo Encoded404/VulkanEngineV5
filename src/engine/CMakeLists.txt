@@ -24,12 +24,26 @@ set(FASTGLTF_USE_STD_MODULE ON CACHE BOOL "")
 add_subdirectory(${_patched_fastgltf_dir} ${CMAKE_CURRENT_BINARY_DIR}/fastgltf)
 find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(efsw CONFIG REQUIRED)
 
 option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation" ON)
 if(VKENGINE_HOT_RELOAD)
     find_package(slang CONFIG REQUIRED)
     target_link_libraries(${ENGINE_TARGET} PRIVATE slang::slang)
     target_compile_definitions(${ENGINE_TARGET} PRIVATE VKENGINE_HOT_RELOAD=1)
+endif()
+
+# ── PhysicalCamera (webcam) support ─────────────────────────────────────
+# Compile-time switch: when OFF, no camera code is built, no SDL camera
+# symbols are referenced and the API is absent (all uses are macro-guarded).
+option(VKENGINE_PHYSICAL_CAMERA "Enable PhysicalCamera (webcam) support" ON)
+if(VKENGINE_PHYSICAL_CAMERA)
+    find_package(SDL3 CONFIG REQUIRED)
+    target_link_libraries(${ENGINE_TARGET} PRIVATE SDL3::SDL3)
+    target_compile_definitions(${ENGINE_TARGET} PUBLIC VKENGINE_PHYSICAL_CAMERA=1)
+    target_sources(${ENGINE_TARGET} PRIVATE
+        physical_camera/PhysicalCameraSystem.cpp
+    )
 endif()
 
 target_link_libraries(${ENGINE_TARGET} PRIVATE
@@ -39,6 +53,7 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     fastgltf::module
     tinyobjloader::tinyobjloader
     imgui::imgui
+    efsw::efsw
 )
 
 target_include_directories(${ENGINE_TARGET} PUBLIC ${Stb_INCLUDE_DIR})
@@ -128,6 +143,24 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHe
 include(SlangSpirVCompiler)
 set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine")
 set(_shader_opt_level "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
+set(_engine_shaders
+    ExpandComp              expand.slang              compute  main
+    OcclusionCullComp       occlusion_cull.slang       compute  main
+    HizGenComp              hiz_gen.slang              compute  main
+    CollectCountCompactComp collect_count_compact.slang compute  main
+    CollectWriteComp        collect_write.slang        compute  main
+    MainIndirVert           main_indir.slang           vertex   main
+    DepthIndirVert          depth_indir.slang          vertex   main
+    StandardMeshFrag        standard_mesh.slang        fragment main
+    DepthPrepassFrag        depth_prepass.slang        fragment main
+    UnlitFrag               unlit.slang                fragment main
+)
+if(VKENGINE_PHYSICAL_CAMERA)
+    list(APPEND _engine_shaders
+        PhysicalCameraCompositeVert camera_composite_vert.slang vertex   main
+        PhysicalCameraCompositeFrag camera_composite.slang       fragment main
+    )
+endif()
 add_slang_shaders(
     TARGET      ${ENGINE_TARGET}_shaders
     OUTPUT_DIR  ${_shader_gen_dir}
@@ -136,15 +169,7 @@ add_slang_shaders(
     COMPILER    slang-spirv-compiler
     OPT_LEVEL   ${_shader_opt_level}
     SHADERS
-        ExpandComp              expand.slang              compute  main
-        OcclusionCullComp       occlusion_cull.slang       compute  main
-        HizGenComp              hiz_gen.slang              compute  main
-        CollectCountCompactComp collect_count_compact.slang compute  main
-        CollectWriteComp        collect_write.slang        compute  main
-        MainIndirVert           main_indir.slang           vertex   main
-        DepthIndirVert          depth_indir.slang          vertex   main
-        StandardMeshFrag        standard_mesh.slang        fragment main
-        DepthPrepassFrag        depth_prepass.slang        fragment main
+        ${_engine_shaders}
 )
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
 
@@ -203,6 +228,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/techniques/TechniqueManager.cppm
             render/techniques/BaseTechnique.cppm
             render/techniques/DefaultMeshTechnique.cppm
+            render/techniques/UnlitTextureTechnique.cppm
             render/techniques/TechniqueId.cppm
             render/materials/MaterialManager.cppm
             render/materials/MaterialId.cppm
@@ -227,6 +253,15 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/passes/DepthPrePass.cppm
             render/passes/MainPass.cppm
     )
+    if(VKENGINE_PHYSICAL_CAMERA)
+        target_sources(${ENGINE_TARGET} PUBLIC
+            FILE_SET CXX_MODULES
+            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+            FILES
+                physical_camera/PhysicalCameraTypes.cppm
+                physical_camera/PhysicalCameraSystem.cppm
+        )
+    endif()
     if(_gen_shader_mods)
         target_sources(${ENGINE_TARGET} PUBLIC
             FILE_SET CXX_MODULES

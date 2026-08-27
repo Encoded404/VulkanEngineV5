@@ -126,6 +126,11 @@ const VulkanEngine::ResourceId* BindlessManager::GetTextureId(std::uint32_t slot
     return nullptr;
 }
 
+const VulkanEngine::GpuResources::GpuTexture* BindlessManager::GetTexture(std::uint32_t slot) const {
+    if (slot < textures_.size()) return &textures_[slot];
+    return nullptr;
+}
+
 void BindlessManager::UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {
     if (!backend_ || *descriptor_set_ == nullptr) return;
 

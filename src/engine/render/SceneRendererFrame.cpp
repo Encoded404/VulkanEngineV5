@@ -28,7 +28,8 @@ namespace VulkanEngine::SceneRenderer {
     namespace {
         struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
         struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
-        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; };
+        // projInfo = (|proj[0][0]|, |proj[1][1]|, proj[2][2], 1 if perspective else 0)
+        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; glm::vec4 projInfo; };
         struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
         static constexpr std::uint32_t HIZ_BATCH = 2;
@@ -61,10 +62,20 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                                     VulkanEngine::ComponentRegistry& /*reg*/,
                                     const glm::mat4& vm, const glm::mat4& pm,
                                     std::uint32_t, std::uint32_t, std::uint32_t fi) {
+    PollShaders(fi);
     view_proj_ = pm * vm;
     const std::uint32_t f = fi % FRAMES_IN_FLIGHT;
     auto& fr = frames_[f];
     const auto& dev = backend_->GetDevice();
+
+    // Projection coefficients for the occlusion culler. The x/y scales are the NDC
+    // units per world unit (focal length for perspective, 1/half-extent for ortho),
+    // z is the clip-space z scale, and the flag distinguishes the two: a perspective
+    // projection derives w from view z (pm[3][2] = -1), an ortho projection keeps
+    // w == 1 (pm[3][2] = 0).
+    fr.proj_info = glm::vec4(
+        std::abs(pm[0][0]), std::abs(pm[1][1]), pm[2][2],
+        (pm[3][2] != 0.0f) ? 1.0f : 0.0f);
 
     const std::uint32_t total = current_entity_count_;
     if (total == 0) {
@@ -294,8 +305,15 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
         LOGIFACE_LOG(trace, std::format("RenderMain: drawIndirect technique={} offset={}", t, draw_cmd_offset));
-        cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
-                          draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
+        //cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
+        //                  draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
+        // TEST: direct draw for the unlit technique only
+        if (t == 1) {
+            cmd.draw(6, 1, 14388, 0);          // vertexCount=6, instanceCount=1, firstVertex=14388
+        } else {
+            cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
+                             draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
+        }
     }
 }
 
@@ -378,7 +396,7 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
                              0, ds, {});
     const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
     const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
-    OccPC pc{ current_entity_count_, 1, hiz_w, hiz_h };
+    OccPC pc{ current_entity_count_, 1, hiz_w, hiz_h, fr.proj_info };
     cmd.pushConstants(*occlusion_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccPC), &pc);
     cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);

@@ -32,9 +32,11 @@ uint32_t MeshRegistry::Register(const GpuResources::MeshData& data) {
     }
 
     auto& info = entries_[id];
-    info.cpu_data = data;
+    auto normalized = data;
+    VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
     info.submesh_count = static_cast<std::uint32_t>(
-        data.sub_meshes.empty() ? 1 : data.sub_meshes.size());
+        normalized.sub_meshes.empty() ? 1 : normalized.sub_meshes.size());
+    info.cpu_data = std::move(normalized);
 
     return id;
 }

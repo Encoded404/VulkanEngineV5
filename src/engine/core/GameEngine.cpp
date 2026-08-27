@@ -31,6 +31,17 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
         return false;
     }
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (ctx_.physical_camera) {
+        physical_camera_sdl_token_ = ctx.platform->GetBackend().GetSdlEventProcessors().Register(
+            [this](void* sdl_event) {
+                if (ctx_.physical_camera) {
+                    ctx_.physical_camera->ProcessSdlEvent(sdl_event);
+                }
+            });
+    }
+#endif
+
     initialized_ = true;
     return true;
 }
@@ -86,6 +97,20 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
             ctx_.scene_renderer->GetSceneUniformLayout());
         auto tech_id = ctx_.technique_mgr->Register(std::move(mesh_tech));
         main_technique_id_ = tech_id.value;
+    }
+    {
+        // Unlit technique: same engine sets + PerMaterial layout as the main
+        // technique, but paired with the unlit fragment shader (no lighting).
+        auto unlit_tech = std::make_unique<TechniqueManager::UnlitTextureTechnique>();
+        unlit_tech->CompileUnlit(
+            *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
+            vert_id, ctx_.shader_ids.unlit_frag, config_.pipeline_config,
+            *ctx_.bindless_mgr->GetLayout(),
+            *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+            *ctx_.scene_renderer->GetRawVertexLayout(),
+            *ctx_.scene_renderer->GetIndirectionLayout(),
+            ctx_.scene_renderer->GetSceneUniformLayout());
+        ctx_.technique_mgr->Register(std::move(unlit_tech));
     }
 
     ctx_.material_mgr.Initialize(&ctx_.staging_mgr);
@@ -160,17 +185,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     // ── Flush pipeline cache (warm data persists across runs) ──
     ctx_.shader_manager->FlushCache();
 
-    // ── Start shader file watching ──
+    // ── Start shader file watching (watches all registered slang directories) ──
     ctx_.shader_watcher = std::make_unique<ShaderSystem::ShaderWatcher>(*ctx_.shader_manager);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.expand_comp);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.occlusion_cull_comp);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.hiz_gen_comp);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.collect_count_compact_comp);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.collect_write_comp);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.main_indir_vert);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.depth_indir_vert);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.standard_mesh_frag);
-    ctx_.shader_watcher->Watch(ctx_.shader_ids.depth_prepass_frag);
     ctx_.shader_watcher->Start();
 
     return true;
@@ -318,6 +334,17 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     // Flush dirty material data to GPU before rendering
     ctx_.material_mgr.FlushDirtyMaterials();
 
+    // Rebuild technique pipelines whose shaders changed (hot reload)
+    const auto frame_index = ctx.bootstrap->GetSnapshot().frame_index;
+    ctx_.technique_mgr->PollShaders(*ctx_.shader_manager, *ctx_.pipeline_factory,
+                                    frame_index);
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (ctx_.physical_camera) {
+        ctx_.physical_camera->PollShaders(frame_index);
+    }
+#endif
+
     ctx_.renderer->RenderFrame(*ctx.bootstrap,
                                ctx_.component_registry,
                                *camera_,
@@ -325,7 +352,11 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
                                *ctx_.bindless_mgr,
                                *ctx_.scene_renderer,
                                ctx_.imgui_system.get(),
-                               ctx.frame.image_index);
+                               ctx.frame.image_index
+#ifdef VKENGINE_PHYSICAL_CAMERA
+                               , ctx_.physical_camera.get()
+#endif
+                               );
 }
 
 void GameEngine::Shutdown() {
@@ -336,6 +367,9 @@ void GameEngine::Shutdown() {
     }
 
     imgui_event_token_ = {};
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    physical_camera_sdl_token_ = {};
+#endif
 
     if (scene_valid_) {
         scene_valid_ = false;

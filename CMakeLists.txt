@@ -199,11 +199,11 @@ endif()
 # that name. The module-mode find_package(Vulkan) below is kept for the
 # headers and the Vulkan::HppModule C++ module target; it skips creating
 # Vulkan::Vulkan because the target already exists.
-find_package(VulkanLoader CONFIG REQUIRED)
-add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
-set_property(TARGET Vulkan::Vulkan PROPERTY
-	INTERFACE_LINK_LIBRARIES Vulkan::Loader
-)
+find_package(Vulkan REQUIRED)
+# add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
+#set_property(TARGET Vulkan::Vulkan PROPERTY
+#	INTERFACE_LINK_LIBRARIES Vulkan::Loader
+#)
 
 find_package( Vulkan 1.3.0 QUIET )
 

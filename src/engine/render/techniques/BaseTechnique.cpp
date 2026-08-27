@@ -18,6 +18,8 @@ import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.ShaderManager;
 
 namespace {
     VulkanEngine::TechniqueManager::TechniqueId s_next_technique_id{0};
@@ -172,30 +174,31 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     // ── 5. Create pipeline via PipelineFactory ──
     {
-        const vk::Format surface_format = bootstrap.GetBackend().GetSurfaceFormat().format;
-        const vk::Format depth_format = bootstrap.GetBackend().GetDepthFormat();
+        vert_id_ = vert_id;
+        frag_id_ = frag_id;
 
-        ShaderSystem::GraphicsPipelineDesc desc{};
-        desc.vertex_shader = vert_id;
-        desc.fragment_shader = frag_id;
-        desc.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
-        desc.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, config.primitive_topology);
-        desc.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
-        desc.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
-        desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
-        desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
-        const vk::PipelineColorBlendAttachmentState color_blend_attachment(
+        color_blend_attachment_ = vk::PipelineColorBlendAttachmentState(
             config.blend_enable,
             config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
             config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-        desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, color_blend_attachment);
-        desc.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        desc.layout = *pipeline_layout_;
-        desc.color_formats = { surface_format };
-        desc.depth_format = depth_format;
 
-        auto result = pipeline_factory.CreateGraphics(desc, shader_mgr);
+        pipeline_desc_.vertex_shader = vert_id;
+        pipeline_desc_.fragment_shader = frag_id;
+        pipeline_desc_.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+        pipeline_desc_.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, config.primitive_topology);
+        pipeline_desc_.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
+        pipeline_desc_.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
+        pipeline_desc_.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
+        pipeline_desc_.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
+        pipeline_desc_.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, color_blend_attachment_);
+        pipeline_desc_.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        pipeline_desc_.layout = *pipeline_layout_;
+        pipeline_desc_.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };
+        pipeline_desc_.depth_format = bootstrap.GetBackend().GetDepthFormat();
+        compiled_ = true;
+
+        auto result = pipeline_factory.CreateGraphics(pipeline_desc_, shader_mgr);
         if (!result.has_value()) {
             LOGIFACE_LOG(error, "BaseTechnique: pipeline creation failed");
         } else {
@@ -319,6 +322,21 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             custom_descriptor_sets_.push_back(std::move(ds));
         }
     }
+}
+
+void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,
+                                   ShaderSystem::PipelineFactory& factory,
+                                   std::uint32_t frame_index) {
+    pipeline_slot_.RetireFrame(frame_index);
+    if (!compiled_) return;
+    pipeline_slot_.PollAndRebuild(shaders, vert_id_, frag_id_,
+        [this, &factory](ShaderSystem::ShaderManager& s)
+            -> std::optional<ShaderSystem::PipelineProduct> {
+            auto result = factory.CreateGraphics(pipeline_desc_, s);
+            return result
+                ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
+                : std::nullopt;
+        }, frame_index);
 }
 
 } // namespace VulkanEngine::TechniqueManager

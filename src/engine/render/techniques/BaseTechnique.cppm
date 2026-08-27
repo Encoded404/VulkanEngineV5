@@ -173,6 +173,11 @@ public:
                  vk::DescriptorSetLayout indirection_layout,
                  vk::DescriptorSetLayout scene_uniform_layout = nullptr);
 
+    // ── Hot-reload: rebuild the pipeline when a shader version changes ──
+    void PollAndRebuild(ShaderSystem::ShaderManager& shaders,
+                        ShaderSystem::PipelineFactory& factory,
+                        std::uint32_t frame_index);
+
 private:
     TechniqueId id_{};
     std::vector<BindingDecl> bindings_;
@@ -182,6 +187,16 @@ private:
 
     vk::raii::PipelineLayout pipeline_layout_ = nullptr;
     ShaderSystem::PipelineSlot pipeline_slot_;
+
+    // Hot-reload state: the fully-built pipeline desc is stored as a member so
+    // its pointer-bearing fields (color_blend.pAttachments) stay valid for the
+    // technique's lifetime. The desc is rebuilt from config in Compile() and
+    // re-fed to PipelineFactory when a shader version changes.
+    ShaderSystem::ShaderId vert_id_{};
+    ShaderSystem::ShaderId frag_id_{};
+    bool compiled_ = false;
+    vk::PipelineColorBlendAttachmentState color_blend_attachment_{};
+    ShaderSystem::GraphicsPipelineDesc pipeline_desc_{};
 
     // Descriptor pool + sets for custom bindings (sets 4+)
     vk::raii::DescriptorPool descriptor_pool_ = nullptr;

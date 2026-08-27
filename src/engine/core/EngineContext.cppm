@@ -27,6 +27,10 @@ import VulkanEngine.GplPolicy;
 import VulkanEngine.ShaderWatcher;
 import VulkanEngine.ShaderRegistration;
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+import VulkanEngine.PhysicalCameraSystem;
+#endif
+
 export namespace VulkanEngine {
 
 inline constexpr std::uint32_t FRAMES_IN_FLIGHT_DYN = 3;
@@ -44,6 +48,9 @@ struct GameConfig {
     std::string shader_cache_dir = "data/cache";
     VulkanEngine::ShaderSystem::GplPolicy gpl_policy = VulkanEngine::ShaderSystem::GplPolicy::Auto;
     VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    bool enable_physical_camera = true;
+#endif
 };
 
 struct EngineContext {
@@ -84,6 +91,11 @@ struct EngineContext {
     std::unique_ptr<ShaderSystem::ShaderWatcher> shader_watcher;
     EngineShaderIds shader_ids{};
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    // Webcam capture + compositing (inert until a camera is opened)
+    std::unique_ptr<PhysicalCamera::PhysicalCameraSystem> physical_camera;
+#endif
+
     // Convenience accessors
     auto& GetBindlessManager() { return *bindless_mgr; }
     auto& GetSceneRenderer() { return *scene_renderer; }
@@ -107,6 +119,10 @@ struct EngineContext {
 
     ImGui::ImGuiSystem* GetImGuiSystem() { return imgui_system.get(); }
     VulkanBackend::ImGui::IImGuiBackend* GetImGuiBackend() { return imgui_backend.get(); }
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    PhysicalCamera::PhysicalCameraSystem* GetPhysicalCameraSystem() { return physical_camera.get(); }
+#endif
 
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };

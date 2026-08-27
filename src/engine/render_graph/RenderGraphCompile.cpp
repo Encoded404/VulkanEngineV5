@@ -206,6 +206,57 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         compiled_pass.execute = pass.execute;
         compiled_pass.attachment_setup = pass.attachment_setup;
 
+        for (const auto& read : pass.reads) {
+            if (!IsValidResourceHandle(read.resource)) continue;
+            const auto& resource = resources_[read.resource.index];
+            auto& current_state = resource_states[read.resource.index];
+
+            if (resource.kind == ResourceKind::Image) {
+                ImageLayoutIntent layout = ImageLayoutIntent::ShaderReadOnly;
+                if (read.stage == PipelineStageIntent::DepthAttachment) {
+                    layout = ImageLayoutIntent::DepthReadOnly;
+                }
+                const ResourceState target_state = ResourceState::ImageState(
+                    read.stage, read.access,
+                    QueueType::Graphics, layout);
+
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::ImageState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics, ImageLayoutIntent::Undefined);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(read.resource.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
+                    compiled_pass.pre_pass_transitions.push_back(
+                        make_transition(read.resource.index, target_state));
+                }
+
+                current_state.state = target_state;
+                current_state.has_state = true;
+            } else if (resource.kind == ResourceKind::Buffer) {
+                const ResourceState target_state = ResourceState::BufferState(
+                    read.stage, read.access, QueueType::Graphics);
+
+                if (!current_state.has_state) {
+                    const ResourceState undefined_state = ResourceState::BufferState(
+                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                        QueueType::Graphics);
+                    if (!StatesEqual(undefined_state, target_state)) {
+                        compiled_pass.pre_pass_transitions.push_back(
+                            make_transition(read.resource.index, target_state));
+                    }
+                } else if (!StatesEqual(current_state.state, target_state)) {
+                    compiled_pass.pre_pass_transitions.push_back(
+                        make_transition(read.resource.index, target_state));
+                }
+
+                current_state.state = target_state;
+                current_state.has_state = true;
+            }
+        }
+
         for (const auto& write : pass.writes) {
             if (!IsValidResourceHandle(write)) continue;
             const auto& resource = resources_[write.index];
@@ -270,57 +321,6 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
                 } else if (!StatesEqual(current_state.state, target_state)) {
                     compiled_pass.pre_pass_transitions.push_back(
                         make_transition(write.index, target_state));
-                }
-
-                current_state.state = target_state;
-                current_state.has_state = true;
-            }
-        }
-
-        for (const auto& read : pass.reads) {
-            if (!IsValidResourceHandle(read.resource)) continue;
-            const auto& resource = resources_[read.resource.index];
-            auto& current_state = resource_states[read.resource.index];
-
-            if (resource.kind == ResourceKind::Image) {
-                ImageLayoutIntent layout = ImageLayoutIntent::ShaderReadOnly;
-                if (read.stage == PipelineStageIntent::DepthAttachment) {
-                    layout = ImageLayoutIntent::DepthReadOnly;
-                }
-                const ResourceState target_state = ResourceState::ImageState(
-                    read.stage, read.access,
-                    QueueType::Graphics, layout);
-
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::ImageState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics, ImageLayoutIntent::Undefined);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(read.resource.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(read.resource.index, target_state));
-                }
-
-                current_state.state = target_state;
-                current_state.has_state = true;
-            } else if (resource.kind == ResourceKind::Buffer) {
-                const ResourceState target_state = ResourceState::BufferState(
-                    read.stage, read.access, QueueType::Graphics);
-
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::BufferState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(read.resource.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(read.resource.index, target_state));
                 }
 
                 current_state.state = target_state;

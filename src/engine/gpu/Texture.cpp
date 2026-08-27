@@ -38,6 +38,49 @@ void CreateBufferResource(const VulkanBackend::Vulkan::IVulkanBootstrap & backen
     out_buffer->bindMemory(*out_memory, 0);
 }
 
+void CreateImageResource(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                         std::uint32_t width,
+                         std::uint32_t height,
+                         vk::Format format,
+                         vk::ImageUsageFlags usage,
+                         std::unique_ptr<vk::raii::Image>& out_image,
+                         std::unique_ptr<vk::raii::DeviceMemory>& out_memory) {
+    vk::ImageCreateInfo const image_info({}, vk::ImageType::e2D, format,
+                                         vk::Extent3D(width, height, 1), 1, 1,
+                                         vk::SampleCountFlagBits::e1,
+                                         vk::ImageTiling::eOptimal,
+                                         usage);
+    out_image = std::make_unique<vk::raii::Image>(backend.GetDevice(), image_info);
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *out_image, "gpu-texture-image");
+
+    vk::MemoryRequirements const requirements = out_image->getMemoryRequirements();
+    vk::MemoryAllocateInfo const alloc(requirements.size,
+        VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(backend.GetPhysicalDevice(), requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal));
+    out_memory = std::make_unique<vk::raii::DeviceMemory>(backend.GetDevice(), alloc);
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *out_memory, "gpu-texture-memory");
+    out_image->bindMemory(*out_memory, 0);
+}
+
+void CreateViewAndSampler(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                          vk::Image image,
+                          vk::Format format,
+                          bool linear_filter,
+                          std::unique_ptr<vk::raii::ImageView>& out_view,
+                          std::unique_ptr<vk::raii::Sampler>& out_sampler) {
+    vk::ImageViewCreateInfo const view_info({}, image, vk::ImageViewType::e2D, format,
+                                            {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+    out_view = std::make_unique<vk::raii::ImageView>(backend.GetDevice(), view_info);
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *out_view, "gpu-texture-image-view");
+
+    const auto filter = linear_filter ? vk::Filter::eLinear : vk::Filter::eNearest;
+    vk::SamplerCreateInfo const sampler_info({}, filter, filter,
+                                             vk::SamplerMipmapMode::eNearest,
+                                             vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge,
+                                             vk::SamplerAddressMode::eClampToEdge);
+    out_sampler = std::make_unique<vk::raii::Sampler>(backend.GetDevice(), sampler_info);
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *out_sampler, "gpu-texture-sampler");
+}
+
 } // namespace
 
 GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
@@ -63,20 +106,9 @@ GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap&
     std::memcpy(data, pixels, pixel_size);
     staging_memory->unmapMemory();
 
-    vk::ImageCreateInfo const image_info({}, vk::ImageType::e2D, format,
-                                         vk::Extent3D(width, height, 1), 1, 1,
-                                         vk::SampleCountFlagBits::e1,
-                                         vk::ImageTiling::eOptimal,
-                                         vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
-    texture.image_ = std::make_unique<vk::raii::Image>(backend.GetDevice(), image_info);
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.image_, "texture-image");
-
-    vk::MemoryRequirements const requirements = texture.image_->getMemoryRequirements();
-    vk::MemoryAllocateInfo const alloc(requirements.size,
-        VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(backend.GetPhysicalDevice(), requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal));
-    texture.memory_ = std::make_unique<vk::raii::DeviceMemory>(backend.GetDevice(), alloc);
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.memory_, "texture-memory");
-    texture.image_->bindMemory(*texture.memory_, 0);
+    CreateImageResource(backend, width, height, format,
+                        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                        texture.image_, texture.memory_);
 
     auto& cmd = backend.GetCommandBuffer(0);
     cmd.reset({});
@@ -98,17 +130,43 @@ GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap&
     backend.GetGraphicsQueue().submit(submit, nullptr);
     backend.GetGraphicsQueue().waitIdle();
 
-    vk::ImageViewCreateInfo const view_info({}, **texture.image_, vk::ImageViewType::e2D, format,
-                                            {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    texture.image_view_ = std::make_unique<vk::raii::ImageView>(backend.GetDevice(), view_info);
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.image_view_, "texture-image-view");
+    CreateViewAndSampler(backend, **texture.image_, format, true,
+                         texture.image_view_, texture.sampler_);
 
-    vk::SamplerCreateInfo const sampler_info({}, vk::Filter::eLinear, vk::Filter::eLinear,
-                                             vk::SamplerMipmapMode::eLinear,
-                                             vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
-                                             vk::SamplerAddressMode::eRepeat);
-    texture.sampler_ = std::make_unique<vk::raii::Sampler>(backend.GetDevice(), sampler_info);
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.sampler_, "texture-sampler");
+    return texture;
+}
+
+GpuTexture GpuTexture::CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                    std::uint32_t width,
+                                    std::uint32_t height,
+                                    vk::Format format,
+                                    bool linear_filter) {
+    GpuTexture texture{};
+    texture.width_ = width;
+    texture.height_ = height;
+
+    CreateImageResource(backend, width, height, format,
+                        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                        texture.image_, texture.memory_);
+    CreateViewAndSampler(backend, **texture.image_, format, linear_filter,
+                         texture.image_view_, texture.sampler_);
+
+    return texture;
+}
+
+GpuTexture GpuTexture::CreateColorTarget(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                         std::uint32_t width,
+                                         std::uint32_t height,
+                                         vk::Format format) {
+    GpuTexture texture{};
+    texture.width_ = width;
+    texture.height_ = height;
+
+    CreateImageResource(backend, width, height, format,
+                        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                        texture.image_, texture.memory_);
+    CreateViewAndSampler(backend, **texture.image_, format, true,
+                         texture.image_view_, texture.sampler_);
 
     return texture;
 }

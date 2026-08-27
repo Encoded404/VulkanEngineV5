@@ -35,10 +35,10 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput main(uint vertexId : SV_VertexID) {
+VSOutput main(uint vertexId : SV_VertexID, uint baseVertex : SV_StartVertexLocation) {
     // vertexId indexes into indirectBuffer which maps to (vertexBuffer, submesh) pairs
     VSOutput result;
-    IndirEntry entry = indirectBuffer[vertexId];
+    IndirEntry entry = indirectBuffer[vertexId + baseVertex];
     uint bufferIndex = entry.vid >> 24;
     uint vertexIndex = entry.vid & 0xFFFFFFu;
     uint submeshId = entry.sid;

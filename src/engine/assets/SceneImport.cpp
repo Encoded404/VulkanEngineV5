@@ -57,13 +57,20 @@ LoadedMeshData CreateFallbackQuad() {
     LoadedMeshData data{
         .positions = { -1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f },
         .normals = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f },
-        .uvs = { 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f },
+        .uvs = { 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f },
         .indices = { 0, 1, 2, 2, 3, 0 },
     };
     data.submeshes.push_back(SubMesh{
         .index_start = 0,
         .index_count = 6,
         .material_id = MaterialId{0},
+        .sphere = BoundingSphere{{0.0f, 0.0f, 0.0f}, 1.41421356f},  // unit quad: half-diagonal = sqrt(2)
+        .obb = BoundingOBB{
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            {1.0f, 0.0f, 0.0f}, 1.0f,
+            {0.0f, 1.0f, 0.0f}, 1.0f,
+            {0.0f, 0.0f, 1.0f}, 0.0f,  // flat quad: zero z extent
+        },
     });
     return data;
 }

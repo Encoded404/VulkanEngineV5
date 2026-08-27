@@ -23,6 +23,10 @@ import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderWatcher;
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+import VulkanEngine.PhysicalCameraSystem;
+#endif
+
 namespace VulkanEngine {
 
 bool EngineBootstrap::Initialize(EngineContext& ctx,
@@ -79,6 +83,18 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         ctx.shader_ids.RegisterAll(*ctx.shader_manager, config.shader_data_dir);
     }
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (config.enable_physical_camera) {
+        ctx.physical_camera = std::make_unique<PhysicalCamera::PhysicalCameraSystem>();
+        if (!ctx.physical_camera->Initialize(vk_backend, *ctx.bindless_mgr,
+                                              *ctx.shader_manager, *ctx.pipeline_factory,
+                                              ctx.shader_ids.physical_camera_composite_vert,
+                                              ctx.shader_ids.physical_camera_composite_frag)) {
+            ctx.physical_camera.reset();
+        }
+    }
+#endif
+
     return true;
 }
 
@@ -111,6 +127,13 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         ctx.scene_renderer->Shutdown();
         ctx.scene_renderer.reset();
     }
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (ctx.physical_camera) {
+        ctx.physical_camera->Shutdown();
+        ctx.physical_camera.reset();
+    }
+#endif
 
     if (ctx.shader_manager) {
         ctx.shader_manager.reset();

@@ -26,6 +26,10 @@ export import VulkanEngine.Application;
 export import VulkanEngine.Input;
 export import VulkanEngine.EngineContext;
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+export import VulkanEngine.PhysicalCameraSystem;
+#endif
+
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanShared.CallbackList;
 import VulkanEngine.MeshManager;
@@ -90,6 +94,9 @@ public:
     MeshManager& GetMeshManager() { return *ctx_.mesh_manager; }
     MeshRegistry& GetMeshRegistry() { return ctx_.mesh_registry; }
     MeshRenderSystem& GetMeshRenderSystem() { return ctx_.mesh_render_system; }
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    PhysicalCamera::PhysicalCameraSystem* GetPhysicalCameraSystem() { return ctx_.physical_camera.get(); }
+#endif
     std::uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
@@ -104,6 +111,10 @@ private:
     EngineBootstrap bootstrap_;
 
     VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    VulkanShared::ScopedHandle<void(void*)> physical_camera_sdl_token_{};
+#endif
 
     VulkanBackend::Vulkan::VulkanBootstrap* vk_backend_ = nullptr;
     GameConfig config_{};

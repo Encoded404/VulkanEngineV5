@@ -26,6 +26,7 @@ public:
 
     [[nodiscard]] std::uint32_t AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id);
     [[nodiscard]] const VulkanEngine::ResourceId* GetTextureId(std::uint32_t slot) const;
+    [[nodiscard]] const VulkanEngine::GpuResources::GpuTexture* GetTexture(std::uint32_t slot) const;
 
     [[nodiscard]] vk::DescriptorSetLayout* GetLayout();
     [[nodiscard]] vk::DescriptorSet GetDescriptorSet() const;

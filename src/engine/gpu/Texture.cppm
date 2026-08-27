@@ -19,6 +19,22 @@ public:
                                        std::uint32_t height,
                                        vk::Format format = vk::Format::eR8G8B8A8Unorm);
 
+    // Persistent, GPU-resident image with no initial content; suitable as a
+    // camera stream upload target (eTransferDst | eSampled, nearest sampler,
+    // no mips). Images are updated in place each frame via vkCmdCopyBufferToImage.
+    static GpuTexture CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                   std::uint32_t width,
+                                   std::uint32_t height,
+                                   vk::Format format,
+                                   bool linear_filter = false);
+
+    // Render target that can also be sampled by materials/shaders
+    // (eColorAttachment | eSampled, linear sampler, no mips).
+    static GpuTexture CreateColorTarget(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                        std::uint32_t width,
+                                        std::uint32_t height,
+                                        vk::Format format = vk::Format::eR8G8B8A8Unorm);
+
     [[nodiscard]] vk::raii::Image& GetImage() { return *image_; }
     [[nodiscard]] const vk::raii::Image& GetImage() const { return *image_; }
     [[nodiscard]] vk::raii::ImageView& GetImageView() { return *image_view_; }

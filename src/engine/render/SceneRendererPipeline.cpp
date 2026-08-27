@@ -18,7 +18,8 @@ import VulkanBackend.Vulkan.VulkanDebugUtils;
 namespace VulkanEngine::SceneRenderer {
     namespace {
         struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
-        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; };
+        // projInfo = (|proj[0][0]|, |proj[1][1]|, proj[2][2], 1 if perspective else 0)
+        struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; glm::vec4 projInfo; };
         struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
         struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
@@ -46,6 +47,7 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBoo
     ShaderSystem::ComputePipelineDesc desc{};
     desc.shader = shader_id;
     desc.layout = *expand_pipeline_layout_;
+    expand_desc_ = desc;
     auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
     if (result.has_value()) {
         expand_slot_.Swap(std::move(result.value()), 0);
@@ -86,6 +88,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap&
     desc.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
     desc.layout = *depth_pipeline_layout_;
     desc.depth_format = be.GetDepthFormat();
+    depth_desc_ = desc;
 
     auto result = pipeline_factory.CreateGraphics(desc, shader_mgr);
     if (result.has_value()) {
@@ -137,6 +140,7 @@ bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& b
     ShaderSystem::ComputePipelineDesc desc{};
     desc.shader = shader_id;
     desc.layout = *hiz_pipeline_layout_;
+    hiz_desc_ = desc;
     auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
     if (result.has_value()) {
         hiz_slot_.Swap(std::move(result.value()), 0);
@@ -166,6 +170,7 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkan
     ShaderSystem::ComputePipelineDesc desc{};
     desc.shader = shader_id;
     desc.layout = *occlusion_pipeline_layout_;
+    occlusion_desc_ = desc;
     auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
     if (result.has_value()) {
         occlusion_slot_.Swap(std::move(result.value()), 0);
@@ -198,6 +203,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
         ShaderSystem::ComputePipelineDesc desc{};
         desc.shader = count_id;
         desc.layout = *collect_pipeline_layout_;
+        collect_count_desc_ = desc;
         auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
         if (result.has_value()) {
             collect_count_slot_.Swap(std::move(result.value()), 0);
@@ -220,6 +226,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
         ShaderSystem::ComputePipelineDesc desc{};
         desc.shader = write_id;
         desc.layout = *collect_write_pipeline_layout_;
+        collect_write_desc_ = desc;
         auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
         if (result.has_value()) {
             collect_write_slot_.Swap(std::move(result.value()), 0);

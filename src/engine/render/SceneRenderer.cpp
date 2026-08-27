@@ -17,6 +17,8 @@ import VulkanBackend.Vulkan.MemoryUtils;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.StandardMeshPipeline;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.ShaderRegistration;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -31,6 +33,9 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 ShaderSystem::PipelineFactory& pipeline_factory,
                                 const EngineShaderIds& shader_ids) {
     backend_ = &be;
+    shader_mgr_ = &shader_mgr;
+    pipeline_factory_ = &pipeline_factory;
+    shader_ids_ = shader_ids;
     const auto& dev = be.GetDevice();
     const std::uint32_t idxc = std::max(tic, 1u);
     total_index_count_ = idxc;
@@ -513,6 +518,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         sampler_ci.magFilter = vk::Filter::eNearest;
         sampler_ci.minFilter = vk::Filter::eNearest;
         sampler_ci.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        // Clamp instead of the default Repeat: out-of-range UVs (e.g. a sphere center
+        // off-screen) must sample the edge texel, whose max depth is a conservative
+        // proxy, never a wrapped texel from the opposite edge.
+        sampler_ci.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        sampler_ci.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        sampler_ci.addressModeW = vk::SamplerAddressMode::eClampToEdge;
         sampler_ci.minLod = 0.0f;
         sampler_ci.maxLod = static_cast<float>(mip_levels);
         hiz_sampler_ = std::make_unique<vk::raii::Sampler>(dev, sampler_ci);
@@ -688,6 +699,57 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     LOGIFACE_LOG(info, "SceneRenderer initialized");
     return true;
+}
+
+namespace {
+    template<typename Desc>
+    std::optional<ShaderSystem::PipelineProduct> RebuildForDesc(
+        ShaderSystem::PipelineFactory& factory, const Desc& desc,
+        ShaderSystem::ShaderManager& shaders) {
+        if constexpr (std::same_as<Desc, ShaderSystem::ComputePipelineDesc>) {
+            auto result = factory.CreateCompute(desc, shaders);
+            return result
+                ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
+                : std::nullopt;
+        } else {
+            auto result = factory.CreateGraphics(desc, shaders);
+            return result
+                ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
+                : std::nullopt;
+        }
+    }
+} // anonymous namespace
+
+void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
+    const auto poll = [this, frame_counter](
+            ShaderSystem::PipelineSlot& slot, ShaderSystem::ShaderId id,
+            auto& desc) {
+        slot.RetireFrame(frame_counter);
+        if (!desc) return;
+        slot.PollAndRebuild(*shader_mgr_, id,
+            [this, &desc](ShaderSystem::ShaderManager& s)
+                -> std::optional<ShaderSystem::PipelineProduct> {
+                return RebuildForDesc(*pipeline_factory_, *desc, s);
+            }, frame_counter);
+    };
+    const auto poll_graphics = [this, frame_counter](
+            ShaderSystem::PipelineSlot& slot,
+            ShaderSystem::ShaderId vert_id, ShaderSystem::ShaderId frag_id,
+            auto& desc) {
+        slot.RetireFrame(frame_counter);
+        if (!desc) return;
+        slot.PollAndRebuild(*shader_mgr_, vert_id, frag_id,
+            [this, &desc](ShaderSystem::ShaderManager& s)
+                -> std::optional<ShaderSystem::PipelineProduct> {
+                return RebuildForDesc(*pipeline_factory_, *desc, s);
+            }, frame_counter);
+    };
+    poll(expand_slot_, shader_ids_.expand_comp, expand_desc_);
+    poll(occlusion_slot_, shader_ids_.occlusion_cull_comp, occlusion_desc_);
+    poll(hiz_slot_, shader_ids_.hiz_gen_comp, hiz_desc_);
+    poll(collect_count_slot_, shader_ids_.collect_count_compact_comp, collect_count_desc_);
+    poll(collect_write_slot_, shader_ids_.collect_write_comp, collect_write_desc_);
+    poll_graphics(depth_slot_, shader_ids_.depth_indir_vert, shader_ids_.depth_prepass_frag, depth_desc_);
 }
 
 void SceneRenderer::Shutdown() {

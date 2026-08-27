@@ -123,7 +123,9 @@ MeshManager::Handle MeshManager::UploadPersistent(
     entry.info.index_allocation = index_alloc;
     entry.info.vertex_buffer_index = vertex_alloc.buffer_index;
     entry.info.index_buffer_index = index_alloc.buffer_index;
-    entry.info.sub_meshes = data.sub_meshes;
+    auto normalized = data;
+    VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
+    entry.info.sub_meshes = std::move(normalized.sub_meshes);
 
     handle.id = handle_id;
     return handle;
@@ -155,8 +157,10 @@ MeshManager::Handle MeshManager::RegisterStreamed(
 
     constexpr std::uint64_t alignment = 256ULL;
 
+    auto normalized = initial_data;
+    VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
     GpuMeshInfo info{};
-    info.sub_meshes = initial_data.sub_meshes;
+    info.sub_meshes = std::move(normalized.sub_meshes);
 
     for (std::uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
         auto& vtx_alloc = info.streamed_vertex_alloc[fif];

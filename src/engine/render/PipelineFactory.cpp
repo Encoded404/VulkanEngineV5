@@ -57,16 +57,44 @@ bool PipelineSlot::PollAndRebuild(
         ShaderManager& shaders, ShaderId id,
         std::function<std::optional<PipelineProduct>(ShaderManager&)> rebuild_fn,
         std::uint32_t frame_index) {
-    std::uint64_t current = shaders.GetVersion(id);
-    if (current == last_shader_version_) return false;
-    last_shader_version_ = current;
+    return PollAndRebuild(shaders, id, static_cast<ShaderId>(-1),
+                          std::move(rebuild_fn), frame_index);
+}
+
+bool PipelineSlot::PollAndRebuild(
+        ShaderManager& shaders, ShaderId vert_id, ShaderId frag_id,
+        std::function<std::optional<PipelineProduct>(ShaderManager&)> rebuild_fn,
+        std::uint32_t frame_index) {
+    const bool has_vert = vert_id != static_cast<ShaderId>(-1);
+    const bool has_frag = frag_id != static_cast<ShaderId>(-1);
+    const std::uint64_t vert_version = has_vert ? shaders.GetVersion(vert_id) : 0;
+    const std::uint64_t frag_version = has_frag ? shaders.GetVersion(frag_id) : 0;
+    const bool vert_changed = has_vert && vert_version != last_vert_version_;
+    const bool frag_changed = has_frag && frag_version != last_frag_version_;
+    if (!vert_changed && !frag_changed) return false;
+
+    if (vert_changed && frag_changed) {
+        LOGIFACE_LOG(debug, std::format("PipelineSlot: shaders {} and {} changed (v{} / v{}), rebuilding pipeline",
+                                        vert_id, frag_id, vert_version, frag_version));
+    } else if (vert_changed) {
+        LOGIFACE_LOG(debug, std::format("PipelineSlot: shader {} changed (v{}), rebuilding pipeline",
+                                        vert_id, vert_version));
+    } else {
+        LOGIFACE_LOG(debug, std::format("PipelineSlot: shader {} changed (v{}), rebuilding pipeline",
+                                        frag_id, frag_version));
+    }
 
     auto result = rebuild_fn(shaders);
-    if (result.has_value()) {
-        Swap(std::move(*result), frame_index);
-        return true;
+    if (!result.has_value()) {
+        // Keep the tracked versions unchanged so a transient rebuild failure is
+        // retried on the next frame instead of permanently disabling hot reload
+        // for this shader until the next edit.
+        return false;
     }
-    return false;
+    last_vert_version_ = has_vert ? vert_version : last_vert_version_;
+    last_frag_version_ = has_frag ? frag_version : last_frag_version_;
+    Swap(std::move(*result), frame_index);
+    return true;
 }
 
 namespace {

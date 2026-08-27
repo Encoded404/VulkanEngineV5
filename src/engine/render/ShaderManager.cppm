@@ -44,6 +44,8 @@ public:
     [[nodiscard]] std::expected<vk::ShaderModule, std::string> GetModule(ShaderId id);
     [[nodiscard]] const ShaderModuleSlot& GetSlot(ShaderId id) const;
     [[nodiscard]] ShaderId FindBySlangPath(std::string_view path) const;
+    [[nodiscard]] ShaderId FindBySlangFilename(std::string_view filename) const;
+    [[nodiscard]] std::vector<std::string> GetSlangDirectories() const;
     [[nodiscard]] std::uint64_t GetVersion(ShaderId id) const;
 
     std::future<bool> RequestReload(ShaderId id);

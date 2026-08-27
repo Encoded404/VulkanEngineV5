@@ -117,6 +117,25 @@ ShaderId ShaderManager::FindBySlangPath(std::string_view path) const {
     return static_cast<ShaderId>(-1);
 }
 
+ShaderId ShaderManager::FindBySlangFilename(std::string_view filename) const {
+    std::shared_lock lock(slots_mutex_);
+    for (ShaderId i = 0; i < static_cast<ShaderId>(slots_.size()); ++i) {
+        if (std::filesystem::path(slots_[i]->slang_path).filename() == filename) return i;
+    }
+    return static_cast<ShaderId>(-1);
+}
+
+std::vector<std::string> ShaderManager::GetSlangDirectories() const {
+    std::shared_lock lock(slots_mutex_);
+    std::vector<std::string> dirs;
+    for (const auto& slot : slots_) {
+        auto dir = std::filesystem::weakly_canonical(
+            std::filesystem::path(slot->slang_path).parent_path()).string();
+        if (std::ranges::find(dirs, dir) == dirs.end()) dirs.push_back(std::move(dir));
+    }
+    return dirs;
+}
+
 std::uint64_t ShaderManager::GetVersion(ShaderId id) const {
     std::shared_lock lock(slots_mutex_);
     return slots_[id]->version.load(std::memory_order_acquire);
@@ -130,6 +149,7 @@ std::future<bool> ShaderManager::RequestReload(ShaderId id) {
             slot = slots_[id].get();
         }
 
+        std::vector<std::uint32_t> spirv;
 #if VKENGINE_HOT_RELOAD
         VulkanEngine::ShaderSystem::CompileRequest req{};
         req.source_path = slot->slang_path;
@@ -148,28 +168,38 @@ std::future<bool> ShaderManager::RequestReload(ShaderId id) {
             return false;
         }
 
-        auto& spirv_vec = result->spirv;
+        spirv = std::move(result->spirv);
+        LOGIFACE_LOG(debug, std::format("ShaderManager: recompiled {} ({} bytes, stage {})",
+                                        slot->slang_path, spirv.size() * sizeof(std::uint32_t),
+                                        static_cast<std::uint32_t>(slot->stage)));
         VulkanShared::FileIO::WriteBinary(slot->spv_path,
-            std::span{reinterpret_cast<const std::byte*>(spirv_vec.data()),
-                      spirv_vec.size() * sizeof(std::uint32_t)});
-
-        vk::ShaderModuleCreateInfo info({},
-            spirv_vec.size() * sizeof(std::uint32_t), spirv_vec.data());
-        slot->module = vk::raii::ShaderModule(device_, info);
+            std::span{reinterpret_cast<const std::byte*>(spirv.data()),
+                      spirv.size() * sizeof(std::uint32_t)});
 #else
         auto spirv_result = VulkanEngine::ShaderLoader::ShaderLoader::LoadSpirv(slot->spv_path);
         if (!spirv_result) {
             LOGIFACE_LOG(error, std::format("ShaderManager: reload failed for {}: {}", slot->spv_path, spirv_result.error()));
             return false;
         }
-        auto& spirv = *spirv_result;
-        vk::ShaderModuleCreateInfo info({},
-            spirv.size() * sizeof(std::uint32_t), spirv.data());
-        slot->module = vk::raii::ShaderModule(device_, info);
+        spirv = std::move(*spirv_result);
 #endif
 
-        slot->loaded = true;
-        slot->version.fetch_add(1, std::memory_order_release);
+        // Create the module off-lock, then publish it atomically with the version
+        // bump. Readers (GetModule/GetVersion/GetSlot) take the shared lock, and
+        // runtime pipeline creation is gated on GetVersion() changing, so the
+        // retired module has no live consumers when it is destroyed here.
+        vk::ShaderModuleCreateInfo info({},
+            spirv.size() * sizeof(std::uint32_t), spirv.data());
+        vk::raii::ShaderModule new_module(device_, info);
+        {
+            std::unique_lock lock(slots_mutex_);
+            slot->module = std::move(new_module);
+            slot->loaded = true;
+            slot->version.fetch_add(1, std::memory_order_release);
+        }
+        LOGIFACE_LOG(debug, std::format("ShaderManager: hot-reloaded {} -> v{}",
+                                        slot->slang_path,
+                                        slot->version.load(std::memory_order_acquire)));
         return true;
     });
 }

@@ -57,8 +57,26 @@ private:
     VulkanEngine::ShaderSystem::GplPolicy gpl_policy_ = VulkanEngine::ShaderSystem::GplPolicy::Auto;
     VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure_ = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
 
+    // Object selector for the debug panel: name + control component.
+    struct ControllableObject {
+        std::string name{};
+        App::Components::TransformControlComponent* component = nullptr;
+    };
+    std::vector<ControllableObject> controllable_objects_{};
+    int selected_object_ = 0;
+
     VulkanEngine::GameEngine engine_game_{};
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    VulkanShared::ScopedHandle<void()> imgui_camera_draw_handle_{};
+    VulkanEngine::PhysicalCamera::PhysicalCameraHandle cam_handle_{};
+    VulkanEngine::PhysicalCamera::PhysicalCameraTargetId cam_target_{};
+    VulkanEngine::PhysicalCamera::PhysicalCameraBindingHandle cam_binding_{};
+    std::uint32_t cam_target_slot_ = 0;
+    std::uint32_t cam_native_slot_ = 0;
+    std::uint32_t webcam_mesh_id_ = 0;
+#endif
 };
 
 } // namespace App::Game

@@ -7,11 +7,15 @@ import std.compat;
 
 import vulkan_hpp;
 
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
+
 export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanShared.CallbackList;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.BaseTechnique;
 export import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
+export import VulkanEngine.TechniqueManager.UnlitTextureTechnique;
 
 #ifndef UINT16_MAX
 constexpr std::uint16_t UINT16_MAX =
@@ -76,6 +80,11 @@ public:
     }
 
     void Shutdown();
+
+    // ── Hot-reload: rebuild technique pipelines whose shaders changed ──
+    void PollShaders(ShaderSystem::ShaderManager& shaders,
+                     ShaderSystem::PipelineFactory& factory,
+                     std::uint32_t frame_index);
 
 private:
     friend class BaseTechnique;

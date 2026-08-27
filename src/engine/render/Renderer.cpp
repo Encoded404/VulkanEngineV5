@@ -295,7 +295,11 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                    VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                                    VulkanEngine::ImGui::ImGuiSystem* imgui,
-                                   std::uint32_t image_index) {
+                                   std::uint32_t image_index
+#ifdef VKENGINE_PHYSICAL_CAMERA
+                                   , VulkanEngine::PhysicalCamera::PhysicalCameraSystem* physical_cameras
+#endif
+                                   ) {
     if (!pipeline_ || !pipeline_->IsCompiled()) return;
 
     std::uint32_t width = 0, height = 0;
@@ -383,6 +387,14 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             .view_proj = view_proj,
         };
         current_ctx_ = &ctx;
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        // PhysicalCamera uploads + compositing run before the scene graph so
+        // scene passes sampling a camera target see this frame's content.
+        if (physical_cameras != nullptr) {
+            physical_cameras->Execute(*cmd, frame_counter_);
+        }
+#endif
 
         // Phase 2: Render graph executes all GPU passes in dependency order
         pipeline_->Execute(&ctx, cmd, image_index);

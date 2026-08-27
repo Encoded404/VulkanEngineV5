@@ -10,26 +10,32 @@ export namespace VulkanEngine::ShaderSystem {
 class ShaderWatcher {
 public:
     explicit ShaderWatcher(ShaderManager& shaders);
+    ~ShaderWatcher();
 
     ShaderWatcher(const ShaderWatcher&) = delete;
     ShaderWatcher& operator=(const ShaderWatcher&) = delete;
 
-    void Watch(ShaderId id);
-    void Poll();
     void Start();
     void Stop();
 
+    // Invoked from the efsw listener thread (internal use). Public only because
+    // the listener type lives in the implementation file.
+    void OnFileChanged(const std::string& filename);
+
 private:
-    struct Entry {
-        ShaderId id;
-        std::filesystem::file_time_type last_write;
-    };
+    struct Impl;
 
     ShaderManager& shaders_;
-    std::vector<Entry> entries_;
-    std::atomic<bool> running_{false};
-    int inotify_fd_ = -1;
-    std::jthread background_thread_;
+    std::unique_ptr<Impl> impl_;
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::filesystem::file_time_type> last_compile_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> pending_reloads_;
+    std::condition_variable cv_;
+    std::thread debounce_thread_;
+    std::atomic<bool> stop_{false};
+
+    void DebounceLoop();
+    void ReloadPath(const std::string& slang_path);
 };
 
 } // namespace VulkanEngine::ShaderSystem

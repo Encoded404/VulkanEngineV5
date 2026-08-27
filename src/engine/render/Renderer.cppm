@@ -26,6 +26,10 @@ import VulkanEngine.Render.Passes.OcclusionPass;
 import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+import VulkanEngine.PhysicalCameraSystem;
+#endif
+
 export namespace VulkanEngine::Renderer {
 
 struct RendererConfig {
@@ -55,7 +59,11 @@ public:
                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                      VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                      VulkanEngine::ImGui::ImGuiSystem* imgui,
-                     std::uint32_t image_index);
+                     std::uint32_t image_index
+#ifdef VKENGINE_PHYSICAL_CAMERA
+                     , VulkanEngine::PhysicalCamera::PhysicalCameraSystem* physical_cameras = nullptr
+#endif
+                     );
 
     struct FrameRenderContext {
         VulkanEngine::ComponentRegistry& registry;

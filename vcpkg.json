@@ -10,10 +10,6 @@
         },
         "vulkan-headers",
         {
-            "name": "vulkan-loader",
-            "features": [ "wayland", "xcb", "xlib" ]
-        },
-        {
             "name": "ktx",
             "features": [ "vulkan" ]
         },
@@ -35,6 +31,7 @@
             "name": "imgui",
             "features": [ "vulkan-binding", "sdl3-binding" ]
         },
+        "efsw",
         "shader-slang"
     ]
 }

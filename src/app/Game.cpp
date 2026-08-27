@@ -7,11 +7,15 @@ module;
 #include <SDL3/SDL_keycode.h>
 #include <imgui.h>
 
+#include <logging/logging_macros.hpp>
+
 module App.Game;
 
 import std;
 
 import vulkan_hpp;
+
+import logiface;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
@@ -134,6 +138,55 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     auto& component_registry = engine_game_.GetContext().GetComponentRegistry();
     engine_game_.CreateCamera(component_registry);
 
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    // 5b. PhysicalCamera (webcam): open device 0, composite into a target
+    // texture, and expose the target's bindless slot for materials/shaders.
+    {
+        auto* phys = engine_game_.GetPhysicalCameraSystem();
+        if (phys && phys->IsInitialized()) {
+            const auto devices = phys->EnumerateDevices();
+            if (!devices.empty()) {
+                cam_handle_ = phys->Open(devices[0].index);
+                if (cam_handle_.IsValid()) {
+                    cam_target_ = phys->CreateTarget(640, 360);
+                    if (cam_target_.IsValid()) {
+                        VulkanEngine::PhysicalCamera::PhysicalCameraBindingConfig bcfg{};
+                        bcfg.fit = VulkanEngine::PhysicalCamera::FitMode::Contain;
+                        bcfg.clear_before = true;
+                        cam_binding_ = phys->Bind(cam_handle_, cam_target_, bcfg);
+                        cam_target_slot_ = phys->GetTargetTextureSlot(cam_target_);
+                        const auto native_slots = phys->GetNativeTextureSlots(cam_handle_);
+                        if (!native_slots.empty()) cam_native_slot_ = native_slots[0];
+                        LOGIFACE_LOG(info,
+                            "webcam bound: target bindless slot " + std::to_string(cam_target_slot_) +
+                            ", native slot " + std::to_string(cam_native_slot_));
+
+                        // Live preview quad: register an unlit material pointing at
+                        // the camera target's bindless slot, and a unit quad mesh
+                        // bound to it. The entity is created in step 6 below.
+                        if (cam_target_slot_ != 0) {
+                            auto webcam_handle = engine_game_.GetContext().GetMaterialManager().Register<
+                                VulkanEngine::TechniqueManager::UnlitTextureTechnique>(
+                                VulkanEngine::MaterialManager::BlendMode::Opaque,
+                                VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData{
+                                    .albedo_texture = cam_target_slot_,
+                                    .roughness_factor = 1.0f,
+                                    .metallic_factor = 0.0f,
+                                    .ao_factor = 1.0f
+                                });
+                            const auto webcam_mat_id = VulkanEngine::MaterialManager::MaterialId{webcam_handle.Id()};
+                            auto quad = VulkanEngine::SceneLoader::CreateFallbackQuad();
+                            quad.submeshes[0].material_id = webcam_mat_id;
+                            webcam_mesh_id_ = engine_game_.GetMeshRegistry().Register(
+                                VulkanEngine::SceneLoader::ToMeshData(quad));
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     // 6. Create game entities with simplified MeshReference
     {
         auto& entity = component_registry.CreateEntity();
@@ -143,6 +196,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
         auto& debug_comp = component_registry.AddComponent<App::Components::TransformControlComponent>(entity);
         debug_comp.position = glm::vec3{0.0f, 0.0f, 0.0f};
+        controllable_objects_.push_back(ControllableObject{"Viking house", &debug_comp});
     }
     {
         auto& entity = component_registry.CreateEntity();
@@ -151,37 +205,89 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         mesh_ref.loaded_mesh_id = monkey_id;
         component_registry.AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
     }
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (webcam_mesh_id_ != 0) {
+        auto& entity = component_registry.CreateEntity();
+        component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
+        auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
+        mesh_ref.loaded_mesh_id = webcam_mesh_id_;
+
+        auto& debug_comp = component_registry.AddComponent<App::Components::TransformControlComponent>(entity);
+        debug_comp.position = glm::vec3{2.0f, 0.0f, 0.0f};
+        controllable_objects_.push_back(ControllableObject{"Camera quad", &debug_comp});
+    }
+#endif
 
     // 7. Register ImGui debug UI
     auto* imgui = engine_game_.GetImGuiSystem();
     if (imgui) {
-        imgui_draw_handle_ = imgui->draw_callbacks.Register([&registry = component_registry]() {
-            auto debug_comps = registry.GetAll<App::Components::TransformControlComponent>();
-            if (debug_comps.empty()) return;
+        imgui_draw_handle_ = imgui->draw_callbacks.Register([this]() {
+            if (controllable_objects_.empty()) return;
+            ImGui::Begin("Transform Control", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
-            for (auto* dc : debug_comps) {
-                ImGui::Begin("Transform Control", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+            // Object selector: pick which controllable object the controls drive.
+            std::vector<const char*> names;
+            names.reserve(controllable_objects_.size());
+            for (const auto& obj : controllable_objects_) names.push_back(obj.name.c_str());
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::Combo("Object", &selected_object_, names.data(),
+                         static_cast<int>(names.size()));
+            selected_object_ = std::clamp(selected_object_, 0,
+                                          static_cast<int>(controllable_objects_.size()) - 1);
 
-                ImGui::DragFloat3("Position", &dc->position.x, 0.1f);
-
-                ImGui::SeparatorText("Texture");
-                ImGui::DragInt("Slot", &dc->texture_slot, 1, 0, 255);
-
-                ImGui::SeparatorText("Rotation");
-                constexpr const char* modes[] = {"Euler (vec3)", "Quaternion (vec4)"}; // NOLINT(modernize-avoid-c-arrays)
-                int mode = static_cast<int>(dc->rotation_mode);
-                if (ImGui::Combo("Mode", &mode, modes, 2)) {
-                    dc->rotation_mode = static_cast<App::Components::RotationMode>(mode);
-                }
-                if (dc->rotation_mode == App::Components::RotationMode::Euler) {
-                    ImGui::DragFloat3("Euler (deg)", &dc->rotation_euler.x, 1.0f);
-                } else {
-                    ImGui::DragFloat4("Quaternion", &dc->rotation_quat.x, 0.01f);
-                }
-
+            auto* dc = controllable_objects_[static_cast<std::size_t>(selected_object_)].component;
+            if (dc == nullptr) {
                 ImGui::End();
+                return;
             }
+
+            ImGui::DragFloat3("Position", &dc->position.x, 0.1f);
+
+            ImGui::SeparatorText("Texture");
+            ImGui::DragInt("Slot", &dc->texture_slot, 1, 0, 255);
+
+            ImGui::SeparatorText("Rotation");
+            constexpr const char* modes[] = {"Euler (vec3)", "Quaternion (vec4)"}; // NOLINT(modernize-avoid-c-arrays)
+            int mode = static_cast<int>(dc->rotation_mode);
+            if (ImGui::Combo("Mode", &mode, modes, 2)) {
+                dc->rotation_mode = static_cast<App::Components::RotationMode>(mode);
+            }
+            if (dc->rotation_mode == App::Components::RotationMode::Euler) {
+                ImGui::DragFloat3("Euler (deg)", &dc->rotation_euler.x, 1.0f);
+            } else {
+                ImGui::DragFloat4("Quaternion", &dc->rotation_quat.x, 0.01f);
+            }
+
+            ImGui::End();
         });
+
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        imgui_camera_draw_handle_ = imgui->draw_callbacks.Register([this]() {
+            ImGui::Begin("Physical Camera");
+            if (engine_game_.GetPhysicalCameraSystem() == nullptr ||
+                !engine_game_.GetPhysicalCameraSystem()->IsInitialized()) {
+                ImGui::TextUnformatted("disabled");
+            } else if (!cam_handle_.IsValid()) {
+                ImGui::TextUnformatted("no camera opened");
+            } else {
+                auto* phys = engine_game_.GetPhysicalCameraSystem();
+                const auto state = phys->GetState(cam_handle_);
+                ImGui::Text("state: %u", static_cast<std::uint32_t>(state));
+                ImGui::Text("streams active: %zu", phys->GetActiveStreamCount());
+                ImGui::Separator();
+                if (const auto* fmt = phys->GetFormat(cam_handle_); fmt != nullptr) {
+                    ImGui::Text("format: %u", static_cast<std::uint32_t>(fmt->format));
+                    ImGui::Text("resolution: %ux%u", fmt->width, fmt->height);
+                    if (fmt->fps_denominator != 0) {
+                        ImGui::Text("fps: %u", fmt->fps_numerator / fmt->fps_denominator);
+                    }
+                }
+                ImGui::Text("target bindless slot: %u", cam_target_slot_);
+                ImGui::Text("native bindless slot: %u", cam_native_slot_);
+            }
+            ImGui::End();
+        });
+#endif
     }
 
     // 8. Bind quit action
@@ -211,6 +317,14 @@ void DemoGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext
 }
 
 void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    if (auto* phys = engine_game_.GetPhysicalCameraSystem(); phys) {
+        phys->Unbind(cam_binding_);
+        phys->DestroyTarget(cam_target_);
+        phys->Close(cam_handle_);
+    }
+    imgui_camera_draw_handle_ = {};
+#endif
     imgui_draw_handle_ = {};
     engine_game_.Shutdown();
 }

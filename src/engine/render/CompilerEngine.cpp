@@ -26,6 +26,19 @@ namespace {
                            blob->getBufferSize());
     }
 
+    std::string sourceContentHash(std::string_view s) {
+        std::uint64_t h = 0xcbf29ce484222325ULL;
+        for (char c : s) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ULL;
+        std::string out;
+        out.reserve(16);
+        constexpr std::string_view hex = "0123456789abcdef";
+        for (int i = 7; i >= 0; --i) {
+            out += hex[(h >> (i * 8 + 4)) & 0xf];
+            out += hex[(h >> (i * 8)) & 0xf];
+        }
+        return out;
+    }
+
     SlangStage slangStageFromShaderStage(ShaderStage s) {
         switch (s) {
         case ShaderStage::eVertex:         return SLANG_STAGE_VERTEX;
@@ -261,13 +274,67 @@ namespace {
         }
     }
 
+    // Long-lived Slang global session for the engine / hot-reload path. The
+    // deprecated compile-request API (spCreateCompileRequest / spCompile, the
+    // same path `slangc` uses) is used here deliberately: the modern Session
+    // API (`loadModuleFromSourceString` → … → `getLayout`) corrupts the heap at
+    // session teardown on Linux (see
+    // docs/Slang-session-teardown-heap-corruption-bug-and-workaround.md), while
+    // the old API is unaffected. The global session is created once and never
+    // released — it is meant to live for the application's lifetime.
+    struct SlangRuntime {
+        slang::IGlobalSession* global = nullptr;
+        SlangProfileID profile = SLANG_PROFILE_UNKNOWN;
+
+        SlangRuntime() {
+            if (SLANG_FAILED(slang::createGlobalSession(&global))) {
+                global = nullptr;
+                return;
+            }
+            profile = global->findProfile("SPIRV_1_6");
+        }
+    };
+
+    SlangRuntime& GetSlangRuntime() {
+        static SlangRuntime runtime; // thread-safe one-time init (magic static)
+        return runtime;
+    }
+
+    std::mutex& CompileMutex() {
+        static std::mutex m;
+        return m;
+    }
+
 } // anonymous namespace
 
 std::expected<CompileResult, std::string>
 CompilerEngine::Compile(const CompileRequest& req) {
-    slang::IGlobalSession* globalSession = nullptr;
-    if (SLANG_FAILED(slang::createGlobalSession(&globalSession)))
-        return std::unexpected("createGlobalSession failed");
+    auto& rt = GetSlangRuntime();
+    if (!rt.global)
+        return std::unexpected("Slang runtime not initialized");
+
+    // The compile-request API is not documented thread-safe; serialise
+    // compiles. Reloads are rare (user edits), so contention is nil.
+    std::lock_guard lock(CompileMutex());
+
+    std::string source = req.source_text;
+    if (source.empty()) {
+        std::ifstream f(req.source_path, std::ios::binary | std::ios::ate);
+        if (!f) {
+            return std::unexpected("cannot open source file: " + req.source_path);
+        }
+        f.seekg(0);
+        source.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+
+    // Every compile request is a fresh, independent compile; the translation
+    // unit name only shows up in diagnostics. Keep it unique per source
+    // version anyway so a stale module cache can never shadow newer content.
+    auto moduleName = req.source_path + "_" + sourceContentHash(source);
+
+    SlangCompileRequest* request = spCreateCompileRequest(rt.global);
+    if (!request)
+        return std::unexpected("createCompileRequest failed");
 
     SlangOptimizationLevel optLevel = SLANG_OPTIMIZATION_LEVEL_NONE;
     switch (req.optimization_level) {
@@ -277,114 +344,44 @@ CompilerEngine::Compile(const CompileRequest& req) {
         case 3: optLevel = SLANG_OPTIMIZATION_LEVEL_MAXIMAL; break;
     }
 
-    slang::CompilerOptionEntry optEntry = {};
-    optEntry.name = slang::CompilerOptionName::Optimization;
-    optEntry.value.kind = slang::CompilerOptionValueKind::Int;
-    optEntry.value.intValue0 = static_cast<int32_t>(optLevel);
-
-    slang::TargetDesc targetDesc = {};
-    targetDesc.format = SLANG_SPIRV;
-    targetDesc.profile = globalSession->findProfile("SPIRV_1_6");
-    targetDesc.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
-    targetDesc.compilerOptionEntries = &optEntry;
-    targetDesc.compilerOptionEntryCount = 1;
-
-    slang::SessionDesc sessionDesc = {};
-    sessionDesc.targets = &targetDesc;
-    sessionDesc.targetCount = 1;
-
-    slang::ISession* session = nullptr;
-    if (SLANG_FAILED(globalSession->createSession(sessionDesc, &session))) {
-        globalSession->release();
-        return std::unexpected("createSession failed");
-    }
-
-    std::string source = req.source_text;
-    if (source.empty()) {
-        std::ifstream f(req.source_path, std::ios::binary | std::ios::ate);
-        if (!f) {
-            session->release();
-            globalSession->release();
-            return std::unexpected("cannot open source file: " + req.source_path);
-        }
-        f.seekg(0);
-        source.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    }
-
-    auto moduleName = req.source_path;
-    slang::IBlob* diag = nullptr;
-    auto* module = session->loadModuleFromSourceString(
-        moduleName.c_str(), req.source_path.c_str(), source.c_str(), &diag);
-    if (!module) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("loadModule failed: " + msg);
-    }
+    spSetCodeGenTarget(request, SLANG_SPIRV);
+    spSetTargetProfile(request, 0, rt.profile);
+    spSetTargetFlags(request, 0, SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY);
+    spSetOptimizationLevel(request, optLevel);
 
     auto slangStage = slangStageFromShaderStage(req.stage);
+    const int tuIndex = spAddTranslationUnit(
+        request, SLANG_SOURCE_LANGUAGE_SLANG, moduleName.c_str());
+    spAddTranslationUnitSourceString(
+        request, tuIndex, req.source_path.c_str(), source.c_str());
+    spAddEntryPoint(request, tuIndex, req.entry_point.c_str(), slangStage);
 
-    slang::IEntryPoint* entryPoint = nullptr;
-    if (SLANG_FAILED(module->findAndCheckEntryPoint(
-            req.entry_point.c_str(), slangStage, &entryPoint, &diag))) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        module->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("findEntryPoint failed: " + msg);
+    SlangResult compileResult = spCompile(request);
+    if (SLANG_FAILED(compileResult)) {
+        std::string msg;
+        ISlangBlob* diagBlob = nullptr;
+        if (SLANG_SUCCEEDED(spGetDiagnosticOutputBlob(request, &diagBlob))) {
+            msg = blobToString(diagBlob);
+            diagBlob->release();
+        }
+        if (msg.empty()) {
+            if (const char* raw = spGetDiagnosticOutput(request)) msg = raw;
+        }
+        spDestroyCompileRequest(request);
+        return std::unexpected("compile failed: " + msg);
     }
 
-    slang::IComponentType* components[] = { module, entryPoint };
-    slang::IComponentType* composite = nullptr;
-    if (SLANG_FAILED(session->createCompositeComponentType(components, 2, &composite, &diag))) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        entryPoint->release();
-        module->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("createComposite failed: " + msg);
+    size_t codeSize = 0;
+    const void* code = spGetEntryPointCode(request, 0, &codeSize);
+    if (!code || codeSize == 0) {
+        spDestroyCompileRequest(request);
+        return std::unexpected("getEntryPointCode failed");
     }
 
-    slang::IComponentType* linkedProgram = nullptr;
-    if (SLANG_FAILED(composite->link(&linkedProgram, &diag))) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        composite->release();
-        entryPoint->release();
-        module->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("link failed: " + msg);
-    }
-
-    slang::IBlob* code = nullptr;
-    if (SLANG_FAILED(linkedProgram->getEntryPointCode(0, 0, &code, &diag))) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        linkedProgram->release();
-        composite->release();
-        entryPoint->release();
-        module->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("getEntryPointCode failed: " + msg);
-    }
-
-    auto* layout = linkedProgram->getLayout(0, &diag);
+    auto* layout = slang::ProgramLayout::get(request);
     if (!layout) {
-        std::string msg = diag ? blobToString(diag) : "unknown error";
-        if (diag) diag->release();
-        code->release();
-        linkedProgram->release();
-        composite->release();
-        entryPoint->release();
-        module->release();
-        session->release();
-        globalSession->release();
-        return std::unexpected("getLayout failed: " + msg);
+        spDestroyCompileRequest(request);
+        return std::unexpected("getReflection failed");
     }
 
     auto* entryPointLayout = layout->getEntryPointByIndex(0);
@@ -398,8 +395,8 @@ CompilerEngine::Compile(const CompileRequest& req) {
     }
 
     CompileResult result;
-    auto* spv_data = static_cast<const uint32_t*>(code->getBufferPointer());
-    auto spv_size = code->getBufferSize() / sizeof(uint32_t);
+    auto* spv_data = static_cast<const uint32_t*>(code);
+    auto spv_size = codeSize / sizeof(uint32_t);
     result.spirv.assign(spv_data, spv_data + spv_size);
 
     auto stageStr = stageEnumToString(actualStage);
@@ -413,19 +410,10 @@ CompilerEngine::Compile(const CompileRequest& req) {
         });
     }
 
-    if (diag) {
-        result.diagnostics = blobToString(diag);
-        diag->release();
-    }
+    if (const char* rawDiag = spGetDiagnosticOutput(request); rawDiag && *rawDiag)
+        result.diagnostics = rawDiag;
 
-    code->release();
-    linkedProgram->release();
-    composite->release();
-    entryPoint->release();
-    module->release();
-    session->release();
-    globalSession->release();
-
+    spDestroyCompileRequest(request);
     return result;
 }
 

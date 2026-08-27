@@ -4,10 +4,10 @@ struct TechniqueResult {
 };
 
 struct DrawIndirectCommand {
-    uint indexCount;
+    uint vertexCount;
     uint instanceCount;
-    uint firstIndex;
-    int vertexOffset;
+    uint firstVertex;
+    int firstInstance;
 };
 
 [[vk::binding(0, 0)]]

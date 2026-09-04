@@ -41,6 +41,12 @@ export namespace VulkanEngine::Application {
     bool bootstrap_initialized = false;
     bool runtime_initialized = false;
     bool setup_completed = false;
+    // DiscardStale: renders submitted to the queue but not yet presented, in
+    // frame order. Presents are issued only once a frame's GPU work completes,
+    // so the Mailbox compositor always sees (and scans out) the freshest frames.
+    struct PendingPresent { std::uint32_t frame_counter; std::uint32_t image_index; };
+    std::vector<PendingPresent> pending_presents{};
+    const bool discard_stale = config.present_policy == PresentPolicy::DiscardStale;
 
     auto cleanup = [&]() {
         VulkanShared::Timer t{true};
@@ -119,6 +125,14 @@ export namespace VulkanEngine::Application {
             LOGIFACE_LOG(warn, "frames_in_flight=" + std::to_string(config.frames_in_flight) +
                          " clamped to " + std::to_string(fif) + "; only 2 or 3 make practical sense");
         }
+        if (discard_stale &&
+            (fif < 3 ||
+             (bootstrap_config.present_mode != VulkanBackend::Vulkan::PresentMode::Mailbox &&
+              bootstrap_config.present_mode != VulkanBackend::Vulkan::PresentMode::Immediate))) {
+            return fail("PresentPolicy::DiscardStale requires frames_in_flight >= 3 and a "
+                        "Mailbox or Immediate present mode (stale-frame discard is performed by the "
+                        "swapchain compositor)");
+        }
         bootstrap_config.frames_in_flight = fif;
 
         if (config.swapchain_image_count >= 2) {
@@ -133,6 +147,12 @@ export namespace VulkanEngine::Application {
                 bootstrap_config.present_mode == VulkanBackend::Vulkan::PresentMode::FifoRelaxed;
             bootstrap_config.preferred_swapchain_image_count =
                 fifo_present ? fif + 1u : std::max(fif, 2u);
+        }
+        if (discard_stale) {
+            // Deferred presents can hold up to FIF-1 images while the GPU catches
+            // up; budget one spare so acquire never stalls on image reuse.
+            bootstrap_config.preferred_swapchain_image_count =
+                std::max(bootstrap_config.preferred_swapchain_image_count, fif + 1u);
         }
         bootstrap_config.native_window_handle = window;
         if (!bootstrap->Initialize(bootstrap_config)) {
@@ -217,6 +237,27 @@ export namespace VulkanEngine::Application {
                 bootstrap->NotifySwapchainOutOfDate();
             }
 
+            // DiscardStale: release frames whose GPU work has completed. Presents
+            // are issued in submission order; the Mailbox compositor then scans out
+            // the freshest completed frame and drops the stale ones.
+            if (discard_stale) {
+                while (!pending_presents.empty()) {
+                    PendingPresent& front = pending_presents.front();
+                    // The front frame's slot fence reflects exactly its own work: no
+                    // later frame has reused the slot (that reuse is gated on this
+                    // same fence by AcquireNextImage), so a signaled fence means the
+                    // frame itself is GPU-complete.
+                    if (!bootstrap->IsFrameComplete(front.frame_counter)) {
+                        break;
+                    }
+                    if (!bootstrap->Present(front.image_index)) {
+                        bootstrap->NotifySwapchainOutOfDate();
+                        break;
+                    }
+                    pending_presents.erase(pending_presents.begin());
+                }
+            }
+
             const auto bootstrap_frame = bootstrap->BeginFrame();
             if (bootstrap_frame.status == VulkanBackend::Vulkan::BootstrapStatus::SwapchainOutOfDate) {
                 if (!bootstrap->RecreateSwapchain()) {
@@ -245,7 +286,23 @@ export namespace VulkanEngine::Application {
             context.frame.render_success = true;
             hooks.on_frame_render.Call(context);
 
-            if (!bootstrap->Present(context.frame.image_index, context.frame.render_success)) {
+            if (discard_stale) {
+                // Submit now, present later (once the GPU work completes — see the
+                // drain at the top of the loop). Frames whose present is superseded
+                // are dropped by the Mailbox compositor; every image is still
+                // presented exactly once, so none leaks.
+                if (!bootstrap->SubmitFrame(context.frame.image_index,
+                                            context.frame.render_success)) {
+                    bootstrap->NotifySwapchainOutOfDate();
+                } else if (context.frame.render_success) {
+                    pending_presents.push_back(
+                        {context.frame.frame_counter, context.frame.image_index});
+                }
+            } else if (!bootstrap->SubmitFrame(context.frame.image_index,
+                                               context.frame.render_success)) {
+                bootstrap->NotifySwapchainOutOfDate();
+            } else if (context.frame.render_success &&
+                       !bootstrap->Present(context.frame.image_index)) {
                 bootstrap->NotifySwapchainOutOfDate();
             }
 

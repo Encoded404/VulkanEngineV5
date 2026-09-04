@@ -151,15 +151,19 @@ public:
         return true;
     }
 
-    [[nodiscard]] bool Present(std::uint32_t frame_idx, std::uint32_t image_index, bool rendering_succeeded) override {
-        LOGIFACE_LOG(trace, "entering Present with frame index " + std::to_string(frame_idx) + " and image index " + std::to_string(image_index) + " and rendering succeeded " + std::to_string(rendering_succeeded) + ".");
+    [[nodiscard]] bool SubmitFrame(std::uint32_t frame_idx, std::uint32_t image_index, bool rendering_succeeded) override {
+        LOGIFACE_LOG(trace, "entering SubmitFrame with frame index " + std::to_string(frame_idx) +
+                     " and image index " + std::to_string(image_index) + " and rendering succeeded " +
+                     std::to_string(rendering_succeeded) + ".");
         if (!device_ || !swapchain_) return false;
 
         const vk::raii::Device& vk_device = device_->GetDevice();
         const vk::raii::Queue& vk_graphics_queue = device_->GetGraphicsQueue();
         const vk::raii::CommandBuffer& vk_command_buffer = device_->GetCommandBuffer(frame_idx);
         const vk::raii::Semaphore& vk_image_available_semaphore = device_->GetImageAvailableSemaphore(frame_idx);
-        const vk::raii::Semaphore& vk_render_finished_semaphore = GetRenderFinishedSemaphore(image_index);
+        const vk::raii::Semaphore& vk_render_finished_semaphore = rendering_succeeded
+            ? GetRenderFinishedSemaphore(image_index)
+            : vk_image_available_semaphore; // unused when no command buffer is submitted
         const vk::raii::Fence& vk_in_flight_fence = device_->GetInFlightFence(frame_idx);
 
         // Reset the fence ONLY when we are about to submit work.
@@ -177,8 +181,8 @@ public:
             submit_info.signalSemaphoreCount = 1;
             submit_info.pSignalSemaphores = &*vk_render_finished_semaphore;
         } else {
-            // If rendering didn't succeed, we still need to consume the image_available_semaphore
-            // but we don't signal render_finished_semaphore as nothing will be presented.
+            // If rendering didn't succeed, we still need to consume the
+            // image_available_semaphore but we don't signal render_finished_semaphore.
             submit_info.commandBufferCount = 0;
             submit_info.pCommandBuffers = nullptr;
             submit_info.signalSemaphoreCount = 0;
@@ -186,11 +190,15 @@ public:
         }
 
         vk_graphics_queue.submit({submit_info}, *vk_in_flight_fence);
+        return true;
+    }
 
-        if (!rendering_succeeded) {
-            LOGIFACE_LOG(trace, "Gracefully skipping presentation because rendering did not succeed.");
-            return true;
-        }
+    [[nodiscard]] bool Present(std::uint32_t image_index) override {
+        LOGIFACE_LOG(trace, "entering Present with image index " + std::to_string(image_index));
+        if (!device_ || !swapchain_) return false;
+
+        const vk::raii::Queue& vk_graphics_queue = device_->GetGraphicsQueue();
+        const vk::raii::Semaphore& vk_render_finished_semaphore = GetRenderFinishedSemaphore(image_index);
 
         vk::PresentInfoKHR present_info{};
         present_info.waitSemaphoreCount = 1;
@@ -214,6 +222,17 @@ public:
         swapchain_->GetImageInitializedFlags()[image_index] = true;
         LOGIFACE_LOG(trace, "leaving Present successfully.");
         return true;
+    }
+
+    [[nodiscard]] bool IsFrameComplete(std::uint32_t frame_idx) override {
+        if (!device_ || !swapchain_) return false;
+        try {
+            const auto status = device_->GetDevice().waitForFences(
+                *device_->GetInFlightFence(frame_idx), vk::True, 0);
+            return status == vk::Result::eSuccess;
+        } catch (...) {
+            return false;
+        }
     }
 
     void Shutdown() override {

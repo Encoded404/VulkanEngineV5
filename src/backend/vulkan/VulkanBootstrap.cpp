@@ -157,11 +157,27 @@ bool VulkanBootstrap::AcquireNextImage(std::uint32_t& out_image_index) {
     return backend_->AcquireNextImage(snapshot_.frame_index, out_image_index);
 }
 
-bool VulkanBootstrap::Present(std::uint32_t image_index, bool rendering_succeeded) {
+bool VulkanBootstrap::SubmitFrame(const std::uint32_t image_index, const bool rendering_succeeded) {
     if (!initialized_ || !backend_) {
         return false;
     }
-    return backend_->Present(snapshot_.frame_index, image_index, rendering_succeeded);
+    // The frame counter in the snapshot is the monotonic iteration index; the
+    // submit targets the per-slot resources indexed by `frame_index % FIF`.
+    return backend_->SubmitFrame(snapshot_.frame_index, image_index, rendering_succeeded);
+}
+
+bool VulkanBootstrap::Present(const std::uint32_t image_index) {
+    if (!initialized_ || !backend_) {
+        return false;
+    }
+    return backend_->Present(image_index);
+}
+
+bool VulkanBootstrap::IsFrameComplete(const std::uint32_t frame_idx) const {
+    if (!initialized_ || !backend_) {
+        return false;
+    }
+    return backend_->IsFrameComplete(frame_idx);
 }
 
 void VulkanBootstrap::NotifyDeviceLost() {

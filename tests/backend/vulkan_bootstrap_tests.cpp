@@ -67,7 +67,9 @@ public:
     [[nodiscard]] const vk::raii::Image& GetDepthImage(uint32_t) const override { throw std::runtime_error("Fake"); }
 
     [[nodiscard]] bool AcquireNextImage(uint32_t, uint32_t&) override { return true; }
-    [[nodiscard]] bool Present(uint32_t, uint32_t, bool) override { return true; }
+    [[nodiscard]] bool SubmitFrame(uint32_t, uint32_t, bool) override { return true; }
+    [[nodiscard]] bool Present(uint32_t) override { return true; }
+    [[nodiscard]] bool IsFrameComplete(uint32_t) override { return true; }
 
     void Shutdown() override { shutdown_called = true; }
 

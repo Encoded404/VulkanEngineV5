@@ -54,7 +54,14 @@ public:
 
     // RenderGraph support
     [[nodiscard]] virtual bool AcquireNextImage(std::uint32_t frame_idx, std::uint32_t& out_image_index) = 0; // Modified
-    [[nodiscard]] virtual bool Present(std::uint32_t frame_idx, std::uint32_t image_index, bool rendering_succeeded) = 0; // Modified
+    // Resets the per-slot fence and queues the frame's command buffer for GPU
+    // execution. Does NOT present; the image stays app-owned until Present().
+    [[nodiscard]] virtual bool SubmitFrame(std::uint32_t frame_idx, std::uint32_t image_index, bool rendering_succeeded) = 0;
+    // Queues vkQueuePresentKHR for a previously submitted image. The present
+    // waits on that image's render-finished semaphore (signaled by SubmitFrame).
+    [[nodiscard]] virtual bool Present(std::uint32_t image_index) = 0;
+    // Non-blocking query: has all command work of frame frame_idx completed?
+    [[nodiscard]] virtual bool IsFrameComplete(std::uint32_t frame_idx) = 0;
 
     virtual void Shutdown() = 0;
 };
@@ -74,7 +81,9 @@ public:
 
     // RenderGraph support
     [[nodiscard]] bool AcquireNextImage(std::uint32_t& out_image_index);
-    [[nodiscard]] bool Present(std::uint32_t image_index, bool rendering_succeeded); // Modified
+    [[nodiscard]] bool SubmitFrame(std::uint32_t image_index, bool rendering_succeeded);
+    [[nodiscard]] bool Present(std::uint32_t image_index);
+    [[nodiscard]] bool IsFrameComplete(std::uint32_t frame_idx) const;
 
     // Direct access to backend for custom rendering
     [[nodiscard]] IVulkanBootstrap& GetBackend() { return *backend_; }

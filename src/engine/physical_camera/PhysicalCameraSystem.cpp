@@ -425,6 +425,17 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
 void PhysicalCameraSystem::Shutdown() {
     if (!impl_) return;
 
+    // The system owns every binding and target it handed out; close them all
+    // here so apps don't have to unwind their camera resources manually.
+    for (auto& target : impl_->targets) {
+        target.valid = false;
+        target.generation++;
+    }
+    for (auto& binding : impl_->bindings) {
+        binding.valid = false;
+        binding.generation++;
+    }
+
     for (auto& stream : impl_->streams) {
         if (!stream) continue;
         StopWorker(*stream);

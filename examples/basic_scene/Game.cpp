@@ -318,11 +318,6 @@ void DemoGame::OnFrameRender(const VulkanEngine::Application::ApplicationContext
 
 void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
 #ifdef VKENGINE_PHYSICAL_CAMERA
-    if (auto* phys = engine_game_.GetPhysicalCameraSystem(); phys) {
-        phys->Unbind(cam_binding_);
-        phys->DestroyTarget(cam_target_);
-        phys->Close(cam_handle_);
-    }
     imgui_camera_draw_handle_ = {};
 #endif
     imgui_draw_handle_ = {};

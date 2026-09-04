@@ -54,7 +54,7 @@ VSOutput main(uint vertexId : SV_VertexID, uint baseVertex : SV_StartVertexLocat
     VertEntry info = submeshInfo[NonUniformResourceIndex(block)][elemIndex];
     result.outM = info.materialId;
     result.outOrm = info.ormPacked;
-    result.outN = n;
+    result.outN = mul(n, (float3x3)info.modelMatrix);
     result.outT = t;
     result.outW = mul(float4(p, 1.0), info.modelMatrix).xyz;
     result.position = mul(float4(p, 1.0), info.MVP);

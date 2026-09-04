@@ -37,7 +37,11 @@ struct VulkanBootstrapConfig {
     std::uint32_t api_major = 1;
     std::uint32_t api_minor = 3;
     std::uint32_t api_patch = 0;
+#ifdef NDEBUG
+    bool enable_validation = false;
+#else
     bool enable_validation = true;
+#endif
     std::uint32_t frames_in_flight = 3;
     std::uint32_t preferred_swapchain_image_count = 3;
     PresentMode present_mode = PresentMode::Mailbox;

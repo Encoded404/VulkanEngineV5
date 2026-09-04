@@ -273,13 +273,6 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 }
 
 void Renderer::Shutdown() {
-    if (bootstrap_) {
-        try {
-            bootstrap_->GetBackend().GetDevice().waitIdle();
-        } catch (const std::exception& err) {
-            LOGIFACE_LOG(error, "Error during Renderer shutdown: " + std::string(err.what()));
-        }
-    }
     gpu_stats_pool_.reset();
     if (pipeline_) {
         pipeline_->Shutdown();

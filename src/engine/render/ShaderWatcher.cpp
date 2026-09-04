@@ -12,6 +12,7 @@ import std.compat;
 import logiface;
 
 import VulkanEngine.ShaderManager;
+import VulkanShared.Teardown;
 
 namespace VulkanEngine::ShaderSystem {
 
@@ -76,6 +77,22 @@ void ShaderWatcher::Start() {
 }
 
 void ShaderWatcher::Stop() {
+    Quiesce();
+    impl_.reset(); // ~FileWatcher stops and joins its internal thread
+}
+
+void ShaderWatcher::StopAsync() {
+    Quiesce();
+    // Quiesce() guarantees no thread can reach `shaders_` anymore, so dropping
+    // the efsw watcher (whose internal thread join can block for its poll
+    // interval) on a detached thread is safe: the join owns nothing else.
+    auto orphan = std::move(impl_);
+    if (orphan) {
+        VulkanShared::RunDetached([orphan = std::move(orphan)]() mutable { orphan.reset(); });
+    }
+}
+
+void ShaderWatcher::Quiesce() {
     {
         std::unique_lock lock(mutex_);
         stop_.store(true, std::memory_order_release);
@@ -85,10 +102,15 @@ void ShaderWatcher::Stop() {
     if (debounce_thread_.joinable()) {
         debounce_thread_.join();
     }
-    impl_.reset(); // ~FileWatcher stops and joins its internal thread
 }
 
 void ShaderWatcher::OnFileChanged(const std::string& filename) {
+    // All shader-manager access happens under mutex_ and is gated by stop_ so
+    // that once Quiesce()/Stop() returns, no efsw callback can race the
+    // destruction of the shader manager.
+    std::unique_lock lock(mutex_);
+    if (stop_.load(std::memory_order_acquire)) return;
+
     const auto id = shaders_.FindBySlangFilename(filename);
     if (id == static_cast<ShaderId>(-1)) return;
 
@@ -96,10 +118,7 @@ void ShaderWatcher::OnFileChanged(const std::string& filename) {
     const std::string slang_path = slot.slang_path;
     LOGIFACE_LOG(debug, "ShaderWatcher: file changed: " + slang_path);
 
-    {
-        std::unique_lock lock(mutex_);
-        pending_reloads_[slang_path] = std::chrono::steady_clock::now() + kReloadDebounce;
-    }
+    pending_reloads_[slang_path] = std::chrono::steady_clock::now() + kReloadDebounce;
     cv_.notify_one();
 }
 

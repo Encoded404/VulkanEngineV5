@@ -15,6 +15,7 @@ import VulkanBackend.Platform.SdlPlatform;
 import VulkanBackend.Platform.SdlPlatformBackend;
 import VulkanBackend.Vulkan.FrameLoop;
 import VulkanShared.CallbackList;
+import VulkanShared.ScopedSection;
 import VulkanShared.Timer;
 import VulkanEngine.Input;
 import VulkanBackend.Vulkan.VulkanBootstrap;
@@ -51,6 +52,15 @@ export namespace VulkanEngine::Application {
     auto cleanup = [&]() {
         VulkanShared::Timer t{true};
         double prev = 0.0;
+        if (bootstrap_initialized && bootstrap) {
+            VulkanShared::ScopedSection drain{
+                "shutdown: gpu drain",
+                [](const std::string& section, double ms) {
+                    LOGIFACE_LOG(debug, section + ": " + std::to_string(ms) + " ms");
+                }};
+            bootstrap->GetBackend().GetDevice().waitIdle();
+            prev = t.ElapsedMs();
+        }
         if (setup_completed) {
             hooks.on_shutdown.Call(context);
             const double current = t.ElapsedMs();

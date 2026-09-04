@@ -9,6 +9,9 @@ import std.compat;
 import logiface;
 import vulkan_hpp;
 
+import VulkanShared.ScopedSection;
+import VulkanShared.Teardown;
+
 import VulkanEngine.BindlessManager;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
@@ -28,6 +31,16 @@ import VulkanEngine.PhysicalCameraSystem;
 #endif
 
 namespace VulkanEngine {
+
+namespace {
+
+VulkanShared::ScopedSection DebugSection(const std::string& name) {
+    return VulkanShared::ScopedSection{name, [](const std::string& section, double ms) {
+        LOGIFACE_LOG(debug, section + ": " + std::to_string(ms) + " ms");
+    }};
+}
+
+} // anonymous namespace
 
 bool EngineBootstrap::Initialize(EngineContext& ctx,
                                   const GameConfig& config,
@@ -103,62 +116,158 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 
 void EngineBootstrap::Shutdown(EngineContext& ctx,
                                 VulkanBackend::Vulkan::VulkanBootstrap& backend) {
-    try {
-        backend.GetBackend().GetDevice().waitIdle();
-    } catch (...) {
-        LOGIFACE_LOG(warn, "Exception during GPU wait idle in EngineBootstrap shutdown");
+    {
+        auto s = DebugSection("engineshutdown.wait_idle");
+        try {
+            backend.GetBackend().GetDevice().waitIdle();
+        } catch (...) {
+            LOGIFACE_LOG(warn, "Exception during GPU wait idle in EngineBootstrap shutdown");
+        }
     }
 
+    // Everything below owns GPU resources (safe to destroy now that the device is
+    // idle) and, except for the two edges noted below, destroys disjoint state,
+    // so subsystems are torn down in parallel on a small worker pool.
+    //
+    // Dependency edges:
+    //   - imgui_backend  -> imgui_system: both touch the same shared backend object.
+    //   - shader_manager -> shader_watcher: the watcher's efsw thread may be inside
+    //     OnFileChanged(); StopAsync() quiesces it before the manager is destroyed.
+    const std::size_t worker_count =
+        std::min<std::size_t>(4, std::max<std::size_t>(2, std::thread::hardware_concurrency()));
+    VulkanShared::TeardownScheduler teardown{worker_count};
+
+    std::optional<VulkanShared::TeardownId> shader_watcher_id;
     if (ctx.shader_watcher) {
-        ctx.shader_watcher->Stop();
-        ctx.shader_watcher.reset();
+        shader_watcher_id = teardown.Add("engineshutdown.shader_watcher", [&ctx] {
+            auto s = DebugSection("engineshutdown.shader_watcher");
+            ctx.shader_watcher->StopAsync();
+            ctx.shader_watcher.reset();
+        });
     }
+
     if (ctx.pipeline_factory) {
-        ctx.pipeline_factory.reset();
+        teardown.Add("engineshutdown.pipeline_factory", [&ctx] {
+            auto s = DebugSection("engineshutdown.pipeline_factory");
+            ctx.pipeline_factory.reset();
+        });
     }
 
     if (ctx.renderer) {
-        ctx.renderer->Shutdown();
-        ctx.renderer.reset();
+        teardown.Add("engineshutdown.renderer", [&ctx] {
+            auto s = DebugSection("engineshutdown.renderer");
+            ctx.renderer->Shutdown();
+            ctx.renderer.reset();
+        });
     }
+
+    std::optional<VulkanShared::TeardownId> imgui_system_id;
     if (ctx.imgui_system) {
-        ctx.imgui_system->Shutdown();
-        ctx.imgui_system.reset();
+        imgui_system_id = teardown.Add("engineshutdown.imgui_system", [&ctx] {
+            auto s = DebugSection("engineshutdown.imgui_system");
+            ctx.imgui_system->Shutdown();
+            ctx.imgui_system.reset();
+        });
     }
-    ctx.imgui_backend.reset();
+    if (ctx.imgui_backend) {
+        std::vector<VulkanShared::TeardownId> deps;
+        if (imgui_system_id) {
+            deps.push_back(*imgui_system_id);
+        }
+        teardown.Add("engineshutdown.imgui_backend",
+                     [&ctx] {
+                         auto s = DebugSection("engineshutdown.imgui_backend");
+                         ctx.imgui_backend.reset();
+                     },
+                     std::move(deps));
+    }
+
     if (ctx.scene_renderer) {
-        ctx.scene_renderer->Shutdown();
-        ctx.scene_renderer.reset();
+        teardown.Add("engineshutdown.scene_renderer", [&ctx] {
+            auto s = DebugSection("engineshutdown.scene_renderer");
+            ctx.scene_renderer->Shutdown();
+            ctx.scene_renderer.reset();
+        });
     }
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
     if (ctx.physical_camera) {
-        ctx.physical_camera->Shutdown();
-        ctx.physical_camera.reset();
+        teardown.Add("engineshutdown.physical_camera", [&ctx] {
+            auto s = DebugSection("engineshutdown.physical_camera");
+            ctx.physical_camera->Shutdown();
+            ctx.physical_camera.reset();
+        });
     }
 #endif
 
     if (ctx.shader_manager) {
-        ctx.shader_manager.reset();
+        std::vector<VulkanShared::TeardownId> deps;
+        if (shader_watcher_id) {
+            deps.push_back(*shader_watcher_id);
+        }
+        teardown.Add("engineshutdown.shader_manager",
+                     [&ctx] {
+                         auto s = DebugSection("engineshutdown.shader_manager");
+                         ctx.shader_manager.reset();
+                     },
+                     std::move(deps));
     }
-    ctx.mesh_registry.Shutdown();
+
+    teardown.Add("engineshutdown.mesh_registry", [&ctx] {
+        auto s = DebugSection("engineshutdown.mesh_registry");
+        ctx.mesh_registry.Shutdown();
+    });
+
     if (ctx.mesh_manager) {
-        ctx.mesh_manager->Shutdown();
-        ctx.mesh_manager.reset();
+        teardown.Add("engineshutdown.mesh_manager", [&ctx] {
+            auto s = DebugSection("engineshutdown.mesh_manager");
+            ctx.mesh_manager->Shutdown();
+            ctx.mesh_manager.reset();
+        });
     }
-    for (auto& heap : ctx.dynamic_vertex_heaps) heap.Shutdown();
-    for (auto& heap : ctx.dynamic_index_heaps) heap.Shutdown();
-    ctx.staging_mgr.Shutdown();
-    ctx.vertex_heap.Shutdown();
-    ctx.index_heap.Shutdown();
+
+    teardown.Add("engineshutdown.dynamic_heaps", [&ctx] {
+        auto s = DebugSection("engineshutdown.dynamic_heaps");
+        for (auto& heap : ctx.dynamic_vertex_heaps) heap.Shutdown();
+        for (auto& heap : ctx.dynamic_index_heaps) heap.Shutdown();
+    });
+
+    teardown.Add("engineshutdown.staging_manager", [&ctx] {
+        auto s = DebugSection("engineshutdown.staging_manager");
+        ctx.staging_mgr.Shutdown();
+    });
+
+    teardown.Add("engineshutdown.static_heaps", [&ctx] {
+        auto s = DebugSection("engineshutdown.static_heaps");
+        ctx.vertex_heap.Shutdown();
+        ctx.index_heap.Shutdown();
+    });
+
     if (ctx.bindless_mgr) {
-        ctx.bindless_mgr->Shutdown();
-        ctx.bindless_mgr.reset();
+        teardown.Add("engineshutdown.bindless_manager", [&ctx] {
+            auto s = DebugSection("engineshutdown.bindless_manager");
+            ctx.bindless_mgr->Shutdown();
+            ctx.bindless_mgr.reset();
+        });
     }
-    ctx.material_mgr.Shutdown();
+
+    teardown.Add("engineshutdown.material_manager", [&ctx] {
+        auto s = DebugSection("engineshutdown.material_manager");
+        ctx.material_mgr.Shutdown();
+    });
+
     if (ctx.technique_mgr) {
-        ctx.technique_mgr->Shutdown();
-        ctx.technique_mgr.reset();
+        teardown.Add("engineshutdown.technique_manager", [&ctx] {
+            auto s = DebugSection("engineshutdown.technique_manager");
+            ctx.technique_mgr->Shutdown();
+            ctx.technique_mgr.reset();
+        });
+    }
+
+    try {
+        teardown.Run();
+    } catch (const std::exception& err) {
+        LOGIFACE_LOG(warn, std::string("Exception during parallel engine shutdown: ") + err.what());
     }
 }
 

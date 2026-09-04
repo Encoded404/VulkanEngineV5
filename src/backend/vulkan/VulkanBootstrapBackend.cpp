@@ -13,11 +13,17 @@ import vulkan_hpp;
 import VulkanBackend.Vulkan.VulkanInstance;
 import VulkanBackend.Vulkan.VulkanDevice;
 import VulkanBackend.Vulkan.VulkanSwapchain;
-import VulkanShared.Timer;
+import VulkanShared.ScopedSection;
 
 namespace VulkanBackend::Vulkan {
 
 namespace {
+
+VulkanShared::ScopedSection DebugSection(const std::string& name) {
+    return VulkanShared::ScopedSection{name, [](const std::string& section, double ms) {
+        LOGIFACE_LOG(debug, section + ": " + std::to_string(ms) + " ms");
+    }};
+}
 
 class DefaultVulkanBootstrapBackend final : public IVulkanBootstrap {
 public:
@@ -236,25 +242,28 @@ public:
     }
 
     void Shutdown() override {
-        const ::VulkanShared::Timer t{true};
-        if (device_ && device_->IsValid()) {
-            device_->GetDevice().waitIdle();
+        {
+            auto s = DebugSection("wait for device idle before destroying resources in VulkanBootstrapBackend::Shutdown");
+            if (device_ && device_->IsValid()) {
+                device_->GetDevice().waitIdle();
+            }
         }
-        LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to wait for device idle in VulkanBootstrapBackend::Shutdown before destroying resources.");
 
-        render_finished_semaphores_.clear();
-        LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy render finished semaphores in VulkanBootstrapBackend::Shutdown.");
+        {
+            auto s = DebugSection("destroy render finished semaphores in VulkanBootstrapBackend::Shutdown");
+            render_finished_semaphores_.clear();
+        }
         if (swapchain_) {
+            auto s = DebugSection("shutdown swapchain in VulkanBootstrapBackend::Shutdown");
             swapchain_->Shutdown();
-            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown swapchain in VulkanBootstrapBackend::Shutdown.");
         }
         if (device_) {
+            auto s = DebugSection("shutdown device in VulkanBootstrapBackend::Shutdown");
             device_->Shutdown();
-            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown device in VulkanBootstrapBackend::Shutdown.");
         }
         if (instance_) {
+            auto s = DebugSection("shutdown instance in VulkanBootstrapBackend::Shutdown");
             instance_->Shutdown();
-            LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to shutdown instance in VulkanBootstrapBackend::Shutdown.");
         }
     }
 

@@ -17,6 +17,11 @@ public:
 
     void Start();
     void Stop();
+    // Like Stop(), but drops the efsw FileWatcher (whose internal thread join can
+    // block for its poll interval) on a detached thread. Safe only because Stop()
+    // first quiesces every path that touches the shader manager; the detached
+    // join owns no other resources. Never wait for completion afterwards.
+    void StopAsync();
 
     // Invoked from the efsw listener thread (internal use). Public only because
     // the listener type lives in the implementation file.
@@ -36,6 +41,9 @@ private:
 
     void DebounceLoop();
     void ReloadPath(const std::string& slang_path);
+    // Sets the stop flag, clears pending reloads, wakes and joins the debounce
+    // thread. After this returns, no efsw/debounce path can reach `shaders_`.
+    void Quiesce();
 };
 
 } // namespace VulkanEngine::ShaderSystem

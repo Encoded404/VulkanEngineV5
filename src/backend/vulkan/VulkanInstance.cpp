@@ -15,7 +15,7 @@ import logiface;
 
 import vulkan_hpp;
 
-import VulkanShared.Timer;
+import VulkanShared.ScopedSection;
 
 import VulkanBackend.Vulkan.VulkanCapabilities;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
@@ -23,6 +23,12 @@ import VulkanBackend.Vulkan.VulkanDebugUtils;
 namespace VulkanBackend::Vulkan {
 
 namespace {
+
+VulkanShared::ScopedSection DebugSection(const std::string& name) {
+    return VulkanShared::ScopedSection{name, [](const std::string& section, double ms) {
+        LOGIFACE_LOG(debug, section + ": " + std::to_string(ms) + " ms");
+    }};
+}
 
 bool IsNameSupported(const std::vector<vk::ExtensionProperties>& available, std::string_view name) {
     for (const auto& ext : available) {
@@ -196,13 +202,18 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 }
 
 void VulkanInstance::Shutdown() {
-    const VulkanShared::Timer t{true};
-    surface_.reset();
-    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy surface in VulkanInstance::Shutdown.");
-    instance_.reset();
-    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy instance in VulkanInstance::Shutdown.");
-    loader_.reset();
-    LOGIFACE_LOG(debug, "took " + std::to_string(t.ElapsedMs()) + " ms to destroy loader in VulkanInstance::Shutdown.");
+    {
+        auto s = DebugSection("destroy surface in VulkanInstance::Shutdown");
+        surface_.reset();
+    }
+    {
+        auto s = DebugSection("destroy instance in VulkanInstance::Shutdown");
+        instance_.reset();
+    }
+    {
+        auto s = DebugSection("destroy loader in VulkanInstance::Shutdown");
+        loader_.reset();
+    }
     window_ = nullptr;
 }
 

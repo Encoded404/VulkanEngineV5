@@ -32,4 +32,4 @@ private:
     static std::int64_t Now() noexcept;
 };
 
-} // namespace VulkanEngine::Utils
+} // namespace VulkanShared

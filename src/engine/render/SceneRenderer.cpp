@@ -763,11 +763,6 @@ void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
 }
 
 void SceneRenderer::Shutdown() {
-    if (backend_) {
-        try {
-            backend_->GetDevice().waitIdle();
-        } catch (const std::exception&) {} //NOLINT(bugprone-empty-catch)
-    }
     for (auto& fr : frames_) {
         fr.compact_dynamic.Shutdown();
         fr.compact_static.Shutdown();

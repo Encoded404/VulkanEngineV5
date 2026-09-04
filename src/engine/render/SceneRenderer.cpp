@@ -389,7 +389,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.compact_static.Initialize(be,
-                make_block_config(16, BLOCK_ENTRIES, {},
+                make_block_config(20, BLOCK_ENTRIES, {},   // StaticEntry: 4 u32 + orm_packed
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.bounding_spheres.Initialize(be,

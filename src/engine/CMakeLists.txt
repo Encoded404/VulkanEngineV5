@@ -195,6 +195,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             components/Camera.cppm
             components/MeshReference.cppm
             components/DynamicMesh.cppm
+            components/OrmOverride.cppm
             assets/FileLoaders/Mesh/BinMeshAssembler.cppm
             assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm

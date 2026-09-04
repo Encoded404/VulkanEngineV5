@@ -47,6 +47,7 @@ struct PSInput {
     [[vk::location(1)]] float2 texCoord : TEXCOORD1;
     [[vk::location(2)]] uint materialId : TEXCOORD2;
     [[vk::location(3)]] float3 worldPos : TEXCOORD3;
+    [[vk::location(4)]] uint ormPacked : TEXCOORD4;   // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic
 };
 
 // Cook-Torrance BRDF
@@ -84,11 +85,20 @@ float4 main(PSInput input) : SV_TARGET {
     float3 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
         .Sample(defaultSampler, input.texCoord).rgb;
 
-    float3 orm = float3(mat.ao_factor, mat.roughness_factor, mat.metallic_factor);
+    // Effective ORM factor layer, packed unorm8 by the CPU gather pass: the
+    // object's OrmOverride if present, else the material's own factors.
+    // Multiplied with the material's ORM texture per the glTF convention.
+    float3 orm_factors = float3(
+        float(input.ormPacked & 0xFFu),
+        float((input.ormPacked >> 8) & 0xFFu),
+        float((input.ormPacked >> 16) & 0xFFu)) / 255.0;
+
+    float3 orm = orm_factors;
     if (mat.orm_texture != 0) {
-        orm = allTextures[NonUniformResourceIndex(mat.orm_texture)]
+        orm *= allTextures[NonUniformResourceIndex(mat.orm_texture)]
             .Sample(defaultSampler, input.texCoord).rgb;
     }
+
     float ao = orm.r;
     float roughness = max(orm.g, 0.04);
     float metallic = orm.b;

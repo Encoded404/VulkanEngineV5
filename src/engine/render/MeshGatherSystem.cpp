@@ -18,12 +18,15 @@ import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshReference;
 import VulkanEngine.Components.DynamicMesh;
+import VulkanEngine.Components.OrmOverride;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshManager;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.MaterialManager.MaterialId;
 import VulkanEngine.TechniqueManager;
+import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 import VulkanEngine.BindlessManager;
 
 namespace VulkanEngine {
@@ -136,6 +139,16 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     frame_blocks.bounding_spheres->EnsureCapacity(total_submeshes);
     frame_blocks.bounding_obb->EnsureCapacity(total_submeshes);
 
+    // Pack ORM override factors into one u32: bits [7:0]=AO, [15:8]=roughness,
+    // [23:16]=metallic, [31:24]=spare. Unorm8 per channel, must match the
+    // unpacking in standard_mesh.slang.
+    const auto PackOrm8 = [](float ao, float roughness, float metallic) -> std::uint32_t {
+        const auto u8 = [](float v) -> std::uint32_t {
+            return static_cast<std::uint32_t>(glm::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+        };
+        return u8(ao) | (u8(roughness) << 8) | (u8(metallic) << 16);
+    };
+
     struct alignas(16) DynamicEntry {
         float px, py, pz, pad0;
         float sx, sy, sz, pad1;
@@ -146,6 +159,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::uint32_t index_range;
         std::uint32_t technique_material;  // packed: hi 16 = material_id, lo 16 = technique_id
         std::uint32_t vertex_info;
+        std::uint32_t orm_packed;          // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
     };
     struct alignas(16) OBBGPUEntry {
         float cx, cy, cz, pad0;
@@ -173,11 +187,34 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
         const glm::quat rot = e.transform ? e.transform->rotation : glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
 
+        // Per-object ORM override: values multiply with the material's ORM texture.
+        // The component applies to all submeshes of the entity; when absent, each
+        // submesh falls back to its material's own factors (resolved per submesh).
+        const Components::OrmOverride* orm_override = nullptr;
+        if (e.mesh_ref && e.mesh_ref->GetOwner()) {
+            orm_override = e.mesh_ref->GetOwner()->GetComponent<Components::OrmOverride>();
+        }
+
         for (std::uint32_t s = 0; s < loaded->submesh_count; ++s) {
             const std::uint32_t si = loaded->first_submesh_in_renderer + s;
             const auto sm = (si < scene_submeshes.size())
                 ? scene_submeshes[si]
                 : SubMesh{};
+
+            float orm_ao = 1.0f;
+            float orm_roughness = 1.0f;
+            float orm_metallic = 1.0f;
+            if (orm_override) {
+                orm_ao = orm_override->ao;
+                orm_roughness = orm_override->roughness;
+                orm_metallic = orm_override->metallic;
+            } else if (material_mgr.GetTechniqueForMaterial(sm.material_id) != nullptr) {
+                const auto& mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(
+                    MaterialManager::MaterialId{sm.material_id.value});
+                orm_ao = mat.ao_factor;
+                orm_roughness = mat.roughness_factor;
+                orm_metallic = mat.metallic_factor;
+            }
 
             if (auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci))) {
                 d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
@@ -193,6 +230,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->technique_material = tech->PackMaterialData(sm.material_id.value);
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
+                s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
             }
 
             if (auto* sp = static_cast<glm::vec4*>(frame_blocks.bounding_spheres->Get(ci))) {
@@ -295,6 +333,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                         s2->technique_material = tech->PackMaterialData(sm.material_id.value);
                     }
                     s2->vertex_info = packed_vertex;
+                    // Dynamic meshes have no ORM override path yet — neutral values.
+                    s2->orm_packed = PackOrm8(1.0f, 1.0f, 1.0f);
                 } else {
                     LOGIFACE_LOG(warn, "ProcessFrame: compact_static->Get(" + std::to_string(ci) + ") returned null");
                 }

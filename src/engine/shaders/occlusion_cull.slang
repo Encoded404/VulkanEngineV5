@@ -3,6 +3,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;       // named materialId (was texSlot) — unused by occlusion cull
+    uint ormPacked;        // packed by expand pass, unused by occlusion cull
     float4x4 modelMatrix;  // unused by occlusion cull, must match main_indir size
 };
 

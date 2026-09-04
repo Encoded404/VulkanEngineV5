@@ -3,6 +3,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    uint ormPacked;         // unorm8 ORM factors packed by the CPU gather pass
     float4x4 modelMatrix;   // world matrix for per-vertex world-space position
 };
 
@@ -31,6 +32,7 @@ struct VSOutput {
     [[vk::location(1)]] float2 outT : TEXCOORD1;
     [[vk::location(2)]] uint outM : TEXCOORD2;
     [[vk::location(3)]] float3 outW : TEXCOORD3;    // world-space position
+    [[vk::location(4)]] uint outOrm : TEXCOORD4;    // packed unorm8 ORM factors
     float4 position : SV_Position;
 };
 
@@ -51,6 +53,7 @@ VSOutput main(uint vertexId : SV_VertexID, uint baseVertex : SV_StartVertexLocat
 
     VertEntry info = submeshInfo[NonUniformResourceIndex(block)][elemIndex];
     result.outM = info.materialId;
+    result.outOrm = info.ormPacked;
     result.outN = n;
     result.outT = t;
     result.outW = mul(float4(p, 1.0), info.modelMatrix).xyz;

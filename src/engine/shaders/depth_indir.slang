@@ -3,6 +3,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    uint ormPacked;         // packed by expand pass, unused by depth pass
     float4x4 modelMatrix;   // unused by depth pass, must match main_indir size
 };
 

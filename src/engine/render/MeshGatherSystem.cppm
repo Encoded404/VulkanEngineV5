@@ -15,6 +15,8 @@ export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.MaterialManager;
+export import VulkanEngine.TechniqueManager;
+export import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 export import VulkanEngine.BindlessManager;
 
 export namespace VulkanEngine {

@@ -15,6 +15,7 @@ struct StaticEntry {
     uint indexRange;
     uint techniqueMaterial; // packed: hi 16 = materialId, lo 16 = techniqueId
     uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
+    uint ormPacked;        // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
 };
 
 [[vk::binding(1, 0)]]
@@ -28,6 +29,7 @@ struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
+    uint ormPacked;         // unorm8 ORM factors packed by the CPU gather pass
     float4x4 modelMatrix;   // world matrix for per-vertex world-space position computation
 };
 
@@ -107,6 +109,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].MVP = mvp;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].maxScale = maxScaleVal;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].materialId = matId;
+    vertexConstants[NonUniformResourceIndex(block)][elemIndex].ormPacked =
+        staticMeshes[NonUniformResourceIndex(block)][elemIndex].ormPacked;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].modelMatrix = model;
 
     uint drawOffset;

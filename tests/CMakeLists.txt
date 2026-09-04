@@ -37,5 +37,5 @@ endfunction()
 
 add_subdirectory(backend)
 add_subdirectory(engine)
-add_subdirectory(app)
+add_subdirectory(runtime)
 add_subdirectory(shared)

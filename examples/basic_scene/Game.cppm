@@ -1,16 +1,16 @@
 module;
 
-export module App.Game;
+export module Examples.BasicScene.Game;
 
 import std;
 
 export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
 import VulkanEngine.GplPolicy;
-export import App.Components.SimpleControllerComponent;
-export import App.Components.TransformControlComponent;
+export import Examples.BasicScene.Components.SimpleControllerComponent;
+export import Examples.BasicScene.Components.TransformControlComponent;
 
-export namespace App::Game {
+export namespace Examples::BasicScene::Game {
 
 enum class RenderMode : std::uint8_t {
     Normal,
@@ -60,7 +60,7 @@ private:
     // Object selector for the debug panel: name + control component.
     struct ControllableObject {
         std::string name{};
-        App::Components::TransformControlComponent* component = nullptr;
+        Examples::BasicScene::Components::TransformControlComponent* component = nullptr;
     };
     std::vector<ControllableObject> controllable_objects_{};
     int selected_object_ = 0;
@@ -79,4 +79,4 @@ private:
 #endif
 };
 
-} // namespace App::Game
+} // namespace Examples::BasicScene::Game

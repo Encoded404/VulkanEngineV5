@@ -173,13 +173,9 @@ add_slang_shaders(
 )
 add_dependencies(${ENGINE_TARGET} ${ENGINE_TARGET}_shaders)
 
-add_custom_target(deploy_engine_shaders ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${_shader_gen_dir}/*.spv" "$<TARGET_FILE_DIR:${APP_TARGET}>/data/shaders"
-    DEPENDS ${ENGINE_TARGET}_shaders
-    COMMENT "Deploying engine SPIR-V shaders"
-)
+# Expose where the engine .spv files are generated so per-example deploy steps
+# (add_engine_example) can copy them next to each example executable.
+set_property(GLOBAL PROPERTY VKENGINE_ENGINE_SHADER_DIR "${_shader_gen_dir}")
 
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shaders SLANG_CPPM_FILES)
 

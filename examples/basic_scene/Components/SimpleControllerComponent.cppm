@@ -10,7 +10,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-export module App.Components.SimpleControllerComponent;
+export module Examples.BasicScene.Components.SimpleControllerComponent;
 
 import std;
 import logiface;
@@ -20,7 +20,7 @@ import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Input;
 import VulkanEngine.Components.Transform;
 
-export namespace App::Components {
+export namespace Examples::BasicScene::Components {
 
 class SimpleControllerComponent : public VulkanEngine::Component {
 public:

@@ -3,14 +3,14 @@ module;
 #include <glm/glm.hpp> //NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> //NOLINT(misc-include-cleaner)
 
-export module App.Components.TransformControlComponent;
+export module Examples.BasicScene.Components.TransformControlComponent;
 
 import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.Components.Transform;
 
-export namespace App::Components {
+export namespace Examples::BasicScene::Components {
 
 enum class RotationMode : std::uint8_t {
     Euler,

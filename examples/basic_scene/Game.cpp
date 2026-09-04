@@ -9,7 +9,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-module App.Game;
+module Examples.BasicScene.Game;
 
 import std;
 
@@ -20,14 +20,14 @@ import logiface;
 import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.GplPolicy;
-import App.Components.SimpleControllerComponent;
-import App.Components.TransformControlComponent;
+import Examples.BasicScene.Components.SimpleControllerComponent;
+import Examples.BasicScene.Components.TransformControlComponent;
 import Shaders.Engine.StandardMeshFrag;
-import Shaders.App.NormalsFrag;
-import Shaders.App.SolidFrag;
+import Shaders.BasicScene.NormalsFrag;
+import Shaders.BasicScene.SolidFrag;
 import VulkanEngine.ShaderManager;
 
-namespace App::Game {
+namespace Examples::BasicScene::Game {
 
 DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& executable_path,
                    std::filesystem::path model_path,
@@ -70,7 +70,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     VulkanEngine::GameConfig config{};
     config.enable_imgui = true;
     config.renderer_config.clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
-    config.shader_data_dir = (exe_dir_ / "data" / "shaders").string();
+    config.shader_data_dir = (exe_dir_ / "shaders").string();
     config.gpl_policy = gpl_policy_;
     config.gpl_structure = gpl_structure_;
 
@@ -82,8 +82,8 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
     auto standard_frag_id = engine_game_.GetContext().GetShaderIds().standard_mesh_frag;
 
-    auto normals_frag_id = Shaders::App::NormalsFrag::Register(shader_mgr, config.shader_data_dir);
-    auto solid_frag_id = Shaders::App::SolidFrag::Register(shader_mgr, config.shader_data_dir);
+    auto normals_frag_id = Shaders::BasicScene::NormalsFrag::Register(shader_mgr, config.shader_data_dir);
+    auto solid_frag_id = Shaders::BasicScene::SolidFrag::Register(shader_mgr, config.shader_data_dir);
 
     VulkanEngine::ShaderSystem::ShaderId frag_id;
     switch (render_mode_) {
@@ -194,7 +194,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.loaded_mesh_id = viking_id;
 
-        auto& debug_comp = component_registry.AddComponent<App::Components::TransformControlComponent>(entity);
+        auto& debug_comp = component_registry.AddComponent<Examples::BasicScene::Components::TransformControlComponent>(entity);
         debug_comp.position = glm::vec3{0.0f, 0.0f, 0.0f};
         controllable_objects_.push_back(ControllableObject{"Viking house", &debug_comp});
     }
@@ -203,7 +203,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
         auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.loaded_mesh_id = monkey_id;
-        component_registry.AddComponent<App::Components::SimpleControllerComponent>(entity, ctx.input_system);
+        component_registry.AddComponent<Examples::BasicScene::Components::SimpleControllerComponent>(entity, ctx.input_system);
     }
 #ifdef VKENGINE_PHYSICAL_CAMERA
     if (webcam_mesh_id_ != 0) {
@@ -212,7 +212,7 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
         mesh_ref.loaded_mesh_id = webcam_mesh_id_;
 
-        auto& debug_comp = component_registry.AddComponent<App::Components::TransformControlComponent>(entity);
+        auto& debug_comp = component_registry.AddComponent<Examples::BasicScene::Components::TransformControlComponent>(entity);
         debug_comp.position = glm::vec3{2.0f, 0.0f, 0.0f};
         controllable_objects_.push_back(ControllableObject{"Camera quad", &debug_comp});
     }
@@ -250,9 +250,9 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
             constexpr const char* modes[] = {"Euler (vec3)", "Quaternion (vec4)"}; // NOLINT(modernize-avoid-c-arrays)
             int mode = static_cast<int>(dc->rotation_mode);
             if (ImGui::Combo("Mode", &mode, modes, 2)) {
-                dc->rotation_mode = static_cast<App::Components::RotationMode>(mode);
+                dc->rotation_mode = static_cast<Examples::BasicScene::Components::RotationMode>(mode);
             }
-            if (dc->rotation_mode == App::Components::RotationMode::Euler) {
+            if (dc->rotation_mode == Examples::BasicScene::Components::RotationMode::Euler) {
                 ImGui::DragFloat3("Euler (deg)", &dc->rotation_euler.x, 1.0f);
             } else {
                 ImGui::DragFloat4("Quaternion", &dc->rotation_quat.x, 0.01f);
@@ -329,4 +329,4 @@ void DemoGame::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/
     engine_game_.Shutdown();
 }
 
-} // namespace App::Game
+} // namespace Examples::BasicScene::Game

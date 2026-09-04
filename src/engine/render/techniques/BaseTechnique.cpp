@@ -110,6 +110,9 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     LOGIFACE_LOG(debug, std::format("BaseTechnique: compiling technique (vert={}, frag={})",
                                     vert_id, frag_id));
 
+    // Size the pipeline retire ring to the pipeline depth configured on the device.
+    pipeline_slot_.SetFramesInFlight(bootstrap.GetBackend().GetFramesInFlight());
+
     // ── 1. Build descriptor set layout array ──
     // Engine sets 0-4 are always at layout slots 0-4
     std::vector<vk::DescriptorSetLayout> set_layouts = {

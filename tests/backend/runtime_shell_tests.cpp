@@ -8,7 +8,7 @@ using namespace VulkanBackend::Vulkan;
 
 TEST(FrameLoopTest, ResizeAndOutOfDateStatusesAreReported) {
     FrameLoop runtime{};
-    ASSERT_TRUE(runtime.Initialize(RuntimeConfig{.frames_in_flight = 3}));
+    ASSERT_TRUE(runtime.Initialize(RuntimeConfig{}));
 
     runtime.NotifyWindowResized();
     const auto resized = runtime.BeginFrame();

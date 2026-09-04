@@ -16,13 +16,10 @@ enum class RuntimeStatus : std::uint8_t {
     FatalError
 };
 
-struct RuntimeConfig {
-    std::uint32_t frames_in_flight = 2; // NOLINT(misc-non-private-member-variables-in-classes)
-};
+struct RuntimeConfig {};
 
 struct RuntimeFrameInfo {
     std::uint32_t frame_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t swapchain_image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     RuntimeStatus status = RuntimeStatus::Ok; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 

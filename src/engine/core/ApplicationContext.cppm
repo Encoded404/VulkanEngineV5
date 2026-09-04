@@ -21,6 +21,7 @@ export namespace VulkanEngine::Application {
 
 struct ApplicationFrameState {
     VulkanBackend::Vulkan::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::uint32_t frame_counter = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     float delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     bool render_success = true; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -41,6 +42,16 @@ struct ApplicationContext {
 struct ApplicationConfig {
     std::string app_name = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
     std::string log_level = "info"; // NOLINT(misc-non-private-member-variables-in-classes)
+    // ── Frame pipeline (single source of truth) ──
+    // Number of frames that may be in flight (CPU slots running ahead of the GPU).
+    // All engine rings, the device sync structures, and the pipeline depth are
+    // sized from this one value. Only 2 or 3 make practical sense.
+    std::uint32_t frames_in_flight = 3; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Swapchain image count. 0 = derive from present mode + frames_in_flight
+    // (FIFO -> frames_in_flight + 1, Mailbox/Immediate -> max(frames_in_flight, 2)).
+    // Values are clamped to the driver's min/max image counts during swapchain
+    // creation.
+    std::uint32_t swapchain_image_count = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Platform::PlatformConfig platform_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)

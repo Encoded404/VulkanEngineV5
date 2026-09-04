@@ -33,8 +33,6 @@ import VulkanEngine.PhysicalCameraSystem;
 
 export namespace VulkanEngine {
 
-inline constexpr std::uint32_t FRAMES_IN_FLIGHT_DYN = 3;
-
 struct GameConfig {
     StandardMeshPipeline::PipelineConfig pipeline_config{
         .depth_test_enable = true,
@@ -56,12 +54,14 @@ struct GameConfig {
 struct EngineContext {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
 
-    // GPU resources (constructed in order)
+    // GPU resources (constructed in order). The dynamic FIFO heap rings are
+    // runtime-sized: EngineBootstrap::Initialize resizes them to the device's
+    // configured frames in flight (backend.GetFramesInFlight()).
     GpuResources::StagingManager staging_mgr;
     GpuResources::DeviceBufferHeap vertex_heap;
     GpuResources::DeviceBufferHeap index_heap;
-    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN> dynamic_vertex_heaps;
-    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN> dynamic_index_heaps;
+    std::vector<GpuResources::DeviceBufferHeap> dynamic_vertex_heaps;
+    std::vector<GpuResources::DeviceBufferHeap> dynamic_index_heaps;
 
     // Rendering subsystems
     std::unique_ptr<BindlessManager::BindlessManager> bindless_mgr;

@@ -47,7 +47,6 @@ constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;
 
 class SceneRenderer {
 public:
-    static constexpr std::uint32_t FRAMES_IN_FLIGHT = 3;
     static constexpr std::uint32_t MAX_HIZ_MIPS = 12;
     static constexpr std::uint32_t MAX_VERTEX_BUFFERS = 64;
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
@@ -66,7 +65,8 @@ public:
                     std::uint32_t total_index_count,
                     ShaderSystem::ShaderManager& shader_mgr,
                     ShaderSystem::PipelineFactory& pipeline_factory,
-                    const EngineShaderIds& shader_ids);
+                    const EngineShaderIds& shader_ids,
+                    std::uint32_t frames_in_flight);
     void Shutdown();
 
     [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexDataLayout() const;
@@ -134,11 +134,11 @@ public:
     void SetViewProj(const glm::mat4& vp) { view_proj_ = vp; }
 
     [[nodiscard]] vk::Image GetHizImage(std::uint32_t frame_index) const {
-        const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
+        const auto& frame = frames_[frame_index % frames_in_flight_];
         return static_cast<vk::Image>(*frame.hiz_image);
     }
     [[nodiscard]] vk::ImageView GetHizFullView(std::uint32_t frame_index) const {
-        const auto& frame = frames_[frame_index % FRAMES_IN_FLIGHT];
+        const auto& frame = frames_[frame_index % frames_in_flight_];
         return static_cast<vk::ImageView>(*frame.hiz_full_view);
     }
     void UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view);
@@ -148,7 +148,7 @@ public:
 
     // Buffer access for render graph
     [[nodiscard]] vk::Buffer GetTechniqueDrawCommandsBuffer(std::uint32_t frame_index) const {
-        const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+        const auto& fr = frames_[frame_index % frames_in_flight_];
         return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
     }
 
@@ -318,7 +318,9 @@ private:
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 
-    std::array<FrameResources, FRAMES_IN_FLIGHT> frames_;
+    // Runtime-sized per-frame resource ring (see frames_in_flight_).
+    std::vector<FrameResources> frames_;
+    std::uint32_t frames_in_flight_ = 3;
     std::uint32_t current_entity_count_ = 0;
     glm::mat4 view_proj_{1.0f};
 };

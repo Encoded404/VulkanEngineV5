@@ -64,7 +64,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                                     std::uint32_t, std::uint32_t, std::uint32_t fi) {
     PollShaders(fi);
     view_proj_ = pm * vm;
-    const std::uint32_t f = fi % FRAMES_IN_FLIGHT;
+    const std::uint32_t f = fi % frames_in_flight_;
     auto& fr = frames_[f];
     const auto& dev = backend_->GetDevice();
 
@@ -186,7 +186,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 }
 
 void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     if (!depth_slot_.Get()) {
         LOGIFACE_LOG(warn, "DepthPrepass: depth pipeline is null, skipping");
         return;
@@ -204,7 +204,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     LOGIFACE_LOG(trace, std::format("DepthPrepass: bound pipeline 0x{:x}",
                                     HandleToU64(depth_slot_.Get())));
     const std::array<vk::DescriptorSet, 4> ds{
-        empty_sets_[fi % FRAMES_IN_FLIGHT].GetHandle(),
+        empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
         *fr.depth_indirection_set
@@ -226,7 +226,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         LOGIFACE_LOG(debug, "Render: current_entity_count_ is 0, skipping");
         return;
     }
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     const auto& dev = backend_->GetDevice();
 
     // Rebind indirection set to compacted buffer for main pass
@@ -319,7 +319,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
 void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
                                     const glm::mat4& vp, std::uint32_t fi) {
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     if (!cnt) {
         LOGIFACE_LOG(debug, "DispatchExpand: cnt is 0, skipping");
         return;
@@ -340,7 +340,7 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
 
 void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,
                                     std::uint32_t fi, std::uint32_t) {
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchHiZGen: current_entity_count_ is 0, skipping");
         return;
@@ -379,7 +379,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
 }
 
 void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchOcclusion: current_entity_count_ is 0, skipping");
         return;
@@ -403,7 +403,7 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
 }
 
 void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
-    auto& fr = frames_[fi % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[fi % frames_in_flight_];
     if (!current_entity_count_) {
         LOGIFACE_LOG(debug, "DispatchCollect: current_entity_count_ is 0, skipping");
         return;
@@ -552,7 +552,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
 
 void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {
     if (hiz_initialized_) return;
-    for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+    for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
         auto& f = frames_[i];
         const vk::ImageSubresourceRange hiz_range(
             vk::ImageAspectFlagBits::eColor, 0, hiz_mip_count_, 0, 1);

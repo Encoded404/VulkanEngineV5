@@ -55,7 +55,10 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
             vk::MemoryPropertyFlagBits::eHostVisible |
             vk::MemoryPropertyFlagBits::eHostCoherent;
 
-        for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT_DYN; ++i) {
+        const std::uint32_t fif = backend.GetBackend().GetFramesInFlight();
+        ctx.dynamic_vertex_heaps.resize(fif);
+        ctx.dynamic_index_heaps.resize(fif);
+        for (std::uint32_t i = 0; i < fif; ++i) {
             if (!ctx.dynamic_vertex_heaps[i].Initialize(vk_backend, dynamic_heap_config,
                 "dynamic_vertex_fifo" + std::to_string(i))) return false;
             if (!ctx.dynamic_index_heaps[i].Initialize(vk_backend, dynamic_heap_config,
@@ -68,7 +71,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
                                        &ctx.staging_mgr,
                                        ctx.dynamic_vertex_heaps.data(),
                                        ctx.dynamic_index_heaps.data(),
-                                       FRAMES_IN_FLIGHT_DYN)) {
+                                       static_cast<std::uint32_t>(ctx.dynamic_vertex_heaps.size()))) {
         return false;
     }
 

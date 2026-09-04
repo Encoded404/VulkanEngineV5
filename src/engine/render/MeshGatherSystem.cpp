@@ -88,7 +88,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     }
 
     {
-        const std::uint32_t dyn_fif = frame_index % 3;
+        const std::uint32_t dyn_fif = frame_index % mesh_mgr.GetFramesInFlight();
         for (auto& e : dyn_ents) {
             const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
             if (!gpu_info) {
@@ -216,7 +216,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // Write dynamic mesh entries
     const std::uint32_t static_vtx_count = vtx_heap.GetBufferCount();
     const std::uint32_t static_idx_count = idx_heap.GetBufferCount();
-    const std::uint32_t fif = frame_index % 3;
+    const std::uint32_t fif = frame_index % mesh_mgr.GetFramesInFlight();
 
     for (auto& e : dyn_ents) {
         const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);

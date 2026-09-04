@@ -110,6 +110,30 @@ export namespace VulkanEngine::Application {
         vk_backend = VulkanBackend::Vulkan::CreateVulkanBootstrapBackend();
         bootstrap = std::make_unique<VulkanBackend::Vulkan::VulkanBootstrap>(vk_backend);
         auto bootstrap_config = config.bootstrap_config;
+
+        // ── Frame pipeline is configured from the single ApplicationConfig ──
+        // frame-clock: the device sync rings (command buffers, fences, semaphores)
+        // and every engine FIF ring are sized from this value.
+        const std::uint32_t fif = std::clamp(config.frames_in_flight, 1u, 4u);
+        if (config.frames_in_flight != fif || config.frames_in_flight < 2) {
+            LOGIFACE_LOG(warn, "frames_in_flight=" + std::to_string(config.frames_in_flight) +
+                         " clamped to " + std::to_string(fif) + "; only 2 or 3 make practical sense");
+        }
+        bootstrap_config.frames_in_flight = fif;
+
+        if (config.swapchain_image_count >= 2) {
+            bootstrap_config.preferred_swapchain_image_count = config.swapchain_image_count;
+        } else {
+            // Derive from present mode: with FIFO the present queue holds an image
+            // until its VBlank turn, so it cannot be re-acquired meanwhile; Mailbox
+            // drops pending presents, so images become free as soon as the render
+            // completes.
+            const bool fifo_present =
+                bootstrap_config.present_mode == VulkanBackend::Vulkan::PresentMode::Fifo ||
+                bootstrap_config.present_mode == VulkanBackend::Vulkan::PresentMode::FifoRelaxed;
+            bootstrap_config.preferred_swapchain_image_count =
+                fifo_present ? fif + 1u : std::max(fif, 2u);
+        }
         bootstrap_config.native_window_handle = window;
         if (!bootstrap->Initialize(bootstrap_config)) {
             std::string bootstrap_message = "Vulkan bootstrap initialization failed";
@@ -213,6 +237,8 @@ export namespace VulkanEngine::Application {
             const auto now = std::chrono::steady_clock::now();
             context.frame.delta_time = std::chrono::duration<float>(now - previous_time).count();
             previous_time = now;
+
+            context.frame.frame_counter = bootstrap->GetSnapshot().frame_index;
 
             hooks.on_frame_update.Call(context);
 

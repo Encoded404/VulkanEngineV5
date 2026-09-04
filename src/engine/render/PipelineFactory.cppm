@@ -73,9 +73,12 @@ private:
 
 class PipelineSlot {
 public:
-    static constexpr std::uint32_t kMaxFramesInFlight = 3;
-
     PipelineSlot() = default;
+
+    // Runtime-sized retire ring. Must be called before the first Swap/Poll with
+    // the configured frames in flight; systems default to 3 until then. Retained
+    // pipelines are retired one FIF depth later, so a ring sized >= FIF is safe.
+    void SetFramesInFlight(std::uint32_t frames_in_flight);
 
     void Swap(PipelineProduct product, std::uint32_t frame_index);
 
@@ -93,7 +96,8 @@ public:
 
 private:
     PipelineProduct current_;
-    std::array<std::vector<PipelineProduct>, kMaxFramesInFlight> retiring_;
+    std::vector<std::vector<PipelineProduct>> retiring_{3};
+    std::uint32_t frames_in_flight_ = 3;
     std::uint64_t last_vert_version_{0};
     std::uint64_t last_frag_version_{0};
 };

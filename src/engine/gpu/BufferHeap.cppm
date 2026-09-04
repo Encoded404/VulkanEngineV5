@@ -49,8 +49,12 @@ public:
 
     DeviceBufferHeap(const DeviceBufferHeap&) = delete;
     DeviceBufferHeap& operator=(const DeviceBufferHeap&) = delete;
-    DeviceBufferHeap(DeviceBufferHeap&&) = delete;
-    DeviceBufferHeap& operator=(DeviceBufferHeap&&) = delete;
+    // Movable so the per-frame heap ring can be runtime-sized (frames in flight is
+    // configurable). All members (vector<Block>, TlsfAllocator, GpuBuffer) support
+    // default move: TLSF arena pointers reference the mapped GPU memory, which is
+    // stable across moving the owning objects.
+    DeviceBufferHeap(DeviceBufferHeap&&) noexcept = default;
+    DeviceBufferHeap& operator=(DeviceBufferHeap&&) noexcept = default;
 
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     const HeapConfig& config = {},

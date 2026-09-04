@@ -12,7 +12,6 @@ export namespace VulkanEngine::RenderGraph {
     ImportedFrameResources imported_resources) {
     return GraphExecutionContext{
         .frame_index = runtime_frame.frame_index,
-        .swapchain_image_index = runtime_frame.swapchain_image_index,
         .imported_resources = imported_resources,
     };
 }

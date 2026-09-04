@@ -31,7 +31,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 std::uint32_t tic,
                                 ShaderSystem::ShaderManager& shader_mgr,
                                 ShaderSystem::PipelineFactory& pipeline_factory,
-                                const EngineShaderIds& shader_ids) {
+                                const EngineShaderIds& shader_ids,
+                                const std::uint32_t frames_in_flight) {
     backend_ = &be;
     shader_mgr_ = &shader_mgr;
     pipeline_factory_ = &pipeline_factory;
@@ -39,6 +40,21 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     const auto& dev = be.GetDevice();
     const std::uint32_t idxc = std::max(tic, 1u);
     total_index_count_ = idxc;
+
+    // Size the per-frame resource ring to the configured pipeline depth. All
+    // descriptor pools and per-frame GPU resources scale with this count.
+    frames_in_flight_ = std::max(frames_in_flight, 1u);
+    frames_.resize(frames_in_flight_);
+    empty_sets_.clear();
+    empty_sets_.reserve(frames_in_flight_);
+
+    // Size every pipeline retire ring consistently with the frame depth.
+    expand_slot_.SetFramesInFlight(frames_in_flight_);
+    occlusion_slot_.SetFramesInFlight(frames_in_flight_);
+    hiz_slot_.SetFramesInFlight(frames_in_flight_);
+    collect_count_slot_.SetFramesInFlight(frames_in_flight_);
+    collect_write_slot_.SetFramesInFlight(frames_in_flight_);
+    depth_slot_.SetFramesInFlight(frames_in_flight_);
 
     // Set 1: SubmeshVertexData (block array, simple layout)
     {
@@ -52,8 +68,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *submesh_vertex_layout_, "submesh-vertex-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT;
-        pc.max_storage_buffers = FRAMES_IN_FLIGHT * MAX_BLOCKS;
+        pc.max_sets = frames_in_flight_;
+        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS;
         submesh_vertex_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
     }
@@ -80,12 +96,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *raw_vertex_layout_, "raw-vertex-layout");
 
         const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_VERTEX_BUFFERS
+            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * MAX_VERTEX_BUFFERS
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                         vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = FRAMES_IN_FLIGHT;
+        pool_ci.maxSets = frames_in_flight_;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         raw_vertex_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
@@ -105,12 +121,9 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             fr.bindless_vertex_set = std::move(sets[0]);
         }
 
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[0].bindless_vertex_set, "bindless-vertex-frame-0");
-        if constexpr (FRAMES_IN_FLIGHT > 1) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[1].bindless_vertex_set, "bindless-vertex-frame-1");
-        }
-        if constexpr (FRAMES_IN_FLIGHT > 2) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[2].bindless_vertex_set, "bindless-vertex-frame-2");
+        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
+            VulkanBackend::Vulkan::SetVulkanObjectName(
+                dev, frames_[i].bindless_vertex_set, "bindless-vertex-frame-" + std::to_string(i));
         }
 
         // Write initial static blocks into ALL frame vertex sets
@@ -148,12 +161,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         indirection_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
         const vk::DescriptorPoolSize indir_ps{
-            vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * 2
+            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * 2
         };
         vk::DescriptorPoolCreateInfo indir_pool_ci{};
         indir_pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                               vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        indir_pool_ci.maxSets = FRAMES_IN_FLIGHT * 2;
+        indir_pool_ci.maxSets = frames_in_flight_ * 2;
         indir_pool_ci.poolSizeCount = 1;
         indir_pool_ci.pPoolSizes = &indir_ps;
         indirection_raw_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, indir_pool_ci);
@@ -182,12 +195,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *bindless_index_layout_, "bindless-index-layout");
 
         const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, FRAMES_IN_FLIGHT * MAX_INDEX_BUFFERS
+            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * MAX_INDEX_BUFFERS
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                         vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = FRAMES_IN_FLIGHT;
+        pool_ci.maxSets = frames_in_flight_;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &ps;
         bindless_index_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
@@ -207,12 +220,9 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             fr.bindless_index_set = std::move(sets[0]);
         }
 
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[0].bindless_index_set, "bindless-index-frame-0");
-        if constexpr (FRAMES_IN_FLIGHT > 1) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[1].bindless_index_set, "bindless-index-frame-1");
-        }
-        if constexpr (FRAMES_IN_FLIGHT > 2) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, frames_[2].bindless_index_set, "bindless-index-frame-2");
+        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
+            VulkanBackend::Vulkan::SetVulkanObjectName(
+                dev, frames_[i].bindless_index_set, "bindless-index-frame-" + std::to_string(i));
         }
     }
 
@@ -236,8 +246,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT;
-        pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS * 4 + 2);
+        pc.max_sets = frames_in_flight_;
+        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 4 + 2);
         expand_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         expand_pool_->SetDebugName(dev, "expand-pool");
     }
@@ -264,10 +274,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT;
-        pc.max_storage_buffers = FRAMES_IN_FLIGHT * MAX_BLOCKS * 4;
-        pc.max_sampled_images = FRAMES_IN_FLIGHT;
-        pc.max_combined_image_samplers = FRAMES_IN_FLIGHT;
+        pc.max_sets = frames_in_flight_;
+        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS * 4;
+        pc.max_sampled_images = frames_in_flight_;
+        pc.max_combined_image_samplers = frames_in_flight_;
         occlusion_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         occlusion_pool_->SetDebugName(dev, "occlusion-pool");
     }
@@ -290,8 +300,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT;
-        pc.max_storage_buffers = FRAMES_IN_FLIGHT * (MAX_BLOCKS + 3);
+        pc.max_sets = frames_in_flight_;
+        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS + 3);
         collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_pool_->SetDebugName(dev, "collect-pool");
     }
@@ -310,8 +320,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT + 1;
-        pc.max_storage_buffers = FRAMES_IN_FLIGHT * 5;
+        pc.max_sets = frames_in_flight_ + 1;
+        pc.max_storage_buffers = frames_in_flight_ * 5;
         collect_write_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_write_pool_->SetDebugName(dev, "collect-write-pool");
     }
@@ -322,11 +332,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         empty_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, empty_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *empty_layout_, "empty-layout");
         GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = FRAMES_IN_FLIGHT;
+        pc.max_sets = frames_in_flight_;
         empty_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         empty_pool_->SetDebugName(dev, "empty-pool");
-        empty_sets_.reserve(FRAMES_IN_FLIGHT);
-        for (std::uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        empty_sets_.reserve(frames_in_flight_);
+        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
             auto set = empty_pool_->Allocate(*empty_layout_);
             set.SetDebugName(dev, "empty-set-" + std::to_string(i));
             empty_sets_.push_back(std::move(set));
@@ -796,7 +806,7 @@ void SceneRenderer::UpdateVertexBufferArrayElement(std::uint32_t frame_index,
                                                      std::uint32_t buffer_index,
                                                      vk::Buffer buffer,
                                                      std::uint64_t size) {
-    const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    const auto& fr = frames_[frame_index % frames_in_flight_];
     if (!buffer) {
         LOGIFACE_LOG(warn, "UpdateVertexBufferArrayElement: null buffer for slot " +
                      std::to_string(buffer_index));
@@ -817,7 +827,7 @@ void SceneRenderer::UpdateIndexBufferArrayElement(std::uint32_t frame_index,
                                                     std::uint32_t buffer_index,
                                                     vk::Buffer buffer,
                                                     std::uint64_t size) {
-    const auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    const auto& fr = frames_[frame_index % frames_in_flight_];
     if (!buffer) {
         LOGIFACE_LOG(warn, "UpdateIndexBufferArrayElement: null buffer for slot " +
                      std::to_string(buffer_index));
@@ -837,7 +847,7 @@ void SceneRenderer::UpdateIndexBufferArrayElement(std::uint32_t frame_index,
 void SceneRenderer::UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index,
                                                               vk::Buffer buffer,
                                                               std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < FRAMES_IN_FLIGHT; ++fi) {
+    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
         UpdateVertexBufferArrayElement(fi, buffer_index, buffer, size);
     }
 }
@@ -845,7 +855,7 @@ void SceneRenderer::UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer
 void SceneRenderer::UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_index,
                                                              vk::Buffer buffer,
                                                              std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < FRAMES_IN_FLIGHT; ++fi) {
+    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
         UpdateIndexBufferArrayElement(fi, buffer_index, buffer, size);
     }
 }
@@ -870,7 +880,7 @@ void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,
 }
 
 void SceneRenderer::UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view) {
-    auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[frame_index % frames_in_flight_];
     if (!backend_) return;
     auto& dev = backend_->GetDevice();
     const vk::DescriptorImageInfo depth_info(
@@ -885,7 +895,7 @@ void SceneRenderer::UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageVi
 }
 
 SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(std::uint32_t frame_index) {
-    auto& fr = frames_[frame_index % FRAMES_IN_FLIGHT];
+    auto& fr = frames_[frame_index % frames_in_flight_];
     return {
         &fr.compact_dynamic,
         &fr.compact_static,

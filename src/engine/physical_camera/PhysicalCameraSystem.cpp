@@ -405,6 +405,9 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
     desc.color_formats = { vk::Format::eR8G8B8A8Unorm };
     impl->composite_desc = desc;
 
+    // Size the pipeline retire ring to the pipeline depth configured on the device.
+    impl->composite_slot.SetFramesInFlight(backend.GetFramesInFlight());
+
     auto result = pipeline_factory.CreateGraphics(desc, shader_manager);
     if (!result.has_value()) {
         LOGIFACE_LOG(error, "PhysicalCameraSystem: failed to create composite pipeline");

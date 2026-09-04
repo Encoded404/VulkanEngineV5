@@ -79,7 +79,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     ctx_.scene_renderer = std::make_unique<SceneRenderer::SceneRenderer>();
     if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_indirection_entries,
                                            ctx_.GetShaderManager(), ctx_.GetPipelineFactory(),
-                                           ctx_.GetShaderIds())) {
+                                           ctx_.GetShaderIds(), backend.GetFramesInFlight())) {
         LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
         return false;
     }
@@ -300,7 +300,11 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
     }
 
     {
-        const std::uint32_t frame_index = ctx.frame.image_index % 3;
+        // Index every engine FIF ring (dynamic mesh uploads, per-frame descriptors,
+        // frame block arrays) with the monotonic frame counter modulo the pipeline
+        // depth. Image indices must never drive FIF slot selection.
+        const std::uint32_t fif = ctx.bootstrap->GetBackend().GetFramesInFlight();
+        const std::uint32_t frame_index = ctx.frame.frame_counter % fif;
         ctx_.mesh_render_system.ProcessFrame(
             ctx_.component_registry,
             ctx_.mesh_registry,
@@ -328,7 +332,8 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     }
 
     if (ctx_.mesh_manager) {
-        ctx_.mesh_manager->EndFrame(ctx.frame.image_index % 3);
+        const std::uint32_t fif = ctx.bootstrap->GetBackend().GetFramesInFlight();
+        ctx_.mesh_manager->EndFrame(ctx.frame.frame_counter % fif);
     }
 
     // Flush dirty material data to GPU before rendering

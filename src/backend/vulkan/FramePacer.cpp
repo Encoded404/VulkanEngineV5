@@ -13,7 +13,6 @@ bool FrameLoop::Initialize(const RuntimeConfig& config) {
     }
 
     config_ = config;
-    config_.frames_in_flight = std::max(config_.frames_in_flight, 1u);
     frame_counter_ = 0;
     minimized_ = false;
     pending_status_ = RuntimeStatus::Ok;
@@ -33,7 +32,6 @@ RuntimeFrameInfo FrameLoop::BeginFrame() {
 
     RuntimeFrameInfo frame_info{};
     frame_info.frame_index = frame_counter_;
-    frame_info.swapchain_image_index = frame_counter_ % config_.frames_in_flight;
 
     if (minimized_) {
         frame_info.status = RuntimeStatus::Minimized;

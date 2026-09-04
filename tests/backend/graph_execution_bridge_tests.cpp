@@ -12,7 +12,6 @@ using namespace VulkanBackend::Vulkan;
 TEST(GraphExecutionBridgeTest, RuntimeFrameMapsToGraphExecutionContext) {
     const RuntimeFrameInfo runtime_frame{
         .frame_index = 4,
-        .swapchain_image_index = 1,
         .status = RuntimeStatus::Ok,
     };
 
@@ -22,7 +21,6 @@ TEST(GraphExecutionBridgeTest, RuntimeFrameMapsToGraphExecutionContext) {
     const auto graph_context = CreateGraphExecutionContext(runtime_frame, imported);
 
     EXPECT_EQ(graph_context.frame_index, runtime_frame.frame_index);
-    EXPECT_EQ(graph_context.swapchain_image_index, runtime_frame.swapchain_image_index);
     EXPECT_EQ(graph_context.imported_resources.backbuffer, imported.backbuffer);
 }
 

@@ -20,7 +20,6 @@ export namespace VulkanEngine {
 class MeshManager {
 public:
     static constexpr std::uint32_t INVALID_HANDLE = UINT32_MAX;
-    static constexpr std::uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
     enum class Strategy : std::uint8_t { Persistent, Streamed };
 
@@ -29,8 +28,11 @@ public:
         VulkanEngine::GpuResources::HeapAllocation index_allocation{};
         std::uint32_t vertex_buffer_index = 0;
         std::uint32_t index_buffer_index = 0;
-        std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_vertex_alloc{};
-        std::array<VulkanEngine::GpuResources::HeapAllocation, MAX_FRAMES_IN_FLIGHT> streamed_index_alloc{};
+        // Sized to the runtime frames in flight (see Initialize/RegisterStreamed);
+        // one mirrored allocation per FIF slot so each in-flight frame writes and
+        // reads an independent copy of the streamed geometry.
+        std::vector<VulkanEngine::GpuResources::HeapAllocation> streamed_vertex_alloc;
+        std::vector<VulkanEngine::GpuResources::HeapAllocation> streamed_index_alloc;
         std::vector<SubMesh> sub_meshes;
     };
 
@@ -77,6 +79,8 @@ public:
     [[nodiscard]] std::uint64_t GetDynamicIndexBlockSize(std::uint32_t fif_index) const;
     [[nodiscard]] std::uint32_t GetDynamicVertexBlockCount(std::uint32_t fif_index) const;
     [[nodiscard]] std::uint32_t GetDynamicIndexBlockCount(std::uint32_t fif_index) const;
+
+    [[nodiscard]] std::uint32_t GetFramesInFlight() const { return frames_in_flight_; }
 
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 

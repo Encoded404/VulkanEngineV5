@@ -124,10 +124,10 @@ bool SceneRenderer::CreateHiZPipeline(VulkanBackend::Vulkan::IVulkanBootstrap& b
     hiz_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
         dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
     GpuResources::DescriptorPoolConfig pc{};
-    pc.max_sets = FRAMES_IN_FLIGHT;
-    pc.max_storage_images = FRAMES_IN_FLIGHT * MAX_HIZ_MIPS;
-    pc.max_sampled_images = FRAMES_IN_FLIGHT;
-    pc.max_samplers = FRAMES_IN_FLIGHT;
+    pc.max_sets = frames_in_flight_;
+    pc.max_storage_images = frames_in_flight_ * MAX_HIZ_MIPS;
+    pc.max_sampled_images = frames_in_flight_;
+    pc.max_samplers = frames_in_flight_;
     hiz_pool_ = GpuResources::DescriptorPool::Create(be, pc);
     vk::PipelineLayoutCreateInfo li{};
     li.setLayoutCount = 1;

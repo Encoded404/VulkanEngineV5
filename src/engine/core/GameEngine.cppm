@@ -89,8 +89,8 @@ public:
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return ctx_.vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return ctx_.index_heap; }
     GpuResources::StagingManager& GetStagingManager() { return ctx_.staging_mgr; }
-    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN>& GetDynamicVertexHeaps() { return ctx_.dynamic_vertex_heaps; }
-    std::array<GpuResources::DeviceBufferHeap, FRAMES_IN_FLIGHT_DYN>& GetDynamicIndexHeaps() { return ctx_.dynamic_index_heaps; }
+    std::vector<GpuResources::DeviceBufferHeap>& GetDynamicVertexHeaps() { return ctx_.dynamic_vertex_heaps; }
+    std::vector<GpuResources::DeviceBufferHeap>& GetDynamicIndexHeaps() { return ctx_.dynamic_index_heaps; }
     MeshManager& GetMeshManager() { return *ctx_.mesh_manager; }
     MeshRegistry& GetMeshRegistry() { return ctx_.mesh_registry; }
     MeshRenderSystem& GetMeshRenderSystem() { return ctx_.mesh_render_system; }

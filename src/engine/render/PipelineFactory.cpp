@@ -37,16 +37,21 @@ PipelineProduct PipelineProduct::GPLLinked(
     return p;
 }
 
+void PipelineSlot::SetFramesInFlight(const std::uint32_t frames_in_flight) {
+    frames_in_flight_ = std::max(frames_in_flight, 1u);
+    retiring_.resize(frames_in_flight_);
+}
+
 void PipelineSlot::Swap(PipelineProduct product, std::uint32_t frame_index) {
     PipelineProduct retired = std::move(current_);
     current_ = std::move(product);
     if (retired.Get()) {
-        retiring_[frame_index % kMaxFramesInFlight].push_back(std::move(retired));
+        retiring_[frame_index % frames_in_flight_].push_back(std::move(retired));
     }
 }
 
 void PipelineSlot::RetireFrame(std::uint32_t frame_index) {
-    retiring_[frame_index % kMaxFramesInFlight].clear();
+    retiring_[frame_index % frames_in_flight_].clear();
 }
 
 vk::Pipeline PipelineSlot::Get() const {

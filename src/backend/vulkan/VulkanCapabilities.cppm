@@ -50,6 +50,7 @@ enum class Feature : std::uint16_t {
     DescriptorBindingSampledImageUpdateAfterBind,
     DescriptorBindingStorageBufferUpdateAfterBind,
     DescriptorBindingVariableDescriptorCount,
+    ScalarBlockLayout,  // scalar block layout for StructuredBuffers (Slang CDataLayout/ScalarDataLayout)
     // core 1.3
     DynamicRendering,
     PipelineCreationCacheControl,
@@ -107,6 +108,7 @@ inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count
     { "descriptorBindingSampledImageUpdateAfterBind", Requirement::Required },
     { "descriptorBindingStorageBufferUpdateAfterBind", Requirement::Required },
     { "descriptorBindingVariableDescriptorCount", Requirement::Required },
+    { "scalarBlockLayout", Requirement::Required },
     { "dynamicRendering", Requirement::Required },
     { "pipelineCreationCacheControl", Requirement::Required },
     { "graphicsPipelineLibrary", Requirement::Optional },

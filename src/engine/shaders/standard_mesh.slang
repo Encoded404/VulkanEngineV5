@@ -7,7 +7,8 @@ SamplerState defaultSampler;
 [[vk::push_constant]]
 float4 camera_position;
 
-// Scene header (set 4, binding 0)
+// Scene header (set 4, binding 0) — C layout matches the C++ mirror in
+// SceneRenderer.cppm (SceneHeader: 3 x float4 + uint = 52 B).
 struct SceneHeader {
     float4 ambient_color;
     float4 sun_direction;
@@ -16,7 +17,7 @@ struct SceneHeader {
 };
 
 [[vk::binding(0, 4)]]
-StructuredBuffer<SceneHeader> sceneHeader;
+StructuredBuffer<SceneHeader, CDataLayout> sceneHeader;
 
 // Light array (set 4, binding 1) — BlockArray-backed unbounded array
 struct Light {
@@ -27,9 +28,10 @@ struct Light {
 };
 
 [[vk::binding(1, 4)]]
-StructuredBuffer<Light> sceneLights[];
+StructuredBuffer<Light, CDataLayout> sceneLights[];
 
-// Per-material data (set 5, binding 0)
+// Per-material data (set 5, binding 0) — C layout matches the C++
+// DefaultMeshPerMaterialData (4 x u32 + 3 x f32 = 28 B).
 struct MaterialData {
     uint albedo_texture;
     uint normal_texture;
@@ -40,7 +42,7 @@ struct MaterialData {
 };
 
 [[vk::binding(0, 5)]]
-StructuredBuffer<MaterialData> materialBuffer[];
+StructuredBuffer<MaterialData, CDataLayout> materialBuffer[];
 
 struct PSInput {
     [[vk::location(0)]] float3 normal : TEXCOORD0;
@@ -48,6 +50,8 @@ struct PSInput {
     [[vk::location(2)]] uint materialId : TEXCOORD2;
     [[vk::location(3)]] float3 worldPos : TEXCOORD3;
     [[vk::location(4)]] uint ormPacked : TEXCOORD4;   // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic
+    [[vk::location(5)]] float3 tangent : TEXCOORD5;    // world-space tangent
+    [[vk::location(6)]] float handedness : TEXCOORD6;  // bitangent handedness, +1/-1
 };
 
 // Cook-Torrance BRDF
@@ -106,6 +110,19 @@ float4 main(PSInput input) : SV_TARGET {
     // Vectors
     float3 N = normalize(input.normal);
     float3 V = normalize(camera_position.xyz - input.worldPos);
+
+    // Tangent-space normal mapping (glTF convention: tangent xyz + bitangent
+    // sign w; bitangent reconstructed, never stored). The TBN frame is built
+    // from the interpolated geometric normal so the frame stays orthonormal
+    // even where the tangent drifts slightly from perpendicularity.
+    if (mat.normal_texture != 0) {
+        float3 t = normalize(input.tangent);
+        float3 b = cross(N, t) * input.handedness;
+        float3x3 TBN = float3x3(t, b, N);
+        float3 n_ts = allTextures[NonUniformResourceIndex(mat.normal_texture)]
+            .Sample(defaultSampler, input.texCoord).xyz * 2.0 - 1.0;
+        N = normalize(mul(normalize(n_ts), TBN));
+    }
 
     // Cook-Torrance BRDF
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);

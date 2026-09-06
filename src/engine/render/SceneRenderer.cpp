@@ -401,7 +401,13 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.submesh_vertex_data.Initialize(be,
-                make_block_config(144, BLOCK_ENTRIES,   // sizeof(VertEntry) = 144 (expanded with modelMatrix)
+                make_block_config(176, BLOCK_ENTRIES,   // sizeof(VertEntry) = 176, Slang CDataLayout
+                                                        // (scalar block layout): 64 MVP + 12 (maxScale/mat/orm)
+                                                        // + 64 modelMatrix + 36 normalMatrix. No padding —
+                                                        // matrices are 4B-aligned. Byte-identical to the
+                                                        // VertEntryGPU mirror + static_assert in
+                                                        // MeshGatherSystem.cpp. MUST match all VertEntry copies
+                                                        // in expand/main_indir/depth_indir/occlusion_cull slang.
                     vk::BufferUsageFlagBits::eTransferSrc,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
             fr.submesh_cull.Initialize(be,

@@ -14,6 +14,7 @@ import logiface;
 
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
+import VulkanEngine.Mesh.TangentGenerator;
 import VulkanEngine.MaterialManager.MaterialId;
 
 export namespace VulkanEngine::FileLoaders::Mesh {
@@ -139,6 +140,28 @@ public:
 
             if (mesh->vertices.empty()) {
                 throw std::runtime_error("ObjMeshAssembler: No vertices loaded from OBJ file");
+            }
+
+            // MikkTSpace tangent generation, per submesh, after dedup. Tangents
+            // accumulate across shared vertices; true UV seams were already
+            // split into distinct vertices by the (pos,normal,uv) dedup key.
+            mesh->tangents.resize(mesh->vertices.size());
+            mesh->tangent_handedness.resize(mesh->vertices.size(), 1.0f);
+            if (!mesh->uvs.empty()) {
+                bool all_generated = true;
+                for (const auto& sm : mesh->subMeshes) {
+                    all_generated &= VulkanEngine::TangentGen::GenerateSubmeshTangents(
+                        mesh->vertices, mesh->normals, mesh->uvs, mesh->indices,
+                        sm.index_start, sm.index_count,
+                        mesh->tangents, mesh->tangent_handedness);
+                }
+                if (!all_generated) {
+                    // MikkTSpace rejected the geometry; drop tangents so the
+                    // import path encodes a neutral frame instead of garbage.
+                    LOGIFACE_LOG(warn, "ObjMeshAssembler: MikkTSpace failed for submesh(es); tangents discarded");
+                    mesh->tangents.clear();
+                    mesh->tangent_handedness.clear();
+                }
             }
 
             prom->set_value(mesh);

@@ -54,6 +54,7 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     tinyobjloader::tinyobjloader
     imgui::imgui
     efsw::efsw
+    MikkTSpace
 )
 
 target_include_directories(${ENGINE_TARGET} PUBLIC ${Stb_INCLUDE_DIR})
@@ -186,6 +187,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         FILES
             input/InputSystem.cppm
             assets/MeshTypes.cppm
+            assets/NormalEncoding.cppm
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
             core/Startup.cppm
@@ -201,6 +203,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm
             assets/FileLoaders/Mesh/ObjMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshMagicLoader.cppm
+            assets/FileLoaders/Mesh/TangentGenerator.cppm
             assets/FileLoaders/Textures/TextureLoaders.cppm
             ui/ImGuiSystem.cppm
             render/Pipeline.cppm

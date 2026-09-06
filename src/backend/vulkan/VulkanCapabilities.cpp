@@ -40,6 +40,8 @@ bool VulkanCapabilitiesBuilder::GetSupportedFeature(const SupportedDeviceState& 
             return supported.vulkan12.descriptorBindingStorageBufferUpdateAfterBind == vk::True;
         case Feature::DescriptorBindingVariableDescriptorCount:
             return supported.vulkan12.descriptorBindingVariableDescriptorCount == vk::True;
+        case Feature::ScalarBlockLayout:
+            return supported.vulkan12.scalarBlockLayout == vk::True;
         case Feature::DynamicRendering:
             return supported.vulkan13.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
@@ -78,6 +80,8 @@ bool VulkanCapabilitiesBuilder::GetRequestedFeature(const VulkanCapabilities& ca
             return caps.vulkan12_features_.descriptorBindingStorageBufferUpdateAfterBind == vk::True;
         case Feature::DescriptorBindingVariableDescriptorCount:
             return caps.vulkan12_features_.descriptorBindingVariableDescriptorCount == vk::True;
+        case Feature::ScalarBlockLayout:
+            return caps.vulkan12_features_.scalarBlockLayout == vk::True;
         case Feature::DynamicRendering:
             return caps.vulkan13_features_.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
@@ -128,6 +132,9 @@ void VulkanCapabilitiesBuilder::SetRequestedFeature(VulkanCapabilities& caps, Fe
             break;
         case Feature::DescriptorBindingVariableDescriptorCount:
             caps.vulkan12_features_.descriptorBindingVariableDescriptorCount = bit;
+            break;
+        case Feature::ScalarBlockLayout:
+            caps.vulkan12_features_.scalarBlockLayout = bit;
             break;
         case Feature::DynamicRendering:
             caps.vulkan13_features_.dynamicRendering = bit;

@@ -310,6 +310,25 @@ message("finding SlangSpriVCompilerHelper")
 
 add_subdirectory("${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper" SlangSpriVCompilerHelper)
 
+# ----------------------------
+# MikkTSpace (tangent generation)
+# ----------------------------
+# Upstream ships no CMakeLists; build the two standalone C files as a library.
+# Kept unaltered per the upstream zlib-style license; the engine wraps them
+# behind VulkanEngine.Mesh.TangentGenerator.
+if(EXISTS "${CMAKE_SOURCE_DIR}/external/MikkTSpace/mikktspace.c")
+	# Project enables CXX only, so compile the C file as C++ — the extern "C"
+	# block in mikktspace.h keeps the ABI identical.
+	set_source_files_properties("${CMAKE_SOURCE_DIR}/external/MikkTSpace/mikktspace.c"
+		PROPERTIES LANGUAGE CXX)
+	add_library(MikkTSpace STATIC EXCLUDE_FROM_ALL
+		"${CMAKE_SOURCE_DIR}/external/MikkTSpace/mikktspace.c"
+	)
+	target_include_directories(MikkTSpace PUBLIC "${CMAKE_SOURCE_DIR}/external/MikkTSpace")
+else()
+	message(FATAL_ERROR "Missing MikkTSpace at external/MikkTSpace; run: git submodule update --init external/MikkTSpace")
+endif()
+
 option(CLANG_TIDY_ENABLED "Enable Clang-Tidy static analysis" ON)
 # disable Clang-Tidy if not using Clang or GCC
 if(CLANG_TIDY_ENABLED AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

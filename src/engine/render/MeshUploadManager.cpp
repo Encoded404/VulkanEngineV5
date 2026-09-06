@@ -64,8 +64,16 @@ MeshManager::Handle MeshManager::UploadPersistent(
         sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
     const std::uint64_t index_data_size = data.indices.size() * sizeof(std::uint32_t);
 
+    // Vertex allocations must be aligned to a multiple of the vertex stride:
+    // baseVertex in expand.slang is computed as offset / sizeof(Vertex) with
+    // integer division, so any offset that isn't a multiple of the stride
+    // truncates and every vertex of the mesh reads shifted bytes (squished
+    // geometry with far-flung vertices). 24 divides 240; use 240 so that the
+    // common 256-multiples elsewhere don't matter but the stride always does.
+    // 240 = LCM(24, 16) — also satisfies any 16B requirement, and divides 720/960.
+    constexpr std::uint64_t kVertexAlignment = 240ULL;
     constexpr std::uint64_t alignment = 256ULL;
-    auto vertex_alloc = vertex_heap_->Allocate(vertex_data_size, alignment);
+    auto vertex_alloc = vertex_heap_->Allocate(vertex_data_size, kVertexAlignment);
     if (!vertex_alloc.IsValid()) {
         LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex heap allocation failed");
         return handle;
@@ -157,6 +165,9 @@ MeshManager::Handle MeshManager::RegisterStreamed(
                  std::to_string(initial_data.sub_meshes.size()) + " submeshes, " +
                  std::to_string(frames_in_flight_) + " FIFs");
 
+    // Vertex allocations must be aligned to a multiple of sizeof(Vertex) (24):
+    // see the note in UploadPersistent. 240 = LCM(24, 16).
+    constexpr std::uint64_t kVertexAlignment = 240ULL;
     constexpr std::uint64_t alignment = 256ULL;
 
     auto normalized = initial_data;
@@ -170,7 +181,7 @@ MeshManager::Handle MeshManager::RegisterStreamed(
         auto& vtx_alloc = info.streamed_vertex_alloc[fif];
         auto& idx_alloc = info.streamed_index_alloc[fif];
 
-        vtx_alloc = dynamic_vertex_heaps_[fif].Allocate(vertex_bytes, alignment);
+        vtx_alloc = dynamic_vertex_heaps_[fif].Allocate(vertex_bytes, kVertexAlignment);
         if (!vtx_alloc.IsValid()) {
             for (std::uint32_t j = 0; j < fif; ++j) {
                 if (info.streamed_vertex_alloc[j].IsValid())

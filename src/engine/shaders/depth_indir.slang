@@ -1,23 +1,25 @@
-// Per-submesh transform constants (same layout as main vertex shader)
+// Per-submesh transform constants (same layout as main vertex shader).
+// C layout: byte-identical to the C++ mirror in MeshGatherSystem.cpp (176 B).
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;
     uint ormPacked;         // packed by expand pass, unused by depth pass
     float4x4 modelMatrix;   // unused by depth pass, must match main_indir size
+    float3x3 normalMatrix;  // unused by depth pass, must match main_indir size
 };
 
 [[vk::binding(0, 1)]]
-StructuredBuffer<VertEntry> submeshInfo[];
+StructuredBuffer<VertEntry, CDataLayout> submeshInfo[];
 
 struct Vertex {
     float px, py, pz;
-    float nx, ny, nz;
+    uint packedTBN;         // unused by depth pass (position-only fetch), layout must match main_indir
     float u, v;
 };
 
 [[vk::binding(0, 2)]]
-StructuredBuffer<Vertex> vertexBuffers[];
+StructuredBuffer<Vertex, CDataLayout> vertexBuffers[];
 
 struct IndirEntry {
     uint vid;
@@ -25,7 +27,7 @@ struct IndirEntry {
 };
 
 [[vk::binding(0, 3)]]
-StructuredBuffer<IndirEntry> indirectBuffer;
+StructuredBuffer<IndirEntry, CDataLayout> indirectBuffer;
 
 [shader("vertex")]
 float4 main(uint vertexId : SV_VertexID) : SV_Position {

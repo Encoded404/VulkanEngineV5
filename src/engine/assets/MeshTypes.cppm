@@ -63,6 +63,11 @@ export namespace VulkanEngine
         std::vector<MeshVertexVec3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<MeshVertexVec3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<MeshVertexVec2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
+        // MikkTSpace tangents + bitangent handedness (+1/-1), per-vertex,
+        // parallel to `normals`. Empty when the mesh has no UVs (tangent space
+        // is undefined without a texture domain) or generation failed.
+        std::vector<MeshVertexVec3> tangents; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<float> tangent_handedness; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<std::uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<SubMesh> subMeshes; //NOLINT(misc-non-private-member-variables-in-classes)
     };

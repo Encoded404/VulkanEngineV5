@@ -42,12 +42,23 @@ struct PipelineConfig {
 
 
 
+// Canonical vertex layout. Mirrored by the `Vertex` structs in
+// main_indir.slang and depth_indir.slang (SSBO vertex fetch — there are no
+// vertex attributes); those MUST be changed in lockstep with this struct.
 struct Vertex {
     float px, py, pz;       // position  (12 bytes)
-    float nx, ny, nz;       // normal    (12 bytes)
+    std::uint32_t packedTBN; // packed tangent frame (4 bytes):
+                            //   [31]    handedness (1 = -1.0)
+                            //   [30..21] tangent diamond d (10 bits)
+                            //   [19..10] octahedral normal y (10 bits)
+                            //   [9..0]  octahedral normal x (10 bits)
+                            //   [20]    spare (reserved)
+                            // see VulkanEngine.Mesh.NormalEncoding (pack) and
+                            // shaders/normal_encoding.slang (unpack)
     float u, v;             // texcoord  ( 8 bytes)
-    // Total: 32 bytes (8 uints)
+    // Total: 24 bytes (6 uints)
 };
+static_assert(sizeof(Vertex) == 24, "Vertex layout must match the Slang Vertex structs (main_indir.slang, depth_indir.slang)");
 
 struct MeshGPUResources {
     VulkanEngine::GpuResources::GpuBuffer vertex_buffer{};

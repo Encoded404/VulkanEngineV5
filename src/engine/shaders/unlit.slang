@@ -12,7 +12,7 @@ Texture2D<float4> allTextures[];
 SamplerState defaultSampler;
 
 // Per-material data (set 5, binding 0) — must match
-// TechniqueManager::DefaultMeshPerMaterialData.
+// TechniqueManager::DefaultMeshPerMaterialData. C layout: 28 bytes.
 struct MaterialData {
     uint albedo_texture;
     uint normal_texture;
@@ -23,7 +23,7 @@ struct MaterialData {
 };
 
 [[vk::binding(0, 5)]]
-StructuredBuffer<MaterialData> materialBuffer[];
+StructuredBuffer<MaterialData, CDataLayout> materialBuffer[];
 
 struct PSInput {
     [[vk::location(0)]] float3 normal : TEXCOORD0;

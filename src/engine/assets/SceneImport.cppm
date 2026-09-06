@@ -28,6 +28,12 @@ struct LoadedMeshData {
     std::vector<float> positions;
     std::vector<float> normals;
     std::vector<float> uvs;
+    // MikkTSpace tangents (xyz, unnormalized ok) + handedness (+1/-1),
+    // per-vertex, parallel to `normals`. May be empty when the mesh has no
+    // UVs — packedTBN then encodes a zero tangent (no tangent-space normal
+    // mapping for that mesh).
+    std::vector<float> tangents;
+    std::vector<float> tangent_handedness;
     std::vector<std::uint32_t> indices;
     std::vector<VulkanEngine::SubMesh> submeshes;
 };

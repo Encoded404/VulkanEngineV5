@@ -149,24 +149,52 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         return u8(ao) | (u8(roughness) << 8) | (u8(metallic) << 16);
     };
 
-    struct alignas(16) DynamicEntry {
+    // ── GPU mirror structs ──
+    // These are byte-identical to the Slang structs (CDataLayout buffers,
+    // scalar block layout device feature) in expand.slang. The static_asserts
+    // turn any layout drift between CPU and GPU struct definitions into a
+    // compile-time error instead of corrupted transforms.
+    // No alignas on these: the engine's BlockArray packs entries back-to-back
+    // at the exact stride, and scalar block layout requires no 16B struct
+    // alignment on the GPU side. Natural alignment only.
+    struct DynamicEntry {
         float px, py, pz, pad0;
         float sx, sy, sz, pad1;
         float rx, ry, rz, rw;
     };
-    struct alignas(16) StaticEntry {
+    static_assert(sizeof(DynamicEntry) == 48, "DynamicEntry must match Slang DynEntry (CDataLayout)");
+
+    struct StaticEntry {
         std::uint32_t index_start_packed;
         std::uint32_t index_range;
         std::uint32_t technique_material;  // packed: hi 16 = material_id, lo 16 = technique_id
         std::uint32_t vertex_info;
         std::uint32_t orm_packed;          // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
     };
-    struct alignas(16) OBBGPUEntry {
+    static_assert(sizeof(StaticEntry) == 20, "StaticEntry must match Slang StaticEntry (CDataLayout)");
+
+    struct OBBGPUEntry {
         float cx, cy, cz, pad0;
         float ux, uy, uz, hu;
         float vx, vy, vz, hv;
         float wx, wy, wz, hw;
     };
+    static_assert(sizeof(OBBGPUEntry) == 64, "OBBGPUEntry must match Slang OBBGPU (CDataLayout)");
+
+    // VertEntry mirror (written by the GPU expand pass, only sized here).
+    // Slang C layout: MVP@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
+    // + modelMatrix@76 (64B) + normalMatrix@140 (3 tightly packed float3 rows,
+    // 36B) = 176 bytes. No alignment padding — matrices sit on 4-byte
+    // boundaries, which is exactly what scalar block layout permits.
+    struct VertEntryGPU {
+        std::array<float, 16> mvp;           // 0
+        float max_scale;                     // 64
+        std::uint32_t material_id;           // 68
+        std::uint32_t orm_packed;            // 72
+        std::array<float, 16> model_matrix;  // 76
+        std::array<float, 9> normal_matrix;  // 140 (row-major, 12B row stride)
+    };
+    static_assert(sizeof(VertEntryGPU) == 176, "VertEntryGPU must match Slang VertEntry (CDataLayout)");
 
     std::uint32_t ci = 0;
 
@@ -179,6 +207,11 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         if (!gpu_info) continue;
 
         const std::uint32_t vertex_buf_slot = gpu_info->vertex_allocation.buffer_index;
+        // baseVertex must reconstruct the exact byte offset: integer division
+        // here truncates unless the allocation was stride-aligned (see
+        // kVertexAlignment in MeshUploadManager). Verify, don't hope.
+        assert(gpu_info->vertex_allocation.offset % sizeof(StandardMeshPipeline::Vertex) == 0 &&
+               "vertex allocation not stride-aligned; baseVertex would truncate");
         const std::uint32_t base_vertex = static_cast<std::uint32_t>(
             gpu_info->vertex_allocation.offset / sizeof(StandardMeshPipeline::Vertex));
         const std::uint32_t index_buf_slot = gpu_info->index_allocation.buffer_index;
@@ -273,6 +306,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         }
 
         const std::uint32_t vertex_buf_slot = static_vtx_count + vtx_alloc.buffer_index;
+        assert(vtx_alloc.offset % sizeof(StandardMeshPipeline::Vertex) == 0 &&
+               "streamed vertex allocation not stride-aligned; baseVertex would truncate");
         const std::uint32_t base_vertex = static_cast<std::uint32_t>(
             vtx_alloc.offset / sizeof(StandardMeshPipeline::Vertex));
         const std::uint32_t index_buf_slot = static_idx_count + idx_alloc.buffer_index;

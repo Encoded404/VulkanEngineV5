@@ -11,16 +11,16 @@ struct DrawIndirectCommand {
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<TechniqueResult> intermediateResults;
+StructuredBuffer<TechniqueResult, CDataLayout> intermediateResults;
 
 [[vk::binding(1, 0)]]
-RWStructuredBuffer<uint> tech_counts;
+RWStructuredBuffer<uint, CDataLayout> tech_counts;
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<uint> tech_offsets;
+RWStructuredBuffer<uint, CDataLayout> tech_offsets;
 
 [[vk::binding(3, 0)]]
-RWStructuredBuffer<DrawIndirectCommand> tech_cmds;
+RWStructuredBuffer<DrawIndirectCommand, CDataLayout> tech_cmds;
 
 struct WritePC {
     uint elementCount;

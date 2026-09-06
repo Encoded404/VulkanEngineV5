@@ -12,7 +12,7 @@ struct TechniqueResult {
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<CullEntry> cull[];
+StructuredBuffer<CullEntry, CDataLayout> cull[];
 
 struct IndirEntry {
     uint vertexId;
@@ -20,13 +20,13 @@ struct IndirEntry {
 };
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<IndirEntry> fullIndirect;
+StructuredBuffer<IndirEntry, CDataLayout> fullIndirect;
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<IndirEntry> compactedIndirect;
+RWStructuredBuffer<IndirEntry, CDataLayout> compactedIndirect;
 
 [[vk::binding(3, 0)]]
-RWStructuredBuffer<TechniqueResult> inter;
+RWStructuredBuffer<TechniqueResult, CDataLayout> inter;
 
 struct CollectPC {
     uint elementCount;

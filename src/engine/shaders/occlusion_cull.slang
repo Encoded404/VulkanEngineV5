@@ -1,14 +1,16 @@
-// Per-submesh transform and material info (written by expand pass)
+// Per-submesh transform and material info (written by expand pass).
+// C layout: byte-identical to the C++ mirror in MeshGatherSystem.cpp (176 B).
 struct VertEntry {
     float4x4 MVP;
     float maxScale;
     uint materialId;       // named materialId (was texSlot) — unused by occlusion cull
     uint ormPacked;        // packed by expand pass, unused by occlusion cull
     float4x4 modelMatrix;  // unused by occlusion cull, must match main_indir size
+    float3x3 normalMatrix; // unused by occlusion cull, must match main_indir size
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<VertEntry> submeshVertexInfo[];
+StructuredBuffer<VertEntry, CDataLayout> submeshVertexInfo[];
 
 struct CullEntry {
     uint indirOffset;
@@ -18,10 +20,10 @@ struct CullEntry {
 };
 
 [[vk::binding(1, 0)]]
-RWStructuredBuffer<CullEntry> cullEntries[];
+RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
 [[vk::binding(2, 0)]]
-StructuredBuffer<float4> boundingSpheres[];
+StructuredBuffer<float4, CDataLayout> boundingSpheres[];
 
 // Hi-Z pyramid of the depth prepass. Depth convention: non-reversed [0,1]
 // (0 = near, 1 = far) and every texel stores the FARTHEST depth in its footprint
@@ -31,6 +33,7 @@ StructuredBuffer<float4> boundingSpheres[];
 Sampler2D<float> hizTex;
 
 // Oriented bounding box: center + 3 axis-aligned half-extent vectors (xyz = axis, w = half-length)
+// C layout matches the CPU OBBGPUEntry (4 x float4, 64 B).
 struct OBBGPU {
     float4 center_pad;
     float4 u_half;
@@ -39,7 +42,7 @@ struct OBBGPU {
 };
 
 [[vk::binding(4, 0)]]
-StructuredBuffer<OBBGPU> obbBuf[];
+StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
 
 struct OccPC {
     uint elementCount;

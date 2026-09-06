@@ -13,6 +13,7 @@ import vulkan_hpp;
 
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Mesh.MeshTypes;
+import VulkanEngine.Mesh.NormalEncoding;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.StandardMeshPipeline;
@@ -20,6 +21,9 @@ import VulkanEngine.StandardMeshPipeline;
 namespace VulkanEngine::SceneLoader {
 
 namespace {
+    // Local alias for the NormalEncoding helpers' 3D vector type.
+    using float3 = MeshVertexVec3;
+
     [[nodiscard]] std::filesystem::path FindFirstFileWithExtension(const std::filesystem::path& dir,
                                                                     const std::vector<std::string>& extensions) {
         if (!std::filesystem::exists(dir)) {
@@ -58,6 +62,8 @@ LoadedMeshData CreateFallbackQuad() {
         .positions = { -1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f },
         .normals = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f },
         .uvs = { 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f },
+        .tangents = { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
+        .tangent_handedness = { 1.0f, 1.0f, 1.0f, 1.0f },
         .indices = { 0, 1, 2, 2, 3, 0 },
     };
     data.submeshes.push_back(SubMesh{
@@ -90,6 +96,8 @@ LoadedMeshData LoadMeshFromFile(const std::filesystem::path& models_dir,
                 for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
                 for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
                 for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
+                for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
+                data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;
                 data.submeshes = mesh->subMeshes;
                 return data;
@@ -115,6 +123,8 @@ LoadedMeshData LoadMeshFromFilePath(const std::filesystem::path& file_path,
             for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
             for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
             for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
+            for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
+            data.tangent_handedness = mesh->tangent_handedness;
             data.indices = mesh->indices;
             data.submeshes = mesh->subMeshes;
             return data;
@@ -153,6 +163,8 @@ bool LoadAllMeshes(const std::filesystem::path& models_dir,
                 for (const auto& v : mesh->vertices) { data.positions.push_back(v.x); data.positions.push_back(v.y); data.positions.push_back(v.z); }
                 for (const auto& n : mesh->normals) { data.normals.push_back(n.x); data.normals.push_back(n.y); data.normals.push_back(n.z); }
                 for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
+                for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
+                data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;
                 data.submeshes = mesh->subMeshes;
                 out_meshes.push_back(std::move(data));
@@ -181,16 +193,35 @@ ConvertToVertices(const LoadedMeshData& mesh) {
     const std::size_t vertex_count = mesh.positions.size() / 3U;
     if (vertex_count == 0U) return vertices;
     vertices.resize(vertex_count);
+    const bool has_tangents = mesh.tangents.size() >= mesh.positions.size()
+                           && mesh.tangent_handedness.size() >= vertex_count;
     for (std::size_t i = 0; i < vertex_count; ++i) {
         const std::size_t p = i * 3U, t = i * 2U;
         vertices[i].px = mesh.positions[p + 0];
         vertices[i].py = mesh.positions[p + 1];
         vertices[i].pz = mesh.positions[p + 2];
+        float3 normal{0.0f, 0.0f, 0.0f};
         if (mesh.normals.size() > p + 2) {
-            vertices[i].nx = mesh.normals[p + 0];
-            vertices[i].ny = mesh.normals[p + 1];
-            vertices[i].nz = mesh.normals[p + 2];
+            normal.x = mesh.normals[p + 0];
+            normal.y = mesh.normals[p + 1];
+            normal.z = mesh.normals[p + 2];
+        } else {
+            // Degenerate geometry without normals: give the packer a unit
+            // vector so the octahedral projection stays well-defined.
+            normal.y = 1.0f;
         }
+        // Zero tangent = no tangent space; PackTBN still encodes a valid
+        // frame (basis tangent fallback) which the shader-side normal-map
+        // gating (normal_texture == 0) simply never uses.
+        float3 tangent{0.0f, 0.0f, 0.0f};
+        float handedness = 1.0f;
+        if (has_tangents) {
+            tangent.x = mesh.tangents[p + 0];
+            tangent.y = mesh.tangents[p + 1];
+            tangent.z = mesh.tangents[p + 2];
+            handedness = mesh.tangent_handedness[i];
+        }
+        vertices[i].packedTBN = VulkanEngine::NormalEncoding::PackTBN(normal, tangent, handedness);
         vertices[i].u = (t + 1 < mesh.uvs.size()) ? mesh.uvs[t + 0] : 0.0f;
         vertices[i].v = (t + 1 < mesh.uvs.size()) ? mesh.uvs[t + 1] : 0.0f;
     }
@@ -275,7 +306,11 @@ CombinedScene UploadCombined(
     const std::uint64_t index_data_size = all_indices.size() * sizeof(std::uint32_t);
 
     // Allocate from heaps
-    constexpr std::uint64_t VERTEX_ALIGNMENT = 4;
+    // Vertex allocations must be aligned to a multiple of sizeof(Vertex) (24):
+    // baseVertex is computed as offset / sizeof(Vertex) with integer division
+    // (expand.slang), so a non-multiple offset truncates and every vertex of
+    // the mesh reads shifted bytes. 240 = LCM(24, 16).
+    constexpr std::uint64_t VERTEX_ALIGNMENT = 240;
     scene.vertex_allocation = vertex_heap.Allocate(vertex_data_size, VERTEX_ALIGNMENT);
     if (scene.vertex_allocation.buffer_index == UINT32_MAX) {
         LOGIFACE_LOG(error, "UploadCombined: vertex heap allocation failed");

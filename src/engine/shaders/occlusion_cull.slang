@@ -78,9 +78,8 @@ float NearPoleDepth(float4 clipPos, float worldR) {
 // pole's clip z/w shift by projInfo.z and -worldR respectively; for ortho w stays 1 and
 // only the z term applies (the near plane sits at z_ndc = -1).
 bool NearPoleClipped(float4 clipPos, float worldR) {
-    if (pc.projInfo.w > 0.5)
-        return clipPos.z + clipPos.w + (pc.projInfo.z - 1.0) * worldR <= kDepthEps;
-    return clipPos.z + pc.projInfo.z * worldR <= kDepthEps - 1.0;
+    // Zero-to-one depth: near plane is ndc z = 0, i.e. clip z = 0.
+    return clipPos.z + pc.projInfo.z * worldR <= kDepthEps;
 }
 
 // Largest valid Hi-Z mip index (hiz level 0 is half the depth resolution).
@@ -92,7 +91,7 @@ int MaxHizMip() {
 // covers the whole rect (rectSizeUV in [0,1] UV units).
 int RectMip(float2 rectSizeUV) {
     float maxDim = max(rectSizeUV.x * float(pc.hizWidth), rectSizeUV.y * float(pc.hizHeight));
-    return min(int(floor(log2(max(maxDim, 1.0)))), MaxHizMip());
+    return min(int(ceil(log2(max(maxDim, 1.0)))), MaxHizMip());
 }
 
 void CullSubmesh(uint block, uint elemIndex) {
@@ -218,8 +217,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // inverts the y order, so sort the two flipped corners into a proper
     // min/max rect; otherwise the refinement's texel loop iterates an empty
     // range and falsely culls everything.
-    const float2 uvA = float2(minXY.x, 1.0 - maxXY.y) * 0.5 + 0.5;
-    const float2 uvB = float2(maxXY.x, 1.0 - minXY.y) * 0.5 + 0.5;
+    const float2 uvA = float2(minXY.x * 0.5 + 0.5, (1.0 - maxXY.y) * 0.5);
+    const float2 uvB = float2(maxXY.x * 0.5 + 0.5, (1.0 - minXY.y) * 0.5);
     float2 screenMin = clamp(min(uvA, uvB), 0.0, 1.0);
     float2 screenMax = clamp(max(uvA, uvB), 0.0, 1.0);
 

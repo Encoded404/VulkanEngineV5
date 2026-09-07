@@ -305,15 +305,8 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         const vk::DeviceSize draw_cmd_offset =
             static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
         LOGIFACE_LOG(trace, std::format("RenderMain: drawIndirect technique={} offset={}", t, draw_cmd_offset));
-        //cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
-        //                  draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
-        // TEST: direct draw for the unlit technique only
-        if (t == 1) {
-            cmd.draw(6, 1, 14388, 0);          // vertexCount=6, instanceCount=1, firstVertex=14388
-        } else {
             cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
                              draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
-        }
     }
 }
 

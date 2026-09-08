@@ -45,6 +45,20 @@ struct alignas(16) SceneHeader {
 constexpr std::uint32_t LIGHTS_PER_BLOCK = 256;
 constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;
 
+// ── GPU technique flag-table bit layout ──
+// SceneRenderer::UpdateTechniqueFlags packs BaseTechnique::PipelineFlags into a
+// uint[MAX_TECHNIQUES] storage buffer consumed by the occluder-select,
+// pre-cull and occlusion cull shaders. Bit positions must match the kFlag*
+// constants in occluder_select.slang, pre_cull.slang and occlusion_cull.slang.
+inline constexpr std::uint32_t TECHNIQUE_FLAG_DEPTH_PASS = 1u << 0;           // participates_in_depth_pass
+inline constexpr std::uint32_t TECHNIQUE_FLAG_RECEIVES_OCCLUSION = 1u << 1;   // receives_occlusion
+inline constexpr std::uint32_t TECHNIQUE_FLAG_COLLECT = 1u << 2;              // participates_in_collect
+inline constexpr std::uint32_t TECHNIQUE_FLAG_OCCLUDER_SAFE = 1u << 3;        // bounds_conservative (§5.5)
+
+// Occluder selection: coverage threshold as a fraction of screen area and the
+// entry budget (docs/pre-prepass-occlusion-culling.md §5.1-A).
+inline constexpr float kOccluderMinAreaFraction = 0.0025f; // 0.25 % of the screen
+
 class SceneRenderer {
 public:
     static constexpr std::uint32_t MAX_HIZ_MIPS = 12;
@@ -114,6 +128,26 @@ public:
 
     void DispatchCollect(vk::CommandBuffer cmd, std::uint32_t frame_index);
 
+    void DispatchOccluderSelect(vk::CommandBuffer cmd,
+                                 std::uint32_t width,
+                                 std::uint32_t height,
+                                 std::uint32_t frame_index);
+
+    // Hardware raster of the selected occluder meshes into the depth prepass
+    // buffer (load_op = CLEAR, store = STORE; render graph node).
+    void OccluderPrepass(vk::CommandBuffer cmd,
+                         std::uint32_t width,
+                         std::uint32_t height,
+                         std::uint32_t frame_index);
+
+    void DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t frame_index);
+
+    // Packs each registered technique's PipelineFlags into the shared flag
+    // table buffer (upload on change only). Called once per frame before
+    // PrepareCompute.
+    void UpdateTechniqueFlags(
+        VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr);
+
     void InitializeHizFirstFrame(vk::CommandBuffer cmd);
 
     void SetSubmeshes(const std::vector<VulkanEngine::SubMesh>& submeshes) { scene_submeshes_ = submeshes; }
@@ -178,6 +212,16 @@ private:
         VulkanEngine::GpuResources::GpuBuffer indirection_buffer{};
         VulkanEngine::GpuResources::GpuBuffer compacted_indirection_buffer{};
         VulkanEngine::GpuResources::GpuBuffer draw_count_buffer{};
+        // Depth-prepass survivor list: written by the pre-cull pass every
+        // frame (frustum + Hi-Z survivors minus occluders, excluding
+        // depth-pass-opted-out techniques).
+        VulkanEngine::GpuResources::GpuBuffer depth_indirection_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer depth_draw_count_buffer{};
+        // Occluder prepass inputs: selected occluders' indirection + draw
+        // command + selection counter (§5.1-A/§5.3).
+        VulkanEngine::GpuResources::GpuBuffer occluder_indirection_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_draw_count_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_count_buffer{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
         VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
         VulkanEngine::GpuResources::GpuBuffer tech_offsets_buffer{};
@@ -188,9 +232,11 @@ private:
         VulkanEngine::GpuResources::GpuDescriptorSet occlusion_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet collect_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet collect_write_set{};
+        VulkanEngine::GpuResources::GpuDescriptorSet occluder_select_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet depth_indirection_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet occluder_indirection_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet bindless_vertex_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet bindless_index_set = vk::raii::DescriptorSet(nullptr);
         VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
@@ -222,6 +268,14 @@ private:
                                   ShaderSystem::ShaderManager& shader_mgr,
                                   ShaderSystem::PipelineFactory& pipeline_factory,
                                   ShaderSystem::ShaderId shader_id);
+    bool CreateOccluderSelectPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                       ShaderSystem::ShaderManager& shader_mgr,
+                                       ShaderSystem::PipelineFactory& pipeline_factory,
+                                       ShaderSystem::ShaderId shader_id);
+    bool CreatePreCullPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                ShaderSystem::ShaderManager& shader_mgr,
+                                ShaderSystem::PipelineFactory& pipeline_factory,
+                                ShaderSystem::ShaderId shader_id);
     bool CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                  ShaderSystem::ShaderManager& shader_mgr,
                                  ShaderSystem::PipelineFactory& pipeline_factory,
@@ -268,6 +322,20 @@ private:
     std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
     ShaderSystem::PipelineSlot occlusion_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> occlusion_desc_;
+
+    // Set 8: Occluder-select compute (cull blocks + transforms + OBBs + flag
+    // table + indirection copy + draw command + selection counter)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> occluder_select_layout_{};
+    std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> occluder_select_pool_;
+    std::unique_ptr<vk::raii::PipelineLayout> occluder_select_pipeline_layout_{};
+    ShaderSystem::PipelineSlot occluder_select_slot_;
+    std::optional<ShaderSystem::ComputePipelineDesc> occluder_select_desc_;
+
+    // Pre-cull compute: reuses the occlusion set (extended with the survivor
+    // compaction bindings 6-8) + its own pipeline.
+    std::unique_ptr<vk::raii::PipelineLayout> pre_cull_pipeline_layout_{};
+    ShaderSystem::PipelineSlot pre_cull_slot_;
+    std::optional<ShaderSystem::ComputePipelineDesc> pre_cull_desc_;
 
     // Set 6: Collect count + compact (cull blocks + indirections + intermediate)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
@@ -317,6 +385,13 @@ private:
     std::unique_ptr<vk::raii::DescriptorSet> scene_uniform_set_{};
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
+
+    // Shared (not per-frame) technique flag table: PipelineFlags change rarely,
+    // so a single host-visible buffer is updated in place only when contents
+    // change. Worst case on a change is one frame reading a torn word, which is
+    // self-correcting next frame.
+    VulkanEngine::GpuResources::GpuBuffer technique_flags_buffer_{};
+    std::vector<std::uint32_t> technique_flags_cache_{};
 
     // Runtime-sized per-frame resource ring (see frames_in_flight_).
     std::vector<FrameResources> frames_;

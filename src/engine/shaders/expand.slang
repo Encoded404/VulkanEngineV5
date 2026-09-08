@@ -151,6 +151,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     cullEntries[NonUniformResourceIndex(block)][elemIndex].indirOffset = drawOffset;
     cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
     cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techId;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].pad = 0; // occluder bit, set by occluder_select
 
     uint indexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart >> 24;
     uint indexOffset  = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart & 0xFFFFFFu;

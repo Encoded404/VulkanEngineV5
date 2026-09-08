@@ -32,6 +32,8 @@ namespace VulkanEngine::SceneRenderer {
         struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; glm::vec4 projInfo; };
         struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
+        struct OccluderSelectPC { std::uint32_t cnt; std::uint32_t minAreaPx; std::uint32_t screenW; std::uint32_t screenH; };
+        struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
         static constexpr std::uint32_t HIZ_BATCH = 2;
 
         template<typename Handle>
@@ -91,6 +93,14 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 
     constexpr vk::DrawIndirectCommand zero_cmd{ 0, 1, 0, 0 };
     fr.draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
+    // Survivor list (depth prepass) and occluder list start empty each frame;
+    // the occluder entry counter restarts from zero.
+    fr.depth_draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
+    fr.occluder_draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
+    {
+        const std::uint32_t zero = 0;
+        fr.occluder_count_buffer.Upload(&zero, sizeof(zero));
+    }
 
     // Zero intermediate buffer
     {
@@ -140,6 +150,14 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     WriteBlocks(fr.expand_set.GetHandle(), 3, fr.submesh_cull,
                 vk::DescriptorType::eStorageBuffer, dev);
 
+    // Occluder-select block arrays (block counts change with scene capacity).
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 0, fr.submesh_cull,
+                vk::DescriptorType::eStorageBuffer, dev);
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_data,
+                vk::DescriptorType::eStorageBuffer, dev);
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 2, fr.bounding_obb,
+                vk::DescriptorType::eStorageBuffer, dev);
+
     {
         const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
@@ -183,6 +201,52 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         w.pImageInfo = &hiz_info;
         dev.updateDescriptorSets(w, nullptr);
     }
+    {
+        // Technique flag table consumed by the occlusion cull and pre-cull
+        // shaders (receives_occlusion gate).
+        const vk::DescriptorBufferInfo bi(
+            *technique_flags_buffer_.GetBuffer(), 0, vk::WholeSize);
+        vk::WriteDescriptorSet w{};
+        w.dstSet = fr.occlusion_set.GetHandle();
+        w.dstBinding = 5;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &bi;
+        dev.updateDescriptorSets(w, nullptr);
+    }
+}
+
+void SceneRenderer::UpdateTechniqueFlags(
+    VulkanEngine::TechniqueManager::TechniqueManager& tm) {
+    if (!backend_) return;
+
+    const std::uint32_t count =
+        std::min<std::uint32_t>(tm.GetTechniqueCount(), MAX_TECHNIQUES);
+    if (tm.GetTechniqueCount() > MAX_TECHNIQUES) {
+        LOGIFACE_LOG(warn, "UpdateTechniqueFlags: " +
+                     std::to_string(tm.GetTechniqueCount()) +
+                     " techniques exceed flag-table capacity " +
+                     std::to_string(MAX_TECHNIQUES));
+    }
+
+    std::vector<std::uint32_t> flags(MAX_TECHNIQUES, 0);
+    for (std::uint32_t t = 0; t < count; ++t) {
+        auto* tech = tm.GetTechnique(static_cast<std::uint16_t>(t));
+        if (!tech) continue;
+        const auto& f = tech->pipeline_flags;
+        std::uint32_t bits = 0;
+        if (f.participates_in_depth_pass) bits |= TECHNIQUE_FLAG_DEPTH_PASS;
+        if (f.receives_occlusion)        bits |= TECHNIQUE_FLAG_RECEIVES_OCCLUSION;
+        if (f.participates_in_collect)   bits |= TECHNIQUE_FLAG_COLLECT;
+        if (f.bounds_conservative)       bits |= TECHNIQUE_FLAG_OCCLUDER_SAFE;
+        flags[t] = bits;
+    }
+
+    // Upload only when contents change (flags are static in practice).
+    if (technique_flags_cache_ != flags) {
+        technique_flags_cache_ = flags;
+        technique_flags_buffer_.Upload(flags.data(), sizeof(std::uint32_t) * flags.size());
+    }
 }
 
 void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
@@ -211,7 +275,35 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
-    cmd.drawIndirect(*fr.draw_count_buffer.GetBuffer(), 0, 1,
+    cmd.drawIndirect(*fr.depth_draw_count_buffer.GetBuffer(), 0, 1,
+                     sizeof(vk::DrawIndirectCommand));
+}
+
+void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
+    auto& fr = frames_[fi % frames_in_flight_];
+    if (!depth_slot_.Get()) {
+        LOGIFACE_LOG(warn, "OccluderPrepass: depth pipeline is null, skipping");
+        return;
+    }
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "OccluderPrepass: current_entity_count_ is 0, skipping");
+        return;
+    }
+    LOGIFACE_LOG(trace, "OccluderPrepass: selected occluders (" + std::to_string(w) + "x" +
+                 std::to_string(h) + ")");
+    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
+                                     -static_cast<float>(h), 0, 1));
+    cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
+    const std::array<vk::DescriptorSet, 4> ds{
+        empty_sets_[fi % frames_in_flight_].GetHandle(),
+        fr.submesh_vertex_set.GetHandle(),
+        static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
+        *fr.occluder_indirection_set
+    };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
+                             0, ds, {});
+    cmd.drawIndirect(*fr.occluder_draw_count_buffer.GetBuffer(), 0, 1,
                      sizeof(vk::DrawIndirectCommand));
 }
 
@@ -541,6 +633,62 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     cmd.pushConstants(*collect_write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(WritePC), &pc2);
     cmd.dispatch(1, 1, 1);
+}
+
+void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,
+                                            std::uint32_t w,
+                                            std::uint32_t h,
+                                            std::uint32_t fi) {
+    // §5.1-A: OBB screen-area threshold selection + occluder indirection
+    // compaction into the occluder-prepass draw command. Any set of large
+    // real-geometry occluders is valid — overflow only misses culls.
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DispatchOccluderSelect: current_entity_count_ is 0, skipping");
+        return;
+    }
+    auto& fr = frames_[fi % frames_in_flight_];
+    if (!occluder_select_slot_.Get()) {
+        LOGIFACE_LOG(warn, "DispatchOccluderSelect: pipeline is null, skipping");
+        return;
+    }
+    LOGIFACE_LOG(trace, "DispatchOccluderSelect: submeshes=" + std::to_string(current_entity_count_));
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, occluder_select_slot_.Get());
+    const std::array<vk::DescriptorSet, 1> ds{ fr.occluder_select_set.GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occluder_select_pipeline_layout_,
+                             0, ds, {});
+    const float screenArea = static_cast<float>(w) * static_cast<float>(h);
+    OccluderSelectPC pc{
+        current_entity_count_,
+        static_cast<std::uint32_t>(screenArea * kOccluderMinAreaFraction),
+        w, h };
+    cmd.pushConstants(*occluder_select_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                       0, sizeof(OccluderSelectPC), &pc);
+    cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
+}
+
+void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
+    // §5.1-D / §5.3: frustum reject + Hi-Z test against the occluder-only
+    // pyramid, then compact survivors into the depth-prepass indirection.
+    // Culled submeshes get indexCount = 0 so the post-prepass occlusion pass
+    // and collect skip them for free.
+    if (!current_entity_count_) {
+        LOGIFACE_LOG(debug, "DispatchPreCull: current_entity_count_ is 0, skipping");
+        return;
+    }
+    auto& fr = frames_[fi % frames_in_flight_];
+    LOGIFACE_LOG(trace, "DispatchPreCull: submeshes=" + std::to_string(current_entity_count_));
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pre_cull_slot_.Get());
+    const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pre_cull_pipeline_layout_,
+                             0, ds, {});
+    const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
+    const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
+    PreCullPC pc{ current_entity_count_, hiz_w, hiz_h, 0, fr.proj_info };
+    cmd.pushConstants(*pre_cull_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                       0, sizeof(PreCullPC), &pc);
+    cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
 }
 
 void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {

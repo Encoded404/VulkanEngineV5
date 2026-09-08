@@ -23,6 +23,8 @@ namespace VulkanEngine::SceneRenderer {
         struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
         struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
+        struct OccluderSelectPC { std::uint32_t cnt; std::uint32_t minAreaPx; std::uint32_t screenW; std::uint32_t screenH; };
+        struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
 
     } // anonymous namespace
 
@@ -180,11 +182,71 @@ bool SceneRenderer::CreateOcclusionPipeline(const VulkanBackend::Vulkan::IVulkan
     return true;
 }
 
+bool SceneRenderer::CreateOccluderSelectPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                                  ShaderSystem::ShaderManager& shader_mgr,
+                                                  ShaderSystem::PipelineFactory& pipeline_factory,
+                                                  ShaderSystem::ShaderId shader_id) {
+    LOGIFACE_LOG(debug, "Creating occluder-select pipeline...");
+    const auto& dev = be.GetDevice();
+    vk::PushConstantRange pr{};
+    pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pr.size = sizeof(OccluderSelectPC);
+    vk::PipelineLayoutCreateInfo li{};
+    li.setLayoutCount = 1;
+    li.pSetLayouts = &**occluder_select_layout_;
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pr;
+    occluder_select_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occluder_select_pipeline_layout_, "occluder-select-pipeline-layout");
+
+    ShaderSystem::ComputePipelineDesc desc{};
+    desc.shader = shader_id;
+    desc.layout = *occluder_select_pipeline_layout_;
+    occluder_select_desc_ = desc;
+    auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+    if (result.has_value()) {
+        occluder_select_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, occluder_select_slot_.Get(), "occluder-select-pipeline");
+    }
+    LOGIFACE_LOG(debug, "Occluder-select pipeline created");
+    return true;
+}
+
+bool SceneRenderer::CreatePreCullPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
+                                           ShaderSystem::ShaderManager& shader_mgr,
+                                           ShaderSystem::PipelineFactory& pipeline_factory,
+                                           ShaderSystem::ShaderId shader_id) {
+    LOGIFACE_LOG(debug, "Creating pre-cull pipeline...");
+    const auto& dev = be.GetDevice();
+    vk::PushConstantRange pr{};
+    pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pr.size = sizeof(PreCullPC);
+    vk::PipelineLayoutCreateInfo li{};
+    li.setLayoutCount = 1;
+    li.pSetLayouts = &**occlusion_layout_; // shares the occlusion set (+ survivor compaction bindings 6-8)
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pr;
+    pre_cull_pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(dev, li);
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *pre_cull_pipeline_layout_, "pre-cull-pipeline-layout");
+
+    ShaderSystem::ComputePipelineDesc desc{};
+    desc.shader = shader_id;
+    desc.layout = *pre_cull_pipeline_layout_;
+    pre_cull_desc_ = desc;
+    auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
+    if (result.has_value()) {
+        pre_cull_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, pre_cull_slot_.Get(), "pre-cull-pipeline");
+    }
+    LOGIFACE_LOG(debug, "Pre-cull pipeline created");
+    return true;
+}
+
 bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
-                                             ShaderSystem::ShaderManager& shader_mgr,
-                                             ShaderSystem::PipelineFactory& pipeline_factory,
-                                             ShaderSystem::ShaderId count_id,
-                                             ShaderSystem::ShaderId write_id) {
+                                           ShaderSystem::ShaderManager& shader_mgr,
+                                           ShaderSystem::PipelineFactory& pipeline_factory,
+                                           ShaderSystem::ShaderId count_id,
+                                           ShaderSystem::ShaderId write_id) {
     LOGIFACE_LOG(debug, "Creating collect pipelines...");
     const auto& dev = be.GetDevice();
 

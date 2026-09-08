@@ -42,8 +42,11 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     // Create pass class instances
     expand_pass_ = std::make_unique<VulkanEngine::SceneRenderer::ExpandPass>(scene_renderer);
+    occluder_select_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OccluderSelectPass>(scene_renderer);
+    occluder_prepass_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OccluderPrePass>(scene_renderer);
     depth_pass_ = std::make_unique<VulkanEngine::SceneRenderer::DepthPrePass>(scene_renderer);
     hiz_pass_ = std::make_unique<VulkanEngine::SceneRenderer::HiZPass>(scene_renderer);
+    pre_cull_pass_ = std::make_unique<VulkanEngine::SceneRenderer::PreCullPass>(scene_renderer);
     occlusion_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OcclusionPass>(scene_renderer);
     collect_pass_ = std::make_unique<VulkanEngine::SceneRenderer::CollectPass>(scene_renderer);
     main_pass_ = std::make_unique<VulkanEngine::SceneRenderer::MainPass>(scene_renderer);
@@ -53,6 +56,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     auto hiz_image = pipeline_->ImportImage("hiz-image");
     auto scene_buffers = pipeline_->ImportBuffer("scene-buffers");
     auto draw_indirect = pipeline_->ImportBuffer("draw-indirect");
+    auto depth_indirect = pipeline_->ImportBuffer("depth-indirect");
+    auto occluder_indirect = pipeline_->ImportBuffer("occluder-indirect");
 
     pipeline_->RegisterResourceResolver("hiz-image",
         [this](std::uint32_t) { return current_ctx_ ? current_ctx_->scene_renderer.GetHizImage(current_ctx_->frame_counter) : nullptr; },
@@ -85,15 +90,108 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
     });
 
-    // ── Pass 2: Depth pre-pass ──
+    // ── Pass 1b: Occluder selection (compute, §5.1-A) — OBB screen-coverage
+    // threshold, budgeted via atomic counters; copies selected ranges into the
+    // occluder-only indirection and flags them in CullEntry.pad. ──
+    auto occluder_select_handle = pipeline_->AddPass({
+        .name = "occluder-select",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {scene_buffers, occluder_indirect},
+        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
+            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            VulkanEngine::PipelinePass::FrameContext pctx{};
+            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
+            pctx.frame_index = fctx.frame_counter;
+            occluder_select_pass_->Execute(pctx, cmd);
+        }
+    });
+
+    // ── Pass 1c: Occluder pre-pass — rasterizes the selected real meshes into
+    // the depth prepass buffer (§5.3: full-res seed, clear + store). ──
+    VulkanEngine::RenderGraph::PassAttachmentSetup occluder_setup{};
+    occluder_setup.auto_begin_rendering = true;
+
+    VulkanEngine::RenderGraph::AttachmentInfo occluder_depth_attach{};
+    occluder_depth_attach.resource = depth_buffer;
+    occluder_depth_attach.load_op = vk::AttachmentLoadOp::eClear;
+    occluder_depth_attach.store_op = vk::AttachmentStoreOp::eStore;
+    occluder_depth_attach.clear_depth = config.clear_depth_stencil;
+    occluder_setup.depth_attachment = occluder_depth_attach;
+
+    auto occluder_prepass_handle = pipeline_->AddPass({
+        .name = "occluder-prepass",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {occluder_indirect,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {depth_buffer},
+        .attachments = occluder_setup,
+        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
+            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            VulkanEngine::PipelinePass::FrameContext pctx{};
+            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
+            pctx.frame_index = fctx.frame_counter;
+            pctx.render_width = fctx.width;
+            pctx.render_height = fctx.height;
+            occluder_prepass_pass_->Execute(pctx, cmd);
+        }
+    });
+
+    // ── Pass 1c: Hi-Z generation from the partial (occluder-only) depth ──
+    auto hiz_pre_handle = pipeline_->AddPass({
+        .name = "hiz-gen-pre",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{depth_buffer,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {hiz_image},
+        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
+            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            VulkanEngine::PipelinePass::FrameContext pctx{};
+            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
+            pctx.frame_index = fctx.frame_counter;
+            pctx.swapchain_image_index = fctx.image_index;
+            pctx.render_width = fctx.width;
+            pctx.render_height = fctx.height;
+            hiz_pass_->Execute(pctx, cmd);
+        }
+    });
+
+    // ── Pass 1d: Pre-cull compute (§5.1-D) — frustum reject + Hi-Z occlusion
+    // test against the occluder pyramid, then survivor compaction. ──
+    auto pre_cull_handle = pipeline_->AddPass({
+        .name = "pre-cull",
+        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
+        .reads = {{hiz_image,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {scene_buffers,
+            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+            VulkanEngine::RenderGraph::AccessIntent::Read}},
+        .writes = {scene_buffers, depth_indirect},
+        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
+            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            VulkanEngine::PipelinePass::FrameContext pctx{};
+            pctx.frame_index = fctx.frame_counter;
+            pre_cull_pass_->Execute(pctx, cmd);
+        }
+    });
+
+    // ── Pass 2: Depth pre-pass — draws survivors only, keeping the occluder
+    // depth (load_op = LOAD, §5.3 depth-buffer reuse). ──
     VulkanEngine::RenderGraph::PassAttachmentSetup depth_setup{};
     depth_setup.auto_begin_rendering = true;
 
     VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
     depth_attach.resource = depth_buffer;
-    depth_attach.load_op = vk::AttachmentLoadOp::eClear;
+    depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
     depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-    depth_attach.clear_depth = config.clear_depth_stencil;
     depth_setup.depth_attachment = depth_attach;
 
     auto depth_handle = pipeline_->AddPass({
@@ -103,6 +201,9 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
             VulkanEngine::RenderGraph::AccessIntent::Read},
             {draw_indirect,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
+            VulkanEngine::RenderGraph::AccessIntent::Read},
+            {depth_indirect,
             VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {depth_buffer},
@@ -245,7 +346,14 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     }
 
     // Explicit ordering ensures correct pipeline
-    pipeline_->AddDependency(expand_handle, depth_handle);
+    // Explicit ordering ensures correct pipeline:
+    // expand → occluder-select → occluder-prepass → hiz-gen-pre → pre-cull →
+    // depth-prepass → hiz-gen (full) → occlusion → collect → main.
+    pipeline_->AddDependency(expand_handle, occluder_select_handle);
+    pipeline_->AddDependency(occluder_select_handle, occluder_prepass_handle);
+    pipeline_->AddDependency(occluder_prepass_handle, hiz_pre_handle);
+    pipeline_->AddDependency(hiz_pre_handle, pre_cull_handle);
+    pipeline_->AddDependency(pre_cull_handle, depth_handle);
     pipeline_->AddDependency(depth_handle, hiz_handle);
     pipeline_->AddDependency(hiz_handle, occlusion_handle);
     pipeline_->AddDependency(occlusion_handle, collect_handle);
@@ -361,6 +469,10 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
         // Initialize Hi-Z on first frame
         scene_renderer.InitializeHizFirstFrame(cmd);
+
+        // Upload technique PipelineFlags and enable/disable the depth filter
+        // pass before PrepareCompute retargets the depth indirection set.
+        scene_renderer.UpdateTechniqueFlags(technique_mgr);
 
         // CPU gather + upload + descriptor writes for all passes
         scene_renderer.PrepareCompute(cmd, registry, view, proj, width, height, frame_counter_);

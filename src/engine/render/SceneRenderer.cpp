@@ -55,6 +55,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     collect_count_slot_.SetFramesInFlight(frames_in_flight_);
     collect_write_slot_.SetFramesInFlight(frames_in_flight_);
     depth_slot_.SetFramesInFlight(frames_in_flight_);
+    occluder_select_slot_.SetFramesInFlight(frames_in_flight_);
+    pre_cull_slot_.SetFramesInFlight(frames_in_flight_);
 
     // Set 1: SubmeshVertexData (block array, simple layout)
     {
@@ -161,12 +163,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         indirection_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
         const vk::DescriptorPoolSize indir_ps{
-            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * 2
+            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * 3
         };
         vk::DescriptorPoolCreateInfo indir_pool_ci{};
         indir_pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                               vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        indir_pool_ci.maxSets = frames_in_flight_ * 2;
+        indir_pool_ci.maxSets = frames_in_flight_ * 3;
         indir_pool_ci.poolSizeCount = 1;
         indir_pool_ci.pPoolSizes = &indir_ps;
         indirection_raw_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, indir_pool_ci);
@@ -252,9 +254,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         expand_pool_->SetDebugName(dev, "expand-pool");
     }
 
-    // Set 5: Occlusion layout (5 bindings)
+    // Set 5: Occlusion layout (10 bindings: vertex info, cull, spheres, Hi-Z,
+    // OBBs, flag table — shared by the occlusion pass and the pre-cull pass,
+    // which adds the survivor compaction bindings 6-8)
     {
-        std::array<vk::DescriptorSetLayoutBinding, 5> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 9> bs{};
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -269,17 +273,51 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[4].descriptorCount = MAX_BLOCKS;
         bs[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        for (std::uint32_t i = 5; i < 9; ++i) {
+            bs[i].binding = i;
+            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            bs[i].descriptorCount = 1;
+            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        }
         occlusion_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS * 4;
+        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS * 4 + frames_in_flight_ * 5;
         pc.max_sampled_images = frames_in_flight_;
         pc.max_combined_image_samplers = frames_in_flight_;
         occlusion_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         occlusion_pool_->SetDebugName(dev, "occlusion-pool");
+    }
+
+    // Set 8: Occluder-select layout (8 bindings: cull blocks, transform blocks,
+    // OBB blocks, flag table, full indirection, occluder indirection, draw
+    // command, selection counter)
+    {
+        std::array<vk::DescriptorSetLayoutBinding, 8> bs{};
+        for (std::uint32_t i = 0; i < 3; ++i) {
+            bs[i].binding = i;
+            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        }
+        for (std::uint32_t i = 3; i < 8; ++i) {
+            bs[i].binding = i;
+            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            bs[i].descriptorCount = 1;
+            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        }
+        occluder_select_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+            dev, vk::DescriptorSetLayoutCreateInfo{
+                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occluder_select_layout_, "occluder-select-layout");
+        GpuResources::DescriptorPoolConfig pc{};
+        pc.max_sets = frames_in_flight_;
+        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 3 + 5);
+        occluder_select_pool_ = GpuResources::DescriptorPool::Create(be, pc);
+        occluder_select_pool_->SetDebugName(dev, "occluder-select-pool");
     }
 
     // Set 6: Collect count + compact layout (4 bindings: cull blocks, full indir, compacted indir, intermediate)
@@ -357,12 +395,17 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     if (!CreateHiZPipeline(be, shader_mgr, pipeline_factory, shader_ids.hiz_gen_comp)) return false;
     if (!CreateOcclusionPipeline(be, shader_mgr, pipeline_factory, shader_ids.occlusion_cull_comp)) return false;
+    if (!CreateOccluderSelectPipeline(be, shader_mgr, pipeline_factory, shader_ids.occluder_select_comp)) return false;
+    if (!CreatePreCullPipeline(be, shader_mgr, pipeline_factory, shader_ids.pre_cull_comp)) return false;
     if (!CreateCollectPipelines(be, shader_mgr, pipeline_factory, shader_ids.collect_count_compact_comp, shader_ids.collect_write_comp)) return false;
 
     // Per-frame ring resources
     {
         const std::uint64_t max_indirection_size =
             static_cast<uint64_t>(idxc) * 8u;
+        constexpr std::uint64_t technique_flags_size =
+            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
+        constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
         const std::uint64_t technique_cmd_size =
             static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(vk::DrawIndirectCommand);
         constexpr std::uint64_t tech_counts_size =
@@ -382,6 +425,17 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             c.memory = memory;
             return c;
         };
+
+        // Shared technique flag table (single buffer, not per-frame — see
+        // SceneRenderer.cppm). Created before the ring loop because the
+        // per-frame depth-filter descriptor sets bind it.
+        technique_flags_buffer_ = GpuResources::GpuBuffer::Create(be,
+            technique_flags_size,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+                vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, technique_flags_buffer_.GetBuffer(), vk::ObjectType::eBuffer, "technique-flags-buffer");
 
         for (auto& fr : frames_) {
             fr.compact_dynamic.Initialize(be,
@@ -441,6 +495,50 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
             VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "draw-count-buffer");
 
+            // Depth-prepass survivor list: rebuilt by the pre-cull pass every
+            // frame (frustum + Hi-Z survivors minus occluders).
+            fr.depth_indirection_buffer = GpuResources::GpuBuffer::Create(be,
+                max_indirection_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "depth-indirection-buffer");
+
+            fr.depth_draw_count_buffer = GpuResources::GpuBuffer::Create(be,
+                sizeof(vk::DrawIndirectCommand),
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eIndirectBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "depth-draw-count-buffer");
+
+            // Occluder prepass inputs (§5.1-A/§5.3).
+            fr.occluder_indirection_buffer = GpuResources::GpuBuffer::Create(be,
+                max_indirection_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-indirection-buffer");
+
+            fr.occluder_draw_count_buffer = GpuResources::GpuBuffer::Create(be,
+                sizeof(vk::DrawIndirectCommand),
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eIndirectBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-draw-count-buffer");
+
+            fr.occluder_count_buffer = GpuResources::GpuBuffer::Create(be,
+                occluder_count_size,
+                vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-count-buffer");
+
             fr.intermediate_buffer = GpuResources::GpuBuffer::Create(be,
                 intermediate_size,
                 vk::BufferUsageFlagBits::eStorageBuffer |
@@ -479,6 +577,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);
             fr.collect_set = collect_pool_->Allocate(*collect_layout_);
             fr.collect_write_set = collect_write_pool_->Allocate(*collect_write_layout_);
+            fr.occluder_select_set = occluder_select_pool_->Allocate(*occluder_select_layout_);
             fr.submesh_vertex_set =
                 submesh_vertex_pool_->Allocate(*submesh_vertex_layout_);
             {
@@ -498,9 +597,27 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 auto sets = dev.allocateDescriptorSets(alloc_ci);
                 fr.depth_indirection_set = std::move(sets[0]);
                 VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indirection_set, "depth-indirection-set");
-                const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                // Depth prepass consumes the pre-cull survivor list.
+                const vk::DescriptorBufferInfo bi(*fr.depth_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
                 vk::WriteDescriptorSet w{};
                 w.dstSet = *fr.depth_indirection_set;
+                w.dstBinding = 0;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                vk::DescriptorSetAllocateInfo alloc_ci{};
+                alloc_ci.descriptorPool = **indirection_raw_pool_;
+                alloc_ci.descriptorSetCount = 1;
+                alloc_ci.pSetLayouts = &**indirection_layout_;
+                auto sets = dev.allocateDescriptorSets(alloc_ci);
+                fr.occluder_indirection_set = std::move(sets[0]);
+                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indirection_set, "occluder-indirection-set");
+                const vk::DescriptorBufferInfo bi(*fr.occluder_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = *fr.occluder_indirection_set;
                 w.dstBinding = 0;
                 w.descriptorCount = 1;
                 w.descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -513,8 +630,140 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             fr.occlusion_set.SetDebugName(dev, "occlusion-set");
             fr.collect_set.SetDebugName(dev, "collect-set");
             fr.collect_write_set.SetDebugName(dev, "collect-write-set");
+            fr.occluder_select_set.SetDebugName(dev, "occluder-select-set");
             fr.submesh_vertex_set.SetDebugName(dev, "submesh-vertex-set");
             fr.hiz_set.SetDebugName(dev, "hiz-set");
+
+            // Static bindings for the occluder-select set. All bound buffers
+            // are per-frame (or the shared flag table, created before this
+            // loop); the pass rewrites their contents each frame.
+            for (std::uint32_t bi = 0; bi < fr.submesh_cull.BlockCount(); ++bi) {
+                const vk::DescriptorBufferInfo bii(
+                    fr.submesh_cull.GetBlockArray(bi), 0, fr.submesh_cull.BlockSize());
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 0;
+                w.dstArrayElement = bi;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bii;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            for (std::uint32_t bi = 0; bi < fr.submesh_vertex_data.BlockCount(); ++bi) {
+                const vk::DescriptorBufferInfo bii(
+                    fr.submesh_vertex_data.GetBlockArray(bi), 0, fr.submesh_vertex_data.BlockSize());
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 1;
+                w.dstArrayElement = bi;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bii;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            for (std::uint32_t bi = 0; bi < fr.bounding_obb.BlockCount(); ++bi) {
+                const vk::DescriptorBufferInfo bii(
+                    fr.bounding_obb.GetBlockArray(bi), 0, fr.bounding_obb.BlockSize());
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 2;
+                w.dstArrayElement = bi;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bii;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo flags_bi(
+                    *technique_flags_buffer_.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 3;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &flags_bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 4;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.occluder_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 5;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.occluder_draw_count_buffer.GetBuffer(), 0, sizeof(vk::DrawIndirectCommand));
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 6;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.occluder_count_buffer.GetBuffer(), 0, occluder_count_size);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occluder_select_set.GetHandle();
+                w.dstBinding = 7;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+
+            // Pre-cull uses the occlusion set extended with the survivor
+            // compaction bindings 6-8 (see pre_cull.slang).
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occlusion_set.GetHandle();
+                w.dstBinding = 6;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.depth_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occlusion_set.GetHandle();
+                w.dstBinding = 7;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
+            {
+                const vk::DescriptorBufferInfo bi(
+                    *fr.depth_draw_count_buffer.GetBuffer(), 0, sizeof(vk::DrawIndirectCommand));
+                vk::WriteDescriptorSet w{};
+                w.dstSet = fr.occlusion_set.GetHandle();
+                w.dstBinding = 8;
+                w.descriptorCount = 1;
+                w.descriptorType = vk::DescriptorType::eStorageBuffer;
+                w.pBufferInfo = &bi;
+                dev.updateDescriptorSets(w, nullptr);
+            }
         }
     }
 
@@ -762,6 +1011,8 @@ void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
     };
     poll(expand_slot_, shader_ids_.expand_comp, expand_desc_);
     poll(occlusion_slot_, shader_ids_.occlusion_cull_comp, occlusion_desc_);
+    poll(occluder_select_slot_, shader_ids_.occluder_select_comp, occluder_select_desc_);
+    poll(pre_cull_slot_, shader_ids_.pre_cull_comp, pre_cull_desc_);
     poll(hiz_slot_, shader_ids_.hiz_gen_comp, hiz_desc_);
     poll(collect_count_slot_, shader_ids_.collect_count_compact_comp, collect_count_desc_);
     poll(collect_write_slot_, shader_ids_.collect_write_comp, collect_write_desc_);
@@ -779,6 +1030,8 @@ void SceneRenderer::Shutdown() {
     }
     scene_light_blocks_.Shutdown();
     scene_header_buffer_ = GpuResources::GpuBuffer{};
+    technique_flags_buffer_ = GpuResources::GpuBuffer{};
+    technique_flags_cache_.clear();
     scene_uniform_set_.reset();
     scene_uniform_pool_.reset();
     scene_uniform_layout_.reset();

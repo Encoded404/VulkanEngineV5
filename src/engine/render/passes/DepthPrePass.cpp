@@ -18,10 +18,13 @@ DepthPrePass::~DepthPrePass() = default;
 void DepthPrePass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
     auto scene_buffers = ctx.ImportBuffer("scene-buffers");
     auto draw_indirect = ctx.ImportBuffer("draw-indirect");
+    auto depth_indirect = ctx.ImportBuffer("depth-indirect");
     auto depth_buffer = ctx.ReadDepthBuffer();
     ctx.AddRead(scene_buffers, VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddRead(draw_indirect, VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
+    ctx.AddRead(depth_indirect, VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddWrite(depth_buffer);
 }

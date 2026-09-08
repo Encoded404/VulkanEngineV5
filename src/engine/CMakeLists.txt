@@ -128,12 +128,18 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/HiZPass.cpp
     render/passes/OcclusionPass.cpp
     render/passes/CollectPass.cpp
+    render/passes/OccluderSelectPass.cpp
+    render/passes/OccluderPrePass.cpp
+    render/passes/PreCullPass.cpp
     render/passes/DepthPrePass.cpp
     render/passes/MainPass.cpp
     render/passes/ExpandPass.cppm
     render/passes/HiZPass.cppm
     render/passes/OcclusionPass.cppm
     render/passes/CollectPass.cppm
+    render/passes/OccluderSelectPass.cppm
+    render/passes/OccluderPrePass.cppm
+    render/passes/PreCullPass.cppm
     render/passes/DepthPrePass.cppm
     render/passes/MainPass.cppm
     render_graph/RenderGraph.cpp
@@ -147,6 +153,8 @@ set(_shader_opt_level "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONF
 set(_engine_shaders
     ExpandComp              expand.slang              compute  main
     OcclusionCullComp       occlusion_cull.slang       compute  main
+    OccluderSelectComp      occluder_select.slang      compute  main
+    PreCullComp             pre_cull.slang             compute  main
     HizGenComp              hiz_gen.slang              compute  main
     CollectCountCompactComp collect_count_compact.slang compute  main
     CollectWriteComp        collect_write.slang        compute  main
@@ -247,6 +255,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             core/EngineBootstrap.cppm
             render_graph/RenderGraph.cppm
             render/passes/ExpandPass.cppm
+            render/passes/OccluderSelectPass.cppm
+            render/passes/OccluderPrePass.cppm
+            render/passes/PreCullPass.cppm
             render/passes/HiZPass.cppm
             render/passes/OcclusionPass.cppm
             render/passes/CollectPass.cppm

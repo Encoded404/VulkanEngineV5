@@ -21,12 +21,17 @@ import VulkanEngine.PipelineFactory;
 export namespace VulkanEngine::TechniqueManager {
 
 // ── PipelineFlags — per-technique pass participation hints ──
-// SceneRenderer checks these flags when dispatching GPU passes.
-// Zero runtime overhead beyond a single branch per technique per frame.
+// SceneRenderer packs these into the GPU flag table (UpdateTechniqueFlags);
+// the depth prepass filter, occluder selection and the occlusion cull shaders
+// consume them.
 struct PipelineFlags {
     bool participates_in_depth_pass = true;  // writes depth → occludes others
     bool receives_occlusion = true;          // gets culled by HiZ (set false for transparents)
     bool participates_in_collect = true;     // generates indirect draw commands
+    // Conservative post-transform bounds (§5.5): techniques whose vertices can
+    // be displaced by compute must set false — they are occludee-only and
+    // never occluder candidates unless they prove a post-deform envelope.
+    bool bounds_conservative = true;
 };
 
 // ── BaseTechnique — abstract base for all rendering techniques ──

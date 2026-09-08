@@ -20,8 +20,11 @@ export import VulkanEngine.Components.Camera;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.ImGui;
 import VulkanEngine.Render.Passes.ExpandPass;
+import VulkanEngine.Render.Passes.OccluderSelectPass;
+import VulkanEngine.Render.Passes.OccluderPrePass;
 import VulkanEngine.Render.Passes.DepthPrePass;
 import VulkanEngine.Render.Passes.HiZPass;
+import VulkanEngine.Render.Passes.PreCullPass;
 import VulkanEngine.Render.Passes.OcclusionPass;
 import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
@@ -86,8 +89,11 @@ private:
     // Pass classes
     VulkanEngine::SceneRenderer::SceneRenderer* scene_renderer_ = nullptr;
     std::unique_ptr<VulkanEngine::SceneRenderer::ExpandPass> expand_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::OccluderSelectPass> occluder_select_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::OccluderPrePass> occluder_prepass_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::DepthPrePass> depth_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::HiZPass> hiz_pass_{};
+    std::unique_ptr<VulkanEngine::SceneRenderer::PreCullPass> pre_cull_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::OcclusionPass> occlusion_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::CollectPass> collect_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::MainPass> main_pass_{};

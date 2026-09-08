@@ -44,6 +44,15 @@ struct OBBGPU {
 [[vk::binding(4, 0)]]
 StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
 
+// Per-technique pass participation flags (written by the CPU from PipelineFlags).
+// Bit layout must match SceneRenderer's TECHNIQUE_FLAG_* constants:
+//   bit0 participates_in_depth_pass, bit1 receives_occlusion,
+//   bit2 participates_in_collect,    bit3 bounds_conservative (reserved)
+[[vk::binding(5, 0)]]
+StructuredBuffer<uint, CDataLayout> techniqueFlags;
+
+static const uint kFlagReceivesOcclusion = 1u << 1;
+
 struct OccPC {
     uint elementCount;
     uint refineLevel;
@@ -109,6 +118,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     uint currentIndexCount = cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount;
     if (currentIndexCount == 0) return;
+
+    // Techniques with receives_occlusion == false (e.g. transparents) are never
+    // Hi-Z culled: kept alive unconditionally, regardless of test outcome.
+    if ((techniqueFlags[cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId]
+         & kFlagReceivesOcclusion) == 0) return;
 
     float4x4 mvp = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].MVP;
     float maxScaleVal = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].maxScale;

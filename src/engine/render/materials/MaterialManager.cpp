@@ -17,15 +17,19 @@ namespace VulkanEngine::MaterialManager {
 
 void MaterialManager::Initialize(GpuResources::StagingManager* staging_mgr) {
     Materials.clear();
+    generations_.clear();
     Dirty_list.clear();
     Free_list.clear();
+    next_generation_ = 1;
     this->staging_mgr = staging_mgr;
 }
 
 void MaterialManager::Shutdown() {
     Materials.clear();
+    generations_.clear();
     Dirty_list.clear();
     Free_list.clear();
+    next_generation_ = 1;
     staging_mgr = nullptr;
 }
 
@@ -40,7 +44,15 @@ void MaterialManager::MarkDirty(MaterialId id) {
 
 void MaterialManager::Destroy(MaterialId id) {
     if (id.value >= Materials.size()) return;
+    if (!Materials[id.value]) return;  // already destroyed
     Materials[id.value].reset();
+
+    // Invalidate every outstanding MaterialRef for this slot lifetime. The slot
+    // may later be reused by a different material; the generation bump ensures
+    // a stale reference cannot alias the new occupant.
+    if (next_generation_ == 0) next_generation_ = 1;
+    generations_[id.value] = next_generation_++;
+
     Free_list.push_back(id);
 }
 
@@ -84,11 +96,12 @@ void MaterialManager::FlushDirtyMaterials() {
                         continue;
                     }
                     if (mask & 1u) {
-                        auto* ba = tech->GetBlockArray(bi);
-                        if (ba) {
+                        auto* ba = tech->GetBlockArrayForBinding(bi);
+                        if (ba != nullptr &&
+                            (p.id.value / ba->EntriesPerBlock()) < ba->BlockCount()) {
                             staging_mgr->RecordBufferCopy(p.slice,
-                                ba->GetBlockArray(p.id.value / 256),
-                                ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % 256)));
+                                ba->GetBlockArray(p.id.value / ba->EntriesPerBlock()),
+                                ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % ba->EntriesPerBlock())));
                         }
                     }
                     mask >>= 1;

@@ -1,11 +1,14 @@
 module;
 
 #include <cassert>
+#include <logging/logging_macros.hpp>
 
 export module VulkanEngine.MaterialManager;
 
 import std;
 import std.compat;
+
+import logiface;
 
 import vulkan_hpp;
 
@@ -56,7 +59,15 @@ public:
         } else {
             id = MaterialId{static_cast<std::uint32_t>(Materials.size())};
             Materials.emplace_back();
+            generations_.emplace_back(0u);
         }
+
+        // Fresh generation for this slot lifetime. Generation 0 is reserved so
+        // that a default-constructed MaterialRef (value == kInvalidMaterialId)
+        // can never accidentally match a live slot.
+        if (next_generation_ == 0) next_generation_ = 1;
+        const std::uint32_t generation = next_generation_++;
+        generations_[id.value] = generation;
 
         // ── Serialize PerMaterial binding data into flat cpu_data buffer ──
         auto entry = std::make_unique<MaterialEntry>();
@@ -76,12 +87,56 @@ public:
             std::memcpy(staging_slice.data, entry->cpu_data.data(), total_size);
 
             for (std::size_t bi = 0; bi < tech_ptr->GetBindingCount(); ++bi) {
-                if (const auto& binding = tech_ptr->GetBinding(bi); binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) continue;
-                if (const GpuResources::BlockArray* ba = tech_ptr->GetBlockArray(bi)) {
-                    staging_mgr->RecordBufferCopy(staging_slice,
-                                                   ba->GetBlockArray(id.value / 256),
-                                                   ba->EntrySize() * (static_cast<std::uint64_t>(id.value % 256)));
+                const auto& binding = tech_ptr->GetBinding(bi);
+                if (binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) continue;
+
+                auto* ba = tech_ptr->GetBlockArrayForBinding(bi);
+                if (ba == nullptr) continue;
+
+                // The shader derives the block index as materialId /
+                // MATERIAL_BLOCK_SIZE, so the BlockArray geometry must match it.
+                if (ba->EntriesPerBlock() != TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) {
+                    LOGIFACE_LOG(error, "MaterialManager::Register: technique " +
+                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                 " has entries_per_block " + std::to_string(ba->EntriesPerBlock()) +
+                                 " but the shaders expect " +
+                                 std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
+                                 "; material will not be uploaded");
+                    continue;
                 }
+
+                const std::uint32_t block = id.value / ba->EntriesPerBlock();
+                if (block >= TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT) {
+                    LOGIFACE_LOG(error, "MaterialManager::Register: material id " +
+                                 std::to_string(id.value) + " exceeds the per-material descriptor "
+                                 "array capacity (" +
+                                 std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT *
+                                                 TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
+                                 " materials) for technique " + std::to_string(tech_id.value) +
+                                 "; material will not be uploaded");
+                    continue;
+                }
+
+                ba->EnsureCapacity(id.value + 1);
+                if (block >= ba->BlockCount()) {
+                    LOGIFACE_LOG(error, "MaterialManager::Register: BlockArray for technique " +
+                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                 " could not grow to hold material " + std::to_string(id.value) +
+                                 "; material will not be uploaded");
+                    continue;
+                }
+
+                if (!tech_ptr->EnsureMaterialBlockBound(bi, block)) {
+                    LOGIFACE_LOG(error, "MaterialManager::Register: could not bind material block " +
+                                 std::to_string(block) + " for technique " +
+                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                 "; material will not be uploaded");
+                    continue;
+                }
+
+                staging_mgr->RecordBufferCopy(staging_slice,
+                                               ba->GetBlockArray(block),
+                                               ba->EntrySize() * (static_cast<std::uint64_t>(id.value % ba->EntriesPerBlock())));
             }
 
             staging_mgr->Flush();
@@ -90,7 +145,7 @@ public:
         MaterialEntry* entry_ptr = entry.get();
         Materials[id.value] = std::move(entry);
 
-        return MaterialHandle<Tech>(id.value, entry_ptr,
+        return MaterialHandle<Tech>(id.value, generation, entry_ptr,
             [this](const std::uint32_t mid) { MarkDirty(MaterialId{mid}); });
     }
 
@@ -103,10 +158,33 @@ public:
     // ── Called by MaterialHandle::modify() ──
     void MarkDirty(MaterialId id);
 
+    // ── Validity ──
+    // True when the id names a live material entry. Does not detect slot reuse;
+    // use the MaterialRef overload for that.
+    [[nodiscard]] bool IsUsable(MaterialId id) const {
+        return id.value < Materials.size() && Materials[id.value] != nullptr;
+    }
+
+    // True when the generation-checked reference still points at the same
+    // material slot lifetime it was taken from.
+    [[nodiscard]] bool IsUsable(MaterialRef ref) const {
+        return ref.IsSet() &&
+               ref.value < Materials.size() &&
+               Materials[ref.value] != nullptr &&
+               ref.value < generations_.size() &&
+               generations_[ref.value] == ref.generation;
+    }
+
+    // Generation currently assigned to a slot (0 if the slot does not exist).
+    [[nodiscard]] std::uint32_t GetGeneration(MaterialId id) const {
+        return id.value < generations_.size() ? generations_[id.value] : 0u;
+    }
+
     // ── Read-only access to any material (type-erased path) ──
     template<typename T>
     const T& Get(const MaterialId id) const {
-        auto& entry = Materials[id.value];
+        assert(IsUsable(id) && "MaterialManager::Get called with an unusable material id");
+        const auto& entry = Materials[id.value];
         return *reinterpret_cast<const T*>(entry->cpu_data.data());
     }
 
@@ -115,13 +193,16 @@ public:
 
     // ── Type-erased access to raw material data for PackMaterialData() ──
     [[nodiscard]] const void* GetRawData(MaterialId id) const {
+        if (!IsUsable(id)) return nullptr;
         return Materials[id.value]->cpu_data.data();
     }
 
     // ── Look up the BaseTechnique for a material (via stored technique_id) ──
+    // Null-safe: returns nullptr for an out-of-range, destroyed, or
+    // technique-less material instead of dereferencing a dead slot.
     [[nodiscard]] TechniqueManager::BaseTechnique* GetTechniqueForMaterial(MaterialId id) const {
-        auto& entry = Materials[id.value];
-        return technique_mgr->GetTechnique(entry->technique_id);
+        if (!IsUsable(id) || technique_mgr == nullptr) return nullptr;
+        return technique_mgr->GetTechnique(Materials[id.value]->technique_id);
     }
 
     MaterialManager(const MaterialManager&) = delete;
@@ -134,8 +215,12 @@ public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     // New typed storage (pointer stability via unique_ptr)
     std::vector<std::unique_ptr<MaterialEntry>> Materials{};
+    // Parallel to Materials: per-slot lifetime counter. Bumped on allocation
+    // and on destroy so MaterialRef values taken earlier become stale.
+    std::vector<std::uint32_t> generations_{};
     std::vector<MaterialId> Dirty_list{};
     std::vector<MaterialId> Free_list{};
+    std::uint32_t next_generation_{1};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     GpuResources::StagingManager* staging_mgr = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)

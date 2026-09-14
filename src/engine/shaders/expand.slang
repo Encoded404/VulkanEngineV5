@@ -13,7 +13,7 @@ StructuredBuffer<DynEntry, CDataLayout> dynamicInstances[];
 struct StaticEntry {
     uint indexStart;       // packed: hi 8 = indexBufSlot, lo 24 = indexOffset
     uint indexRange;
-    uint techniqueMaterial; // packed: hi 16 = materialId, lo 16 = techniqueId
+    uint techniqueMaterial; // packed: hi (32 - kTechniqueBits) = materialId, lo kTechniqueBits = techniqueId
     uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
     uint ormPacked;        // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
     uint vertexWindowBase; // min mesh-local index referenced by the submesh (indexed-drawing window)
@@ -23,8 +23,8 @@ struct StaticEntry {
 [[vk::binding(1, 0)]]
 StructuredBuffer<StaticEntry, CDataLayout> staticMeshes[];
 
-// TechniquePacking constants — MUST match C++ TechniquePacking in TechniqueManager.cppm
-static const uint kTechniqueBits = 12;
+// TechniquePacking constants — MUST match C++ TechniquePacking in BaseTechnique.cppm
+static const uint kTechniqueBits = 14;
 static const uint kTechniqueMask = (1u << kTechniqueBits) - 1;
 
 // C layout (scalar block layout feature): float3x3 is 3 tightly-packed rows

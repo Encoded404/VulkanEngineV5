@@ -5,6 +5,7 @@ export module VulkanEngine.MaterialManager:MaterialHandle;
 import std;
 import std.compat;
 import VulkanEngine.TechniqueManager.TechniqueId;
+import VulkanEngine.MaterialManager.MaterialId;
 
 // ── Design ──
 // Lambda-based modify<T>([](T& d) { d.field = value; }) eliminates the
@@ -68,7 +69,11 @@ public:
 
     // ── Accessors ──
     [[nodiscard]] std::uint32_t Id() const { return id_; }
+    [[nodiscard]] std::uint32_t Generation() const { return generation_; }
     [[nodiscard]] bool Valid() const { return entry_ != nullptr; }
+
+    // ── Generation-checked reference, suitable for long-lived per-object storage ──
+    [[nodiscard]] MaterialRef Ref() const { return MaterialRef{id_, generation_}; }
 
     // Copyable — all copies point to the same MaterialEntry
     MaterialHandle(const MaterialHandle&) = default;
@@ -79,11 +84,12 @@ public:
 private:
     friend class MaterialManager;
 
-    MaterialHandle(std::uint32_t id, MaterialEntry* entry,
+    MaterialHandle(std::uint32_t id, std::uint32_t generation, MaterialEntry* entry,
                    std::function<void(std::uint32_t)> mark_dirty)
-        : id_(id), entry_(entry), mark_dirty_(std::move(mark_dirty)) {}
+        : id_(id), generation_(generation), entry_(entry), mark_dirty_(std::move(mark_dirty)) {}
 
     std::uint32_t id_ = 0;
+    std::uint32_t generation_ = 0;
     MaterialEntry* entry_ = nullptr;
     std::function<void(std::uint32_t)> mark_dirty_{};
 };

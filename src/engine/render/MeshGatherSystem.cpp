@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
+#include <typeinfo> // NOLINT(misc-include-cleaner)
 
 #include <logging/logging_macros.hpp>
 
@@ -19,6 +20,7 @@ import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshReference;
 import VulkanEngine.Components.DynamicMesh;
 import VulkanEngine.Components.OrmOverride;
+import VulkanEngine.Components.MaterialOverride;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshManager;
 import VulkanEngine.SceneRenderer;
@@ -30,6 +32,125 @@ import VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 import VulkanEngine.BindlessManager;
 
 namespace VulkanEngine {
+
+namespace {
+
+// FNV-1a over a small tuple of integers. Used only to detect "same
+// discrepancy as last frame" for once-per-cause logging.
+std::uint64_t OverrideSignature(const std::uint64_t tag,
+                                const std::uint64_t a,
+                                const std::uint64_t b) {
+    std::uint64_t h = 1469598103934665603ull;
+    const auto mix = [&h](std::uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (v >> (i * 8)) & 0xFFu;
+            h *= 1099511628211ull;
+        }
+    };
+    mix(tag);
+    mix(a);
+    mix(b);
+    return h;
+}
+
+// Material chosen for one object-local submesh, after applying (and validating)
+// any per-object MaterialOverride. `technique` is the material's own technique
+// and is never mixed with a different material's packing.
+struct EffectiveMaterial {
+    MaterialManager::MaterialId id{0};
+    TechniqueManager::BaseTechnique* technique = nullptr;
+    bool overridden = false;
+};
+
+// Resolve the material actually used for object-local submesh `submesh_index`.
+//
+// `asset_material` is the mesh asset's material for that submesh; `mesh_id` and
+// `submesh_count` describe the owning mesh. Any inconsistency — stale mesh
+// binding, an override range larger than the mesh, or an unusable (destroyed or
+// reused) material reference — is reported once and falls back to the asset
+// material rather than rendering with an unvalidated id.
+//
+// Never throws and never returns a packing for a material whose technique could
+// not be resolved unless the asset material itself is broken (engine invariant).
+EffectiveMaterial ResolveEffectiveMaterial(
+    MaterialManager::MaterialManager& material_mgr,
+    const MaterialManager::MaterialId asset_material,
+    Components::MaterialOverride* const override_comp,
+    const std::uint32_t submesh_index,
+    const std::uint32_t mesh_id,
+    const std::uint32_t submesh_count,
+    const std::uint64_t entity_id) {
+    EffectiveMaterial result{asset_material, nullptr, false};
+
+    if (override_comp != nullptr) {
+        // Lazily adopt the owner's mesh the first time the override is used.
+        if (override_comp->mesh_id == Components::MaterialOverride::kUnboundMesh) {
+            override_comp->mesh_id = mesh_id;
+        }
+
+        if (override_comp->mesh_id != mesh_id) {
+            const std::uint64_t sig = OverrideSignature(1, override_comp->mesh_id, mesh_id);
+            if (override_comp->ShouldReport(sig)) {
+                LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
+                    " override was authored for mesh " + std::to_string(override_comp->mesh_id) +
+                    " but entity now uses mesh " + std::to_string(mesh_id) +
+                    "; override ignored");
+            }
+        } else if (override_comp->submeshes.size() > submesh_count) {
+            const std::uint64_t sig = OverrideSignature(2, override_comp->submeshes.size(),
+                                                        submesh_count);
+            if (override_comp->ShouldReport(sig)) {
+                LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
+                    " override covers " + std::to_string(override_comp->submeshes.size()) +
+                    " submeshes but mesh " + std::to_string(mesh_id) + " has " +
+                    std::to_string(submesh_count) + "; override ignored");
+            }
+        } else if (submesh_index < override_comp->submeshes.size()) {
+            const MaterialManager::MaterialRef ref = override_comp->submeshes[submesh_index];
+            if (ref.IsSet()) {
+                if (!material_mgr.IsUsable(ref)) {
+                    const std::uint64_t sig = OverrideSignature(3, ref.value, ref.generation);
+                    if (override_comp->ShouldReport(sig)) {
+                        LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
+                            " submesh " + std::to_string(submesh_index) +
+                            " references a destroyed or replaced material " +
+                            std::to_string(ref.value) + " (generation " +
+                            std::to_string(ref.generation) + "); using mesh material");
+                    }
+                } else {
+                    result.id = MaterialManager::MaterialId{ref.value};
+                    result.overridden = true;
+                }
+            }
+        }
+    }
+
+    result.technique = material_mgr.GetTechniqueForMaterial(result.id);
+    if (result.technique == nullptr && result.overridden) {
+        const std::uint64_t sig = OverrideSignature(4, result.id.value, 0);
+        if (override_comp->ShouldReport(sig)) {
+            LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
+                " override material " + std::to_string(result.id.value) +
+                " has no registered technique; using mesh material");
+        }
+        result.id = asset_material;
+        result.overridden = false;
+        result.technique = material_mgr.GetTechniqueForMaterial(result.id);
+    }
+
+    return result;
+}
+
+// True when a technique's per-material data has the layout the ORM factor
+// fallback reads. Guards against reinterpreting another technique's material
+// bytes as DefaultMeshPerMaterialData.
+bool TechniqueHasDefaultMeshMaterial(const TechniqueManager::BaseTechnique* const technique) {
+    return technique != nullptr &&
+           technique->HasPerMaterialOfType(
+               std::type_index(typeid(TechniqueManager::DefaultMeshPerMaterialData)));
+}
+
+} // anonymous namespace
 
 void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                      MeshRegistry& mesh_registry,
@@ -209,7 +330,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     const auto accumulate = [&](const SubMesh& sm, std::uint32_t tech_material) {
         total_index_count += sm.index_count;
         total_vertex_span += sm.vertex_span;
-        const std::uint32_t tid = tech_material & 0xFFFu;
+        const std::uint32_t tid = tech_material & TechniqueManager::TechniquePacking::TECHNIQUE_MASK;
         if (tid < kTechniqueCount) tech_submeshes[tid] += 1u;
     };
     // The 24-bit vertex index packing cannot be represented past 2^24; fail
@@ -251,15 +372,26 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         // The component applies to all submeshes of the entity; when absent, each
         // submesh falls back to its material's own factors (resolved per submesh).
         const Components::OrmOverride* orm_override = nullptr;
+        Components::MaterialOverride* material_override = nullptr;
         if (e.mesh_ref && e.mesh_ref->GetOwner()) {
             orm_override = e.mesh_ref->GetOwner()->GetComponent<Components::OrmOverride>();
+            material_override = e.mesh_ref->GetOwner()->GetComponent<Components::MaterialOverride>();
         }
+        const std::uint64_t entity_id = (e.mesh_ref && e.mesh_ref->GetOwner())
+            ? static_cast<std::uint64_t>(e.mesh_ref->GetOwner()->GetId())
+            : 0ull;
 
         for (std::uint32_t s = 0; s < loaded->submesh_count; ++s) {
             const std::uint32_t si = loaded->first_submesh_in_renderer + s;
             const auto sm = (si < scene_submeshes.size())
                 ? scene_submeshes[si]
                 : SubMesh{};
+
+            // Per-submesh material selection. The chosen material's own technique
+            // travels with it, so a cross-technique override stays consistent.
+            const EffectiveMaterial effective = ResolveEffectiveMaterial(
+                material_mgr, sm.material_id, material_override, s,
+                e.mesh_ref->loaded_mesh_id, loaded->submesh_count, entity_id);
 
             float orm_ao = 1.0f;
             float orm_roughness = 1.0f;
@@ -268,9 +400,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 orm_ao = orm_override->ao;
                 orm_roughness = orm_override->roughness;
                 orm_metallic = orm_override->metallic;
-            } else if (material_mgr.GetTechniqueForMaterial(sm.material_id) != nullptr) {
+            } else if (TechniqueHasDefaultMeshMaterial(effective.technique) &&
+                       material_mgr.IsUsable(effective.id)) {
                 const auto& mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(
-                    MaterialManager::MaterialId{sm.material_id.value});
+                    effective.id);
                 orm_ao = mat.ao_factor;
                 orm_roughness = mat.roughness_factor;
                 orm_metallic = mat.metallic_factor;
@@ -285,9 +418,14 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             if (auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci))) {
                 s2->index_start_packed = (index_buf_slot << 24) | sm.index_start;
                 s2->index_range = sm.index_count;
-                {
-                    auto* tech = material_mgr.GetTechniqueForMaterial(sm.material_id);
-                    s2->technique_material = tech->PackMaterialData(sm.material_id.value);
+                if (effective.technique != nullptr) {
+                    s2->technique_material = effective.technique->PackMaterialData(effective.id.value);
+                } else {
+                    // Unreachable while the fallback material (id 0) is registered.
+                    assert(effective.technique != nullptr &&
+                           "submesh has no resolvable technique; fallback material missing");
+                    s2->technique_material =
+                        TechniqueManager::TechniquePacking::Pack(0u, 0u);
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
                 s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
@@ -355,10 +493,25 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                      ") rot=(" + std::to_string(rot.x) + "," + std::to_string(rot.y) + "," + std::to_string(rot.z) + "," + std::to_string(rot.w) +
                      ")");
 
+        // Per-object overrides for dynamic meshes. The gpu_handle acts as the
+        // mesh fingerprint (dynamic meshes have no MeshRegistry id).
+        const Components::OrmOverride* orm_override = nullptr;
+        Components::MaterialOverride* material_override = nullptr;
+        std::uint64_t entity_id = 0ull;
+        if (e.dyn_mesh->GetOwner() != nullptr) {
+            orm_override = e.dyn_mesh->GetOwner()->GetComponent<Components::OrmOverride>();
+            material_override = e.dyn_mesh->GetOwner()->GetComponent<Components::MaterialOverride>();
+            entity_id = static_cast<std::uint64_t>(e.dyn_mesh->GetOwner()->GetId());
+        }
+
         for (std::uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {
             const std::uint32_t si = e.dyn_mesh->first_submesh + s;
             const auto& sms = gpu_info->sub_meshes;
             const auto sm = (si < sms.size()) ? sms[si] : SubMesh{};
+
+            const EffectiveMaterial effective = ResolveEffectiveMaterial(
+                material_mgr, sm.material_id, material_override, s,
+                e.dyn_mesh->gpu_handle.id, e.dyn_mesh->submesh_count, entity_id);
 
             {
                 auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci));
@@ -394,13 +547,36 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                  " packed_vertex=0x" + std::to_string(packed_vertex));
                     s2->index_start_packed = packed_index;
                     s2->index_range = sm.index_count;
-                    {
-                        auto* tech = material_mgr.GetTechniqueForMaterial(sm.material_id);
-                        s2->technique_material = tech->PackMaterialData(sm.material_id.value);
+                    if (effective.technique != nullptr) {
+                        s2->technique_material =
+                            effective.technique->PackMaterialData(effective.id.value);
+                    } else {
+                        // Unreachable while the fallback material (id 0) is registered.
+                        assert(effective.technique != nullptr &&
+                               "dynamic submesh has no resolvable technique; fallback material missing");
+                        s2->technique_material =
+                            TechniqueManager::TechniquePacking::Pack(0u, 0u);
                     }
+
+                    // Same ORM precedence as static meshes: object override, then
+                    // the effective material's factors.
+                    float orm_ao = 1.0f;
+                    float orm_roughness = 1.0f;
+                    float orm_metallic = 1.0f;
+                    if (orm_override) {
+                        orm_ao = orm_override->ao;
+                        orm_roughness = orm_override->roughness;
+                        orm_metallic = orm_override->metallic;
+                    } else if (TechniqueHasDefaultMeshMaterial(effective.technique) &&
+                               material_mgr.IsUsable(effective.id)) {
+                        const auto& mat = material_mgr.Get<TechniqueManager::DefaultMeshPerMaterialData>(
+                            effective.id);
+                        orm_ao = mat.ao_factor;
+                        orm_roughness = mat.roughness_factor;
+                        orm_metallic = mat.metallic_factor;
+                    }
+                    s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
                     s2->vertex_info = packed_vertex;
-                    // Dynamic meshes have no ORM override path yet — neutral values.
-                    s2->orm_packed = PackOrm8(1.0f, 1.0f, 1.0f);
                     s2->vertex_window_base = sm.vertex_window_base;
                     s2->vertex_span = sm.vertex_span;
                     check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);

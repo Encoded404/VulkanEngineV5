@@ -65,11 +65,7 @@ public:
                 scene_uniform_layout);
     }
 
-    [[nodiscard]] std::uint32_t PackMaterialData(std::uint32_t material_id) const override {
-        constexpr std::uint32_t kTechBits = 12;
-        constexpr std::uint32_t kTechMask = (1u << kTechBits) - 1;
-        return (material_id << kTechBits) | (GetId().value & kTechMask);
-    }
+    // PackMaterialData uses the BaseTechnique default (TechniquePacking::Pack).
 
     [[nodiscard]] VulkanEngine::GpuResources::BlockArray* GetMaterialBlockArray() {
         return GetBlockArrayForType<DefaultMeshPerMaterialData>();

@@ -32,9 +32,11 @@ constexpr float kWallRecycleZ = 8.0f;   // once a wall passes this, wrap it back
 constexpr float kWallSpacingPowScaling = 0.9f;
 constexpr int kWallCount = 8;
 constexpr std::pair<float, float> kWallHoleSizes = {0.85f, 1.1f};
-constexpr float kWallHoleSizePowScaling = 0.2f;
+constexpr float kWallHoleSizePowScaling = 0.15f;
 constexpr float kWallSpeed = 15.0f;     // units/second toward the player
 constexpr float kPlayerSpeed = 9.0f;    // units/second sideways
+
+constexpr float kDifficultyScalingDivider = 100.0f;
 
 constexpr float WallSpacing() {
     return (kWallRecycleZ - kWallSpawnZ) / static_cast<float>(kWallCount);
@@ -329,10 +331,10 @@ void Game::ApplyWallTransform(Wall& wall) {
 }
 
 void Game::ResetWalls() {
-    float difficulty =
+    float difficulty = std::pow(std::max(1, score_), kWallSpacingPowScaling);
     for (int i = 0; i < static_cast<int>(walls_.size()); ++i) {
         auto& wall = walls_[static_cast<std::size_t>(i)];
-        wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing();
+        wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing() * std::max(1.0f, difficulty / kDifficultyScalingDivider);
         RandomizeWall(wall);
         ApplyWallTransform(wall);
     }
@@ -347,6 +349,8 @@ void Game::ResetRun() {
 }
 
 void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx, const float delta_time) {
+
+
     float direction = 0.0f;
     auto* input = ctx.input_system;
     if (input->IsActionActive(move_left_a_) || input->IsActionActive(move_left_arrow_)) {
@@ -363,8 +367,10 @@ void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx
 }
 
 void Game::UpdateWalls(const float delta_time) {
+    float difficulty = std::max(1, score_);
+
     for (auto& wall : walls_) {
-        wall.z += kWallSpeed * delta_time;
+        wall.z += kWallSpeed * delta_time  * std::max(1.0f, difficulty / kDifficultyScalingDivider);
 
         if (wall.z > kWallRecycleZ) {
             wall.z -= (kWallRecycleZ - kWallSpawnZ);

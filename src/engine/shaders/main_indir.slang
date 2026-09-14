@@ -55,7 +55,7 @@ VSOutput main(uint vertexId : SV_VertexID) {
     uint submeshId = entry.sid;
     uint block = submeshId / 256u;
     uint elemIndex = submeshId % 256u;
-    Vertex vert = vertexBuffers[bufferIndex][vertexIndex];
+    Vertex vert = vertexBuffers[NonUniformResourceIndex(bufferIndex)][vertexIndex];
     float3 p = float3(vert.px, vert.py, vert.pz);
     float2 t = float2(vert.u, vert.v);
 

@@ -39,6 +39,6 @@
 # jetbrains directory
 /.idea
 
-/src/app/models/*
-/src/app/textures/*
+/**/models/*
+/**/textures/*
 /vcpkg_installed

@@ -59,6 +59,25 @@ inline constexpr std::uint32_t TECHNIQUE_FLAG_OCCLUDER_SAFE = 1u << 3;        //
 // entry budget (docs/pre-prepass-occlusion-culling.md §5.1-A).
 inline constexpr float kOccluderMinAreaFraction = 0.0025f; // 0.25 % of the screen
 
+// ── Indexed-drawing pipeline (docs/indexed-drawing-pipeline.md) ──
+// Compaction output / draw shape. Fixed at initialization; changing it
+// re-creates the mode-dependent frame buffers and rebuilds the
+// kCompactionMode-specialized compute pipelines.
+enum class DrawMode : std::uint8_t {
+    Monolithic = 0,      // 4 B absolute slot indices, one drawIndexedIndirect per pass/technique
+    MultiIndirect = 1,   // 20 B DrawIndexedIndirectCommand per alive submesh, drawIndexedIndirectCount
+};
+
+// Runtime scene totals that size the per-frame indexed-drawing buffers. Since
+// MeshRenderSystem::ProcessFrame accumulates the real values after upload,
+// EnsureSceneCapacity grows the ring geometrically rather than relying on the
+// initial (init-time) estimate.
+struct SceneCapacity {
+    std::uint32_t index_count = 0;   // Σ submesh index_count over the frame
+    std::uint32_t vertex_span = 0;   // Σ submesh tight vertex-window span
+    std::uint32_t submesh_count = 0; // Σ submeshes (alive + culled) over the frame
+};
+
 class SceneRenderer {
 public:
     static constexpr std::uint32_t MAX_HIZ_MIPS = 12;
@@ -76,12 +95,34 @@ public:
 
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
-                    std::uint32_t total_index_count,
+                    SceneCapacity initial_capacity,
                     ShaderSystem::ShaderManager& shader_mgr,
                     ShaderSystem::PipelineFactory& pipeline_factory,
                     const EngineShaderIds& shader_ids,
-                    std::uint32_t frames_in_flight);
+                    std::uint32_t frames_in_flight,
+                    DrawMode draw_mode = DrawMode::Monolithic);
     void Shutdown();
+
+    // Grows (never shrinks) the indexed-drawing frame ring to cover the given
+    // scene totals. Called from the gather pass once the frame's real totals
+    // are known. Device-idles and re-creates the capacity-dependent buffers
+    // when growth is required; no-op otherwise.
+    void EnsureSceneCapacity(const SceneCapacity& required);
+
+    // Switches draw mode at runtime: device idle, destroy + re-create the
+    // mode-dependent buffers at the current capacity, then rebuild the
+    // kCompactionMode-specialized compute pipelines. Descriptor set layouts,
+    // pools and technique graphics pipelines are mode-independent and reused.
+    void Reinitialize(DrawMode mode);
+
+    [[nodiscard]] DrawMode GetDrawMode() const { return draw_mode_; }
+    [[nodiscard]] const SceneCapacity& GetSceneCapacity() const { return scene_capacity_; }
+    [[nodiscard]] bool IsDrawModeSupported(DrawMode mode) const;
+    [[nodiscard]] std::uint32_t GetTechniqueRegionTotal() const { return region_total_; }
+
+    // MID main pass: CPU prefix-sum of submesh counts per technique. Defines
+    // each technique's fixed command region in the shared command buffer.
+    void SetTechniqueCommandRegions(std::span<const std::uint32_t> submeshes_per_technique);
 
     [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexDataLayout() const;
     [[nodiscard]] vk::DescriptorSetLayout* GetRawVertexLayout() const;
@@ -208,23 +249,34 @@ private:
         VulkanEngine::GpuResources::BlockArray submesh_vertex_data{};
         VulkanEngine::GpuResources::BlockArray submesh_cull{};
 
-        // Single buffers for indirection, draw commands
-        VulkanEngine::GpuResources::GpuBuffer indirection_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer compacted_indirection_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer draw_count_buffer{};
-        // Depth-prepass survivor list: written by the pre-cull pass every
-        // frame (frustum + Hi-Z survivors minus occluders, excluding
-        // depth-pass-opted-out techniques).
-        VulkanEngine::GpuResources::GpuBuffer depth_indirection_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer depth_draw_count_buffer{};
-        // Occluder prepass inputs: selected occluders' indirection + draw
-        // command + selection counter (§5.1-A/§5.3).
-        VulkanEngine::GpuResources::GpuBuffer occluder_indirection_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_draw_count_buffer{};
+        // ── Indexed-drawing substrate (shared by both modes) ──
+        // One IndirEntry per slot in each submesh's tight vertex window.
+        VulkanEngine::GpuResources::GpuBuffer vertex_entries{};
+        // 4 B absolute slot indices into vertex_entries, one per occurrence.
+        VulkanEngine::GpuResources::GpuBuffer draw_indices{};
+        // 2 x u32 atomic counters allocated by expand: [0]=entryBase, [1]=indexBase.
+        VulkanEngine::GpuResources::GpuBuffer expand_counter{};
+
+        // ── Monolithic destinations (4 B compact index lists) ──
+        VulkanEngine::GpuResources::GpuBuffer main_compact_indices{};
+        VulkanEngine::GpuResources::GpuBuffer depth_compact_indices{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_compact_indices{};
+        // Monolithic GPU-accumulated indexed draw commands (word 0 = indexCount).
+        VulkanEngine::GpuResources::GpuBuffer depth_draw_command{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_draw_command{};
+
+        // ── MID destinations (20 B indexed indirect commands + count) ──
+        VulkanEngine::GpuResources::GpuBuffer main_commands{};
+        VulkanEngine::GpuResources::GpuBuffer depth_commands{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_commands{};
+        VulkanEngine::GpuResources::GpuBuffer depth_command_count{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_command_count{};
+        // CPU prefix sum of submeshes per technique (host-visible, MID main pass).
+        VulkanEngine::GpuResources::GpuBuffer region_base_buffer{};
+
         VulkanEngine::GpuResources::GpuBuffer occluder_count_buffer{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
         VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer tech_offsets_buffer{};
         VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};
 
         // Descriptor sets
@@ -234,9 +286,9 @@ private:
         VulkanEngine::GpuResources::GpuDescriptorSet collect_write_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet occluder_select_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
+        // Single shared indirection set (set 3) bound to vertex_entries and
+        // reused by the depth, occluder and main passes.
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
-        vk::raii::DescriptorSet depth_indirection_set = vk::raii::DescriptorSet(nullptr);
-        vk::raii::DescriptorSet occluder_indirection_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet bindless_vertex_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet bindless_index_set = vk::raii::DescriptorSet(nullptr);
         VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
@@ -357,7 +409,6 @@ private:
     std::uint32_t depth_height_ = 0;
     std::uint32_t hiz_mip_count_ = 0;
     bool hiz_initialized_ = false;
-    std::uint32_t total_index_count_ = 0;
 
     std::unique_ptr<vk::raii::DescriptorSetLayout> empty_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> empty_pool_{};
@@ -393,11 +444,27 @@ private:
     VulkanEngine::GpuResources::GpuBuffer technique_flags_buffer_{};
     std::vector<std::uint32_t> technique_flags_cache_{};
 
+    // Create/destroy the mode-dependent per-frame buffers at the current
+    // capacity. Called by Initialize and EnsureSceneCapacity/Reinitialize.
+    bool CreateFrameBuffers();
+    void DestroyFrameBuffers();
+    // Rebuild the kCompactionMode-specialized compute pipelines (pre-cull,
+    // occluder-select, collect count/compact, collect write).
+    bool RebuildCompactionPipelines();
+
     // Runtime-sized per-frame resource ring (see frames_in_flight_).
     std::vector<FrameResources> frames_;
     std::uint32_t frames_in_flight_ = 3;
     std::uint32_t current_entity_count_ = 0;
     glm::mat4 view_proj_{1.0f};
+
+    DrawMode draw_mode_ = DrawMode::Monolithic;
+    bool draw_indirect_count_supported_ = false;
+    SceneCapacity scene_capacity_{};
+    // CPU prefix sum (MID): region_base_[t] = first command slot of technique t.
+    std::vector<std::uint32_t> region_base_{};
+    std::vector<std::uint32_t> region_count_{};
+    std::uint32_t region_total_ = 0;
 };
 
 }

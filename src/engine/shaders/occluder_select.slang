@@ -12,7 +12,7 @@
 // No sort, no scan, no ranking: any set of large real-geometry occluders is a
 // valid occluder set — selection can only miss culls, never cause false ones.
 struct CullEntry {
-    uint indirOffset;
+    uint indexBase;  // slot base of the submesh's indices in draw_indices
     uint indexCount;
     uint techniqueId;
     uint pad; // bit0 = selected occluder this frame
@@ -51,19 +51,18 @@ StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
 [[vk::binding(3, 0)]]
 StructuredBuffer<uint, CDataLayout> techniqueFlags;
 
-struct IndirEntry {
-    uint vertexId;
-    uint submeshId;
-};
-
+// Absolute entry slots, one per occurrence, produced by expand.
 [[vk::binding(4, 0)]]
-StructuredBuffer<IndirEntry, CDataLayout> fullIndirect;
+StructuredBuffer<uint, CDataLayout> drawIndices;
 
+// Compaction destination, viewed as raw u32:
+//   monolithic: a packed uint index list
+//   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
 [[vk::binding(5, 0)]]
-RWStructuredBuffer<IndirEntry, CDataLayout> occluderIndirect;
+RWStructuredBuffer<uint, CDataLayout> occluderOut;
 
-// DrawIndirectCommand buffer pre-initialized by the CPU to {0, 1, 0, 0}; word 0
-// (vertexCount) accumulates the occluder index total via InterlockedAdd.
+// Word 0. Monolithic: accumulates the occluder index total. MID: increments
+// once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(6, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderCounter;
 
@@ -71,6 +70,10 @@ globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderCounter;
 [[vk::binding(7, 0)]]
 RWStructuredBuffer<uint, CDataLayout> occluderCount;
 
+// 0 = monolithic (compact index copy), 1 = MID (command emission).
+[[vk::constant_id(0)]] const uint kCompactionMode = 0;
+
+static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
 static const uint kFlagDepthPass    = 1u << 0;
 static const uint kFlagOccluderSafe = 1u << 3;
 static const uint kOccluderBit      = 1u << 0;
@@ -162,10 +165,23 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     InterlockedAdd(occluderCount[0], 1u, slot);
     if (slot >= kMaxOccluders) return;
 
-    uint destOffset;
-    InterlockedAdd(occluderCounter[0], entry.indexCount, destOffset);
-    for (uint i = 0; i < entry.indexCount; i++) {
-        occluderIndirect[destOffset + i] = fullIndirect[entry.indirOffset + i];
+    if (kCompactionMode == 0) {
+        // Monolithic: copy the 4 B entry slots into the packed index list.
+        uint destOffset;
+        InterlockedAdd(occluderCounter[0], entry.indexCount, destOffset);
+        for (uint i = 0; i < entry.indexCount; i++) {
+            occluderOut[destOffset + i] = drawIndices[entry.indexBase + i];
+        }
+    } else {
+        // MID: one 20 B indexed draw command per selected occluder.
+        uint cmdSlot;
+        InterlockedAdd(occluderCounter[0], 1u, cmdSlot);
+        uint base = cmdSlot * kCmdWords;
+        occluderOut[base + 0] = entry.indexCount;
+        occluderOut[base + 1] = 1u;
+        occluderOut[base + 2] = entry.indexBase;
+        occluderOut[base + 3] = 0u;
+        occluderOut[base + 4] = 0u;
     }
 
     cull[NonUniformResourceIndex(block)][elemIndex].pad |= kOccluderBit;

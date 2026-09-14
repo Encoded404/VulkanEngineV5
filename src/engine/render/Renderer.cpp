@@ -49,7 +49,6 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pre_cull_pass_ = std::make_unique<VulkanEngine::SceneRenderer::PreCullPass>(scene_renderer);
     occlusion_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OcclusionPass>(scene_renderer);
     collect_pass_ = std::make_unique<VulkanEngine::SceneRenderer::CollectPass>(scene_renderer);
-    main_pass_ = std::make_unique<VulkanEngine::SceneRenderer::MainPass>(scene_renderer);
 
     auto backbuffer = pipeline_->ImportBackbuffer();
     auto depth_buffer = pipeline_->ImportDepthBuffer();
@@ -125,7 +124,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .name = "occluder-prepass",
         .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
         .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
             VulkanEngine::RenderGraph::AccessIntent::Read},
             {occluder_indirect,
             VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
@@ -198,7 +197,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .name = "depth-prepass",
         .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
         .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
             VulkanEngine::RenderGraph::AccessIntent::Read},
             {draw_indirect,
             VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
@@ -296,7 +295,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .name = "main-pass",
         .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
         .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
             VulkanEngine::RenderGraph::AccessIntent::Read},
             {draw_indirect,
             VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,

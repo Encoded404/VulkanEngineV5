@@ -16,6 +16,8 @@ struct StaticEntry {
     uint techniqueMaterial; // packed: hi 16 = materialId, lo 16 = techniqueId
     uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
     uint ormPacked;        // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
+    uint vertexWindowBase; // min mesh-local index referenced by the submesh (indexed-drawing window)
+    uint vertexSpan;       // tight vertex-window size: max-min+1 (indexed-drawing pipeline)
 };
 
 [[vk::binding(1, 0)]]
@@ -43,7 +45,7 @@ struct VertEntry {
 RWStructuredBuffer<VertEntry, CDataLayout> vertexConstants[];
 
 struct CullEntry {
-    uint indirOffset;
+    uint indexBase;   // slot base of this submesh's indices in drawIndices
     uint indexCount;
     uint techniqueId;
     uint pad;
@@ -57,11 +59,18 @@ struct IndirEntry {
     uint submeshId;
 };
 
+// One entry per vertex slot in each submesh's tight window. Indexed draws make
+// SV_VertexID the draw_indices value, which is a slot here.
 [[vk::binding(4, 0)]]
-RWStructuredBuffer<IndirEntry, CDataLayout> indirectDraws;
+RWStructuredBuffer<IndirEntry, CDataLayout> vertexEntries;
 
+// Absolute slot indices into vertexEntries, one per index occurrence.
 [[vk::binding(5, 0)]]
-globallycoherent RWStructuredBuffer<uint, CDataLayout> drawCounter;
+RWStructuredBuffer<uint, CDataLayout> drawIndices;
+
+// [0] = next vertex-entry base, [1] = next draw-index base. Zeroed by the CPU.
+[[vk::binding(6, 0)]]
+globallycoherent RWStructuredBuffer<uint, CDataLayout> expandCounter;
 
 struct ExpandPC {
     float4x4 vp;
@@ -145,22 +154,36 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].modelMatrix = model;
     vertexConstants[NonUniformResourceIndex(block)][elemIndex].normalMatrix = nrm;
 
-    uint drawOffset;
-    InterlockedAdd(drawCounter[0], indexRange, drawOffset); // allocate range in the indirect draw buffer
-
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].indirOffset = drawOffset;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techId;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].pad = 0; // occluder bit, set by occluder_select
-
     uint indexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart >> 24;
     uint indexOffset  = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart & 0xFFFFFFu;
     uint vertexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo >> 24;
     uint baseVertex    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo & 0xFFFFFFu;
+    uint windowBase    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexWindowBase;
+    uint vertexSpan    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexSpan;
 
+    // Allocate this submesh's vertex-entry range and its draw-index range. The
+    // ranges are independent: entry slots are dense over the tight vertex
+    // window, index slots are dense over the index range.
+    uint entryBase;
+    InterlockedAdd(expandCounter[0], vertexSpan, entryBase);
+    uint indexBase;
+    InterlockedAdd(expandCounter[1], indexRange, indexBase);
+
+    // One entry per vertex slot; no per-occurrence duplication.
+    for (uint j = 0; j < vertexSpan; j++) {
+        vertexEntries[entryBase + j].vertexId =
+            (vertexBufSlot << 24) | (baseVertex + windowBase + j);
+        vertexEntries[entryBase + j].submeshId = id;
+    }
+
+    // Replay the asset indices once into absolute entry slots.
     for (uint i = 0; i < indexRange; i++) {
         uint rawIndex = indexBuffers[indexBufSlot][indexOffset + i];
-        indirectDraws[drawOffset + i].vertexId = (vertexBufSlot << 24) | (rawIndex + baseVertex);
-        indirectDraws[drawOffset + i].submeshId = id;
+        drawIndices[indexBase + i] = entryBase + (rawIndex - windowBase);
     }
+
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexBase = indexBase;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techId;
+    cullEntries[NonUniformResourceIndex(block)][elemIndex].pad = 0; // occluder bit, set by occluder_select
 }

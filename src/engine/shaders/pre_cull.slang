@@ -29,7 +29,7 @@ struct VertEntry {
 StructuredBuffer<VertEntry, CDataLayout> submeshVertexInfo[];
 
 struct CullEntry {
-    uint indirOffset;
+    uint indexBase;  // slot base of the submesh's indices in draw_indices
     uint indexCount;
     uint techniqueId;
     uint pad; // bit0 = selected occluder (set by occluder_select)
@@ -61,22 +61,25 @@ StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
 [[vk::binding(5, 0)]]
 StructuredBuffer<uint, CDataLayout> techniqueFlags;
 
-struct IndirEntry {
-    uint vertexId;
-    uint submeshId;
-};
-
+// Absolute entry slots, one per occurrence, produced by expand.
 [[vk::binding(6, 0)]]
-StructuredBuffer<IndirEntry, CDataLayout> fullIndirect;
+StructuredBuffer<uint, CDataLayout> drawIndices;
 
+// Compaction destination, viewed as raw u32:
+//   monolithic: a packed uint index list
+//   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
 [[vk::binding(7, 0)]]
-RWStructuredBuffer<IndirEntry, CDataLayout> prepassIndirect;
+RWStructuredBuffer<uint, CDataLayout> prepassOut;
 
-// DrawIndirectCommand buffer pre-initialized by the CPU to {0, 1, 0, 0}; word 0
-// (vertexCount) accumulates the survivor index total via InterlockedAdd.
+// Counter word. Monolithic: word 0 accumulates the survivor index total.
+// MID: increments once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(8, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> prepassCounter;
 
+// 0 = monolithic (compact index copy), 1 = MID (command emission).
+[[vk::constant_id(0)]] const uint kCompactionMode = 0;
+
+static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
 static const uint kFlagDepthPass          = 1u << 0;
 static const uint kFlagReceivesOcclusion  = 1u << 1;
 static const uint kOccluderBit            = 1u << 0;
@@ -245,9 +248,22 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // part of the depth prepass.
     if ((flags & kFlagDepthPass) == 0) return;
 
-    uint destOffset;
-    InterlockedAdd(prepassCounter[0], entry.indexCount, destOffset);
-    for (uint i = 0; i < entry.indexCount; i++) {
-        prepassIndirect[destOffset + i] = fullIndirect[entry.indirOffset + i];
+    if (kCompactionMode == 0) {
+        // Monolithic: copy the 4 B entry slots into the packed index list.
+        uint destOffset;
+        InterlockedAdd(prepassCounter[0], entry.indexCount, destOffset);
+        for (uint i = 0; i < entry.indexCount; i++) {
+            prepassOut[destOffset + i] = drawIndices[entry.indexBase + i];
+        }
+    } else {
+        // MID: one 20 B indexed draw command per survivor.
+        uint slot;
+        InterlockedAdd(prepassCounter[0], 1u, slot);
+        uint base = slot * kCmdWords;
+        prepassOut[base + 0] = entry.indexCount;
+        prepassOut[base + 1] = 1u;
+        prepassOut[base + 2] = entry.indexBase;
+        prepassOut[base + 3] = 0u;
+        prepassOut[base + 4] = 0u;
     }
 }

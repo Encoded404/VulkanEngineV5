@@ -27,11 +27,11 @@ struct IndirEntry {
 };
 
 [[vk::binding(0, 3)]]
-StructuredBuffer<IndirEntry, CDataLayout> indirectBuffer;
+StructuredBuffer<IndirEntry, CDataLayout> vertexEntries;
 
 [shader("vertex")]
 float4 main(uint vertexId : SV_VertexID) : SV_Position {
-    IndirEntry entry = indirectBuffer[vertexId];
+    IndirEntry entry = vertexEntries[vertexId];
     uint bufferIndex = entry.vid >> 24;
     uint vertexIndex = entry.vid & 0xFFFFFFu;
     uint submeshId = entry.sid;

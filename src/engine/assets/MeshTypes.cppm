@@ -46,10 +46,41 @@ export namespace VulkanEngine
     {
         std::uint32_t index_start{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         std::uint32_t index_count{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Tight window over the vertex indices referenced by this submesh
+        // (mesh-local index values): all indices lie in
+        // [vertex_window_base, vertex_window_base + vertex_span). Used by the
+        // indexed-drawing pipeline to allocate one vertex_entries slot per
+        // referenced vertex instead of one per occurrence.
+        std::uint32_t vertex_window_base{0}; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::uint32_t vertex_span{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         MaterialId material_id{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         BoundingSphere sphere{};
         BoundingOBB obb{};
     };
+
+    // Computes SubMesh::vertex_window_base / vertex_span from the mesh-local
+    // index values in [index_start, index_start + index_count). Empty
+    // submeshes yield base 0, span 0. Index values are the raw importer
+    // indices (no GPU index-buffer offset), so this is independent of where
+    // the index data is uploaded.
+    inline void ComputeSubmeshVertexWindow(SubMesh& sm,
+                                           const std::vector<std::uint32_t>& indices) {
+        std::uint32_t min_index = std::numeric_limits<std::uint32_t>::max();
+        std::uint32_t max_index = 0;
+        const std::uint32_t end = sm.index_start + sm.index_count;
+        for (std::uint32_t i = sm.index_start; i < end && i < indices.size(); ++i) {
+            const std::uint32_t v = indices[i];
+            min_index = std::min(min_index, v);
+            max_index = std::max(max_index, v);
+        }
+        if (min_index == std::numeric_limits<std::uint32_t>::max()) {
+            sm.vertex_window_base = 0;
+            sm.vertex_span = 0;
+            return;
+        }
+        sm.vertex_window_base = min_index;
+        sm.vertex_span = max_index - min_index + 1;
+    }
 
     struct BoneWeight
     {

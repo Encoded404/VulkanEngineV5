@@ -26,6 +26,18 @@ namespace VulkanEngine::SceneRenderer {
         struct OccluderSelectPC { std::uint32_t cnt; std::uint32_t minAreaPx; std::uint32_t screenW; std::uint32_t screenH; };
         struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
 
+        // kCompactionMode specialization constant (constant_id 0):
+        //   0 = monolithic (4 B compact index copies)
+        //   1 = MID (20 B DrawIndexedIndirectCommand emission)
+        void SetCompactionMode(ShaderSystem::ComputePipelineDesc& desc, DrawMode mode) {
+            const std::uint32_t value =
+                (mode == DrawMode::MultiIndirect) ? 1u : 0u;
+            desc.spec_entries = {
+                vk::SpecializationMapEntry(0, 0, sizeof(std::uint32_t))
+            };
+            desc.spec_data.resize(sizeof(std::uint32_t));
+            std::memcpy(desc.spec_data.data(), &value, sizeof(value));
+        }
     } // anonymous namespace
 
 bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBootstrap& be,
@@ -202,6 +214,7 @@ bool SceneRenderer::CreateOccluderSelectPipeline(const VulkanBackend::Vulkan::IV
     ShaderSystem::ComputePipelineDesc desc{};
     desc.shader = shader_id;
     desc.layout = *occluder_select_pipeline_layout_;
+    SetCompactionMode(desc, draw_mode_);
     occluder_select_desc_ = desc;
     auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
     if (result.has_value()) {
@@ -232,6 +245,7 @@ bool SceneRenderer::CreatePreCullPipeline(const VulkanBackend::Vulkan::IVulkanBo
     ShaderSystem::ComputePipelineDesc desc{};
     desc.shader = shader_id;
     desc.layout = *pre_cull_pipeline_layout_;
+    SetCompactionMode(desc, draw_mode_);
     pre_cull_desc_ = desc;
     auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
     if (result.has_value()) {
@@ -265,6 +279,7 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
         ShaderSystem::ComputePipelineDesc desc{};
         desc.shader = count_id;
         desc.layout = *collect_pipeline_layout_;
+        SetCompactionMode(desc, draw_mode_);
         collect_count_desc_ = desc;
         auto result = pipeline_factory.CreateCompute(desc, shader_mgr);
         if (result.has_value()) {
@@ -298,6 +313,36 @@ bool SceneRenderer::CreateCollectPipelines(const VulkanBackend::Vulkan::IVulkanB
 
     LOGIFACE_LOG(debug, "Collect pipelines created");
     return true;
+}
+
+bool SceneRenderer::RebuildCompactionPipelines() {
+    if (!backend_ || !shader_mgr_ || !pipeline_factory_) return false;
+    // Rebuild only the pipeline objects: the existing pipeline layouts are
+    // reused so pipelines still in a retire ring keep valid layouts. The
+    // kCompactionMode spec value is updated on each stored desc first.
+    const auto rebuild = [this](ShaderSystem::PipelineSlot& slot,
+                                std::optional<ShaderSystem::ComputePipelineDesc>& desc) {
+        if (!desc) return true;
+        auto result = pipeline_factory_->CreateCompute(*desc, *shader_mgr_);
+        if (!result.has_value()) {
+            LOGIFACE_LOG(error, "SceneRenderer: failed to rebuild compaction pipeline");
+            return false;
+        }
+        slot.Swap(std::move(result.value()), 0);
+        return true;
+    };
+
+    if (occluder_select_desc_) SetCompactionMode(*occluder_select_desc_, draw_mode_);
+    if (pre_cull_desc_)       SetCompactionMode(*pre_cull_desc_, draw_mode_);
+    if (collect_count_desc_)  SetCompactionMode(*collect_count_desc_, draw_mode_);
+    // collect_write is monolithic-only and has no specialization constant.
+
+    bool ok = true;
+    ok = rebuild(occluder_select_slot_, occluder_select_desc_) && ok;
+    ok = rebuild(pre_cull_slot_, pre_cull_desc_) && ok;
+    ok = rebuild(collect_count_slot_, collect_count_desc_) && ok;
+    ok = rebuild(collect_write_slot_, collect_write_desc_) && ok;
+    return ok;
 }
 
 } // namespace VulkanEngine::SceneRenderer

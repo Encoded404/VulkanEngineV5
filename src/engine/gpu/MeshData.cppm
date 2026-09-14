@@ -39,6 +39,11 @@ void EnsureSubmeshBounds(MeshData& data) {
     }
 
     for (auto& sm : data.sub_meshes) {
+        // The indexed-drawing pipeline needs the vertex window for every
+        // submesh, regardless of whether bounds already exist.
+        if (sm.vertex_span == 0) {
+            ComputeSubmeshVertexWindow(sm, data.indices);
+        }
         if (sm.sphere.radius > 0.0f) continue;
         ComputeSubmeshBounds(sm, positions, data.indices);
     }

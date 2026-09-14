@@ -41,6 +41,19 @@ namespace VulkanEngine::SceneRenderer {
             return reinterpret_cast<std::uint64_t>(static_cast<typename Handle::CType>(h));
         }
 
+        static void WriteBuffer(vk::DescriptorSet ds, std::uint32_t binding,
+                                VulkanEngine::GpuResources::GpuBuffer& buf,
+                                const vk::raii::Device& dev) {
+            const vk::DescriptorBufferInfo bi(*buf.GetBuffer(), 0, vk::WholeSize);
+            vk::WriteDescriptorSet w{};
+            w.dstSet = ds;
+            w.dstBinding = binding;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eStorageBuffer;
+            w.pBufferInfo = &bi;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+
         static void WriteBlocks(vk::DescriptorSet ds, std::uint32_t binding,
                                 GpuResources::BlockArray& buf,
                                 vk::DescriptorType desc_type,
@@ -91,48 +104,38 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     fr.submesh_vertex_data.EnsureCapacity(total);
     fr.submesh_cull.EnsureCapacity(total);
 
-    constexpr vk::DrawIndirectCommand zero_cmd{ 0, 1, 0, 0 };
-    fr.draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
-    // Survivor list (depth prepass) and occluder list start empty each frame;
-    // the occluder entry counter restarts from zero.
-    fr.depth_draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
-    fr.occluder_draw_count_buffer.Upload(&zero_cmd, sizeof(zero_cmd));
-    {
-        const std::uint32_t zero = 0;
-        fr.occluder_count_buffer.Upload(&zero, sizeof(zero));
-    }
+    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
 
-    // Zero intermediate buffer
+    // Per-frame counters/commands.
     {
-        auto* p = fr.intermediate_buffer.Map(0, fr.intermediate_buffer.GetSize());
-        if (p) {
-            std::memset(p, 0, fr.intermediate_buffer.GetSize());
-            fr.intermediate_buffer.Unmap();
+        const std::uint32_t zero2[2] = {0u, 0u};
+        fr.expand_counter.Upload(zero2, sizeof(zero2));
+        const std::uint32_t zero = 0u;
+        fr.occluder_count_buffer.Upload(&zero, sizeof(zero));
+        if (mid) {
+            fr.depth_command_count.Upload(&zero, sizeof(zero));
+            fr.occluder_command_count.Upload(&zero, sizeof(zero));
+        } else {
+            const vk::DrawIndexedIndirectCommand zero_cmd{0u, 1u, 0u, 0, 0u};
+            fr.depth_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
+            fr.occluder_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
         }
     }
 
-    // Zero technique_draw_commands buffer (always, used by fallback path)
-    {
+    // Zero CPU-consumed buffers. technique_draw_commands only exists in
+    // monolithic mode; tech_counts is written by the MID compact pass.
+    for (auto* buf : {&fr.intermediate_buffer, &fr.tech_counts_buffer}) {
+        auto* p = buf->Map(0, buf->GetSize());
+        if (p) {
+            std::memset(p, 0, buf->GetSize());
+            buf->Unmap();
+        }
+    }
+    if (!mid) {
         auto* p = fr.technique_draw_commands.Map(0, fr.technique_draw_commands.GetSize());
         if (p) {
             std::memset(p, 0, fr.technique_draw_commands.GetSize());
             fr.technique_draw_commands.Unmap();
-        }
-    }
-
-    // Zero tech counts and offsets buffers (legacy fallback path)
-    {
-        auto* p = fr.tech_counts_buffer.Map(0, fr.tech_counts_buffer.GetSize());
-        if (p) {
-            std::memset(p, 0, fr.tech_counts_buffer.GetSize());
-            fr.tech_counts_buffer.Unmap();
-        }
-    }
-    {
-        auto* p = fr.tech_offsets_buffer.Map(0, fr.tech_offsets_buffer.GetSize());
-        if (p) {
-            std::memset(p, 0, fr.tech_offsets_buffer.GetSize());
-            fr.tech_offsets_buffer.Unmap();
         }
     }
 
@@ -149,6 +152,9 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBlocks(fr.expand_set.GetHandle(), 3, fr.submesh_cull,
                 vk::DescriptorType::eStorageBuffer, dev);
+    WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_entries, dev);
+    WriteBuffer(fr.expand_set.GetHandle(), 5, fr.draw_indices, dev);
+    WriteBuffer(fr.expand_set.GetHandle(), 6, fr.expand_counter, dev);
 
     // Occluder-select block arrays (block counts change with scene capacity).
     WriteBlocks(fr.occluder_select_set.GetHandle(), 0, fr.submesh_cull,
@@ -157,27 +163,13 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBlocks(fr.occluder_select_set.GetHandle(), 2, fr.bounding_obb,
                 vk::DescriptorType::eStorageBuffer, dev);
-
-    {
-        const vk::DescriptorBufferInfo bi(*fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.expand_set.GetHandle();
-        w.dstBinding = 4;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-    {
-        const vk::DescriptorBufferInfo bi(*fr.draw_count_buffer.GetBuffer(), 0, sizeof(std::uint32_t));
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.expand_set.GetHandle();
-        w.dstBinding = 5;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags_buffer_, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 4, fr.draw_indices, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 5,
+                mid ? fr.occluder_commands : fr.occluder_compact_indices, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 6,
+                mid ? fr.occluder_command_count : fr.occluder_draw_command, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_count_buffer, dev);
 
     WriteBlocks(fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_data,
                 vk::DescriptorType::eStorageBuffer, dev);
@@ -213,6 +205,62 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         w.descriptorType = vk::DescriptorType::eStorageBuffer;
         w.pBufferInfo = &bi;
         dev.updateDescriptorSets(w, nullptr);
+    }
+    // Pre-cull survivor compaction bindings 6-8.
+    WriteBuffer(fr.occlusion_set.GetHandle(), 6, fr.draw_indices, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 7,
+                mid ? fr.depth_commands : fr.depth_compact_indices, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 8,
+                mid ? fr.depth_command_count : fr.depth_draw_command, dev);
+
+    // Collect bindings 1-4.
+    WriteBlocks(fr.collect_set.GetHandle(), 0, fr.submesh_cull,
+                vk::DescriptorType::eStorageBuffer, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 1, fr.draw_indices, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 2,
+                mid ? fr.main_commands : fr.main_compact_indices, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 3, fr.intermediate_buffer, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 4, fr.region_base_buffer, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 5, fr.tech_counts_buffer, dev);
+
+    // Collect-write bindings (monolithic only): intermediate + technique commands.
+    if (!mid) {
+        WriteBuffer(fr.collect_write_set.GetHandle(), 0, fr.intermediate_buffer, dev);
+        WriteBuffer(fr.collect_write_set.GetHandle(), 1, fr.technique_draw_commands, dev);
+    }
+
+    // Single shared indirection set (set 3) bound to vertex_entries.
+    {
+        const vk::DescriptorBufferInfo bi(*fr.vertex_entries.GetBuffer(), 0, vk::WholeSize);
+        vk::WriteDescriptorSet w{};
+        w.dstSet = *fr.indirection_raw_set;
+        w.dstBinding = 0;
+        w.descriptorCount = 1;
+        w.descriptorType = vk::DescriptorType::eStorageBuffer;
+        w.pBufferInfo = &bi;
+        dev.updateDescriptorSets(w, nullptr);
+    }
+}
+
+void SceneRenderer::SetTechniqueCommandRegions(
+    std::span<const std::uint32_t> submeshes_per_technique) {
+    region_base_.assign(MAX_TECHNIQUES, 0);
+    region_count_.assign(MAX_TECHNIQUES, 0);
+    std::uint32_t offset = 0;
+    const std::size_t n = std::min<std::size_t>(submeshes_per_technique.size(), MAX_TECHNIQUES);
+    for (std::size_t t = 0; t < n; ++t) {
+        region_base_[t] = offset;
+        region_count_[t] = submeshes_per_technique[t];
+        offset += submeshes_per_technique[t];
+    }
+    region_total_ = offset;
+
+    if (!backend_) return;
+    for (auto& fr : frames_) {
+        if (fr.region_base_buffer.GetSize() >= region_base_.size() * sizeof(std::uint32_t)) {
+            fr.region_base_buffer.Upload(region_base_.data(),
+                region_base_.size() * sizeof(std::uint32_t));
+        }
     }
 }
 
@@ -271,12 +319,20 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
-        *fr.depth_indirection_set
+        *fr.indirection_raw_set
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
-    cmd.drawIndirect(*fr.depth_draw_count_buffer.GetBuffer(), 0, 1,
-                     sizeof(vk::DrawIndirectCommand));
+    if (draw_mode_ == DrawMode::MultiIndirect) {
+        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirectCount(*fr.depth_commands.GetBuffer(), 0,
+            *fr.depth_command_count.GetBuffer(), 0,
+            scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
+    } else {
+        cmd.bindIndexBuffer(*fr.depth_compact_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirect(*fr.depth_draw_command.GetBuffer(), 0, 1,
+            sizeof(vk::DrawIndexedIndirectCommand));
+    }
 }
 
 void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
@@ -299,12 +355,20 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
-        *fr.occluder_indirection_set
+        *fr.indirection_raw_set
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
-    cmd.drawIndirect(*fr.occluder_draw_count_buffer.GetBuffer(), 0, 1,
-                     sizeof(vk::DrawIndirectCommand));
+    if (draw_mode_ == DrawMode::MultiIndirect) {
+        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirectCount(*fr.occluder_commands.GetBuffer(), 0,
+            *fr.occluder_command_count.GetBuffer(), 0,
+            scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
+    } else {
+        cmd.bindIndexBuffer(*fr.occluder_compact_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirect(*fr.occluder_draw_command.GetBuffer(), 0, 1,
+            sizeof(vk::DrawIndexedIndirectCommand));
+    }
 }
 
 void SceneRenderer::Render(vk::CommandBuffer cmd,
@@ -319,20 +383,6 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         return;
     }
     auto& fr = frames_[fi % frames_in_flight_];
-    const auto& dev = backend_->GetDevice();
-
-    // Rebind indirection set to compacted buffer for main pass
-    {
-        const vk::DescriptorBufferInfo bi(
-            *fr.compacted_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-        vk::WriteDescriptorSet w{};
-        w.dstSet = *fr.indirection_raw_set;
-        w.dstBinding = 0;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
 
     cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
                                      -static_cast<float>(h), 0, 1));
@@ -353,6 +403,11 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     // Camera position for fragment shader (push constant at offset 0)
     const glm::mat4 inv_view = glm::inverse(view);
     float camera_pos[4] = {inv_view[3][0], inv_view[3][1], inv_view[3][2], 0.0f};
+
+    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    cmd.bindIndexBuffer(
+        mid ? *fr.draw_indices.GetBuffer() : *fr.main_compact_indices.GetBuffer(),
+        0, vk::IndexType::eUint32);
 
     for (uint32_t t = 0; t < static_cast<uint32_t>(tm.GetTechniqueCount()); ++t) {
         auto* tech = tm.GetTechnique(t);
@@ -394,11 +449,23 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         // Camera position (fragment-stage push constant at offset 0, 16 bytes)
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eFragment, 0, 16, camera_pos);
 
-        const vk::DeviceSize draw_cmd_offset =
-            static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndirectCommand);
-        LOGIFACE_LOG(trace, std::format("RenderMain: drawIndirect technique={} offset={}", t, draw_cmd_offset));
-            cmd.drawIndirect(*fr.technique_draw_commands.GetBuffer(),
-                             draw_cmd_offset, 1, sizeof(vk::DrawIndirectCommand));
+        if (mid) {
+            const std::uint32_t base = (t < region_base_.size()) ? region_base_[t] : 0u;
+            const std::uint32_t cnt = (t < region_count_.size()) ? region_count_[t] : 0u;
+            if (cnt == 0) continue;
+            cmd.drawIndexedIndirectCount(
+                *fr.main_commands.GetBuffer(),
+                static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
+                *fr.tech_counts_buffer.GetBuffer(),
+                static_cast<vk::DeviceSize>(t) * sizeof(std::uint32_t),
+                cnt, sizeof(vk::DrawIndexedIndirectCommand));
+        } else {
+            const vk::DeviceSize draw_cmd_offset =
+                static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndexedIndirectCommand);
+            cmd.drawIndexedIndirect(*fr.technique_draw_commands.GetBuffer(),
+                                    draw_cmd_offset, 1,
+                                    sizeof(vk::DrawIndexedIndirectCommand));
+        }
     }
 }
 
@@ -493,146 +560,66 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         LOGIFACE_LOG(debug, "DispatchCollect: current_entity_count_ is 0, skipping");
         return;
     }
-    const auto& dev = backend_->GetDevice();
     LOGIFACE_LOG(trace, "DispatchCollect: submeshes=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(MAX_TECHNIQUES));
+    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
 
-    // Write set 6 bindings (shared between count + compact)
-    WriteBlocks(fr.collect_set.GetHandle(), 0, fr.submesh_cull,
-                vk::DescriptorType::eStorageBuffer, dev);
-    {
-        const vk::DescriptorBufferInfo bi(
-            *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_set.GetHandle();
-        w.dstBinding = 1;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-    {
-        const vk::DescriptorBufferInfo bi(
-            *fr.compacted_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_set.GetHandle();
-        w.dstBinding = 2;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-    {
-        const vk::DescriptorBufferInfo bi(
-            *fr.intermediate_buffer.GetBuffer(), 0, fr.intermediate_buffer.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_set.GetHandle();
-        w.dstBinding = 3;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
+    const auto barrier = [&cmd]() {
+        vk::MemoryBarrier mb{};
+        mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        mb.dstAccessMask = vk::AccessFlagBits::eShaderRead |
+                           vk::AccessFlagBits::eShaderWrite;
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, mb, {}, {});
+    };
 
-    // Write set 7 bindings (write shader - intermediate buffer at binding 0)
-    {
-        const vk::DescriptorBufferInfo bi(
-            *fr.intermediate_buffer.GetBuffer(), 0, fr.intermediate_buffer.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_write_set.GetHandle();
-        w.dstBinding = 0;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-
-    {
-        const vk::DescriptorBufferInfo cnt_bi(
-            *fr.tech_counts_buffer.GetBuffer(), 0, fr.tech_counts_buffer.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_write_set.GetHandle();
-        w.dstBinding = 1;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &cnt_bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-    {
-        const vk::DescriptorBufferInfo off_bi(
-            *fr.tech_offsets_buffer.GetBuffer(), 0, fr.tech_offsets_buffer.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_write_set.GetHandle();
-        w.dstBinding = 2;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &off_bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-    {
-        const vk::DescriptorBufferInfo cmd_bi(
-            *fr.technique_draw_commands.GetBuffer(), 0, fr.technique_draw_commands.GetSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = fr.collect_write_set.GetHandle();
-        w.dstBinding = 3;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &cmd_bi;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-
-    // Pass 0: count visible indices per technique
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_slot_.Get());
-    {
-        const std::array<vk::DescriptorSet, 1> ds1{ fr.collect_set.GetHandle() };
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
-                                 0, ds1, {});
-    }
+    const std::array<vk::DescriptorSet, 1> ds1{ fr.collect_set.GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
+                            0, ds1, {});
 
-    CollectPC pc0{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
-    cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
-                       0, sizeof(CollectPC), &pc0);
-    cmd.dispatch((current_entity_count_ + 255) / 256, 1, 1);
+    const std::uint32_t groups = (current_entity_count_ + 255) / 256;
+    if (!mid) {
+        // Monolithic: count -> global prefix -> compact -> command emission.
+        CollectPC pc0{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
+        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(CollectPC), &pc0);
+        cmd.dispatch(groups, 1, 1);
 
-    // Barrier between count and compact
-    {
-        vk::MemoryBarrier mb{};
-        mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
-        mb.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eComputeShader,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, mb, {}, {});
-    }
+        barrier();
 
-    // Pass 1: compact visible entries + build intermediate buffer
-    CollectPC pc1{ current_entity_count_, 0, MAX_TECHNIQUES, 1 };
-    cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
-                       0, sizeof(CollectPC), &pc1);
-    cmd.dispatch((current_entity_count_ + 255) / 256, 1, 1);
+        CollectPC pc1{ current_entity_count_, 0, MAX_TECHNIQUES, 1 };
+        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(CollectPC), &pc1);
+        cmd.dispatch(1, 1, 1);
 
-    // Barrier between compact and write
-    {
-        vk::MemoryBarrier mb{};
-        mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
-        mb.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eComputeShader,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, mb, {}, {});
-    }
+        barrier();
 
-    // Pass 2: write final draw data (legacy draw commands)
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_write_slot_.Get());
-    {
+        CollectPC pc2{ current_entity_count_, 0, MAX_TECHNIQUES, 2 };
+        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(CollectPC), &pc2);
+        cmd.dispatch(groups, 1, 1);
+
+        barrier();
+
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_write_slot_.Get());
         const std::array<vk::DescriptorSet, 1> ds2{ fr.collect_write_set.GetHandle() };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_layout_,
-                                 0, ds2, {});
+                                0, ds2, {});
+        WritePC pcw{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
+        cmd.pushConstants(*collect_write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(WritePC), &pcw);
+        cmd.dispatch(1, 1, 1);
+    } else {
+        // MID: single compact pass appends commands into CPU-prefixed regions
+        // and publishes the per-technique alive count. No epilogue dispatch.
+        CollectPC pcMid{ current_entity_count_, 0, MAX_TECHNIQUES, 2 };
+        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(CollectPC), &pcMid);
+        cmd.dispatch(groups, 1, 1);
     }
-    WritePC pc2{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
-    cmd.pushConstants(*collect_write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
-                       0, sizeof(WritePC), &pc2);
-    cmd.dispatch(1, 1, 1);
 }
 
 void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,

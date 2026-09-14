@@ -170,8 +170,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::uint32_t technique_material;  // packed: hi 16 = material_id, lo 16 = technique_id
         std::uint32_t vertex_info;
         std::uint32_t orm_packed;          // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
+        std::uint32_t vertex_window_base;  // min mesh-local index referenced by the submesh
+        std::uint32_t vertex_span;         // number of distinct slots in the tight vertex window
     };
-    static_assert(sizeof(StaticEntry) == 20, "StaticEntry must match Slang StaticEntry (CDataLayout)");
+    static_assert(sizeof(StaticEntry) == 28, "StaticEntry must match Slang StaticEntry (CDataLayout)");
 
     struct OBBGPUEntry {
         float cx, cy, cz, pad0;
@@ -197,6 +199,31 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     static_assert(sizeof(VertEntryGPU) == 176, "VertEntryGPU must match Slang VertEntry (CDataLayout)");
 
     std::uint32_t ci = 0;
+
+    // Indexed-drawing capacity totals + MID per-technique command regions.
+    std::uint32_t total_index_count = 0;
+    std::uint32_t total_vertex_span = 0;
+    constexpr std::uint32_t kTechniqueCount =
+        SceneRenderer::SceneRenderer::MAX_TECHNIQUES;
+    std::vector<std::uint32_t> tech_submeshes(kTechniqueCount, 0);
+    const auto accumulate = [&](const SubMesh& sm, std::uint32_t tech_material) {
+        total_index_count += sm.index_count;
+        total_vertex_span += sm.vertex_span;
+        const std::uint32_t tid = tech_material & 0xFFFu;
+        if (tid < kTechniqueCount) tech_submeshes[tid] += 1u;
+    };
+    // The 24-bit vertex index packing cannot be represented past 2^24; fail
+    // loud (once) instead of silently corrupting geometry.
+    const auto check_vertex_pack = [](std::uint32_t abs_vertex_end) {
+        static bool reported = false;
+        if (!reported && abs_vertex_end >= (1u << 24)) {
+            reported = true;
+            LOGIFACE_LOG(error, "vertex_info 24-bit packing overflow: "
+                "baseVertex + vertexWindowBase + vertexSpan >= 2^24; geometry will be corrupt");
+        }
+        assert(abs_vertex_end < (1u << 24) &&
+               "vertex_info 24-bit packing overflow");
+    };
 
     // Write static mesh entries
     for (auto& e : static_ents) {
@@ -264,6 +291,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 }
                 s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
                 s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
+                s2->vertex_window_base = sm.vertex_window_base;
+                s2->vertex_span = sm.vertex_span;
+                check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);
+                accumulate(sm, s2->technique_material);
             }
 
             if (auto* sp = static_cast<glm::vec4*>(frame_blocks.bounding_spheres->Get(ci))) {
@@ -370,6 +401,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->vertex_info = packed_vertex;
                     // Dynamic meshes have no ORM override path yet — neutral values.
                     s2->orm_packed = PackOrm8(1.0f, 1.0f, 1.0f);
+                    s2->vertex_window_base = sm.vertex_window_base;
+                    s2->vertex_span = sm.vertex_span;
+                    check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);
+                    accumulate(sm, s2->technique_material);
                 } else {
                     LOGIFACE_LOG(warn, "ProcessFrame: compact_static->Get(" + std::to_string(ci) + ") returned null");
                 }
@@ -398,6 +433,15 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             ++ci;
         }
     }
+
+    // Grow the indexed-drawing frame ring to the frame's real totals before
+    // any descriptor is written for this frame (PrepareCompute runs later).
+    renderer.EnsureSceneCapacity(SceneRenderer::SceneCapacity{
+        .index_count = total_index_count,
+        .vertex_span = total_vertex_span,
+        .submesh_count = total_submeshes,
+    });
+    renderer.SetTechniqueCommandRegions(tech_submeshes);
 
     // Set entity count on renderer so subsequent passes know how many entries to process
     renderer.SetCurrentEntityCount(total_submeshes);

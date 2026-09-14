@@ -1,26 +1,26 @@
+// Monolithic main-pass epilogue: one 20 B indexed draw command per technique
+// at a fixed slot (indexCount = Σ alive indices, firstIndex = compaction base).
+//
+// MID does not use this shader: its compact pass emits the per-submesh commands
+// and publishes the per-technique alive-submesh count directly.
 struct TechniqueResult {
     uint offset;
     uint count;
 };
 
-struct DrawIndirectCommand {
-    uint vertexCount;
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
     uint instanceCount;
-    uint firstVertex;
-    int firstInstance;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
 };
 
 [[vk::binding(0, 0)]]
 StructuredBuffer<TechniqueResult, CDataLayout> intermediateResults;
 
 [[vk::binding(1, 0)]]
-RWStructuredBuffer<uint, CDataLayout> tech_counts;
-
-[[vk::binding(2, 0)]]
-RWStructuredBuffer<uint, CDataLayout> tech_offsets;
-
-[[vk::binding(3, 0)]]
-RWStructuredBuffer<DrawIndirectCommand, CDataLayout> tech_cmds;
+RWStructuredBuffer<DrawIndexedIndirectCommand, CDataLayout> tech_cmds;
 
 struct WritePC {
     uint elementCount;
@@ -38,8 +38,6 @@ void main() {
     for (uint t = 0; t < pc.techniqueCount; t++) {
         uint count = intermediateResults[t].count;
         uint entryOffset = intermediateResults[t].offset;
-        tech_counts[t] = count;
-        tech_offsets[t] = entryOffset;
-        tech_cmds[t] = DrawIndirectCommand(count, 1u, entryOffset, 0);
+        tech_cmds[t] = DrawIndexedIndirectCommand(count, 1u, entryOffset, 0, 0u);
     }
 }

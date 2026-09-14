@@ -34,6 +34,11 @@ struct GraphicsPipelineDesc {
 struct ComputePipelineDesc {
     ShaderId shader;
     vk::PipelineLayout layout;
+    // Optional specialization constants. The desc owns the data; the vectors
+    // must not be reallocated between storing the desc and pipeline creation
+    // (hot-reload passes the same desc to CreateCompute).
+    std::vector<vk::SpecializationMapEntry> spec_entries{};
+    std::vector<std::byte> spec_data{};
 };
 
 class PipelineProduct {

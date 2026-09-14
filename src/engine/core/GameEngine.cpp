@@ -75,11 +75,18 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                               ShaderSystem::ShaderManager* shader_mgr) {
     auto& backend = ctx.bootstrap->GetBackend();
 
-    constexpr std::uint32_t initial_indirection_entries = 1u << 20; // 1M entries = 8MB
+    // Initial indexed-drawing capacity. The gather pass grows these from the
+    // real frame totals (EnsureSceneCapacity), so this is only a starting hint.
+    const SceneRenderer::SceneCapacity initial_capacity{
+        .index_count = 1u << 20,
+        .vertex_span = 1u << 19,
+        .submesh_count = 1u << 14,
+    };
     ctx_.scene_renderer = std::make_unique<SceneRenderer::SceneRenderer>();
-    if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_indirection_entries,
+    if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_capacity,
                                            ctx_.GetShaderManager(), ctx_.GetPipelineFactory(),
-                                           ctx_.GetShaderIds(), backend.GetFramesInFlight())) {
+                                           ctx_.GetShaderIds(), backend.GetFramesInFlight(),
+                                           config_.draw_mode)) {
         LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
         return false;
     }

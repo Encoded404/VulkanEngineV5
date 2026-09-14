@@ -27,7 +27,6 @@ import VulkanEngine.Render.Passes.HiZPass;
 import VulkanEngine.Render.Passes.PreCullPass;
 import VulkanEngine.Render.Passes.OcclusionPass;
 import VulkanEngine.Render.Passes.CollectPass;
-import VulkanEngine.Render.Passes.MainPass;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import VulkanEngine.PhysicalCameraSystem;
@@ -96,7 +95,7 @@ private:
     std::unique_ptr<VulkanEngine::SceneRenderer::PreCullPass> pre_cull_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::OcclusionPass> occlusion_pass_{};
     std::unique_ptr<VulkanEngine::SceneRenderer::CollectPass> collect_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::MainPass> main_pass_{};
+
 
     FrameRenderContext* current_ctx_ = nullptr;
     vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};

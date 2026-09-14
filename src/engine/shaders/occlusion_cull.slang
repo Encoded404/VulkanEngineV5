@@ -13,7 +13,7 @@ struct VertEntry {
 StructuredBuffer<VertEntry, CDataLayout> submeshVertexInfo[];
 
 struct CullEntry {
-    uint indirOffset;
+    uint indexBase;
     uint indexCount;
     uint techniqueId;
     uint pad;

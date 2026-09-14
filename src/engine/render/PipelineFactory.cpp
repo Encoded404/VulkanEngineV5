@@ -344,6 +344,14 @@ PipelineFactory::CreateCompute(const ComputePipelineDesc& desc,
     }
     auto module = *module_result;
     vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, module, "main");
+    vk::SpecializationInfo spec{};
+    if (!desc.spec_entries.empty()) {
+        spec.mapEntryCount = static_cast<std::uint32_t>(desc.spec_entries.size());
+        spec.pMapEntries = desc.spec_entries.data();
+        spec.dataSize = desc.spec_data.size();
+        spec.pData = desc.spec_data.data();
+        ss.pSpecializationInfo = &spec;
+    }
     vk::ComputePipelineCreateInfo ci({}, ss, desc.layout);
     try {
         vk::raii::Pipeline pipeline = device_.createComputePipeline(cache_, ci);

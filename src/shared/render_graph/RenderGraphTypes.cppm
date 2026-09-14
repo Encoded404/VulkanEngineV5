@@ -44,6 +44,11 @@ enum class PipelineStageIntent : std::uint8_t {
     ColorAttachment,
     DepthAttachment,
     VertexShader,
+    // Vertex/index fetch: VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, distinct from the
+    // vertex-shader stage. Also covers the vertex shader reads on draw passes
+    // so one intent synchronizes a compute-written buffer consumed as both an
+    // index buffer and a shader resource.
+    IndexInput,
     IndirectDraw,
     FragmentShader,
     ComputeShader,
@@ -304,6 +309,9 @@ inline vk::PipelineStageFlags IntentToPipelineStage(PipelineStageIntent intent, 
                    vk::PipelineStageFlagBits::eLateFragmentTests;
         case PipelineStageIntent::VertexShader:
             return vk::PipelineStageFlagBits::eVertexShader;
+        case PipelineStageIntent::IndexInput:
+            return vk::PipelineStageFlagBits::eVertexInput |
+                   vk::PipelineStageFlagBits::eVertexShader;
         case PipelineStageIntent::FragmentShader:
             return vk::PipelineStageFlagBits::eFragmentShader;
         case PipelineStageIntent::ComputeShader:
@@ -337,6 +345,10 @@ inline vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessInte
             case PipelineStageIntent::ComputeShader:
                 return is_write ? vk::AccessFlagBits::eShaderWrite
                                 : vk::AccessFlagBits::eShaderRead;
+            case PipelineStageIntent::IndexInput:
+                return is_write ? vk::AccessFlagBits::eShaderWrite
+                                : (vk::AccessFlagBits::eIndexRead |
+                                   vk::AccessFlagBits::eShaderRead);
             case PipelineStageIntent::IndirectDraw:
                 return vk::AccessFlagBits::eIndirectCommandRead;
             case PipelineStageIntent::Present:

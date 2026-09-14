@@ -29,7 +29,7 @@ struct IndirEntry {
 };
 
 [[vk::binding(0, 3)]]
-StructuredBuffer<IndirEntry, CDataLayout> indirectBuffer;
+StructuredBuffer<IndirEntry, CDataLayout> vertexEntries;
 
 #include "normal_encoding.slang"
 
@@ -45,10 +45,11 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput main(uint vertexId : SV_VertexID, uint baseVertex : SV_StartVertexLocation) {
-    // vertexId indexes into indirectBuffer which maps to (vertexBuffer, submesh) pairs
+VSOutput main(uint vertexId : SV_VertexID) {
+    // Hardware indexed draw: SV_VertexID is the value from draw_indices, which
+    // is an absolute slot into vertex_entries (vertexOffset is always 0).
     VSOutput result;
-    IndirEntry entry = indirectBuffer[vertexId + baseVertex];
+    IndirEntry entry = vertexEntries[vertexId];
     uint bufferIndex = entry.vid >> 24;
     uint vertexIndex = entry.vid & 0xFFFFFFu;
     uint submeshId = entry.sid;

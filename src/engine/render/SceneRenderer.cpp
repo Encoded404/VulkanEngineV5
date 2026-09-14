@@ -19,6 +19,7 @@ import VulkanEngine.GpuResources;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderRegistration;
+import VulkanBackend.Vulkan.VulkanCapabilities;
 
 namespace VulkanEngine::SceneRenderer {
 
@@ -28,18 +29,30 @@ SceneRenderer::~SceneRenderer() {
 
 bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 VulkanEngine::GpuResources::DeviceBufferHeap& vh,
-                                std::uint32_t tic,
+                                SceneCapacity initial_capacity,
                                 ShaderSystem::ShaderManager& shader_mgr,
                                 ShaderSystem::PipelineFactory& pipeline_factory,
                                 const EngineShaderIds& shader_ids,
-                                const std::uint32_t frames_in_flight) {
+                                const std::uint32_t frames_in_flight,
+                                DrawMode draw_mode) {
     backend_ = &be;
     shader_mgr_ = &shader_mgr;
     pipeline_factory_ = &pipeline_factory;
     shader_ids_ = shader_ids;
     const auto& dev = be.GetDevice();
-    const std::uint32_t idxc = std::max(tic, 1u);
-    total_index_count_ = idxc;
+    draw_indirect_count_supported_ =
+        be.GetCapabilities().IsFeatureEnabled(
+            VulkanBackend::Vulkan::Feature::DrawIndirectCount);
+    draw_mode_ = draw_mode;
+    if (draw_mode_ == DrawMode::MultiIndirect && !draw_indirect_count_supported_) {
+        LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount unsupported; falling back to Monolithic draw mode");
+        draw_mode_ = DrawMode::Monolithic;
+    }
+    scene_capacity_ = SceneCapacity{
+        std::max(initial_capacity.index_count, 1u),
+        std::max(initial_capacity.vertex_span, 1u),
+        std::max(initial_capacity.submesh_count, 1u),
+    };
 
     // Size the per-frame resource ring to the configured pipeline depth. All
     // descriptor pools and per-frame GPU resources scale with this count.
@@ -163,12 +176,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         indirection_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
         const vk::DescriptorPoolSize indir_ps{
-            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * 3
+            vk::DescriptorType::eStorageBuffer, frames_in_flight_
         };
         vk::DescriptorPoolCreateInfo indir_pool_ci{};
         indir_pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                               vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        indir_pool_ci.maxSets = frames_in_flight_ * 3;
+        indir_pool_ci.maxSets = frames_in_flight_;
         indir_pool_ci.poolSizeCount = 1;
         indir_pool_ci.pPoolSizes = &indir_ps;
         indirection_raw_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, indir_pool_ci);
@@ -228,16 +241,17 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         }
     }
 
-    // Set 4: Expand layout (6 bindings)
+    // Set 4: Expand layout (7 bindings: 4 block arrays + vertex_entries +
+    // draw_indices + expand counter)
     {
-        std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 7> bs{};
         for (std::uint32_t i = 0; i < 4; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = MAX_BLOCKS;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
-        for (std::uint32_t i = 4; i < 6; ++i) {
+        for (std::uint32_t i = 4; i < 7; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1;
@@ -249,7 +263,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 4 + 2);
+        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 4 + 3);
         expand_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         expand_pool_->SetDebugName(dev, "expand-pool");
     }
@@ -320,14 +334,16 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         occluder_select_pool_->SetDebugName(dev, "occluder-select-pool");
     }
 
-    // Set 6: Collect count + compact layout (4 bindings: cull blocks, full indir, compacted indir, intermediate)
+    // Set 6: Collect count/compact layout (6 bindings: cull blocks,
+    // draw_indices, compacted output, intermediate, MID region bases,
+    // MID alive-count output)
     {
-        std::array<vk::DescriptorSetLayoutBinding, 4> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[0].descriptorCount = MAX_BLOCKS;
         bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        for (std::uint32_t i = 1; i < 4; ++i) {
+        for (std::uint32_t i = 1; i < bs.size(); ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1;
@@ -339,15 +355,16 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS + 3);
+        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS + 5);
         collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_pool_->SetDebugName(dev, "collect-pool");
     }
 
-    // Set 7: Collect write shader layout
+    // Set 7: Collect write shader layout (monolithic-only: emits one indexed
+    // indirect command per technique from the intermediate results).
     {
-        std::array<vk::DescriptorSetLayoutBinding, 4> bs{};
-        for (std::uint32_t i = 0; i < 4; ++i) {
+        std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
+        for (std::uint32_t i = 0; i < bs.size(); ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1;
@@ -359,7 +376,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_ + 1;
-        pc.max_storage_buffers = frames_in_flight_ * 5;
+        pc.max_storage_buffers = frames_in_flight_ * 2;
         collect_write_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_write_pool_->SetDebugName(dev, "collect-write-pool");
     }
@@ -401,19 +418,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     // Per-frame ring resources
     {
-        const std::uint64_t max_indirection_size =
-            static_cast<uint64_t>(idxc) * 8u;
         constexpr std::uint64_t technique_flags_size =
             static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
-        constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
-        const std::uint64_t technique_cmd_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(vk::DrawIndirectCommand);
-        constexpr std::uint64_t tech_counts_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
-        constexpr std::uint64_t tech_offsets_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
-        const std::uint64_t intermediate_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(TechniqueResult);
 
         auto make_block_config = [](std::uint32_t entry_size, std::uint32_t entries_per_block,
                                      vk::BufferUsageFlags extra_usage,
@@ -443,7 +449,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.compact_static.Initialize(be,
-                make_block_config(20, BLOCK_ENTRIES, {},   // StaticEntry: 4 u32 + orm_packed
+                make_block_config(28, BLOCK_ENTRIES, {},   // StaticEntry: 5 u32 + vertexWindowBase + vertexSpan
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.bounding_spheres.Initialize(be,
@@ -469,110 +475,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::BufferUsageFlagBits::eTransferSrc,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
 
-            fr.indirection_buffer = GpuResources::GpuBuffer::Create(be,
-                max_indirection_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "indirection-buffer");
-
-            fr.compacted_indirection_buffer = GpuResources::GpuBuffer::Create(be,
-                max_indirection_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.compacted_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "compacted-indirection-buffer");
-
-            fr.draw_count_buffer = GpuResources::GpuBuffer::Create(be,
-                sizeof(vk::DrawIndirectCommand),
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eIndirectBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "draw-count-buffer");
-
-            // Depth-prepass survivor list: rebuilt by the pre-cull pass every
-            // frame (frustum + Hi-Z survivors minus occluders).
-            fr.depth_indirection_buffer = GpuResources::GpuBuffer::Create(be,
-                max_indirection_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "depth-indirection-buffer");
-
-            fr.depth_draw_count_buffer = GpuResources::GpuBuffer::Create(be,
-                sizeof(vk::DrawIndirectCommand),
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eIndirectBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "depth-draw-count-buffer");
-
-            // Occluder prepass inputs (§5.1-A/§5.3).
-            fr.occluder_indirection_buffer = GpuResources::GpuBuffer::Create(be,
-                max_indirection_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indirection_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-indirection-buffer");
-
-            fr.occluder_draw_count_buffer = GpuResources::GpuBuffer::Create(be,
-                sizeof(vk::DrawIndirectCommand),
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eIndirectBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_draw_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-draw-count-buffer");
-
-            fr.occluder_count_buffer = GpuResources::GpuBuffer::Create(be,
-                occluder_count_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_count_buffer.GetBuffer(), vk::ObjectType::eBuffer, "occluder-count-buffer");
-
-            fr.intermediate_buffer = GpuResources::GpuBuffer::Create(be,
-                intermediate_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.intermediate_buffer.GetBuffer(), vk::ObjectType::eBuffer, "intermediate-buffer");
-
-            fr.technique_draw_commands = GpuResources::GpuBuffer::Create(be,
-                technique_cmd_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eIndirectBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(), vk::ObjectType::eBuffer, "technique-draw-cmds");
-
-            fr.tech_counts_buffer = GpuResources::GpuBuffer::Create(be,
-                tech_counts_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.tech_counts_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-counts");
-
-            fr.tech_offsets_buffer = GpuResources::GpuBuffer::Create(be,
-                tech_offsets_size,
-                vk::BufferUsageFlagBits::eStorageBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.tech_offsets_buffer.GetBuffer(), vk::ObjectType::eBuffer, "tech-offsets");
-
+            // Capacity- and mode-dependent GPU buffers are created by
+            // CreateFrameBuffers() below (and re-created on capacity growth).
             fr.expand_set = expand_pool_->Allocate(*expand_layout_);
             fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);
             fr.collect_set = collect_pool_->Allocate(*collect_layout_);
@@ -589,41 +493,6 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 fr.indirection_raw_set = std::move(sets[0]);
                 VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_raw_set, "indirection-raw-set");
             }
-            {
-                vk::DescriptorSetAllocateInfo alloc_ci{};
-                alloc_ci.descriptorPool = **indirection_raw_pool_;
-                alloc_ci.descriptorSetCount = 1;
-                alloc_ci.pSetLayouts = &**indirection_layout_;
-                auto sets = dev.allocateDescriptorSets(alloc_ci);
-                fr.depth_indirection_set = std::move(sets[0]);
-                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indirection_set, "depth-indirection-set");
-                // Depth prepass consumes the pre-cull survivor list.
-                const vk::DescriptorBufferInfo bi(*fr.depth_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = *fr.depth_indirection_set;
-                w.dstBinding = 0;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                vk::DescriptorSetAllocateInfo alloc_ci{};
-                alloc_ci.descriptorPool = **indirection_raw_pool_;
-                alloc_ci.descriptorSetCount = 1;
-                alloc_ci.pSetLayouts = &**indirection_layout_;
-                auto sets = dev.allocateDescriptorSets(alloc_ci);
-                fr.occluder_indirection_set = std::move(sets[0]);
-                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indirection_set, "occluder-indirection-set");
-                const vk::DescriptorBufferInfo bi(*fr.occluder_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = *fr.occluder_indirection_set;
-                w.dstBinding = 0;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
             fr.hiz_set = hiz_pool_->Allocate(*hiz_layout_);
 
             fr.expand_set.SetDebugName(dev, "expand-set");
@@ -634,137 +503,9 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             fr.submesh_vertex_set.SetDebugName(dev, "submesh-vertex-set");
             fr.hiz_set.SetDebugName(dev, "hiz-set");
 
-            // Static bindings for the occluder-select set. All bound buffers
-            // are per-frame (or the shared flag table, created before this
-            // loop); the pass rewrites their contents each frame.
-            for (std::uint32_t bi = 0; bi < fr.submesh_cull.BlockCount(); ++bi) {
-                const vk::DescriptorBufferInfo bii(
-                    fr.submesh_cull.GetBlockArray(bi), 0, fr.submesh_cull.BlockSize());
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 0;
-                w.dstArrayElement = bi;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bii;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            for (std::uint32_t bi = 0; bi < fr.submesh_vertex_data.BlockCount(); ++bi) {
-                const vk::DescriptorBufferInfo bii(
-                    fr.submesh_vertex_data.GetBlockArray(bi), 0, fr.submesh_vertex_data.BlockSize());
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 1;
-                w.dstArrayElement = bi;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bii;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            for (std::uint32_t bi = 0; bi < fr.bounding_obb.BlockCount(); ++bi) {
-                const vk::DescriptorBufferInfo bii(
-                    fr.bounding_obb.GetBlockArray(bi), 0, fr.bounding_obb.BlockSize());
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 2;
-                w.dstArrayElement = bi;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bii;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo flags_bi(
-                    *technique_flags_buffer_.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 3;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &flags_bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 4;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.occluder_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 5;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.occluder_draw_count_buffer.GetBuffer(), 0, sizeof(vk::DrawIndirectCommand));
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 6;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.occluder_count_buffer.GetBuffer(), 0, occluder_count_size);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occluder_select_set.GetHandle();
-                w.dstBinding = 7;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-
-            // Pre-cull uses the occlusion set extended with the survivor
-            // compaction bindings 6-8 (see pre_cull.slang).
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occlusion_set.GetHandle();
-                w.dstBinding = 6;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.depth_indirection_buffer.GetBuffer(), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occlusion_set.GetHandle();
-                w.dstBinding = 7;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorBufferInfo bi(
-                    *fr.depth_draw_count_buffer.GetBuffer(), 0, sizeof(vk::DrawIndirectCommand));
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.occlusion_set.GetHandle();
-                w.dstBinding = 8;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bi;
-                dev.updateDescriptorSets(w, nullptr);
-            }
         }
+
+        if (!CreateFrameBuffers()) return false;
     }
 
     (void)be.GetSwapchainExtent(depth_width_, depth_height_);
@@ -964,6 +705,247 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     LOGIFACE_LOG(info, "SceneRenderer initialized");
     return true;
+}
+
+bool SceneRenderer::IsDrawModeSupported(DrawMode mode) const {
+    switch (mode) {
+        case DrawMode::Monolithic: return true;
+        case DrawMode::MultiIndirect: return draw_indirect_count_supported_;
+    }
+    return false;
+}
+
+bool SceneRenderer::CreateFrameBuffers() {
+    if (!backend_) return false;
+    auto& be = *backend_;
+    const auto& dev = be.GetDevice();
+
+    const std::uint64_t vertex_entries_size =
+        static_cast<std::uint64_t>(scene_capacity_.vertex_span) * 8u;
+    const std::uint64_t draw_indices_size =
+        static_cast<std::uint64_t>(scene_capacity_.index_count) * 4u;
+    const std::uint64_t compact_size = draw_indices_size;
+    const std::uint64_t command_size =
+        static_cast<std::uint64_t>(scene_capacity_.submesh_count) *
+            sizeof(vk::DrawIndexedIndirectCommand);
+    constexpr std::uint64_t tech_counts_size =
+        static_cast<std::uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
+    constexpr std::uint64_t intermediate_size =
+        static_cast<std::uint64_t>(MAX_TECHNIQUES) * sizeof(TechniqueResult);
+    constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
+
+    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    const vk::BufferUsageFlags index_dest_usage =
+        vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eIndexBuffer |
+        vk::BufferUsageFlagBits::eTransferDst;
+    const vk::BufferUsageFlags indirect_usage =
+        vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eIndirectBuffer |
+        vk::BufferUsageFlagBits::eTransferDst;
+    const vk::BufferUsageFlags storage_usage =
+        vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eTransferDst;
+
+    for (auto& fr : frames_) {
+        fr.vertex_entries = GpuResources::GpuBuffer::Create(
+            be, std::max<std::uint64_t>(vertex_entries_size, 8u),
+            vk::BufferUsageFlagBits::eStorageBuffer |
+                vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.vertex_entries.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "vertex-entries");
+
+        // draw_indices is bound as an index buffer only in MID mode.
+        const vk::BufferUsageFlags draw_indices_usage =
+            mid ? index_dest_usage : storage_usage;
+        fr.draw_indices = GpuResources::GpuBuffer::Create(
+            be, std::max<std::uint64_t>(draw_indices_size, 4u),
+            draw_indices_usage,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_indices.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "draw-indices");
+
+        fr.expand_counter = GpuResources::GpuBuffer::Create(
+            be, 2u * sizeof(std::uint32_t), storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.expand_counter.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "expand-counter");
+
+        if (!mid) {
+            fr.main_compact_indices = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
+                vk::MemoryPropertyFlagBits::eDeviceLocal);
+            fr.depth_compact_indices = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
+                vk::MemoryPropertyFlagBits::eDeviceLocal);
+            fr.occluder_compact_indices = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
+                vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.main_compact_indices.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "main-compact-indices");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_compact_indices.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-compact-indices");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_compact_indices.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-compact-indices");
+
+            fr.depth_draw_command = GpuResources::GpuBuffer::Create(
+                be, sizeof(vk::DrawIndexedIndirectCommand), indirect_usage,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            fr.occluder_draw_command = GpuResources::GpuBuffer::Create(
+                be, sizeof(vk::DrawIndexedIndirectCommand), indirect_usage,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_draw_command.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-draw-command");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_draw_command.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-draw-command");
+        } else {
+            fr.main_commands = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
+                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            fr.depth_commands = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
+                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            fr.occluder_commands = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
+                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.main_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "main-commands");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-commands");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-commands");
+
+            fr.depth_command_count = GpuResources::GpuBuffer::Create(
+                be, sizeof(std::uint32_t), indirect_usage,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            fr.occluder_command_count = GpuResources::GpuBuffer::Create(
+                be, sizeof(std::uint32_t), indirect_usage,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_command_count.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-command-count");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_command_count.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-command-count");
+        }
+
+        // Allocated in both modes so the collect layout bindings are always valid.
+        fr.region_base_buffer = GpuResources::GpuBuffer::Create(
+            be, tech_counts_size, storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.region_base_buffer.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "region-base");
+
+        // technique_draw_commands: monolithic main pass only. In MID the
+        // per-technique commands live in main_commands, so nothing is bound to
+        // the monolithic-only collect-write set.
+        if (!mid) {
+            fr.technique_draw_commands = GpuResources::GpuBuffer::Create(
+                be, static_cast<std::uint64_t>(MAX_TECHNIQUES) *
+                        sizeof(vk::DrawIndexedIndirectCommand),
+                indirect_usage,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "technique-draw-cmds");
+        }
+
+        fr.occluder_count_buffer = GpuResources::GpuBuffer::Create(
+            be, occluder_count_size, storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_count_buffer.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "occluder-count-buffer");
+
+        fr.tech_counts_buffer = GpuResources::GpuBuffer::Create(
+            be, tech_counts_size,
+            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.tech_counts_buffer.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "tech-counts");
+
+        fr.intermediate_buffer = GpuResources::GpuBuffer::Create(
+            be, intermediate_size, storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.intermediate_buffer.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "intermediate-buffer");
+    }
+
+    // CPU-prefix region bases for MID (recomputed when topology changes).
+    region_base_.assign(MAX_TECHNIQUES, 0);
+    region_count_.assign(MAX_TECHNIQUES, 0);
+    region_total_ = 0;
+    return true;
+}
+
+void SceneRenderer::DestroyFrameBuffers() {
+    for (auto& fr : frames_) {
+        fr.vertex_entries = GpuResources::GpuBuffer{};
+        fr.draw_indices = GpuResources::GpuBuffer{};
+        fr.expand_counter = GpuResources::GpuBuffer{};
+        fr.main_compact_indices = GpuResources::GpuBuffer{};
+        fr.depth_compact_indices = GpuResources::GpuBuffer{};
+        fr.occluder_compact_indices = GpuResources::GpuBuffer{};
+        fr.depth_draw_command = GpuResources::GpuBuffer{};
+        fr.occluder_draw_command = GpuResources::GpuBuffer{};
+        fr.main_commands = GpuResources::GpuBuffer{};
+        fr.depth_commands = GpuResources::GpuBuffer{};
+        fr.occluder_commands = GpuResources::GpuBuffer{};
+        fr.depth_command_count = GpuResources::GpuBuffer{};
+        fr.occluder_command_count = GpuResources::GpuBuffer{};
+        fr.region_base_buffer = GpuResources::GpuBuffer{};
+        fr.occluder_count_buffer = GpuResources::GpuBuffer{};
+        fr.technique_draw_commands = GpuResources::GpuBuffer{};
+        fr.tech_counts_buffer = GpuResources::GpuBuffer{};
+        fr.intermediate_buffer = GpuResources::GpuBuffer{};
+    }
+}
+
+void SceneRenderer::EnsureSceneCapacity(const SceneCapacity& required) {
+    if (!backend_) return;
+    if (required.index_count <= scene_capacity_.index_count &&
+        required.vertex_span <= scene_capacity_.vertex_span &&
+        required.submesh_count <= scene_capacity_.submesh_count) {
+        return;
+    }
+    backend_->GetDevice().waitIdle();
+    scene_capacity_.index_count =
+        std::max(required.index_count, scene_capacity_.index_count * 2);
+    scene_capacity_.vertex_span =
+        std::max(required.vertex_span, scene_capacity_.vertex_span * 2);
+    scene_capacity_.submesh_count =
+        std::max(required.submesh_count, scene_capacity_.submesh_count * 2);
+    LOGIFACE_LOG(info, "SceneRenderer: capacity grew to index_count=" +
+        std::to_string(scene_capacity_.index_count) + " vertex_span=" +
+        std::to_string(scene_capacity_.vertex_span) + " submeshes=" +
+        std::to_string(scene_capacity_.submesh_count));
+    DestroyFrameBuffers();
+    CreateFrameBuffers();
+    // Buffer descriptors are rewritten each frame in PrepareCompute.
+}
+
+void SceneRenderer::Reinitialize(DrawMode mode) {
+    if (mode == draw_mode_) return;
+    if (!IsDrawModeSupported(mode)) {
+        LOGIFACE_LOG(warn, "SceneRenderer::Reinitialize: requested draw mode unsupported; ignoring");
+        return;
+    }
+    backend_->GetDevice().waitIdle();
+    DestroyFrameBuffers();
+    draw_mode_ = mode;
+    CreateFrameBuffers();
+    if (!RebuildCompactionPipelines()) {
+        LOGIFACE_LOG(error, "SceneRenderer::Reinitialize: failed to rebuild compaction pipelines");
+    }
+    LOGIFACE_LOG(info, std::string("SceneRenderer: draw mode set to ") +
+        (mode == DrawMode::MultiIndirect ? "MultiIndirect" : "Monolithic"));
 }
 
 namespace {

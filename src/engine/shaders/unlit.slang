@@ -6,10 +6,10 @@
 // The pipeline layout intentionally contains the engine sets (0-4) and the
 // technique's PerMaterial set (5); this shader simply uses a subset of them.
 
+// Combined image sampler (Slang `Sampler2D`), matching the engine's set 0 /
+// binding 0 COMBINED_IMAGE_SAMPLER descriptor array one-to-one.
 [[vk::binding(0, 0)]]
-Texture2D<float4> allTextures[];
-[[vk::binding(0, 0)]]
-SamplerState defaultSampler;
+Sampler2D<float4> allTextures[];
 
 // Per-material data (set 5, binding 0) — must match
 // TechniqueManager::DefaultMeshPerMaterialData. C layout: 28 bytes.
@@ -39,7 +39,7 @@ float4 main(PSInput input) : SV_TARGET {
     MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
 
     float4 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
-        .Sample(defaultSampler, input.texCoord);
+        .Sample(input.texCoord);
     //albedo.x = 1.0;
     //albedo.z = 1.0;
     //albedo = float4(1.0, 0.0, 0.5, 1.0);

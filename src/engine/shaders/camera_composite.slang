@@ -12,10 +12,10 @@
 //   2 = Nv12       two images: R8 Y plane (slot0) + RG8 interleaved
 //                  UV plane (slot1), 4:2:0, YUV->RGB in-shader
 
+// Combined image sampler (Slang `Sampler2D`), matching the engine's set 0 /
+// binding 0 COMBINED_IMAGE_SAMPLER descriptor array one-to-one.
 [[vk::binding(0, 0)]]
-Texture2D<float4> allTextures[];
-[[vk::binding(0, 0)]]
-SamplerState cameraSampler;
+Sampler2D<float4> allTextures[];
 
 struct VSOutput {
     float4 position : SV_POSITION;
@@ -58,10 +58,10 @@ float4 main(VSOutput input) : SV_TARGET {
     if (cameraPC.format == 2u) {
         // NV12: Y plane (R8) + interleaved UV plane (RG8), chroma at half res.
         float y = allTextures[NonUniformResourceIndex(cameraPC.src_slot0)]
-            .Sample(cameraSampler, suv).r;
+            .Sample(suv).r;
         float2 uv_t = suv;
         float2 uv_val = allTextures[NonUniformResourceIndex(cameraPC.src_slot1)]
-            .Sample(cameraSampler, uv_t).rg;
+            .Sample(uv_t).rg;
         rgb = yuv2rgb(y, uv_val.r, uv_val.g);
     } else if (cameraPC.format == 1u) {
         // YUY2 packed 4:2:2 in an R8G8B8A8 image of half width.
@@ -69,14 +69,14 @@ float4 main(VSOutput input) : SV_TARGET {
         float pair_index = floor(pixel_col * 0.5);
         float2 tuv = float2((pair_index + 0.5) / (cameraPC.src_full.x * 0.5), suv.y);
         float4 t = allTextures[NonUniformResourceIndex(cameraPC.src_slot0)]
-            .Sample(cameraSampler, tuv);
+            .Sample(tuv);
         float pair_pos = frac(pixel_col * 0.5);
         float y = (pair_pos < 0.5) ? t.r : t.b;
         rgb = yuv2rgb(y, t.g, t.a);
     } else {
         // Xrgb8888 stored as B8G8R8A8 (SDL byte order), alpha ignored.
         float4 t = allTextures[NonUniformResourceIndex(cameraPC.src_slot0)]
-            .Sample(cameraSampler, suv);
+            .Sample(suv);
         rgb = t.bgr;
     }
 

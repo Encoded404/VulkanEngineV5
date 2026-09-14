@@ -36,9 +36,9 @@ StructuredBuffer<IndirEntry, CDataLayout> vertexEntries;
 struct VSOutput {
     [[vk::location(0)]] float3 outN : TEXCOORD0;
     [[vk::location(1)]] float2 outT : TEXCOORD1;
-    [[vk::location(2)]] uint outM : TEXCOORD2;
+    [[vk::location(2)]] nointerpolation uint outM : TEXCOORD2;
     [[vk::location(3)]] float3 outW : TEXCOORD3;    // world-space position
-    [[vk::location(4)]] uint outOrm : TEXCOORD4;    // packed unorm8 ORM factors
+    [[vk::location(4)]] nointerpolation uint outOrm : TEXCOORD4;    // packed unorm8 ORM factors
     [[vk::location(5)]] float3 outTangent : TEXCOORD5;   // world-space tangent
     [[vk::location(6)]] float outHandedness : TEXCOORD6; // bitangent handedness, +1/-1
     float4 position : SV_Position;

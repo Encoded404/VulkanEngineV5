@@ -16,18 +16,36 @@ enum class ProjectionMode : std::uint8_t {
     Orthographic
 };
 
+// How GetViewMatrix() derives the camera orientation:
+//   LookAtTarget - aim from `position` at `target` (default, historical behaviour).
+//   Direction    - aim from `position` along `forward`, ignoring `target` entirely.
+enum class CameraOrientation : std::uint8_t {
+    LookAtTarget,
+    Direction
+};
+
 class Camera : public VulkanEngine::Component {
 public:
     glm::vec3 position{0.0f, 0.0f, 3.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 target{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 up{0.0f, 1.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
+    glm::vec3 forward{0.0f, 0.0f, -1.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     float fov_degrees = 60.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float orthographic_size = 10.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float near_plane = 0.1f; // NOLINT(misc-non-private-member-variables-in-classes)
     float far_plane = 100.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     ProjectionMode projection_mode = ProjectionMode::Perspective; // NOLINT(misc-non-private-member-variables-in-classes)
+    CameraOrientation orientation = CameraOrientation::LookAtTarget; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] glm::mat4 GetViewMatrix() const {
+        if (orientation == CameraOrientation::Direction) {
+            // A zero-length forward would make lookAt emit NaNs; fall back to the
+            // target-based path rather than producing a degenerate matrix. lookAt
+            // normalises the direction itself, so no pre-normalise is needed here.
+            if (glm::dot(forward, forward) > 0.0f) {
+                return glm::lookAt(position, position + forward, up);
+            }
+        }
         return glm::lookAt(position, target, up);
     }
 
@@ -46,11 +64,13 @@ public:
             VulkanEngine::field<glm::vec3>("position"),
             VulkanEngine::field<glm::vec3>("target"),
             VulkanEngine::field<glm::vec3>("up"),
+            VulkanEngine::field<glm::vec3>("forward"),
             VulkanEngine::field<float>("fov_degrees"),
             VulkanEngine::field<float>("orthographic_size"),
             VulkanEngine::field<float>("near_plane"),
             VulkanEngine::field<float>("far_plane"),
-            VulkanEngine::field<std::uint8_t>("projection_mode")
+            VulkanEngine::field<std::uint8_t>("projection_mode"),
+            VulkanEngine::field<std::uint8_t>("orientation")
         );
     }
 };

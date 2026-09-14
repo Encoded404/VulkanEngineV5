@@ -63,32 +63,37 @@ function(add_engine_example NAME)
     )
 
     # ---- compile example slang shaders to SPIR-V + C++20 modules ----
-    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
-    include(SlangSpirVCompiler)
-    set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/examples/${NAME}")
-    set(_shader_opt_level
-        "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
-    add_slang_shaders(
-        TARGET      ${NAME}_shaders
-        OUTPUT_DIR  ${_shader_gen_dir}
-        NAMESPACE   ${AEG_SHADER_NAMESPACE}
-        SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-        COMPILER    slang-spirv-compiler
-        OPT_LEVEL   ${_shader_opt_level}
-        SHADERS
-            ${AEG_SHADERS}
-    )
-    add_dependencies(${NAME} ${NAME}_shaders)
+    # Optional: an example may rely solely on the engine's built-in shader set
+    # (e.g. the standard PBR mesh shader). When SHADERS is empty there is no
+    # per-example shader target, but the engine shader deploy below still runs.
+    if(AEG_SHADERS)
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
+        include(SlangSpirVCompiler)
+        set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/examples/${NAME}")
+        set(_shader_opt_level
+            "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
+        add_slang_shaders(
+            TARGET      ${NAME}_shaders
+            OUTPUT_DIR  ${_shader_gen_dir}
+            NAMESPACE   ${AEG_SHADER_NAMESPACE}
+            SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+            COMPILER    slang-spirv-compiler
+            OPT_LEVEL   ${_shader_opt_level}
+            SHADERS
+                ${AEG_SHADERS}
+        )
+        add_dependencies(${NAME} ${NAME}_shaders)
 
-    # Deploy this example's shaders next to the executable.
-    add_custom_command(
-        TARGET ${NAME}
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${NAME}>/shaders"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_shader_gen_dir}/*.spv" "$<TARGET_FILE_DIR:${NAME}>/shaders"
-        COMMENT "Deploying ${NAME} SPIR-V shaders"
-    )
+        # Deploy this example's shaders next to the executable.
+        add_custom_command(
+            TARGET ${NAME}
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${NAME}>/shaders"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_shader_gen_dir}/*.spv" "$<TARGET_FILE_DIR:${NAME}>/shaders"
+            COMMENT "Deploying ${NAME} SPIR-V shaders"
+        )
+    endif()
 
     # Deploy the engine's shared shader set next to the executable too, so the
     # example is runnable on its own.
@@ -112,14 +117,17 @@ function(add_engine_example NAME)
             FILES ${AEG_MODULES}
         )
 
-        # Register generated slang shader module files
-        get_target_property(_gen_shader_mods ${NAME}_shaders SLANG_CPPM_FILES)
-        if(_gen_shader_mods)
-            target_sources(${NAME} PUBLIC
-                FILE_SET CXX_MODULES
-                BASE_DIRS ${_shader_gen_dir}
-                FILES ${_gen_shader_mods}
-            )
+        # Register generated slang shader module files (only when this example
+        # declared its own shaders; engine-only examples have no shader target).
+        if(TARGET ${NAME}_shaders)
+            get_target_property(_gen_shader_mods ${NAME}_shaders SLANG_CPPM_FILES)
+            if(_gen_shader_mods)
+                target_sources(${NAME} PUBLIC
+                    FILE_SET CXX_MODULES
+                    BASE_DIRS ${_shader_gen_dir}
+                    FILES ${_gen_shader_mods}
+                )
+            endif()
         endif()
     endif()
 

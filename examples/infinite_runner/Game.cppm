@@ -86,6 +86,7 @@ private:
     int score_ = 0;
     bool game_over_ = false;
     std::mt19937 rng_{std::random_device{}()};
+    float prevGapCenter_ = 0.0f;
 };
 
 } // namespace Examples::InfiniteRunner::Game

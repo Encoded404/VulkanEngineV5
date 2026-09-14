@@ -178,7 +178,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // Replay the asset indices once into absolute entry slots.
     for (uint i = 0; i < indexRange; i++) {
-        uint rawIndex = indexBuffers[indexBufSlot][indexOffset + i];
+        uint rawIndex = indexBuffers[NonUniformResourceIndex(indexBufSlot)][indexOffset + i];
         drawIndices[indexBase + i] = entryBase + (rawIndex - windowBase);
     }
 

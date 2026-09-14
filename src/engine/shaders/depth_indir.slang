@@ -37,7 +37,7 @@ float4 main(uint vertexId : SV_VertexID) : SV_Position {
     uint submeshId = entry.sid;
     uint block = submeshId / 256u;
     uint elemIndex = submeshId % 256u;
-    Vertex vert = vertexBuffers[bufferIndex][vertexIndex];
+    Vertex vert = vertexBuffers[NonUniformResourceIndex(bufferIndex)][vertexIndex];
     float3 p = float3(vert.px, vert.py, vert.pz);
     return mul(float4(p, 1.0), submeshInfo[NonUniformResourceIndex(block)][elemIndex].MVP);
 }

@@ -273,10 +273,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
                 texelsTested++;
 
                 float finerDepth = hizTex.Load(int3(x, y, obbMip));
-                // A texel is occluding iff its depth is in front of the object's near
+                // A texel is occluding if its depth is in front of the object's near
                 // pole; a texel holding anything farther (the object itself, background,
                 // or a gap) proves the object is visible there and must keep it alive.
-                if (finerDepth > nearZ_OBB + kDepthEps) {
+                if (finerDepth > nearZ_OBB - kDepthEps) {
                     fullyOccluded = false;
                     break;
                 }

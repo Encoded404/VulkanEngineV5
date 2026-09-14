@@ -29,14 +29,15 @@ constexpr float kPlayerSize = 0.9f;
 constexpr float kWallSpawnZ = -150.0f;   // far end (camera looks toward -Z)
 constexpr float kWallInitialSpawnZ = -10.0f;
 constexpr float kWallRecycleZ = 8.0f;   // once a wall passes this, wrap it back
-constexpr float kWallSpacingPowScaling = 0.9f;
+constexpr float kWallSpacingPowScaling = 0.75f;
 constexpr int kWallCount = 8;
-constexpr std::pair<float, float> kWallHoleSizes = {0.85f, 1.1f};
-constexpr float kWallHoleSizePowScaling = 0.15f;
+constexpr std::pair<float, float> kWallHoleSizes = {1.0f, 1.2f};
+constexpr float kWallHoleSizePowScaling = 0.08f;
+constexpr std::pair<float, float> kWallHolePlacementMinMaxDistance = {0.8f, 3.5f};
 constexpr float kWallSpeed = 15.0f;     // units/second toward the player
 constexpr float kPlayerSpeed = 9.0f;    // units/second sideways
 
-constexpr float kDifficultyScalingDivider = 100.0f;
+constexpr float kDifficultyScalingDivider = 10.0f;
 
 constexpr float WallSpacing() {
     return (kWallRecycleZ - kWallSpawnZ) / static_cast<float>(kWallCount);
@@ -259,7 +260,7 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // 5. Floor + player + wall pool.
     float floor_height = 0.2f;
-    CreateCubeEntity(0.0f, -(kPlayerSize / 2) - (floor_height / 2), -20.0f, 2.0f * kCorridorHalf + 2.0f, floor_height, 120.0f, floor_material_);
+    CreateCubeEntity(0.0f, -(kPlayerSize / 2) - (floor_height / 2), -(WallSpacing() * kWallCount + 20.0f) / 2 + 20.0f, 2.0f * kCorridorHalf + 2.0f, floor_height, WallSpacing() * kWallCount + 20.0f, floor_material_);
     player_transform_ = CreateCubeEntity(0.0f, 0.0f, 0.0f, kPlayerSize, kPlayerSize, kPlayerSize, player_material_);
 
     walls_.reserve(kWallCount);
@@ -285,9 +286,10 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 7. HUD.
     if (auto* imgui = engine_game_.GetImGuiSystem()) {
         imgui_draw_handle_ = imgui->draw_callbacks.Register([this]() {
-            ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
+            const ImVec2 screen = ImGui::GetMainViewport()->Size;
+            ImGui::SetNextWindowPos(ImVec2(screen.x * 0.8f, screen.y * 0.05f), ImGuiCond_Always);
             ImGui::Begin("Infinite Runner", nullptr,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove);
+                         ImGuiWindowFlags_AlwaysAutoResize/* | ImGuiWindowFlags_NoMove*/);
             ImGui::Text("Score: %d", score_);
             ImGui::Separator();
             if (game_over_) {
@@ -312,7 +314,15 @@ void Game::RandomizeWall(Wall& wall) {
     constexpr float margin = 0.25f;
     const float limit = kCorridorHalf - gap_half - margin;
     std::uniform_real_distribution<float> center_dist(-limit, limit);
-    const float gap_center = center_dist(rng_);
+    float gap_center = 0.0f;
+    float gap_past_distance = std::abs(gap_center - prevGapCenter_);
+    while (gap_past_distance > kWallHolePlacementMinMaxDistance.second || gap_past_distance < kWallHolePlacementMinMaxDistance.first)
+    {
+        gap_center = center_dist(rng_);
+        gap_past_distance = std::abs(gap_center - prevGapCenter_);
+    }
+
+    prevGapCenter_ = gap_center;
 
     wall.gap_left_x = gap_center - gap_half;
     wall.gap_right_x = gap_center + gap_half;

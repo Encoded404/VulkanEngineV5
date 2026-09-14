@@ -1,7 +1,5 @@
 [[vk::binding(0, 0)]]
-Texture2D<float4> allTextures[];
-[[vk::binding(0, 0)]]
-SamplerState defaultSampler;
+Sampler2D<float4> allTextures[];
 
 // Camera position (fragment-stage push constant, 16 bytes at offset 0)
 [[vk::push_constant]]
@@ -87,7 +85,7 @@ float4 main(PSInput input) : SV_TARGET {
 
     // Sample textures
     float3 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
-        .Sample(defaultSampler, input.texCoord).rgb;
+        .Sample(input.texCoord).rgb;
 
     // Effective ORM factor layer, packed unorm8 by the CPU gather pass: the
     // object's OrmOverride if present, else the material's own factors.
@@ -100,7 +98,7 @@ float4 main(PSInput input) : SV_TARGET {
     float3 orm = orm_factors;
     if (mat.orm_texture != 0) {
         orm *= allTextures[NonUniformResourceIndex(mat.orm_texture)]
-            .Sample(defaultSampler, input.texCoord).rgb;
+            .Sample(input.texCoord).rgb;
     }
 
     float ao = orm.r;
@@ -120,7 +118,7 @@ float4 main(PSInput input) : SV_TARGET {
         float3 b = cross(N, t) * input.handedness;
         float3x3 TBN = float3x3(t, b, N);
         float3 n_ts = allTextures[NonUniformResourceIndex(mat.normal_texture)]
-            .Sample(defaultSampler, input.texCoord).xyz * 2.0 - 1.0;
+            .Sample(input.texCoord).xyz * 2.0 - 1.0;
         N = normalize(mul(normalize(n_ts), TBN));
     }
 

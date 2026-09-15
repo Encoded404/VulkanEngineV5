@@ -77,7 +77,8 @@ function(add_engine_example NAME)
             OUTPUT_DIR  ${_shader_gen_dir}
             NAMESPACE   ${AEG_SHADER_NAMESPACE}
             SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-            COMPILER    slang-spirv-compiler
+            COMPILER    ${VKENGINE_SLANG_SPIRV_COMPILER}
+            COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
             OPT_LEVEL   ${_shader_opt_level}
             SHADERS
                 ${AEG_SHADERS}
@@ -107,6 +108,26 @@ function(add_engine_example NAME)
                 "${_engine_shader_dir}/*.spv" "$<TARGET_FILE_DIR:${NAME}>/shaders"
             COMMENT "Deploying engine SPIR-V shaders to ${NAME}"
         )
+    endif()
+
+    # ---- Windows runtime DLL deployment ----
+    # MinGW/libc++ links against shared runtimes (libc++.dll, libunwind.dll,
+    # libwinpthread-1.dll) and the vcpkg dependencies are dynamic, so the
+    # example executable needs those DLLs next to it to run. One POST_BUILD
+    # step per source directory (keeps each command's arguments list-free).
+    if(WIN32)
+        foreach(_dll_dir IN LISTS VKENGINE_RUNTIME_DLL_DIRS)
+            add_custom_command(
+                TARGET ${NAME}
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND}
+                    "-DDLL_DIR=${_dll_dir}"
+                    "-DDEST=$<TARGET_FILE_DIR:${NAME}>"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeDlls.cmake"
+                COMMENT "Deploying Windows runtime DLLs for ${NAME}"
+            )
+        endforeach()
+        unset(_dll_dir)
     endif()
 
     # ---- C++ module registration ----

@@ -3,7 +3,7 @@ target_compile_features(${BACKEND_TARGET} PUBLIC cxx_std_20)
 target_link_libraries(${BACKEND_TARGET} PUBLIC logiface::logiface VulkanShared)
 
 find_package(SDL3 CONFIG REQUIRED)
-find_package(Vulkan REQUIRED)
+find_package(Vulkan QUIET)
 find_package(imgui CONFIG REQUIRED)
 
 target_link_libraries(${BACKEND_TARGET} PRIVATE

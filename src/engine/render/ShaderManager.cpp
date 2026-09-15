@@ -36,7 +36,7 @@ ShaderManager::ShaderManager(const vk::raii::Device& device, const VulkanBackend
     auto uuid_hex = uuidToHex(caps.GetProperties().pipelineCacheUUID);
     cache_path_ = std::format("{}/pipeline_cache_{}.bin", cache_dir, uuid_hex);
 
-    auto initial_data = VulkanShared::FileIO::ReadBinary(cache_path_.native());
+    auto initial_data = VulkanShared::FileIO::ReadBinary(cache_path_);
     vk::PipelineCacheCreateInfo ci{};
     if (!initial_data.empty()) {
         ci.initialDataSize = initial_data.size();
@@ -53,7 +53,7 @@ ShaderManager::ShaderManager(const vk::raii::Device& device, const VulkanBackend
             cache_ = device_.createPipelineCache(ci);
         }
     }
-    LOGIFACE_LOG(info, std::format("ShaderManager: pipeline cache at {}", cache_path_.native()));
+    LOGIFACE_LOG(info, std::format("ShaderManager: pipeline cache at {}", cache_path_.string()));
 }
 
 ShaderManager::~ShaderManager() {
@@ -226,7 +226,7 @@ void ShaderManager::SerializeCache() {
     try {
         auto data = cache_.getData();
         if (!data.empty()) {
-            VulkanShared::FileIO::AtomicWrite(cache_path_.native(),
+            VulkanShared::FileIO::AtomicWrite(cache_path_,
                 std::span{reinterpret_cast<const std::byte*>(data.data()), data.size()});
         }
     } catch (const std::exception& e) {

@@ -8,7 +8,7 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     VulkanShared
 )
 
-find_package(Vulkan REQUIRED)
+find_package(Vulkan QUIET)
 find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
@@ -26,7 +26,17 @@ find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 
-option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation" ON)
+# Runtime shader compilation links the Slang SDK. On a Windows/MinGW target the
+# only available Slang build is the MSVC-produced release archive, which is not
+# usable as a MinGW link input here, so hot reload defaults to OFF for Windows.
+# Shaders are still compiled ahead of time by the host slang-spirv-compiler
+# tool (which runs on the build machine), so the engine works normally.
+if(WIN32)
+    set(_vkengine_hot_reload_default OFF)
+else()
+    set(_vkengine_hot_reload_default ON)
+endif()
+option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation" ${_vkengine_hot_reload_default})
 if(VKENGINE_HOT_RELOAD)
     find_package(slang CONFIG REQUIRED)
     target_link_libraries(${ENGINE_TARGET} PRIVATE slang::slang)
@@ -173,7 +183,8 @@ add_slang_shaders(
     OUTPUT_DIR  ${_shader_gen_dir}
     NAMESPACE   Engine
     SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-    COMPILER    slang-spirv-compiler
+    COMPILER    ${VKENGINE_SLANG_SPIRV_COMPILER}
+    COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
     OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         ${_engine_shaders}

@@ -37,6 +37,39 @@
         "lhs": "$env{VCPKG_ROOT}",
         "rhs": ""
       }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows x86_64 (llvm-mingw + libc++ + vcpkg)",
+      "description": "Cross-compile for Windows x86_64 from Linux using the llvm-mingw toolchain (Clang + libc++ with the std module). Requires the llvm-mingw release extracted under ~/opt (or VKENGINE_LLVM_MINGW_ROOT) and CMake >= 4.2 for `import std;`.",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build-windows",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "${sourceDir}/cmake/toolchains/llvm-mingw.cmake"
+        },
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-libcxx",
+        "USE_LIBCPP": "ON",
+        "VKENGINE_HOT_RELOAD": "OFF",
+        "ENABLE_SANITIZERS": "OFF",
+        "CLANG_TIDY_ENABLED": "OFF",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_CXX_COMPILER_LAUNCHER": ""
+      },
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      },
+      "condition": {
+        "type": "notEquals",
+        "lhs": "$env{VCPKG_ROOT}",
+        "rhs": ""
+      }
     }
   ],
   "buildPresets": [
@@ -62,6 +95,33 @@
       "name": "relwithdebinfo",
       "displayName": "Build RelWithDebInfo",
       "configurePreset": "default",
+      "configuration": "RelWithDebInfo",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Build Windows x86_64 Debug",
+      "configurePreset": "windows",
+      "configuration": "Debug",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Build Windows x86_64 Release",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "windows-relwithdebinfo",
+      "displayName": "Build Windows x86_64 RelWithDebInfo",
+      "configurePreset": "windows",
       "configuration": "RelWithDebInfo",
       "environment": {
         "CCACHE_DISABLE": "1"

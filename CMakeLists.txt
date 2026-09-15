@@ -199,11 +199,20 @@ endif()
 # that name. The module-mode find_package(Vulkan) below is kept for the
 # headers and the Vulkan::HppModule C++ module target; it skips creating
 # Vulkan::Vulkan because the target already exists.
-find_package(Vulkan REQUIRED)
-# add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
-#set_property(TARGET Vulkan::Vulkan PROPERTY
-#	INTERFACE_LINK_LIBRARIES Vulkan::Loader
-#)
+#
+# On the Windows/MinGW target the loader is supplied by vcpkg's `vulkan-loader`
+# port. When module mode cannot resolve the import library by name, fall back to
+# that port's CONFIG package and re-export its Vulkan::Loader target.
+find_package(Vulkan QUIET)
+if(NOT Vulkan_FOUND)
+	find_package(VulkanLoader CONFIG REQUIRED)
+	find_path(Vulkan_INCLUDE_DIR NAMES vulkan/vulkan.h REQUIRED)
+	if(NOT TARGET Vulkan::Vulkan)
+		add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
+		set_property(TARGET Vulkan::Vulkan PROPERTY
+			INTERFACE_LINK_LIBRARIES Vulkan::Loader)
+	endif()
+endif()
 
 find_package( Vulkan 1.3.0 QUIET )
 
@@ -235,6 +244,14 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Sanitizers interface for Debug builds (applied to the engine libs and to
 # every example via add_engine_example).
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer in Debug mode" ON)
+# Windows/MinGW targets: llvm-mingw's default runtimes do not include the
+# sanitizer runtimes (there is no UBSan for MinGW, and the Windows ASan runtime
+# is only available in the MSVC/ASan configuration), so force it off rather
+# than emitting flags the linker cannot satisfy.
+if(ENABLE_SANITIZERS AND WIN32)
+    message(STATUS "Sanitizers are not available for Windows/MinGW targets — forcing ENABLE_SANITIZERS=OFF")
+    set(ENABLE_SANITIZERS OFF)
+endif()
 if(ENABLE_SANITIZERS)
     add_library(project_sanitizers INTERFACE)
     target_compile_options(project_sanitizers INTERFACE
@@ -306,9 +323,115 @@ endif()
 # ----------------------------
 # Slang/SPIR-V Compiler Helper
 # ----------------------------
+#
+# `slang-spirv-compiler` is a *build-time host tool*: it runs on the machine
+# performing the build and only emits target-independent artefacts (SPIR-V
+# bytes plus a generated .cppm). When cross-compiling it must therefore be
+# built for the HOST, never for the target — a Windows .exe cannot run on the
+# build machine.
+#
+#   * Native build : build it in-tree (host == target compiler).
+#   * Cross build  : build it in a nested configure for the host compiler via
+#                    ExternalProject. Its Slang dependency comes from the host
+#                    vcpkg triplet (the helper's own vcpkg.json requires
+#                    shader-slang, which is installed for the host triplet).
+#
+# Controlled by VKENGINE_SLANG_COMPILER_MODE = auto | host | target.
+#
+# VKENGINE_SLANG_SPIRV_COMPILER holds either a CMake target name (native) or
+# an absolute path to the host executable (cross); add_slang_shaders accepts
+# both. VKENGINE_SLANG_COMPILER_DEPENDS carries the file-level dependency that
+# shader custom commands must wait for (the ExternalProject build stamp).
 message("finding SlangSpriVCompilerHelper")
 
-add_subdirectory("${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper" SlangSpriVCompilerHelper)
+if(NOT DEFINED VKENGINE_SLANG_SPIRV_COMPILER)
+	set(VKENGINE_SLANG_SPIRV_COMPILER "slang-spirv-compiler")
+endif()
+set(VKENGINE_SLANG_COMPILER_DEPENDS "")
+
+set(SLANG_HELPER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper")
+
+# When to build slang-spirv-compiler. "auto" builds it for the host whenever
+# cross-compiling, which is the only correct choice (the tool runs on the build
+# machine). This deliberately is NOT derived through option(): an option's
+# default is applied only when the variable is absent from the cache, so a value
+# recorded by an earlier, non-cross configure would otherwise stick forever.
+set(VKENGINE_SLANG_COMPILER_MODE "auto" CACHE STRING
+	"When to build slang-spirv-compiler: auto (host when cross-compiling), host, or target")
+set_property(CACHE VKENGINE_SLANG_COMPILER_MODE PROPERTY STRINGS auto host target)
+
+# Drop the pre-release option whose cached value could be wrong.
+unset(VKENGINE_SLANG_COMPILER_HOST_BUILD CACHE)
+
+if(VKENGINE_SLANG_COMPILER_MODE STREQUAL "host")
+	set(_vkengine_slang_build_host TRUE)
+elseif(VKENGINE_SLANG_COMPILER_MODE STREQUAL "target")
+	set(_vkengine_slang_build_host FALSE)
+else()
+	set(_vkengine_slang_build_host ${CMAKE_CROSSCOMPILING})
+endif()
+
+if(_vkengine_slang_build_host)
+	set(VKENGINE_HOST_VCPKG_TRIPLET "x64-linux" CACHE STRING
+		"vcpkg triplet used to build the host slang-spirv-compiler tool")
+
+	# The helper hardcodes OUTPUT_PATH to <its CMAKE_BINARY_DIR>/bin, so the
+	# host tool lands inside the nested build tree (which also keeps its RPATH
+	# pointing at the nested vcpkg install).
+	set(_host_build_dir "${CMAKE_BINARY_DIR}/host-tools/build")
+	if(CMAKE_HOST_WIN32)
+		set(_host_exe_suffix ".exe")
+	else()
+		set(_host_exe_suffix "")
+	endif()
+	set(_host_tool "${_host_build_dir}/bin/slang-spirv-compiler${_host_exe_suffix}")
+
+	set(_host_vcpkg_args "")
+	if(DEFINED ENV{VCPKG_ROOT})
+		list(APPEND _host_vcpkg_args
+			"-DCMAKE_TOOLCHAIN_FILE=$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+			"-DVCPKG_TARGET_TRIPLET=${VKENGINE_HOST_VCPKG_TRIPLET}"
+			# Use this project's overlay ports for the host build too. The
+			# helper's own vcpkg.json only requires shader-slang >= 2025.14.3, so
+			# without this the nested build silently resolves the older registry
+			# release, whose Slang lacks built-ins the shaders use (CDataLayout).
+			# The host tool must be built against the same Shader-Slang release as
+			# the target (pinned by vcpkg-overlays/ports/shader-slang).
+			"-DVCPKG_OVERLAY_PORTS=${CMAKE_SOURCE_DIR}/vcpkg-overlays/ports")
+	endif()
+
+	find_program(_vkengine_host_cc NAMES clang gcc cc REQUIRED)
+	find_program(_vkengine_host_cxx NAMES clang++ g++ c++ REQUIRED)
+
+	include(ExternalProject)
+	ExternalProject_Add(slang_spirv_compiler_host
+		SOURCE_DIR "${SLANG_HELPER_SOURCE_DIR}"
+		BINARY_DIR "${_host_build_dir}"
+		CMAKE_GENERATOR "Ninja"
+		CMAKE_ARGS
+			-DCMAKE_BUILD_TYPE=Release
+			-DCLANG_TIDY_ENABLED=OFF
+			-DCMAKE_C_COMPILER=${_vkengine_host_cc}
+			-DCMAKE_CXX_COMPILER=${_vkengine_host_cxx}
+			${_host_vcpkg_args}
+		BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --target slang-spirv-compiler
+		INSTALL_COMMAND ""
+		BUILD_BYPRODUCTS "${_host_tool}"
+		USES_TERMINAL_CONFIGURE TRUE
+		USES_TERMINAL_BUILD TRUE
+	)
+
+	set(VKENGINE_SLANG_SPIRV_COMPILER "${_host_tool}")
+	# No separate stamp dependency is needed: "${_host_tool}" is declared via
+	# BUILD_BYPRODUCTS above, and add_slang_shaders already puts the COMPILER
+	# path into each shader command's DEPENDS, which is enough for Ninja to
+	# order the shader steps after this ExternalProject. (Depending on an
+	# ExternalProject stamp file directly is not portable: it lives under
+	# <name>-prefix/src/<name>-stamp/$<CONFIG>/ for multi-config generators.)
+	set(VKENGINE_SLANG_COMPILER_DEPENDS "")
+else()
+	add_subdirectory("${SLANG_HELPER_SOURCE_DIR}" SlangSpriVCompilerHelper)
+endif()
 
 # ----------------------------
 # MikkTSpace (tangent generation)
@@ -337,6 +460,25 @@ endif()
 if(CLANG_TIDY_ENABLED)
 	# Enable Clang-Tidy if available
 	include(ConfigureClangTidy)
+endif()
+
+# ----------------------------
+# Windows runtime DLL deployment
+# ----------------------------
+# Directories scanned by add_engine_example (cmake/CopyRuntimeDlls.cmake) to
+# place the shared runtime and dependency DLLs next to each built executable:
+#   * vcpkg dependencies (all dynamic on the MinGW triplet)
+#   * the llvm-mingw runtimes (libc++.dll, libunwind.dll, libwinpthread-1.dll)
+if(WIN32)
+	# vcpkg keeps Debug and Release binaries in separate trees, so select the
+	# matching one per configuration. The llvm-mingw runtimes are single-config.
+	set(_vkengine_vcpkg_runtime_dir "$<$<CONFIG:Debug>:${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/debug/bin>$<$<NOT:$<CONFIG:Debug>>:${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin>")
+	set(VKENGINE_RUNTIME_DLL_DIRS "${_vkengine_vcpkg_runtime_dir}")
+	if(DEFINED VKENGINE_LLVM_MINGW_ROOT AND VKENGINE_LLVM_MINGW_ROOT)
+		list(APPEND VKENGINE_RUNTIME_DLL_DIRS
+			"${VKENGINE_LLVM_MINGW_ROOT}/${CMAKE_SYSTEM_PROCESSOR}-w64-mingw32/bin")
+	endif()
+	unset(_vkengine_vcpkg_runtime_dir)
 endif()
 
 # Add subdirectories for source, examples and tests

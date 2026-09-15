@@ -10,6 +10,10 @@
         },
         "vulkan-headers",
         {
+            "name": "vulkan-loader",
+            "platform": "windows"
+        },
+        {
             "name": "ktx",
             "features": [ "vulkan" ]
         },
@@ -18,8 +22,14 @@
             "default-features": false,
             "features": [
                 "vulkan",
-                "wayland",
-                "x11"
+                {
+                    "name": "wayland",
+                    "platform": "linux"
+                },
+                {
+                    "name": "x11",
+                    "platform": "linux"
+                }
             ]
         },
         "nlohmann-json",
@@ -32,6 +42,9 @@
             "features": [ "vulkan-binding", "sdl3-binding" ]
         },
         "efsw",
-        "shader-slang"
+        {
+            "name": "shader-slang",
+            "platform": "!windows"
+        }
     ]
 }

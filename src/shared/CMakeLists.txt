@@ -1,7 +1,10 @@
 add_library(VulkanShared STATIC)
 target_compile_features(VulkanShared PUBLIC cxx_std_20)
 
-find_package(Vulkan REQUIRED)
+# Vulkan targets (Vulkan::HppModule, Vulkan::Vulkan) are configured by the
+# top-level CMakeLists; on Windows targets the loader is provided by vcpkg's
+# vulkan-loader port, so this must not hard-require module-mode discovery.
+find_package(Vulkan QUIET)
 target_link_libraries(VulkanShared PUBLIC Vulkan::HppModule)
 
 target_include_directories(VulkanShared PUBLIC

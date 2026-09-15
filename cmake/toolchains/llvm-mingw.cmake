@@ -11,6 +11,11 @@
 # Download: https://github.com/mstorsjo/llvm-mingw/releases
 #   llvm-mingw-<version>-ucrt-ubuntu-22.04-x86_64.tar.xz
 #
+# Extract it into the project as <project>/toolchains/ (that directory is
+# gitignored), then configure with `cmake --preset windows`. Full instructions,
+# including the exact download commands, are in
+# docs/cross-compiling-windows.md.
+#
 # This file is chainloaded in two places:
 #   * from the `x64-mingw-libcxx` vcpkg triplet, which applies it to every
 #     vcpkg port build; and
@@ -88,25 +93,53 @@ if(NOT _VKENGINE_LLVM_MINGW_TOOLCHAIN)
     endif()
 
     # ---- Locate the llvm-mingw installation -----------------------------
+    # Search order:
+    #   1. -DVKENGINE_LLVM_MINGW_ROOT=<dir> (or the same environment variable)
+    #   2. the LLVM_MINGW_ROOT environment variable
+    #   3. <project>/toolchains/llvm-mingw*  (recommended: keep it in-tree)
+    #   4. ~/opt/llvm-mingw*, ~/llvm-mingw*, /opt/llvm-mingw*
+    #
+    # Option 3 is what docs/cross-compiling-windows.md describes: download and
+    # extract the release into <project>/toolchains/, which .gitignore excludes.
+
+    # A cached root that no longer exists (e.g. the toolchain was moved into
+    # toolchains/) must not stick; drop it and re-detect.
+    if(VKENGINE_LLVM_MINGW_ROOT AND
+       NOT IS_DIRECTORY "${VKENGINE_LLVM_MINGW_ROOT}/bin")
+        message(STATUS
+            "VKENGINE_LLVM_MINGW_ROOT='${VKENGINE_LLVM_MINGW_ROOT}' is no longer a "
+            "valid llvm-mingw directory; searching again.")
+        unset(VKENGINE_LLVM_MINGW_ROOT)
+        unset(VKENGINE_LLVM_MINGW_ROOT CACHE)
+    endif()
+
     if(NOT VKENGINE_LLVM_MINGW_ROOT)
         if(DEFINED ENV{VKENGINE_LLVM_MINGW_ROOT})
             set(VKENGINE_LLVM_MINGW_ROOT "$ENV{VKENGINE_LLVM_MINGW_ROOT}")
         elseif(DEFINED ENV{LLVM_MINGW_ROOT})
             set(VKENGINE_LLVM_MINGW_ROOT "$ENV{LLVM_MINGW_ROOT}")
         else()
-            # Newest ~/opt/llvm-mingw-<date>-<crt>-<host> directory.
-            file(GLOB _vkengine_llvm_mingw_dirs LIST_DIRECTORIES true
+            get_filename_component(_vkengine_project_root
+                "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+            file(GLOB _vkengine_llvm_mingw_candidates LIST_DIRECTORIES true
+                "${_vkengine_project_root}/toolchains/llvm-mingw*"
                 "$ENV{HOME}/opt/llvm-mingw-*"
                 "$ENV{HOME}/llvm-mingw-*"
                 "/opt/llvm-mingw-*"
             )
-            list(FILTER _vkengine_llvm_mingw_dirs
-                EXCLUDE REGEX "\\.(tar\\.xz|tar\\.gz|zip)$")
+            # GLOB also matches downloaded .tar.xz files; keep only directories.
+            foreach(_vkengine_candidate IN LISTS _vkengine_llvm_mingw_candidates)
+                if(IS_DIRECTORY "${_vkengine_candidate}")
+                    list(APPEND _vkengine_llvm_mingw_dirs "${_vkengine_candidate}")
+                endif()
+            endforeach()
+            # The project-local candidate is listed first, so it wins.
             if(_vkengine_llvm_mingw_dirs)
-                list(SORT _vkengine_llvm_mingw_dirs)
-                list(GET _vkengine_llvm_mingw_dirs -1 VKENGINE_LLVM_MINGW_ROOT)
+                list(GET _vkengine_llvm_mingw_dirs 0 VKENGINE_LLVM_MINGW_ROOT)
             endif()
+            unset(_vkengine_llvm_mingw_candidates)
             unset(_vkengine_llvm_mingw_dirs)
+            unset(_vkengine_project_root)
         endif()
     endif()
     set(VKENGINE_LLVM_MINGW_ROOT "${VKENGINE_LLVM_MINGW_ROOT}" CACHE PATH
@@ -116,9 +149,10 @@ if(NOT _VKENGINE_LLVM_MINGW_TOOLCHAIN)
        NOT EXISTS "${VKENGINE_LLVM_MINGW_ROOT}/bin")
         message(FATAL_ERROR
             "llvm-mingw not found. Download a release from "
-            "https://github.com/mstorsjo/llvm-mingw/releases and either extract "
-            "it under ~/opt/ or set -DVKENGINE_LLVM_MINGW_ROOT=<dir> (or the "
-            "VKENGINE_LLVM_MINGW_ROOT environment variable).")
+            "https://github.com/mstorsjo/llvm-mingw/releases and extract it into "
+            "<project>/toolchains/ (see docs/cross-compiling-windows.md), or set "
+            "-DVKENGINE_LLVM_MINGW_ROOT=<dir> / the VKENGINE_LLVM_MINGW_ROOT "
+            "environment variable.")
     endif()
 
     set(_vkengine_mingw_prefix "${CMAKE_SYSTEM_PROCESSOR}-w64-mingw32")

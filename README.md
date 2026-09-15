@@ -64,3 +64,39 @@ ctest --test-dir build -C Debug
 ## Clang-Tidy
 
 Set `-DCLANG_TIDY_ENABLED=ON` to enable static analysis when `clang-tidy` is available and a `.clang-tidy` file exists at the project root. Set it to `OFF` to skip clang-tidy configuration.
+
+## Cross-compiling for Windows
+
+Windows x86_64 binaries can be built from Linux using
+[llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Clang + libc++ with the
+standard-library module, so `import std;` works on the target).
+
+The llvm-mingw release is kept **inside this project** at `toolchains/` (which
+is gitignored — nothing outside the checkout is required):
+
+```bash
+mkdir -p toolchains
+curl -L -o toolchains/llvm-mingw.tar.xz \
+  https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64.tar.xz
+echo "2258c745e3155870c80793f3e8c80b28fbde11b9ff73c4c78783635b3440b092  toolchains/llvm-mingw.tar.xz" | sha256sum -c -
+tar -xf toolchains/llvm-mingw.tar.xz -C toolchains
+rm toolchains/llvm-mingw.tar.xz
+```
+
+Then configure and build:
+
+```bash
+cmake --preset windows
+cmake --build --preset windows-release
+```
+
+The executables end up in `build-windows/Release/`, with the required runtime
+DLLs copied next to them (run them with `wine` if you want to test on the host).
+
+Cross-compiling requires **CMake ≥ 4.2**. Shader hot reload
+(`-DVKENGINE_HOT_RELOAD`) is disabled for Windows targets; shaders are still
+compiled ahead of time.
+
+See **[docs/cross-compiling-windows.md](docs/cross-compiling-windows.md)** for
+the full guide, details of what differs from the native build, and
+troubleshooting.

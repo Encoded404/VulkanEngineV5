@@ -33,8 +33,12 @@
 
 # build directories
 /build/
+/build-windows/
 /md-files
 /.cache
+
+# local llvm-mingw cross toolchain (see docs/cross-compiling-windows.md)
+/toolchains/
 
 # jetbrains directory
 /.idea

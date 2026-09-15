@@ -1,0 +1,133 @@
+# Cross-compiling for Windows (Linux → Windows x86_64)
+
+This project can be cross-compiled from a Linux x86_64 host to Windows x86_64
+using [llvm-mingw](https://github.com/mstorsjo/llvm-mingw): a self-contained
+Clang/LLD toolchain that ships the mingw-w64 sysroot, compiler-rt, libunwind and
+libc++ — **including the libc++ standard-library module metadata**, which is what
+makes `import std;` work on the Windows target.
+
+## 1. Prerequisites
+
+- Linux x86_64 build host
+- CMake ≥ 4.2 (4.2 introduced `CMAKE_CXX_STDLIB_MODULES_JSON`, which the cross
+  toolchain uses to point CMake at the *target* libc++ module metadata; the
+  CMake bundled with recent CLion releases works)
+- Ninja
+- vcpkg, with `VCPKG_ROOT` set
+- *optional*: `wine`, to run the resulting executables
+
+## 2. Download llvm-mingw into the project
+
+The toolchain is expected **inside this project** at `toolchains/`. That
+directory is listed in `.gitignore`, so the toolchain is never committed and
+nothing outside the checkout is required.
+
+```bash
+cd /path/to/VulkanEngineV5
+
+mkdir -p toolchains
+curl -L -o toolchains/llvm-mingw.tar.xz \
+  https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64.tar.xz
+
+# verify the download
+echo "2258c745e3155870c80793f3e8c80b28fbde11b9ff73c4c78783635b3440b092  toolchains/llvm-mingw.tar.xz" | sha256sum -c -
+
+tar -xf toolchains/llvm-mingw.tar.xz -C toolchains
+rm toolchains/llvm-mingw.tar.xz
+```
+
+After extracting you have:
+
+```
+toolchains/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64/
+```
+
+Use the **ucrt** variant (the msvcrt variant is only for very old Windows).
+`cmake/toolchains/llvm-mingw.cmake` auto-detects `toolchains/llvm-mingw*`, so no
+environment variables are needed. To keep the toolchain somewhere else, pass
+`-DVKENGINE_LLVM_MINGW_ROOT=/path/to/llvm-mingw` (or set the environment
+variable of the same name).
+
+Sanity check — the second file is the one that enables `import std;`:
+
+```bash
+toolchains/llvm-mingw-*/bin/x86_64-w64-mingw32-clang++ --version
+ls toolchains/llvm-mingw-*/x86_64-w64-mingw32/lib/libc++.modules.json
+```
+
+## 3. Configure
+
+```bash
+export VCPKG_ROOT=/path/to/vcpkg   # only needed if not already set
+cmake --preset windows
+```
+
+The `windows` preset selects the `x64-mingw-libcxx` vcpkg triplet, enables
+libc++, and turns off the options that are not available for a MinGW target.
+
+## 4. Build
+
+```bash
+cmake --build --preset windows-release        # or windows-debug / windows-relwithdebinfo
+```
+
+Resulting executables land in `build-windows/<Config>/`, e.g.
+`build-windows/Release/infinite_runner.exe`, together with the runtime DLLs that
+`add_engine_example` copies next to them.
+
+## 5. Run (optional, via wine)
+
+```bash
+wine build-windows/Release/infinite_runner.exe
+```
+
+The `vulkan-1.dll` next to the executable is deployed by the build, so wine does
+not need a Windows driver installation. The `fixme:` lines wine prints are
+normal noise.
+
+## How this differs from the native Linux build
+
+- **Shader hot reload is off** (`VKENGINE_HOT_RELOAD=OFF`). The only Windows
+  Slang build available is MSVC-produced and cannot be linked from a MinGW
+  target. Shaders are still compiled ahead of time, so the engine behaves
+  normally; only runtime recompilation is unavailable.
+- **`slang-spirv-compiler` is a build-time host tool.** It runs on the build
+  machine, so for a cross build it is built for Linux in
+  `build-windows/host-tools/` and executed during the build to emit the
+  `.spv`/`.cppm` files that are then compiled for the Windows target. Its
+  Shader-Slang dependency comes from this project's overlay port, so the host
+  tool and the target always use the same Slang release.
+- **Sanitizers are unavailable** on MinGW and are forced off.
+- **Windows-only dependencies**: `vulkan-loader` is installed because imgui's
+  CMake config hard-links `Vulkan::Vulkan`; `shader-slang` is *not* installed for
+  the Windows triplet (see above).
+
+## Troubleshooting
+
+- **"Stale CMake build tree"** — the toolchain refuses to configure a build
+  directory that was created before the cross toolchain existed (CMake keeps a
+  cached `CMakeSystem.cmake` reporting a native system). Delete the directory
+  and configure again:
+  ```bash
+  rm -rf build-windows && cmake --preset windows
+  ```
+- **Slang errors about missing built-ins (e.g. `CDataLayout`)** — the host
+  shader compiler was built against a different Shader-Slang release than the
+  target. Rebuild the host tool:
+  ```bash
+  rm -rf build-windows/host-tools build-windows/slang_spirv_compiler_host-prefix
+  cmake --build --preset windows-release
+  ```
+- **`wine: Library libc++.dll (or libunwind.dll) not found`** — run the
+  executable from its output directory (the build copies the llvm-mingw
+  runtimes there), e.g. `wine build-windows/Release/infinite_runner.exe`.
+- **Updating llvm-mingw** — download a newer release into `toolchains/` (the
+  newest `toolchains/llvm-mingw*` directory is picked up automatically) and
+  delete `build-windows`.
+
+## Related files
+
+- `cmake/toolchains/llvm-mingw.cmake` — the cross toolchain file
+- `cmake/triplets/x64-mingw-libcxx.cmake` — the vcpkg triplet
+- `cmake/CopyRuntimeDlls.cmake` — runtime DLL deployment
+- `CMakePresets.json` — the `windows` configure preset and `windows-*` build presets

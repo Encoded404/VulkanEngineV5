@@ -52,8 +52,9 @@ public:
         return 0;  // first (only) PerMaterial binding
     }
 
-    // Compile the default mesh pipeline with the given SPIR-V and engine layouts
-    void CompileDefaultMesh(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+    // Compile the default mesh pipeline with the given SPIR-V and engine layouts.
+    // Returns false if pipeline creation failed.
+    [[nodiscard]] bool CompileDefaultMesh(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                             ShaderSystem::ShaderManager& shader_mgr,
                             ShaderSystem::PipelineFactory& pipeline_factory,
                             ShaderSystem::ShaderId vert_id,
@@ -64,9 +65,9 @@ public:
                             vk::DescriptorSetLayout raw_vertex_layout,
                             vk::DescriptorSetLayout indirection_layout,
                             vk::DescriptorSetLayout scene_uniform_layout = nullptr) {
-        Compile(bootstrap, shader_mgr, pipeline_factory, vert_id, frag_id, config,
-                bindless_layout, submesh_vertex_layout, raw_vertex_layout, indirection_layout,
-                scene_uniform_layout);
+        return Compile(bootstrap, shader_mgr, pipeline_factory, vert_id, frag_id, config,
+                       bindless_layout, submesh_vertex_layout, raw_vertex_layout, indirection_layout,
+                       scene_uniform_layout);
     }
 
     // PackMaterialData uses the BaseTechnique default (TechniquePacking::Pack).

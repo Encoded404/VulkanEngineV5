@@ -135,7 +135,7 @@ std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() con
     return groups;
 }
 
-void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                             ShaderSystem::ShaderManager& shader_mgr,
                             ShaderSystem::PipelineFactory& pipeline_factory,
                             ShaderSystem::ShaderId vert_id,
@@ -262,18 +262,28 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         pipeline_desc_.layout = *pipeline_layout_;
         pipeline_desc_.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };
         pipeline_desc_.depth_format = bootstrap.GetBackend().GetDepthFormat();
-        compiled_ = true;
 
         auto result = pipeline_factory.CreateGraphics(pipeline_desc_, shader_mgr);
         if (!result.has_value()) {
-            LOGIFACE_LOG(error, "BaseTechnique: pipeline creation failed");
-        } else {
-            pipeline_slot_.Swap(std::move(result.value()), 0);
-            VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_slot_.Get(), vk::ObjectType::ePipeline, "technique-pipeline");
-            LOGIFACE_LOG(debug, std::format("BaseTechnique: pipeline ready: 0x{:x} (layout 0x{:x})",
-                                            HandleToU64(pipeline_slot_.Get()),
-                                            HandleToU64(*pipeline_layout_)));
+            LOGIFACE_LOG(error, std::format(
+                "BaseTechnique {} ({}): pipeline creation failed: {} "
+                "(vert={}, frag={}, topo={}, samples={}, color={}, depth={})",
+                id_.value, typeid(*this).name(), result.error().message,
+                vert_id, frag_id,
+                vk::to_string(config.primitive_topology),
+                vk::to_string(config.sample_count),
+                vk::to_string(bootstrap.GetBackend().GetSurfaceFormat().format),
+                vk::to_string(bootstrap.GetBackend().GetDepthFormat())));
+            return false;
         }
+        pipeline_slot_.Swap(std::move(result.value()), 0);
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_slot_.Get(), vk::ObjectType::ePipeline, "technique-pipeline");
+        LOGIFACE_LOG(debug, std::format("BaseTechnique: pipeline ready: 0x{:x} (layout 0x{:x})",
+                                        HandleToU64(pipeline_slot_.Get()),
+                                        HandleToU64(*pipeline_layout_)));
+        // Mark compiled only once a usable pipeline exists: a failed creation
+        // must not enable the hot-reload PollAndRebuild retry path.
+        compiled_ = true;
     }
 
     // ── 6. Create BlockArrays for PerMaterial bindings ──
@@ -403,6 +413,8 @@ void BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             custom_descriptor_sets_.push_back(std::move(ds));
         }
     }
+
+    return true;
 }
 
 void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,

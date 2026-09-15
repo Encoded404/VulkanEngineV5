@@ -126,6 +126,56 @@ namespace {
         }
     }
 
+    // Internal throw type for a failed shader-module fetch. It is deliberately
+    // not a vk::SystemError so the GPL path can tell "the asset is broken" (the
+    // monolithic fallback would fail identically) apart from "the driver refused
+    // the pipeline state" (where falling back to monolithic is worthwhile).
+    struct PipelineCreationError {
+        PipelineError error;
+    };
+
+    vk::ShaderModule FetchModule(ShaderManager& shaders, ShaderId id) {
+        try {
+            auto result = shaders.GetModule(id);
+            if (!result) {
+                throw PipelineCreationError{PipelineError{
+                    PipelineErrorKind::ShaderModuleUnavailable,
+                    vk::Result::eErrorInitializationFailed,
+                    std::format("shader {} unavailable: {}", id, result.error())}};
+            }
+            return *result;
+        } catch (const vk::SystemError& e) {
+            throw PipelineCreationError{PipelineError{
+                PipelineErrorKind::ShaderModuleUnavailable,
+                vk::Result::eErrorInitializationFailed,
+                std::format("shader {} module creation failed: {}", id, e.what())}};
+        }
+    }
+
+    // One-line, log-friendly summary of the pipeline state a driver would reject.
+    std::string Describe(const GraphicsPipelineDesc& d) {
+        std::string color_formats;
+        for (std::size_t i = 0; i < d.color_formats.size(); ++i) {
+            if (i != 0) color_formats += ',';
+            color_formats += vk::to_string(d.color_formats[i]);
+        }
+        return std::format(
+            "vert={} frag={} vbindings={} topo={} samples={} cull={} front={} "
+            "depth(test={},write={},cmp={}) color=[{}] depth={} stencil={} dynamic={} layout=0x{:x}",
+            d.vertex_shader, d.fragment_shader,
+            d.vertex_input.vertexBindingDescriptionCount,
+            vk::to_string(d.input_assembly.topology),
+            vk::to_string(d.multisample.rasterizationSamples),
+            vk::to_string(d.rasterization.cullMode),
+            vk::to_string(d.rasterization.frontFace),
+            d.depth_stencil.depthTestEnable, d.depth_stencil.depthWriteEnable,
+            vk::to_string(d.depth_stencil.depthCompareOp),
+            color_formats,
+            vk::to_string(d.depth_format), vk::to_string(d.stencil_format),
+            d.dynamic_states.size(),
+            HandleToU64(d.layout));
+    }
+
     vk::raii::Pipeline createVertexInputLibrary(
         const vk::raii::Device& device, const vk::raii::PipelineCache& cache,
         const vk::PipelineVertexInputStateCreateInfo& vi,
@@ -317,61 +367,79 @@ PipelineFactory::PipelineFactory(const vk::raii::Device& device, const VulkanBac
     }
 }
 
-std::expected<PipelineProduct, vk::Result>
+void PipelineFactory::DisableGplForRun(std::string_view reason) const {
+    const bool first = !gpl_runtime_disabled_.exchange(true, std::memory_order_relaxed);
+    if (first) {
+        LOGIFACE_LOG(info, std::format("PipelineFactory: GPL disabled for the rest of this run after first "
+                                       "failure ({}); subsequent pipelines use monolithic", reason));
+    }
+}
+
+std::expected<PipelineProduct, PipelineError>
 PipelineFactory::CreateGraphics(const GraphicsPipelineDesc& desc,
                                   ShaderManager& shaders) const {
+    const bool runtime_disabled = gpl_runtime_disabled_.load(std::memory_order_relaxed);
     try {
-        if (gpl_available_) {
+        if (gpl_available_ && !runtime_disabled) {
             LOGIFACE_LOG(debug, std::format("PipelineFactory: creating graphics pipeline via GPL (vert={}, frag={})",
                                             desc.vertex_shader, desc.fragment_shader));
             return CreateGraphicsGPL(desc, shaders);
         }
-        LOGIFACE_LOG(debug, std::format("PipelineFactory: creating graphics pipeline via monolithic (vert={}, frag={})",
-                                        desc.vertex_shader, desc.fragment_shader));
+        if (gpl_available_ && runtime_disabled) {
+            LOGIFACE_LOG(debug, std::format("PipelineFactory: GPL disabled at runtime; using monolithic (vert={}, frag={})",
+                                            desc.vertex_shader, desc.fragment_shader));
+        } else {
+            LOGIFACE_LOG(debug, std::format("PipelineFactory: creating graphics pipeline via monolithic (vert={}, frag={})",
+                                            desc.vertex_shader, desc.fragment_shader));
+        }
         return CreateGraphicsMonolithic(desc, shaders);
+    } catch (const PipelineCreationError& e) {
+        LOGIFACE_LOG(error, std::format("PipelineFactory: {}", e.error.message));
+        return std::unexpected(e.error);
     } catch (const vk::SystemError& e) {
-        return std::unexpected(static_cast<vk::Result>(e.code().value()));
+        const auto result = static_cast<vk::Result>(e.code().value());
+        const std::string message = std::format("{} ({}) [{}]", e.what(), vk::to_string(result), Describe(desc));
+        LOGIFACE_LOG(error, std::format("PipelineFactory: graphics pipeline creation failed: {}", message));
+        return std::unexpected(PipelineError{PipelineErrorKind::DriverRejectedPipeline, result, message});
     }
 }
 
-std::expected<PipelineProduct, vk::Result>
+std::expected<PipelineProduct, PipelineError>
 PipelineFactory::CreateCompute(const ComputePipelineDesc& desc,
                                  ShaderManager& shaders) const {
-    auto module_result = shaders.GetModule(desc.shader);
-    if (!module_result) {
-        LOGIFACE_LOG(error, std::format("PipelineFactory: failed to get compute shader: {}", module_result.error()));
-        return std::unexpected(vk::Result::eErrorInitializationFailed);
-    }
-    auto module = *module_result;
-    vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, module, "main");
-    vk::SpecializationInfo spec{};
-    if (!desc.spec_entries.empty()) {
-        spec.mapEntryCount = static_cast<std::uint32_t>(desc.spec_entries.size());
-        spec.pMapEntries = desc.spec_entries.data();
-        spec.dataSize = desc.spec_data.size();
-        spec.pData = desc.spec_data.data();
-        ss.pSpecializationInfo = &spec;
-    }
-    vk::ComputePipelineCreateInfo ci({}, ss, desc.layout);
     try {
+        vk::ShaderModule module = FetchModule(shaders, desc.shader);
+        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, module, "main");
+        vk::SpecializationInfo spec{};
+        if (!desc.spec_entries.empty()) {
+            spec.mapEntryCount = static_cast<std::uint32_t>(desc.spec_entries.size());
+            spec.pMapEntries = desc.spec_entries.data();
+            spec.dataSize = desc.spec_data.size();
+            spec.pData = desc.spec_data.data();
+            ss.pSpecializationInfo = &spec;
+        }
+        vk::ComputePipelineCreateInfo ci({}, ss, desc.layout);
         vk::raii::Pipeline pipeline = device_.createComputePipeline(cache_, ci);
         LOGIFACE_LOG(debug, std::format("PipelineFactory: compute pipeline created (shader={}): 0x{:x}",
                                         desc.shader, HandleToU64(*pipeline)));
         return PipelineProduct::Monolithic(std::move(pipeline));
+    } catch (const PipelineCreationError& e) {
+        LOGIFACE_LOG(error, std::format("PipelineFactory: {}", e.error.message));
+        return std::unexpected(e.error);
     } catch (const vk::SystemError& e) {
-        return std::unexpected(static_cast<vk::Result>(e.code().value()));
+        const auto result = static_cast<vk::Result>(e.code().value());
+        const std::string message = std::format("{} ({}) [compute shader={}, layout=0x{:x}]",
+                                                e.what(), vk::to_string(result), desc.shader, HandleToU64(desc.layout));
+        LOGIFACE_LOG(error, std::format("PipelineFactory: compute pipeline creation failed: {}", message));
+        return std::unexpected(PipelineError{PipelineErrorKind::DriverRejectedPipeline, result, message});
     }
 }
 
 PipelineProduct
 PipelineFactory::CreateGraphicsMonolithic(const GraphicsPipelineDesc& desc,
                                             ShaderManager& shaders) const {
-    auto vert_result = shaders.GetModule(desc.vertex_shader);
-    if (!vert_result) throw vk::SystemError(vk::Result::eErrorInitializationFailed, vert_result.error());
-    auto frag_result = shaders.GetModule(desc.fragment_shader);
-    if (!frag_result) throw vk::SystemError(vk::Result::eErrorInitializationFailed, frag_result.error());
-    auto vert_mod = *vert_result;
-    auto frag_mod = *frag_result;
+    auto vert_mod = FetchModule(shaders, desc.vertex_shader);
+    auto frag_mod = FetchModule(shaders, desc.fragment_shader);
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
         vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, vert_mod, "main"},
@@ -406,12 +474,8 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
     // resolution_.use_gpl.
     assert(resolution_.use_gpl);
     try {
-        auto vert_result = shaders.GetModule(desc.vertex_shader);
-        if (!vert_result) throw vk::SystemError(vk::Result::eErrorInitializationFailed, vert_result.error());
-        auto frag_result = shaders.GetModule(desc.fragment_shader);
-        if (!frag_result) throw vk::SystemError(vk::Result::eErrorInitializationFailed, frag_result.error());
-        auto vert_mod = *vert_result;
-        auto frag_mod = *frag_result;
+        auto vert_mod = FetchModule(shaders, desc.vertex_shader);
+        auto frag_mod = FetchModule(shaders, desc.fragment_shader);
 
         const auto vi_hash = HashVertexInput(desc.vertex_input, desc.input_assembly);
         auto pr_hash = HashPreRaster(desc.viewport, desc.rasterization, desc.multisample,
@@ -527,14 +591,32 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
 
         auto linked = CreateGraphicsGPLFinalLink(desc, libraries);
         if (!linked.has_value()) {
-            LOGIFACE_LOG(warn, "GPL: fast link not possible (VK_PIPELINE_COMPILE_REQUIRED); falling back to monolithic");
+            DisableGplForRun("final link returned no pipeline");
+            LOGIFACE_LOG(warn, std::format("GPL: fast link not possible (VK_PIPELINE_COMPILE_REQUIRED); "
+                                           "falling back to monolithic [{}]", Describe(desc)));
             return CreateGraphicsMonolithic(desc, shaders);
         }
         return PipelineProduct::GPLLinked(std::move(*linked), vi_lib, pr_lib,
                                           fragment_shader_lib, fragment_output_lib);
+    } catch (const PipelineCreationError&) {
+        // Shader modules are the one failure the monolithic path cannot recover
+        // from either — surface it as-is instead of pointlessly re-fetching.
+        throw;
     } catch (const vk::SystemError& e) {
-        LOGIFACE_LOG(warn, std::string("GPL pipeline creation failed: ") + e.what() + ", falling back to monolithic");
-        return CreateGraphicsMonolithic(desc, shaders);
+        const auto result = static_cast<vk::Result>(e.code().value());
+        DisableGplForRun(e.what());
+        LOGIFACE_LOG(warn, std::format("GPL pipeline creation failed: {} ({}) — falling back to monolithic [{}]",
+                                       e.what(), vk::to_string(result), Describe(desc)));
+        try {
+            return CreateGraphicsMonolithic(desc, shaders);
+        } catch (const PipelineCreationError&) {
+            throw;
+        } catch (const vk::SystemError& e2) {
+            const auto result2 = static_cast<vk::Result>(e2.code().value());
+            LOGIFACE_LOG(error, std::format("monolithic fallback failed too: {} ({})",
+                                            e2.what(), vk::to_string(result2)));
+            throw;
+        }
     }
 }
 

@@ -89,9 +89,16 @@ struct GplDriverVersion {
     GplResolution resolution;
     const bool affected = IsAffectedRadv(driver_id, driver_version);
     resolution.affected_radv = affected;
+    // Auto structure selection. Split is the only structure documented to work
+    // everywhere (doc §5); Combined is the least-tested branch and the fragile
+    // one on RADV < 26 (doc §3.1/§4). Default non-RADV Auto to Split as well, so
+    // an unprobed other-vendor driver (e.g. a Windows driver) never takes the
+    // combined fast-link path by default. Only RADV >= 26 keeps Combined on Auto;
+    // an explicit `gpl.structure=combined` still selects it on any driver.
     const GplStructurePolicy effective =
         (structure == GplStructurePolicy::Auto)
-            ? (affected ? GplStructurePolicy::Split : GplStructurePolicy::Combined)
+            ? ((affected || driver_id != kMesaRadvDriverId) ? GplStructurePolicy::Split
+                                                            : GplStructurePolicy::Combined)
             : structure;
 
     if (!gpl_supported) {

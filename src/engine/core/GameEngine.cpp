@@ -94,14 +94,17 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     ctx_.technique_mgr = std::make_unique<TechniqueManager::TechniqueManager>();
     {
         auto mesh_tech = std::make_unique<TechniqueManager::DefaultMeshTechnique>();
-        mesh_tech->CompileDefaultMesh(
-            *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
-            vert_id, frag_id, config_.pipeline_config,
-            *ctx_.bindless_mgr->GetLayout(),
-            *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-            *ctx_.scene_renderer->GetRawVertexLayout(),
-            *ctx_.scene_renderer->GetIndirectionLayout(),
-            ctx_.scene_renderer->GetSceneUniformLayout());
+        if (!mesh_tech->CompileDefaultMesh(
+                *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
+                vert_id, frag_id, config_.pipeline_config,
+                *ctx_.bindless_mgr->GetLayout(),
+                *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+                *ctx_.scene_renderer->GetRawVertexLayout(),
+                *ctx_.scene_renderer->GetIndirectionLayout(),
+                ctx_.scene_renderer->GetSceneUniformLayout())) {
+            LOGIFACE_LOG(error, "GameEngine::InitRenderer: DefaultMeshTechnique pipeline creation failed");
+            return false;
+        }
         auto tech_id = ctx_.technique_mgr->Register(std::move(mesh_tech));
         main_technique_id_ = tech_id.value;
     }
@@ -109,14 +112,17 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         // Unlit technique: same engine sets + PerMaterial layout as the main
         // technique, but paired with the unlit fragment shader (no lighting).
         auto unlit_tech = std::make_unique<TechniqueManager::UnlitTextureTechnique>();
-        unlit_tech->CompileUnlit(
-            *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
-            vert_id, ctx_.shader_ids.unlit_frag, config_.pipeline_config,
-            *ctx_.bindless_mgr->GetLayout(),
-            *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-            *ctx_.scene_renderer->GetRawVertexLayout(),
-            *ctx_.scene_renderer->GetIndirectionLayout(),
-            ctx_.scene_renderer->GetSceneUniformLayout());
+        if (!unlit_tech->CompileUnlit(
+                *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
+                vert_id, ctx_.shader_ids.unlit_frag, config_.pipeline_config,
+                *ctx_.bindless_mgr->GetLayout(),
+                *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+                *ctx_.scene_renderer->GetRawVertexLayout(),
+                *ctx_.scene_renderer->GetIndirectionLayout(),
+                ctx_.scene_renderer->GetSceneUniformLayout())) {
+            LOGIFACE_LOG(error, "GameEngine::InitRenderer: UnlitTextureTechnique pipeline creation failed");
+            return false;
+        }
         ctx_.technique_mgr->Register(std::move(unlit_tech));
     }
 

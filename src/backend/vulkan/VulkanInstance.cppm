@@ -27,6 +27,10 @@ private:
     SDL_Window* window_ = nullptr;
     std::unique_ptr<vk::detail::DynamicLoader> loader_{};
     std::unique_ptr<vk::raii::Instance> instance_{};
+    // Validation/debug messages sink. Created only when VK_EXT_debug_utils is
+    // enabled; without it the validation layer has nowhere to report, which is
+    // why a Debug build can be silent about invalid create calls.
+    std::unique_ptr<vk::raii::DebugUtilsMessengerEXT> debug_messenger_{};
     std::unique_ptr<vk::raii::SurfaceKHR> surface_{};
     VulkanInstanceCapabilities capabilities_{};
 };

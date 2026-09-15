@@ -41,6 +41,22 @@ struct ComputePipelineDesc {
     std::vector<std::byte> spec_data{};
 };
 
+// Why pipeline creation failed. Both a missing/invalid shader module and a
+// driver-side rejection surface as VK_ERROR_INITIALIZATION_FAILED, so the kind
+// is what lets a caller tell "my asset is broken" from "the driver refused this
+// pipeline state". `message` carries the human-readable context (which shader,
+// which create call, the vk::to_string of the result, and a desc summary).
+enum class PipelineErrorKind : std::uint8_t {
+    ShaderModuleUnavailable,
+    DriverRejectedPipeline,
+};
+
+struct PipelineError {
+    PipelineErrorKind kind = PipelineErrorKind::DriverRejectedPipeline;
+    vk::Result result = vk::Result::eErrorInitializationFailed;
+    std::string message;
+};
+
 class PipelineProduct {
 public:
     PipelineProduct() : linked_(nullptr) {}
@@ -113,19 +129,28 @@ public:
                     const vk::raii::PipelineCache& cache, GplPolicy policy = GplPolicy::Auto,
                     GplStructurePolicy structure = GplStructurePolicy::Auto);
 
-    [[nodiscard]] std::expected<PipelineProduct, vk::Result>
+    [[nodiscard]] std::expected<PipelineProduct, PipelineError>
         CreateGraphics(const GraphicsPipelineDesc& desc,
                        ShaderManager& shaders) const;
 
-    [[nodiscard]] std::expected<PipelineProduct, vk::Result>
+    [[nodiscard]] std::expected<PipelineProduct, PipelineError>
         CreateCompute(const ComputePipelineDesc& desc,
                       ShaderManager& shaders) const;
 
     [[nodiscard]] bool IsGPLAvailable() const { return gpl_available_; }
+    [[nodiscard]] bool IsGPLDisabledAtRuntime() const {
+        return gpl_runtime_disabled_.load(std::memory_order_relaxed);
+    }
 
     void InvalidateShader(ShaderId id);
 
 private:
+    // Sticky runtime GPL off-switch. Set the first time a GPL pipeline creation
+    // fails, so every later pipeline in the same run goes straight to monolithic
+    // instead of re-paying the failing GPL attempt (and re-logging it) per
+    // technique. `mutable` keeps CreateGraphics const; creation is single-threaded.
+    void DisableGplForRun(std::string_view reason) const;
+
     [[nodiscard]] PipelineProduct
         CreateGraphicsMonolithic(const GraphicsPipelineDesc& desc,
                                  ShaderManager& shaders) const;
@@ -162,6 +187,7 @@ private:
     const vk::raii::PipelineCache& cache_;
     bool gpl_available_;
     GplResolution resolution_;
+    mutable std::atomic<bool> gpl_runtime_disabled_{false};
 
     struct SharedLibraries {
         struct LibraryEntry {

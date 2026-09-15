@@ -233,7 +233,9 @@ public:
     // ── Compilation (separate from constructor) ──
     // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
-    void Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+    // Returns false if pipeline creation failed; the technique is then unusable
+    // (GetPipeline() returns VK_NULL_HANDLE) and resource setup is skipped.
+    [[nodiscard]] bool Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                  ShaderSystem::ShaderManager& shader_mgr,
                  ShaderSystem::PipelineFactory& pipeline_factory,
                  ShaderSystem::ShaderId vert_id,

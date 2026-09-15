@@ -83,14 +83,23 @@ TEST(GplResolutionTest, ResolveGplMatrix) {
         EXPECT_EQ(r.warning, GplResolution::Warning::None);
         EXPECT_FALSE(r.affected_radv);
     }
-    // auto/auto on non-RADV → combined + use
+    // auto/auto on non-RADV → split + use (defensive default: combined is the
+    // least-tested branch, so no driver takes it on Auto)
     {
         const auto r = ResolveGpl(GplPolicy::Auto, GplStructurePolicy::Auto,
                                   true, kNonRadv, kRadvAffected);
         EXPECT_TRUE(r.use_gpl);
-        EXPECT_EQ(r.structure, GplStructurePolicy::Combined);
+        EXPECT_EQ(r.structure, GplStructurePolicy::Split);
         EXPECT_EQ(r.warning, GplResolution::Warning::None);
         EXPECT_FALSE(r.affected_radv);
+    }
+    // auto/auto on non-RADV with a non-Mesa driver id (e.g. a Windows vendor) →
+    // split + use, same defensive default
+    {
+        const auto r = ResolveGpl(GplPolicy::Auto, GplStructurePolicy::Auto,
+                                  true, 0u, 0u);
+        EXPECT_TRUE(r.use_gpl);
+        EXPECT_EQ(r.structure, GplStructurePolicy::Split);
     }
     // auto/split anywhere supported → split + use
     {

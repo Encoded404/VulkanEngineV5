@@ -2,6 +2,7 @@ module;
 
 #include <SDL3/SDL_vulkan.h>
 
+#include <vulkan/vulkan.h>
 #include <vulkan/vulkan_hpp_macros.hpp>
 
 #include <logging/logging_macros.hpp>
@@ -37,6 +38,31 @@ bool IsNameSupported(const std::vector<vk::ExtensionProperties>& available, std:
         }
     }
     return false;
+}
+
+// Routes VK_EXT_debug_utils messages (validation layer output, loader/driver
+// diagnostics) into the engine logger. Without a messenger the validation layer
+// has no sink at all, so a Debug build silently swallows exactly the messages
+// that explain a failed vkCreate*Pipelines.
+VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
+        vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+        vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
+        const vk::DebugUtilsMessengerCallbackDataEXT* data,
+        void* /*user_data*/) {
+    if (data == nullptr || data->pMessage == nullptr) return vk::False;
+
+    std::string message = std::string("[Vulkan] ") + data->pMessage;
+    const auto severity_bits = static_cast<VkDebugUtilsMessageSeverityFlagsEXT>(severity);
+    if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0u) {
+        LOGIFACE_LOG(error, message);
+    } else if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0u) {
+        LOGIFACE_LOG(warn, message);
+    } else if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) != 0u) {
+        LOGIFACE_LOG(info, message);
+    } else {
+        LOGIFACE_LOG(debug, message);
+    }
+    return vk::False;  // always continue: never abort the offending call
 }
 
 } // namespace
@@ -165,10 +191,29 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         instance_extension_names.push_back(name.c_str());
     }
 
+    // Debug-utils messenger, chained into the instance create info so messages
+    // emitted during vkCreateInstance/teardown are captured too. Only chained
+    // when VK_EXT_debug_utils actually made the final request set.
+    const bool debug_utils_requested =
+        std::ranges::find(requested_names, "VK_EXT_debug_utils") != requested_names.end();
+    vk::DebugUtilsMessengerCreateInfoEXT messenger_ci{};
+    messenger_ci.messageSeverity =
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo;
+    messenger_ci.messageType =
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
+    messenger_ci.pfnUserCallback = &DebugUtilsCallback;
+
     constexpr vk::ApplicationInfo app_info("VulkanEngineV5", 1, "VulkanEngineV5", 1, vk::ApiVersion13);
-    const vk::InstanceCreateInfo instance_info({}, &app_info,
+    vk::InstanceCreateInfo instance_info({}, &app_info,
         static_cast<std::uint32_t>(instance_layers.size()), instance_layers.data(),
         static_cast<std::uint32_t>(instance_extension_names.size()), instance_extension_names.data());
+    if (debug_utils_requested) {
+        instance_info.setPNext(&messenger_ci);
+    }
 
     try {
         instance_ = std::make_unique<vk::raii::Instance>(vk::raii::Context{}, instance_info);
@@ -187,8 +232,20 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         }
     }
 
-    // 10. Debug-utils global gate (set once, before any naming calls).
+    // 10. Debug-utils global gate (set once, before any naming calls) and the
+    //     actual messenger that routes layer/driver messages into the logger.
     SetDebugUtilsEnabled(capabilities_.IsInstanceExtensionEnabled(InstanceExtension::DebugUtils));
+    if (capabilities_.IsInstanceExtensionEnabled(InstanceExtension::DebugUtils)) {
+        try {
+            debug_messenger_ = std::make_unique<vk::raii::DebugUtilsMessengerEXT>(*instance_, messenger_ci);
+            for (const auto& layer : instance_layers) {
+                LOGIFACE_LOG(info, std::string("Vulkan debug messenger installed (layer: ") + layer + ")");
+            }
+        } catch (const std::exception& ex) {
+            LOGIFACE_LOG(warn, std::string("failed to create Vulkan debug messenger: ") + ex.what());
+            debug_messenger_.reset();
+        }
+    }
 
     VkSurfaceKHR raw_surface = nullptr;
     if (!SDL_Vulkan_CreateSurface(window_, static_cast<VkInstance>(**instance_), nullptr, &raw_surface)) {
@@ -202,6 +259,10 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
 }
 
 void VulkanInstance::Shutdown() {
+    {
+        auto s = DebugSection("destroy debug messenger in VulkanInstance::Shutdown");
+        debug_messenger_.reset();
+    }
     {
         auto s = DebugSection("destroy surface in VulkanInstance::Shutdown");
         surface_.reset();

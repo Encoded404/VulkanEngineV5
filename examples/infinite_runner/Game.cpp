@@ -1,6 +1,7 @@
 module;
 #include <glm/glm.hpp> // NOLINT(misc-include-cleaner)
 
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_keycode.h>
 #include <imgui.h>
 
@@ -281,13 +282,22 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         walls_.push_back(slot);
     }
 
-    // 6. Input.
+    // 6. Input. One 1D action takes both the keyboard keys and the gamepad's
+    // left stick X axis, so every device feeds the same movement value.
     auto* input = ctx.input_system;
-    move_left_a_ = input->BindAction("move_left", VulkanEngine::Input::InputBinding::Key(SDLK_A));
-    move_left_arrow_ = input->BindAction("move_left_arrow", VulkanEngine::Input::InputBinding::Key(SDLK_LEFT));
-    move_right_d_ = input->BindAction("move_right", VulkanEngine::Input::InputBinding::Key(SDLK_D));
-    move_right_arrow_ = input->BindAction("move_right_arrow", VulkanEngine::Input::InputBinding::Key(SDLK_RIGHT));
+    move_ = input->BindAction<1>("move", VulkanEngine::Input::ActionConfig{
+        .processing = VulkanEngine::Input::ActionProcessing::ClampLength,
+    });
+    move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_A).Component(0, -1.0f));
+    move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_LEFT).Component(0, -1.0f));
+    move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_D).Component(0, +1.0f));
+    move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_RIGHT).Component(0, +1.0f));
+    move_.Bind(VulkanEngine::Input::InputBinding::GamepadAxis(SDL_GAMEPAD_AXIS_LEFTX)
+                   .Component(0, +1.0f)
+                   .Deadzone(0.15f));
+
     restart_handle_ = input->BindAction("restart", VulkanEngine::Input::InputBinding::Key(SDLK_R));
+    input->AddBinding(restart_handle_, VulkanEngine::Input::InputBinding::GamepadButton(SDL_GAMEPAD_BUTTON_NORTH));
     ctx.quit_action_handle = input->BindAction("quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
 
     // 7. HUD.
@@ -303,7 +313,7 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "GAME OVER");
                 ImGui::TextUnformatted("Press R to restart");
             } else {
-                ImGui::TextUnformatted("A/D or Left/Right to move");
+                ImGui::TextUnformatted("A/D, Left/Right, or left stick to move");
                 ImGui::TextUnformatted("R to restart, Esc to quit");
             }
             ImGui::End();
@@ -366,15 +376,8 @@ void Game::ResetRun() {
     ResetWalls();
 }
 
-void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx, const float delta_time) {
-    float direction = 0.0f;
-    auto* input = ctx.input_system;
-    if (input->IsActionActive(move_left_a_) || input->IsActionActive(move_left_arrow_)) {
-        direction -= 1.0f;
-    }
-    if (input->IsActionActive(move_right_d_) || input->IsActionActive(move_right_arrow_)) {
-        direction += 1.0f;
-    }
+void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& /*ctx*/, const float delta_time) {
+    const float direction = move_.Scalar();
 
     const float limit = kCorridorHalf - kPlayerSize * 0.5f;
     player_x_ = std::clamp(player_x_ + direction * kPlayerSpeed * delta_time, -limit, limit);

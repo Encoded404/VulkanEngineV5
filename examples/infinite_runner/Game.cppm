@@ -80,10 +80,7 @@ private:
     VulkanEngine::Components::Transform* player_transform_ = nullptr;
     std::vector<WallSlot> walls_{};
 
-    VulkanEngine::Input::ActionHandle move_left_a_{};
-    VulkanEngine::Input::ActionHandle move_left_arrow_{};
-    VulkanEngine::Input::ActionHandle move_right_d_{};
-    VulkanEngine::Input::ActionHandle move_right_arrow_{};
+    VulkanEngine::Input::Action<1> move_{};
     VulkanEngine::Input::ActionHandle restart_handle_{};
 
     float player_x_ = 0.0f;

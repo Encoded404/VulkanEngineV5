@@ -22,7 +22,12 @@ enum class EventType : std::uint8_t {
     MouseButtonDown,
     MouseButtonUp,
     MouseMotion,
-    MouseWheel
+    MouseWheel,
+    GamepadConnected,
+    GamepadDisconnected,
+    GamepadButtonDown,
+    GamepadButtonUp,
+    GamepadAxisMotion
 };
 
 class IEvent {
@@ -180,6 +185,70 @@ public:
 
     float x = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float y = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
+
+protected:
+    [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
+};
+
+class GamepadConnectedEvent final : public EventBase {
+public:
+    explicit GamepadConnectedEvent(std::uint8_t gamepad_index);
+
+    [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::GamepadConnected; }
+
+    std::uint8_t gamepad = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+
+protected:
+    [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
+};
+
+class GamepadDisconnectedEvent final : public EventBase {
+public:
+    explicit GamepadDisconnectedEvent(std::uint8_t gamepad_index);
+
+    [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::GamepadDisconnected; }
+
+    std::uint8_t gamepad = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+
+protected:
+    [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
+};
+
+class GamepadButtonDownEvent final : public EventBase {
+public:
+    GamepadButtonDownEvent(std::uint8_t gamepad_index, std::int32_t button_index);
+
+    [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::GamepadButtonDown; }
+
+    std::uint8_t gamepad = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+
+protected:
+    [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
+};
+
+class GamepadButtonUpEvent final : public EventBase {
+public:
+    GamepadButtonUpEvent(std::uint8_t gamepad_index, std::int32_t button_index);
+
+    [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::GamepadButtonUp; }
+
+    std::uint8_t gamepad = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t button = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+
+protected:
+    [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;
+};
+
+class GamepadAxisMotionEvent final : public EventBase {
+public:
+    GamepadAxisMotionEvent(std::uint8_t gamepad_index, std::int32_t axis_index, float axis_value);
+
+    [[nodiscard]] EventType GetEventType() const noexcept override { return EventType::GamepadAxisMotion; }
+
+    std::uint8_t gamepad = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::int32_t axis = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    float value = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes) normalized -1..1 (0..1 for triggers)
 
 protected:
     [[nodiscard]] std::unique_ptr<IEvent> CloneEvent() const override;

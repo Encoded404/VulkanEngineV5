@@ -1,6 +1,7 @@
 module;
 
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
 
@@ -23,7 +24,7 @@ public:
             return true;
         }
 
-        if (!SDL_Init(SDL_INIT_VIDEO)) {
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
             return false;
         }
 
@@ -32,6 +33,8 @@ public:
     }
 
     void Shutdown() override {
+        CloseAllGamepads();
+
         if (window_ != nullptr) {
             SDL_DestroyWindow(window_);
             window_ = nullptr;
@@ -121,6 +124,37 @@ public:
                         static_cast<float>(event.wheel.x),
                         static_cast<float>(event.wheel.y)));
                     break;
+                case SDL_EVENT_GAMEPAD_ADDED:
+                    if (OpenGamepad(event.gdevice.which)) {
+                        events.push_back(std::make_unique<VulkanBackend::Event::GamepadConnectedEvent>(
+                            gamepad_indices_.at(event.gdevice.which)));
+                    }
+                    break;
+                case SDL_EVENT_GAMEPAD_REMOVED:
+                    if (std::optional<std::uint8_t> index = CloseGamepad(event.gdevice.which)) {
+                        events.push_back(std::make_unique<VulkanBackend::Event::GamepadDisconnectedEvent>(*index));
+                    }
+                    break;
+                case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                    if (std::optional<std::uint8_t> index = IndexForInstance(event.gbutton.which)) {
+                        events.push_back(std::make_unique<VulkanBackend::Event::GamepadButtonDownEvent>(
+                            *index, static_cast<std::int32_t>(event.gbutton.button)));
+                    }
+                    break;
+                case SDL_EVENT_GAMEPAD_BUTTON_UP:
+                    if (std::optional<std::uint8_t> index = IndexForInstance(event.gbutton.which)) {
+                        events.push_back(std::make_unique<VulkanBackend::Event::GamepadButtonUpEvent>(
+                            *index, static_cast<std::int32_t>(event.gbutton.button)));
+                    }
+                    break;
+                case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                    if (std::optional<std::uint8_t> index = IndexForInstance(event.gaxis.which)) {
+                        events.push_back(std::make_unique<VulkanBackend::Event::GamepadAxisMotionEvent>(
+                            *index,
+                            static_cast<std::int32_t>(event.gaxis.axis),
+                            static_cast<float>(event.gaxis.value) / 32767.0F));
+                    }
+                    break;
                 default:
                     break;
             }
@@ -134,8 +168,67 @@ public:
     }
 
 private:
+    [[nodiscard]] std::optional<std::uint8_t> IndexForInstance(SDL_JoystickID instance_id) const {
+        const auto it = gamepad_indices_.find(instance_id);
+        if (it == gamepad_indices_.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
+    [[nodiscard]] std::uint8_t AcquireGamepadIndex() const {
+        for (std::uint8_t index = 0; index < 255; ++index) {
+            if (!gamepads_.contains(index)) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    bool OpenGamepad(SDL_JoystickID instance_id) {
+        if (gamepad_indices_.contains(instance_id)) {
+            return false;
+        }
+
+        SDL_Gamepad* gamepad = SDL_OpenGamepad(instance_id);
+        if (gamepad == nullptr) {
+            return false;
+        }
+
+        const std::uint8_t index = AcquireGamepadIndex();
+        gamepads_[index] = gamepad;
+        gamepad_indices_[instance_id] = index;
+        return true;
+    }
+
+    std::optional<std::uint8_t> CloseGamepad(SDL_JoystickID instance_id) {
+        const auto it = gamepad_indices_.find(instance_id);
+        if (it == gamepad_indices_.end()) {
+            return std::nullopt;
+        }
+
+        const std::uint8_t index = it->second;
+        if (const auto gamepad_it = gamepads_.find(index); gamepad_it != gamepads_.end()) {
+            SDL_CloseGamepad(gamepad_it->second);
+            gamepads_.erase(gamepad_it);
+        }
+        gamepad_indices_.erase(it);
+        return index;
+    }
+
+    void CloseAllGamepads() {
+        for (auto& [gamepad_index, gamepad] : gamepads_) {
+            static_cast<void>(gamepad_index);
+            SDL_CloseGamepad(gamepad);
+        }
+        gamepads_.clear();
+        gamepad_indices_.clear();
+    }
+
     SDL_Window* window_ = nullptr;
     bool initialized_ = false;
+    std::unordered_map<SDL_JoystickID, std::uint8_t> gamepad_indices_{};
+    std::unordered_map<std::uint8_t, SDL_Gamepad*> gamepads_{};
     VulkanShared::CallbackList<void(void*)> sdl_event_processors_{};
 };
 

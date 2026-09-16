@@ -5,6 +5,7 @@ module;
 #include <glm/gtc/quaternion.hpp> // NOLINT(misc-include-cleaner)
 #include <glm/gtx/string_cast.hpp> // NOLINT(misc-include-cleaner)
 
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 
@@ -29,10 +30,16 @@ public:
 
     void Initialize() override {
         if (!input_system_) return;
-        move_left_handle_ = input_system_->BindAction("move_left", VulkanEngine::Input::InputBinding::Key(SDLK_A));
-        move_right_handle_ = input_system_->BindAction("move_right", VulkanEngine::Input::InputBinding::Key(SDLK_D));
-        move_up_handle_ = input_system_->BindAction("move_up", VulkanEngine::Input::InputBinding::Key(SDLK_W));
-        move_down_handle_ = input_system_->BindAction("move_down", VulkanEngine::Input::InputBinding::Key(SDLK_S));
+        // One 2D action for both keyboard (WASD) and the gamepad's left stick.
+        move_ = input_system_->BindAction<2>("move", VulkanEngine::Input::ActionConfig{
+            .processing = VulkanEngine::Input::ActionProcessing::ClampLength,
+        });
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_A).Component(0, -1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_D).Component(0, +1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_W).Component(1, +1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_S).Component(1, -1.0f));
+        move_.BindGamepadStick(SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY);
+
         pause_spin_handle_ = input_system_->BindAction("pause_spin", VulkanEngine::Input::InputBinding::MouseButton(SDL_BUTTON_LEFT));
     }
 
@@ -45,18 +52,9 @@ public:
         }
 
         constexpr float move_speed = 1.5f;
-        if (input_system_->IsActionActive(move_left_handle_)) {
-            transform->position->x -= move_speed * delta_time;
-        }
-        if (input_system_->IsActionActive(move_right_handle_)) {
-            transform->position->x += move_speed * delta_time;
-        }
-        if (input_system_->IsActionActive(move_up_handle_)) {
-            transform->position->y += move_speed * delta_time;
-        }
-        if (input_system_->IsActionActive(move_down_handle_)) {
-            transform->position->y -= move_speed * delta_time;
-        }
+        const auto move = move_.Value();
+        transform->position->x += move[0] * move_speed * delta_time;
+        transform->position->y += move[1] * move_speed * delta_time;
 
         if (!input_system_->IsActionActive(pause_spin_handle_)) {
             const auto yaw = glm::angleAxis(glm::radians(delta_time * 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -77,10 +75,7 @@ public:
 
 private:
     VulkanEngine::Input::InputSystem* input_system_ = nullptr;
-    VulkanEngine::Input::ActionHandle move_left_handle_;
-    VulkanEngine::Input::ActionHandle move_right_handle_;
-    VulkanEngine::Input::ActionHandle move_up_handle_;
-    VulkanEngine::Input::ActionHandle move_down_handle_;
+    VulkanEngine::Input::Action<2> move_{};
     VulkanEngine::Input::ActionHandle pause_spin_handle_;
 };
 

@@ -262,6 +262,31 @@ if(ENABLE_SANITIZERS)
     )
 endif()
 
+# ── Linker selection: use LLD when the host has it ─────────────────────
+# LLD is optional, but when present it unlocks two size knobs the default GNU
+# ld on most distros cannot offer:
+#   * zstd-compressed debug sections (this host's binutils is built without
+#     zstd support, so GNU ld only has zlib), and
+#   * identical-code folding (--icf), which GNU ld does not implement at all.
+#
+# The check is a real link test: `-fuse-ld=lld` fails to link if lld is not
+# installed, so a host without it simply keeps its default linker. On the
+# Windows target the llvm-mingw wrapper already selects lld via its .cfg, so
+# the probe succeeds there too and the extra flag is a no-op.
+#
+# The probe caches its result, so drop any memoized value first: installing
+# lld after the first configure must be picked up by the next configure
+# without having to delete the build directory by hand.
+include(CheckLinkerFlag)
+unset(VKENGINE_HAVE_LLD CACHE)
+check_linker_flag(CXX "-fuse-ld=lld" VKENGINE_HAVE_LLD)
+if(VKENGINE_HAVE_LLD)
+    message(STATUS "lld found — linking with -fuse-ld=lld")
+    add_link_options(-fuse-ld=lld)
+else()
+    message(STATUS "lld not found — using the default linker")
+endif()
+
 # Sections optimization for dead-code stripping (gc-sections)
 add_library(project_sections INTERFACE)
 target_compile_options(project_sections INTERFACE
@@ -271,6 +296,56 @@ target_compile_options(project_sections INTERFACE
 target_link_options(project_sections INTERFACE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
 )
+
+# ── Size knobs that cost nothing in debuggability ──────────────────────
+# Linked next to project_sections, i.e. onto the engine libs, the tests and
+# every example.
+#
+# Debug info is 60-85% of the bytes in the Debug and RelWithDebInfo binaries,
+# so compressing it is the single largest win available on ELF: gdb, lldb and
+# perf decompress SHF_COMPRESSED sections transparently, so those
+# configurations stay exactly as debuggable as before. zstd compresses better
+# and is only reachable through lld; a GNU ld without zstd falls back to zlib.
+#
+# The Windows target cannot compress its DWARF at all — lld's COFF driver
+# rejects --compress-debug-sections and llvm-objcopy reports "option is not
+# supported for COFF" — so it gets the structural equivalent instead: split
+# DWARF. The detailed DIEs move into per-object .dwo files and the executable
+# keeps only skeleton compile units, line tables and the
+# .debug_gnu_pubnames/pubtypes indexes that let gdb resolve symbols without
+# them. Each skeleton records its .dwo relative to the configure-time build
+# directory, so gdb resolves them straight from the build tree and debug
+# fidelity is unchanged — the build tree simply has to survive for
+# symbol-level debugging. Release carries no DWARF on this triplet, so this is
+# limited to the two configurations that do.
+#
+# No --icf here: measured against this project's Windows binary it folded
+# 336 bytes, because the dependencies are already-linked DLLs and cannot
+# participate.
+add_library(project_size INTERFACE)
+if(WIN32)
+    target_compile_options(project_size INTERFACE
+        $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-gsplit-dwarf>)
+else()
+    if(VKENGINE_HAVE_LLD)
+        target_link_options(project_size INTERFACE
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--compress-debug-sections=zstd>
+        )
+        # Safe identical-code folding, Release only. --icf=safe consults the
+        # .llvm_addrsig address-significance tables clang emits on ELF, so it
+        # never merges a function whose address is observable. It is kept out
+        # of Debug/RelWithDebInfo on purpose: a folded function shares one
+        # address with its twin, which makes breakpoints and backtraces
+        # ambiguous in the configurations people actually debug with.
+        target_link_options(project_size INTERFACE
+            $<$<CONFIG:Release>:-Wl,--icf=safe>
+        )
+    else()
+        target_link_options(project_size INTERFACE
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--compress-debug-sections=zlib>
+        )
+    endif()
+endif()
 
 # -----------------
 # Logging Interface

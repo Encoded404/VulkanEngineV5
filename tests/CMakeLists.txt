@@ -29,6 +29,11 @@ function(setup_test_target TARGET)
   target_link_options(${TARGET} PRIVATE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
   )
+  # Same debug-info compression as the shipped binaries; test executables are
+  # not stripped, so a failing test is always symbolizable.
+  if(TARGET project_size)
+    target_link_libraries(${TARGET} PRIVATE project_size)
+  endif()
   gtest_discover_tests(${TARGET}
     PROPERTIES
       ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"

@@ -24,8 +24,21 @@ set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../toolchains/llvm
 # -Werror, which turns that diagnostic into a hard error. Disable it for all
 # ports (the same flag is already used by the native clang-libcxx toolchain).
 # A fully-disabling -Wno-<diag> is not resurrected by a later -Werror.
-set(VCPKG_CXX_FLAGS "-Wno-overriding-option")
-set(VCPKG_C_FLAGS "-Wno-overriding-option")
+#
+# -ffunction-sections/-fdata-sections give every port per-function/per-object
+# data granularity. On this triplet the dependencies are DLLs, so those flags
+# only pay off together with --gc-sections at the ports' own link step, which
+# is why it is added to VCPKG_LINKER_FLAGS below (a consumer-side linker flag
+# cannot reach inside an already-linked DLL).
+set(VCPKG_CXX_FLAGS "-Wno-overriding-option -ffunction-sections -fdata-sections")
+set(VCPKG_C_FLAGS "-Wno-overriding-option -ffunction-sections -fdata-sections")
+
+# Discard unreachable code inside the dependency DLLs. Safe for MinGW DLLs:
+# lld treats every export as a collection root regardless of how it is
+# declared — __declspec(dllexport), a .def file, or --export-all-symbols — so
+# the exported ABI cannot be collected (verified against all three, export
+# tables identical before and after).
+set(VCPKG_LINKER_FLAGS "${VCPKG_LINKER_FLAGS} -Wl,--gc-sections")
 
 # The Vulkan-Loader (pulled in for the Windows target by imgui's vulkan-binding
 # feature) defaults to its MASM path when USE_GAS is unset. MASM needs ml64.exe,

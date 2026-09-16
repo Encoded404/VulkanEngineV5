@@ -114,21 +114,34 @@ function(add_engine_example NAME)
     # MinGW/libc++ links against shared runtimes (libc++.dll, libunwind.dll,
     # libwinpthread-1.dll) and the vcpkg dependencies are dynamic, so the
     # example executable needs those DLLs next to it to run. One POST_BUILD
-    # step per source directory (keeps each command's arguments list-free).
+    # step resolves the executable's whole import closure across every
+    # candidate directory and copies just those DLLs — globbing the
+    # directories would also ship the gtest/gmock, ASan and OpenMP runtimes
+    # that no example links (~3 MB per example). Release deliverables get the
+    # copies stripped; Debug/RelWithDebInfo keep the dependency DWARF so those
+    # builds stay steppable into.
     if(WIN32)
-        foreach(_dll_dir IN LISTS VKENGINE_RUNTIME_DLL_DIRS)
-            add_custom_command(
-                TARGET ${NAME}
-                POST_BUILD
-                COMMAND ${CMAKE_COMMAND}
-                    "-DDLL_DIR=${_dll_dir}"
-                    "-DDEST=$<TARGET_FILE_DIR:${NAME}>"
-                    -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeDlls.cmake"
-                COMMENT "Deploying Windows runtime DLLs for ${NAME}"
-            )
-        endforeach()
-        unset(_dll_dir)
+        # The candidate directories have to be escaped before they go on a
+        # command line: a raw ';'-separated list is written into the generated
+        # shell command verbatim, so /bin/sh splits it and runs everything
+        # after the first semicolon as a separate command (CMake then starts
+        # without -P, and the rule fails with status 126). Escaping the
+        # separators makes the shell pass the script a single argument that
+        # still reads as a list inside CMake.
+        string(REPLACE ";" "\\;" _vkengine_dll_dirs "${VKENGINE_RUNTIME_DLL_DIRS}")
+        add_custom_command(
+            TARGET ${NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DDLL_DIRS=${_vkengine_dll_dirs}"
+                "-DEXE=$<TARGET_FILE:${NAME}>"
+                "-DOBJDUMP=${CMAKE_OBJDUMP}"
+                "-DSTRIP=$<IF:$<CONFIG:Release>,${CMAKE_STRIP},>"
+                "-DDEST=$<TARGET_FILE_DIR:${NAME}>"
+                -P "${CMAKE_SOURCE_DIR}/cmake/CopyRuntimeDlls.cmake"
+            COMMENT "Deploying Windows runtime DLLs for ${NAME}"
+        )
     endif()
+
 
     # ---- C++ module registration ----
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -187,6 +200,19 @@ function(add_engine_example NAME)
     if(TARGET project_sections)
         target_link_libraries(${NAME} PRIVATE project_sections)
     endif()
+    if(TARGET project_size)
+        target_link_libraries(${NAME} PRIVATE project_size)
+    endif()
+
+    # Release deliverables ship without a symbol table: .symtab/.strtab alone
+    # is ~1.5 MB on an example binary and carries nothing the program needs at
+    # runtime. The flag is applied at link time so the table is never written,
+    # rather than stripping the file afterwards. Debug and RelWithDebInfo are
+    # deliberately left untouched — they are the configurations used for
+    # debugging, and their DWARF (compressed by project_size) is what makes a
+    # crash trace useful.
+    target_link_options(${NAME} PRIVATE
+        $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-Wl,--strip-all>)
 
     if(COMMAND enable_target_clang_tidy)
         enable_target_clang_tidy(${NAME})

@@ -16,15 +16,15 @@ import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.Components.MaterialOverride;
+import Examples.InfiniteRunner.Sweep;
+import Examples.InfiniteRunner.Wall;
 
 namespace Examples::InfiniteRunner::Game {
 
 namespace {
 
 // ── Playfield tuning ──
-constexpr float kCorridorHalf = 3.5f;   // half-width of the play corridor
-constexpr float kWallHeight = 2.25f;
-constexpr float kWallDepth = 0.6f;
+// Wall/corridor geometry lives in the Wall module, shared with the collision.
 constexpr float kPlayerSize = 0.9f;
 constexpr float kWallSpawnZ = -150.0f;   // far end (camera looks toward -Z)
 constexpr float kWallInitialSpawnZ = -10.0f;
@@ -265,13 +265,13 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     walls_.reserve(kWallCount);
     for (int i = 0; i < kWallCount; ++i) {
-        Wall wall{};
-        wall.left = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
-        wall.right = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
-        wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing();
-        RandomizeWall(wall);
-        ApplyWallTransform(wall);
-        walls_.push_back(wall);
+        WallSlot slot{};
+        slot.left = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
+        slot.right = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
+        slot.wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing();
+        RandomizeWall(slot.wall);
+        ApplyWallTransform(slot);
+        walls_.push_back(slot);
     }
 
     // 6. Input.
@@ -329,24 +329,25 @@ void Game::RandomizeWall(Wall& wall) {
     wall.passed = false;
 }
 
-void Game::ApplyWallTransform(Wall& wall) {
-    const float left_width = wall.gap_left_x + kCorridorHalf;
-    const float right_width = kCorridorHalf - wall.gap_right_x;
+void Game::ApplyWallTransform(WallSlot& slot) {
+    // Render transforms are derived from the same block geometry the sweep
+    // tests against, so the visuals and the hitboxes cannot drift apart.
+    const auto place = [](VulkanEngine::Components::Transform* transform, const Sweep::Aabb& box) {
+        transform->position = box.Center();
+        transform->scale = box.Size();
+    };
 
-    wall.left->position = glm::vec3{(-kCorridorHalf + wall.gap_left_x) * 0.5f, 0.0f, wall.z};
-    wall.left->scale = glm::vec3{std::max(left_width, 0.05f), kWallHeight, kWallDepth};
-
-    wall.right->position = glm::vec3{(wall.gap_right_x + kCorridorHalf) * 0.5f, 0.0f, wall.z};
-    wall.right->scale = glm::vec3{std::max(right_width, 0.05f), kWallHeight, kWallDepth};
+    place(slot.left, slot.wall.LeftBlock());
+    place(slot.right, slot.wall.RightBlock());
 }
 
 void Game::ResetWalls() {
     float difficulty = std::pow(std::max(1, score_), kWallSpacingPowScaling);
     for (int i = 0; i < static_cast<int>(walls_.size()); ++i) {
-        auto& wall = walls_[static_cast<std::size_t>(i)];
-        wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing() * std::max(1.0f, difficulty / kDifficultyScalingDivider);
-        RandomizeWall(wall);
-        ApplyWallTransform(wall);
+        auto& slot = walls_[static_cast<std::size_t>(i)];
+        slot.wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing() * std::max(1.0f, difficulty / kDifficultyScalingDivider);
+        RandomizeWall(slot.wall);
+        ApplyWallTransform(slot);
     }
 }
 
@@ -359,8 +360,6 @@ void Game::ResetRun() {
 }
 
 void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx, const float delta_time) {
-
-
     float direction = 0.0f;
     auto* input = ctx.input_system;
     if (input->IsActionActive(move_left_a_) || input->IsActionActive(move_left_arrow_)) {
@@ -376,12 +375,27 @@ void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx
     camera_->position.x = player_x_;
 }
 
-void Game::UpdateWalls(const float delta_time) {
-    float difficulty = std::max(1, score_);
+bool Game::StepWalls(const float delta_time, const float player_x_before, const float player_dx) {
+    const float difficulty = std::max(1, score_);
+    const float wall_dz = kWallSpeed * delta_time * std::max(1.0f, difficulty / kDifficultyScalingDivider);
 
-    for (auto& wall : walls_) {
-        wall.z += kWallSpeed * delta_time  * std::max(1.0f, difficulty / kDifficultyScalingDivider);
+    // Player-centre sweep for this frame, expressed relative to a wall: the
+    // wall's own +Z scroll enters as -wall_dz, so a wall that reaches the
+    // player between frames is caught instead of tunnelling through. A
+    // thin ray keeps the hitbox forgiving relative to the visible cube.
+    const glm::vec3 from{player_x_before, 0.0f, 0.0f};
+    const glm::vec3 to{player_x_before + player_dx, 0.0f, -wall_dz};
 
+    bool hit = false;
+    for (auto& slot : walls_) {
+        Wall& wall = slot.wall;
+
+        // Tested against the pre-scroll box, before recycle/randomize, so the
+        // geometry and z used here are the ones the wall actually had.
+        hit = hit || Sweep::SegmentIntersects(wall.LeftBlock(), from, to)
+                  || Sweep::SegmentIntersects(wall.RightBlock(), from, to);
+
+        wall.z += wall_dz;
         if (wall.z > kWallRecycleZ) {
             wall.z -= (kWallRecycleZ - kWallSpawnZ);
             RandomizeWall(wall);
@@ -392,28 +406,9 @@ void Game::UpdateWalls(const float delta_time) {
             ++score_;
         }
 
-        ApplyWallTransform(wall);
+        ApplyWallTransform(slot);
     }
-}
-
-bool Game::PlayerHitsAnyWall() const {
-    const float half = kPlayerSize * 0.5f;
-    const float player_min_x = player_x_ - half;
-    const float player_max_x = player_x_ + half;
-    const float z_reach = kWallDepth * 0.5f + half;
-
-    for (const auto& wall : walls_) {
-        if (std::fabs(wall.z) > z_reach) {
-            continue;
-        }
-        if (player_min_x < wall.gap_left_x && player_max_x > -kCorridorHalf) {
-            return true; // left block
-        }
-        if (player_max_x > wall.gap_right_x && player_min_x < kCorridorHalf) {
-            return true; // right block
-        }
-    }
-    return false;
+    return hit;
 }
 
 void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
@@ -423,9 +418,9 @@ void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ct
 
     const float delta_time = ctx.frame.delta_time;
     if (!game_over_) {
+        const float player_x_before = player_x_;
         UpdatePlayer(ctx, delta_time);
-        UpdateWalls(delta_time);
-        if (PlayerHitsAnyWall()) {
+        if (StepWalls(delta_time, player_x_before, player_x_ - player_x_before)) {
             game_over_ = true;
         }
     }

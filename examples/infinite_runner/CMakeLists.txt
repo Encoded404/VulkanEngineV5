@@ -10,4 +10,6 @@ add_engine_example(infinite_runner
         Game.cpp
     MODULES
         Game.cppm
+        Sweep.cppm
+        Wall.cppm
 )

@@ -6,6 +6,7 @@ import std;
 
 export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
+import Examples.InfiniteRunner.Wall;
 
 export namespace Examples::InfiniteRunner::Game {
 
@@ -14,7 +15,8 @@ export namespace Examples::InfiniteRunner::Game {
 // A fixed pool of wall entities scrolls toward a stationary player cube. Each
 // wall is two blocks with a randomly placed horizontal gap; the player must
 // line up with the gap to pass. There is no engine collision or entity
-// destruction, so collision is plain AABB math and walls are recycled in place.
+// destruction: walls are recycled in place and the player is a thin swept ray
+// tested against the block geometry owned by the Wall value type.
 class Game {
 public:
     explicit Game(const std::filesystem::path& executable_path);
@@ -31,14 +33,12 @@ private:
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
-    // One wall: two blocks leaving the gap [gap_left_x, gap_right_x] open.
-    struct Wall {
+    // A wall's simulated state plus the render handles it drives. The value
+    // type owns the geometry; the game owns the ECS plumbing.
+    struct WallSlot {
+        Wall wall{};
         VulkanEngine::Components::Transform* left = nullptr;
         VulkanEngine::Components::Transform* right = nullptr;
-        float gap_left_x = 0.0f;  // max x of the left block
-        float gap_right_x = 0.0f; // min x of the right block
-        float z = 0.0f;
-        bool passed = false;
     };
 
     VulkanEngine::Components::Transform* CreateCubeEntity(float x, float y, float z,
@@ -46,12 +46,14 @@ private:
                                                           VulkanEngine::MaterialManager::MaterialRef material);
 
     void RandomizeWall(Wall& wall);
-    void ApplyWallTransform(Wall& wall);
+    void ApplyWallTransform(WallSlot& slot);
     void ResetWalls();
     void ResetRun();
     void UpdatePlayer(const VulkanEngine::Application::ApplicationContext& ctx, float delta_time);
-    void UpdateWalls(float delta_time);
-    bool PlayerHitsAnyWall() const;
+    // Integrates every wall and sweeps the player against their pre-move boxes.
+    // Owns the before/after pair explicitly, so the collision never depends on
+    // where an earlier update left shared state. Returns true on a hit.
+    bool StepWalls(float delta_time, float player_x_before, float player_dx);
 
     VulkanEngine::Application::ApplicationHooks hooks_{};
 
@@ -74,7 +76,7 @@ private:
 
     VulkanEngine::Components::Camera* camera_ = nullptr;
     VulkanEngine::Components::Transform* player_transform_ = nullptr;
-    std::vector<Wall> walls_{};
+    std::vector<WallSlot> walls_{};
 
     VulkanEngine::Input::ActionHandle move_left_a_{};
     VulkanEngine::Input::ActionHandle move_left_arrow_{};

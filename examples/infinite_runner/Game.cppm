@@ -15,8 +15,8 @@ export namespace Examples::InfiniteRunner::Game {
 // A fixed pool of wall entities scrolls toward a stationary player cube. Each
 // wall is two blocks with a randomly placed horizontal gap; the player must
 // line up with the gap to pass. There is no engine collision or entity
-// destruction: walls are recycled in place and the player is a thin swept ray
-// tested against the block geometry owned by the Wall value type.
+// destruction: walls are recycled in place, and the player is tested both as a
+// discrete box against the block geometry and as a ray swept between frames.
 class Game {
 public:
     explicit Game(const std::filesystem::path& executable_path);
@@ -54,6 +54,8 @@ private:
     // Owns the before/after pair explicitly, so the collision never depends on
     // where an earlier update left shared state. Returns true on a hit.
     bool StepWalls(float delta_time, float player_x_before, float player_dx);
+    // Discrete box-vs-box overlap at the settled end-of-frame positions.
+    bool PlayerOverlapsAnyWall() const;
 
     VulkanEngine::Application::ApplicationHooks hooks_{};
 

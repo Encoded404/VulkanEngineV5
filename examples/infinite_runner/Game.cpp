@@ -43,6 +43,13 @@ constexpr float WallSpacing() {
     return (kWallRecycleZ - kWallSpawnZ) / static_cast<float>(kWallCount);
 }
 
+// Player cube box centred on the corridor at (center_x, 0, 0), for the
+// discrete overlap check.
+[[nodiscard]] Sweep::Aabb PlayerBox(const float center_x) {
+    const float half = kPlayerSize * 0.5f;
+    return {{center_x - half, -half, -half}, {center_x + half, half, half}};
+}
+
 // Builds a unit cube (centred on the origin, half-extent 0.5) as LoadedMeshData.
 // Bounding volumes and the indexed-draw vertex window are filled in later by
 // MeshRegistry::Register via EnsureSubmeshBounds.
@@ -411,6 +418,17 @@ bool Game::StepWalls(const float delta_time, const float player_x_before, const 
     return hit;
 }
 
+bool Game::PlayerOverlapsAnyWall() const {
+    const Sweep::Aabb player = PlayerBox(player_x_);
+    for (const auto& slot : walls_) {
+        if (Sweep::Intersects(player, slot.wall.LeftBlock()) ||
+            Sweep::Intersects(player, slot.wall.RightBlock())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     if (ctx.input_system->WasActionStarted(restart_handle_)) {
         ResetRun();
@@ -420,7 +438,11 @@ void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ct
     if (!game_over_) {
         const float player_x_before = player_x_;
         UpdatePlayer(ctx, delta_time);
-        if (StepWalls(delta_time, player_x_before, player_x_ - player_x_before)) {
+        // Continuous check catches fast walls crossing between frames; the
+        // discrete box check covers overlap at the settled end-of-frame poses.
+        const bool swept_hit = StepWalls(delta_time, player_x_before, player_x_ - player_x_before);
+        const bool overlap_hit = PlayerOverlapsAnyWall();
+        if (swept_hit || overlap_hit) {
             game_over_ = true;
         }
     }

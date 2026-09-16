@@ -56,4 +56,11 @@ struct Aabb {
     return true;
 }
 
+// True when the two boxes overlap. Touching edges count as an overlap.
+[[nodiscard]] inline bool Intersects(const Aabb& a, const Aabb& b) {
+    return a.min.x <= b.max.x && a.max.x >= b.min.x &&
+           a.min.y <= b.max.y && a.max.y >= b.min.y &&
+           a.min.z <= b.max.z && a.max.z >= b.min.z;
+}
+
 } // namespace Examples::InfiniteRunner::Sweep

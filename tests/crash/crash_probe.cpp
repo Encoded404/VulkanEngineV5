@@ -54,6 +54,57 @@ void EmitContext() {
     std::_Exit(90); // Unknown type: fail loudly rather than run on.
 }
 
+void LogBulk(int count, const char* prefix) {
+    for (int i = 0; i < count; ++i) {
+        char line[64];
+        std::snprintf(line, sizeof(line), "%s-%06d", prefix, i);
+        VulkanEngine::Crash::LogLine(line);
+    }
+}
+
+void LogLongLine() {
+    std::string text = "LONG-BEGIN";
+    text.append(40000, 'x');
+    text += "LONG-END";
+    VulkanEngine::Crash::LogLine(text.c_str());
+}
+
+void RunWorkerThread() {
+    std::thread worker([] {
+        VulkanEngine::Crash::LogLine("THREAD-MARKER-1");
+        VulkanEngine::Crash::LogLine("THREAD-MARKER-2");
+    });
+    worker.join();
+    VulkanEngine::Crash::LogLine("THREAD-MARKER-3");
+}
+
+// Crash while several threads are alive and hold unflushed buffered lines, so
+// the fault handler has to drain every thread's buffer.
+[[noreturn]] void CrashWithLiveThreads() {
+    constexpr int kThreadCount = 4;
+    std::atomic<int> ready{0};
+    std::atomic<bool> release{false};
+    std::vector<std::thread> workers;
+    workers.reserve(kThreadCount);
+    for (int id = 0; id < kThreadCount; ++id) {
+        workers.emplace_back([id, &ready, &release] {
+            for (int i = 0; i < 10; ++i) {
+                char line[64];
+                std::snprintf(line, sizeof(line), "MT-%d-LINE-%02d", id, i);
+                VulkanEngine::Crash::LogLine(line);
+            }
+            ready.fetch_add(1);
+            while (!release.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+    }
+    while (ready.load() != kThreadCount) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    TriggerCrash("segv");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -76,6 +127,33 @@ int main(int argc, char** argv) {
     }
     if (type == "fatal") {
         VulkanEngine::Crash::Fatal("probe fatal", "probe detail");
+    }
+    if (type == "bulk") {
+        LogBulk(5000, "BULK");
+        return 0;
+    }
+    if (type == "bulk-crash") {
+        LogBulk(5000, "BULK");
+        TriggerCrash("segv");
+    }
+    if (type == "long") {
+        LogLongLine();
+        return 0;
+    }
+    if (type == "flush") {
+        // _Exit skips thread-local destructors, so only the explicit Flush()
+        // can have persisted FLUSH-BEFORE; FLUSH-AFTER must be absent.
+        VulkanEngine::Crash::LogLine("FLUSH-BEFORE-777");
+        VulkanEngine::Crash::Flush();
+        VulkanEngine::Crash::LogLine("FLUSH-AFTER-888");
+        std::_Exit(0);
+    }
+    if (type == "thread") {
+        RunWorkerThread();
+        return 0;
+    }
+    if (type == "mt-crash") {
+        CrashWithLiveThreads();
     }
 
     TriggerCrash(type);

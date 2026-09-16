@@ -1,6 +1,7 @@
 #include "engine/core/Crash.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -67,8 +68,43 @@ std::atomic<bool> g_installed{false};
 [[maybe_unused]] std::atomic<bool> g_faulted{false};
 std::atomic<bool> g_reporting{false};
 
-std::mutex g_file_mutex;
-std::FILE* g_log_file = nullptr;
+// ── Buffered session-log storage ───────────────────────────────────────
+// Each logging thread owns one fixed buffer ("slot") and appends whole lines
+// to it, draining it with a single write() once it crosses kLogThreshold. A
+// per-slot 'busy' flag serialises appends and flushes for that one buffer;
+// because a slot is owned by a single thread the fast path is effectively
+// uncontended. The fault handlers drain every slot with write() only, so a
+// crash still captures every committed line. Only whole lines are ever
+// published, so a reader can never observe a torn line.
+constexpr unsigned kMaxLogThreads = 64;
+constexpr std::size_t kLogChunk = 32 * 1024;
+constexpr std::size_t kLogThreshold = 24 * 1024;
+
+struct LogSlot {
+    std::atomic<char*> data{nullptr};
+    std::atomic<unsigned> len{0};
+    std::atomic_flag busy = ATOMIC_FLAG_INIT;
+};
+
+LogSlot g_slots[kMaxLogThreads];
+alignas(64) char g_log_pool[kMaxLogThreads][kLogChunk];
+alignas(64) char g_overflow_buf[kLogChunk];
+LogSlot g_overflow_slot;
+std::atomic<unsigned> g_slot_high_water{0};
+
+// Taken only while a thread claims or retires a slot, never on the per-line
+// path.
+std::mutex g_slot_mutex;
+unsigned g_free_slots[kMaxLogThreads];
+unsigned g_free_count = 0;
+
+// Serialises the rare path that writes a single line longer than kLogChunk.
+std::mutex g_long_line_mutex;
+
+// Open session-log handle: a POSIX fd or a Win32 HANDLE stored as intptr_t.
+// -1 means "not open". It is opened with append semantics so concurrent
+// write() calls from several threads land atomically without a lock.
+std::atomic<std::intptr_t> g_log_handle{-1};
 
 char g_report_dir[1024] = ".";
 char g_session_path[1200] = "";
@@ -127,6 +163,297 @@ RawOut RawOpen(const char* path) {
     return out;
 }
 #endif
+
+// ── Session-log handle ─────────────────────────────────────────────────
+// A single pre-opened append handle. write()/WriteFile are async-signal-safe,
+// so the fault handlers can flush buffered lines without a lock. The handle is
+// never closed from a context that may race a writer: Shutdown() just marks it
+// invalid and lets the OS reclaim it at process exit.
+
+bool WriteHandle(std::intptr_t raw, const void* data, std::size_t size) noexcept {
+    if (raw < 0 || data == nullptr || size == 0) {
+        return false;
+    }
+    const char* bytes = static_cast<const char*>(data);
+#if defined(_WIN32)
+    const HANDLE handle = reinterpret_cast<HANDLE>(raw);
+    while (size > 0) {
+        const DWORD chunk = static_cast<DWORD>(size > 0x100000u ? 0x100000u : size);
+        DWORD written = 0;
+        if (::WriteFile(handle, bytes, chunk, &written, nullptr) == 0 || written == 0) {
+            return false;
+        }
+        bytes += written;
+        size -= written;
+    }
+#else
+    const int fd = static_cast<int>(raw);
+    while (size > 0) {
+        const ssize_t written = ::write(fd, bytes, size);
+        if (written > 0) {
+            bytes += written;
+            size -= static_cast<std::size_t>(written);
+            continue;
+        }
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+#endif
+    return true;
+}
+
+void WriteAll(std::intptr_t handle, const void* data, std::size_t size) noexcept {
+    static_cast<void>(WriteHandle(handle, data, size));
+}
+
+std::intptr_t OpenSessionHandle(const char* path) noexcept {
+    if (path == nullptr || *path == '\0') {
+        return -1;
+    }
+#if defined(_WIN32)
+    const HANDLE handle = ::CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+    return reinterpret_cast<std::intptr_t>(handle);
+#else
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
+    return static_cast<std::intptr_t>(fd);
+#endif
+}
+
+void CloseSessionHandle(std::intptr_t handle) noexcept {
+#if defined(_WIN32)
+    if (handle != -1) {
+        ::CloseHandle(reinterpret_cast<HANDLE>(handle));
+    }
+#else
+    if (handle >= 0) {
+        ::close(static_cast<int>(handle));
+    }
+#endif
+}
+
+// ── Buffered session-log slot operations ───────────────────────────────
+
+void LockSlot(LogSlot& slot) noexcept {
+    while (slot.busy.test_and_set(std::memory_order_acquire)) {
+        // Spin. A slot is owned by one thread, so this only ever contends with
+        // a shutdown or fault drainer.
+    }
+}
+
+bool TryLockSlot(LogSlot& slot) noexcept {
+    // Bounded: the fault path must never block indefinitely on a slot owned by
+    // a thread that is itself mid-operation (possibly the faulting thread).
+    for (int attempt = 0; attempt < 1024; ++attempt) {
+        if (!slot.busy.test_and_set(std::memory_order_acquire)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void UnlockSlot(LogSlot& slot) noexcept {
+    slot.busy.clear(std::memory_order_release);
+}
+
+// Flush whatever the slot already holds. Caller does not hold 'busy'.
+void FlushSlot(LogSlot& slot) noexcept {
+    LockSlot(slot);
+    char* const buf = slot.data.load(std::memory_order_relaxed);
+    const unsigned len = slot.len.load(std::memory_order_relaxed);
+    if (buf != nullptr && len != 0) {
+        WriteAll(g_log_handle.load(std::memory_order_relaxed), buf, len);
+        slot.len.store(0, std::memory_order_relaxed);
+    }
+    UnlockSlot(slot);
+}
+
+struct TlsLog;
+void ReleaseTlsLog(TlsLog& t) noexcept;
+
+// Per-thread cursor into the slot registry. Registration happens once, on the
+// first line a thread logs.
+struct TlsLog {
+    char* buf = nullptr;
+    LogSlot* slot = nullptr;
+    unsigned index = kMaxLogThreads;
+    bool overflow = false;
+
+    ~TlsLog() { ReleaseTlsLog(*this); }
+};
+
+thread_local TlsLog t_log;
+
+void AcquireTlsLog(TlsLog& t) noexcept {
+    try {
+        std::lock_guard<std::mutex> const lock(g_slot_mutex);
+        unsigned index = kMaxLogThreads;
+        if (g_free_count > 0) {
+            index = g_free_slots[--g_free_count];
+        } else {
+            const unsigned high_water = g_slot_high_water.load(std::memory_order_relaxed);
+            if (high_water < kMaxLogThreads) {
+                index = high_water;
+                g_slot_high_water.store(high_water + 1, std::memory_order_release);
+            }
+        }
+        if (index >= kMaxLogThreads) {
+            // More live logging threads than slots: share the overflow buffer.
+            // Lines still reach the file, just serialised through one slot.
+            g_overflow_slot.data.store(g_overflow_buf, std::memory_order_release);
+            t.overflow = true;
+            t.slot = &g_overflow_slot;
+            t.buf = g_overflow_buf;
+            t.index = kMaxLogThreads;
+            return;
+        }
+        t.overflow = false;
+        t.index = index;
+        t.slot = &g_slots[index];
+        t.buf = g_log_pool[index];
+        t.slot->len.store(0, std::memory_order_relaxed);
+        t.slot->data.store(t.buf, std::memory_order_release);
+    } catch (...) {
+        // Registration must never break logging; fall back to the shared
+        // overflow buffer.
+        t.overflow = true;
+        t.slot = &g_overflow_slot;
+        t.buf = g_overflow_buf;
+        t.index = kMaxLogThreads;
+    }
+}
+
+TlsLog& Tls() noexcept {
+    if (t_log.buf == nullptr) {
+        AcquireTlsLog(t_log);
+    }
+    return t_log;
+}
+
+void AppendSlot(LogSlot& slot, const char* line, std::size_t length) noexcept {
+    LockSlot(slot);
+    char* const buf = slot.data.load(std::memory_order_relaxed);
+    if (buf != nullptr) {
+        const std::intptr_t handle = g_log_handle.load(std::memory_order_relaxed);
+        unsigned len = slot.len.load(std::memory_order_relaxed);
+        if (static_cast<std::size_t>(len) + length + 1 > kLogChunk) {
+            if (len != 0) {
+                WriteAll(handle, buf, len);
+            }
+            len = 0;
+        }
+        std::memcpy(buf + len, line, length);
+        len += static_cast<unsigned>(length);
+        buf[len++] = '\n';
+        slot.len.store(len, std::memory_order_relaxed);
+        if (len >= kLogThreshold) {
+            WriteAll(handle, buf, len);
+            slot.len.store(0, std::memory_order_relaxed);
+        }
+    }
+    UnlockSlot(slot);
+}
+
+void AppendLongLine(const char* line, std::size_t length) noexcept {
+    // Pathological only: a single line larger than a whole buffer. Flushed
+    // whole under its own lock so it can never interleave with another chunk.
+    try {
+        std::lock_guard<std::mutex> const lock(g_long_line_mutex);
+        const std::intptr_t handle = g_log_handle.load(std::memory_order_acquire);
+        if (handle < 0) {
+            return;
+        }
+        WriteAll(handle, line, length);
+        WriteAll(handle, "\n", 1);
+    } catch (...) {
+    }
+}
+
+void AppendToSessionLog(const char* line, std::size_t length) noexcept {
+    try {
+        TlsLog& t = Tls();
+        LogSlot& slot = t.overflow ? g_overflow_slot : *t.slot;
+        if (length + 1 > kLogChunk) {
+            FlushSlot(slot);
+            AppendLongLine(line, length);
+            return;
+        }
+        AppendSlot(slot, line, length);
+    } catch (...) {
+    }
+}
+
+void DrainSlotAsync(LogSlot& slot, std::intptr_t handle) noexcept {
+    if (!TryLockSlot(slot)) {
+        return;
+    }
+    char* const buf = slot.data.load(std::memory_order_relaxed);
+    const unsigned len = slot.len.load(std::memory_order_relaxed);
+    if (buf != nullptr && len != 0) {
+        WriteAll(handle, buf, len);
+    }
+    UnlockSlot(slot);
+}
+
+void DrainAllAsync() noexcept {
+    const std::intptr_t handle = g_log_handle.load(std::memory_order_acquire);
+    if (handle < 0) {
+        return;
+    }
+    const unsigned high_water = g_slot_high_water.load(std::memory_order_acquire);
+    for (unsigned i = 0; i < high_water && i < kMaxLogThreads; ++i) {
+        DrainSlotAsync(g_slots[i], handle);
+    }
+    DrainSlotAsync(g_overflow_slot, handle);
+}
+
+void FlushAllSlots() noexcept {
+    if (g_log_handle.load(std::memory_order_acquire) < 0) {
+        return;
+    }
+    const unsigned high_water = g_slot_high_water.load(std::memory_order_acquire);
+    for (unsigned i = 0; i < high_water && i < kMaxLogThreads; ++i) {
+        FlushSlot(g_slots[i]);
+    }
+    FlushSlot(g_overflow_slot);
+}
+
+void ReleaseTlsLog(TlsLog& t) noexcept {
+    if (t.buf == nullptr) {
+        return;
+    }
+    try {
+        if (t.overflow) {
+            FlushSlot(g_overflow_slot);
+            t.buf = nullptr;
+            return;
+        }
+        LogSlot& slot = *t.slot;
+        LockSlot(slot);
+        char* const buf = slot.data.load(std::memory_order_relaxed);
+        const unsigned len = slot.len.load(std::memory_order_relaxed);
+        if (buf != nullptr && len != 0) {
+            WriteAll(g_log_handle.load(std::memory_order_relaxed), buf, len);
+        }
+        slot.len.store(0, std::memory_order_relaxed);
+        slot.data.store(nullptr, std::memory_order_release);
+        UnlockSlot(slot);
+        {
+            std::lock_guard<std::mutex> const lock(g_slot_mutex);
+            if (g_free_count < kMaxLogThreads) {
+                g_free_slots[g_free_count++] = t.index;
+            }
+        }
+    } catch (...) {
+    }
+    t.buf = nullptr;
+    t.slot = nullptr;
+}
 
 // ── Async-safe formatting (no printf) ──────────────────────────────────
 void WriteStr(const RawOut& out, const char* text) {
@@ -285,15 +612,16 @@ void DeriveDefaultPaths() {
     CopyString(g_crash_path, sizeof(g_crash_path), (dir + "/crash_report.txt").c_str());
 }
 
-void OpenSessionLog() {
-    std::lock_guard<std::mutex> const lock(g_file_mutex);
-    if (g_log_file != nullptr) {
-        std::fclose(g_log_file);
-        g_log_file = nullptr;
-    }
-    if (g_session_path[0] != '\0') {
-        g_log_file = std::fopen(g_session_path, "w");
-    }
+void OpenSessionLog() noexcept {
+    g_log_handle.store(OpenSessionHandle(g_session_path), std::memory_order_release);
+}
+
+// Close the current handle. Only ever called from single-threaded
+// reconfiguration (SetReportDirectory), after all buffers have been drained,
+// so no writer can still hold it.
+void CloseSessionLog() noexcept {
+    const std::intptr_t handle = g_log_handle.exchange(-1, std::memory_order_acq_rel);
+    CloseSessionHandle(handle);
 }
 
 // ── Terminate / abort handling ─────────────────────────────────────────
@@ -313,16 +641,9 @@ void WriteFaultReport(const char* reason, unsigned long long code, const char* d
     out.close();
 }
 
-void FlushSessionLog() {
-    std::lock_guard<std::mutex> const lock(g_file_mutex);
-    if (g_log_file != nullptr) {
-        std::fflush(g_log_file);
-    }
-}
-
 void CrashTerminateHandler() {
+    DrainAllAsync();
     WriteFaultReport("std::terminate", 0, "unhandled exception or noexcept violation");
-    FlushSessionLog();
     std::_Exit(3);
 }
 
@@ -333,6 +654,7 @@ LONG WINAPI CrashExceptionFilter(EXCEPTION_POINTERS* info) {
     }
     const unsigned long code =
         (info != nullptr && info->ExceptionRecord != nullptr) ? info->ExceptionRecord->ExceptionCode : 0u;
+    DrainAllAsync();
     RawOut out = RawOpen(g_crash_path);
     if (out.valid()) {
         WriteReportHeader(out, "structured exception");
@@ -352,8 +674,8 @@ LONG WINAPI CrashExceptionFilter(EXCEPTION_POINTERS* info) {
 }
 
 extern "C" void CrashAbortHandler(int) {
+    DrainAllAsync();
     WriteFaultReport("SIGABRT", 0, nullptr);
-    FlushSessionLog();
     std::_Exit(3);
 }
 #else
@@ -363,6 +685,7 @@ extern "C" void CrashSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     if (g_faulted.exchange(true)) {
         ::_exit(128 + sig);
     }
+    DrainAllAsync();
     RawOut out = RawOpen(g_crash_path);
     if (out.valid()) {
         WriteReportHeader(out, "signal");
@@ -492,13 +815,12 @@ void Shutdown() noexcept {
     if (!g_installed.exchange(false)) {
         return;
     }
+    FlushAllSlots();
     RestoreHandlers();
-    std::lock_guard<std::mutex> const lock(g_file_mutex);
-    if (g_log_file != nullptr) {
-        std::fflush(g_log_file);
-        std::fclose(g_log_file);
-        g_log_file = nullptr;
-    }
+    // Mark the log closed without closing the handle: a concurrent writer may
+    // have loaded it just before this store, and closing underneath it would
+    // race. The OS reclaims the handle at process exit.
+    g_log_handle.store(-1, std::memory_order_release);
 }
 
 void SetReportDirectory(const char* directory) noexcept {
@@ -506,17 +828,18 @@ void SetReportDirectory(const char* directory) noexcept {
         return;
     }
     try {
+        FlushAllSlots();
+        CloseSessionLog();
         if (directory != nullptr && *directory != '\0') {
             const std::string dir = directory;
             EnsureDirectory(dir);
             CopyString(g_report_dir, sizeof(g_report_dir), dir.c_str());
             CopyString(g_session_path, sizeof(g_session_path), (dir + "/session.log").c_str());
             CopyString(g_crash_path, sizeof(g_crash_path), (dir + "/crash_report.txt").c_str());
-            OpenSessionLog();
         } else {
             DeriveDefaultPaths();
-            OpenSessionLog();
         }
+        OpenSessionLog();
     } catch (...) {
         // Keep the previous directory on failure.
     }
@@ -535,11 +858,16 @@ void LogLine(const char* line) noexcept {
     g_ring[slot][copy] = '\0';
     g_ring_len[slot].store(static_cast<unsigned>(copy), std::memory_order_release);
 
-    std::lock_guard<std::mutex> const lock(g_file_mutex);
-    if (g_log_file != nullptr) {
-        std::fwrite(line, 1, length, g_log_file);
-        std::fputc('\n', g_log_file);
-        std::fflush(g_log_file);
+    AppendToSessionLog(line, length);
+}
+
+void Flush() noexcept {
+    try {
+        if (t_log.buf == nullptr) {
+            return;
+        }
+        FlushSlot(t_log.overflow ? g_overflow_slot : *t_log.slot);
+    } catch (...) {
     }
 }
 
@@ -577,6 +905,7 @@ void Report(const char* reason, const char* detail) noexcept {
         if (written > 0) {
             LogLine(line);
         }
+        FlushAllSlots();
         WriteFaultReport(reason != nullptr ? reason : "unknown", 0, detail);
     } catch (...) {
         // Nothing sensible left to do.

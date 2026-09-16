@@ -68,6 +68,16 @@ void ExpectCapturedContext(const ProbeRun& run) {
     EXPECT_NE(run.session.find("MARKER-LINE-12345"), std::string::npos);
 }
 
+std::size_t CountOccurrences(const std::string& haystack, const std::string& needle) {
+    std::size_t count = 0;
+    std::size_t pos = 0;
+    while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
 } // namespace
 
 TEST(CrashHandler, DoesNotReportOnCleanExit) {
@@ -144,4 +154,67 @@ TEST(CrashHandler, ExplicitTerminateIsReported) {
     const ProbeRun run = RunProbe("terminate");
     ASSERT_TRUE(run.report_exists);
     EXPECT_NE(run.report.find("reason: std::terminate"), std::string::npos);
+}
+
+// A large burst of lines must survive clean exit even though the session log is
+// buffered and only flushed in batches.
+TEST(CrashHandler, BulkLogIsCompleteOnCleanExit) {
+    const ProbeRun run = RunProbe("bulk");
+    EXPECT_EQ(run.status, 0);
+    EXPECT_FALSE(run.report_exists);
+    EXPECT_EQ(CountOccurrences(run.session, "BULK-"), 5000u);
+    EXPECT_NE(run.session.find("BULK-000000"), std::string::npos);
+    EXPECT_NE(run.session.find("BULK-004999"), std::string::npos);
+}
+
+// Lines still sitting in the buffer when the process faults must be drained by
+// the handler, so nothing committed is lost.
+TEST(CrashHandler, BulkLogIsCompleteAfterCrash) {
+    const ProbeRun run = RunProbe("bulk-crash");
+    EXPECT_NE(run.status, 0);
+    EXPECT_EQ(CountOccurrences(run.session, "BULK-"), 5000u);
+}
+
+// Several threads are alive with unflushed buffers at fault time; the handler
+// has to drain every one of them.
+TEST(CrashHandler, FaultDrainsAllThreadBuffers) {
+    const ProbeRun run = RunProbe("mt-crash");
+    EXPECT_NE(run.status, 0);
+    for (int id = 0; id < 4; ++id) {
+        for (int i = 0; i < 10; ++i) {
+            char line[64];
+            std::snprintf(line, sizeof(line), "MT-%d-LINE-%02d", id, i);
+            EXPECT_NE(run.session.find(line), std::string::npos) << line;
+        }
+    }
+    EXPECT_EQ(CountOccurrences(run.session, "MT-"), 40u);
+}
+
+// A thread that logs and exits flushes its own buffer, independent of Shutdown.
+TEST(CrashHandler, WorkerThreadFlushesOnExit) {
+    const ProbeRun run = RunProbe("thread");
+    EXPECT_EQ(run.status, 0);
+    EXPECT_NE(run.session.find("THREAD-MARKER-1"), std::string::npos);
+    EXPECT_NE(run.session.find("THREAD-MARKER-2"), std::string::npos);
+    EXPECT_NE(run.session.find("THREAD-MARKER-3"), std::string::npos);
+}
+
+// A single line larger than a whole buffer must be written intact.
+TEST(CrashHandler, LongLineIsWrittenIntact) {
+    const ProbeRun run = RunProbe("long");
+    EXPECT_EQ(run.status, 0);
+    EXPECT_NE(run.session.find("LONG-BEGIN"), std::string::npos);
+    EXPECT_NE(run.session.find("LONG-END"), std::string::npos);
+    EXPECT_NE(run.session.find(std::string(40000, 'x')), std::string::npos);
+}
+
+// An explicit Flush() makes the log current without waiting for a full buffer
+// or for Shutdown.
+TEST(CrashHandler, ExplicitFlushPersistsWithoutShutdown) {
+    const ProbeRun run = RunProbe("flush");
+    EXPECT_EQ(run.status, 0);
+    EXPECT_NE(run.session.find("FLUSH-BEFORE-777"), std::string::npos);
+    // The probe _Exit()s right after Flush(), which skips the destructor
+    // flush, so a line logged after the flush must be absent.
+    EXPECT_EQ(run.session.find("FLUSH-AFTER-888"), std::string::npos);
 }

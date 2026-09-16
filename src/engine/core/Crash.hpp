@@ -17,6 +17,12 @@
 // stage, breadcrumbs, the full captured log ring and a stack trace) next to the
 // session log, then terminate the process. Only async-signal-safe operations
 // (open/write/close, backtrace_symbols_fd) run on that path.
+//
+// Session-log writes are batched: LogLine() appends whole lines to a
+// per-thread buffer and drains it with a single write() once it fills, so the
+// common path never pays a syscall per line. Before writing a report every
+// fault handler drains all buffers with write() only, so a crash still
+// captures every committed line.
 
 namespace VulkanEngine::Crash {
 
@@ -34,6 +40,10 @@ void SetReportDirectory(const char* directory) noexcept;
 
 // Append one already-formatted log line to the crash ring and the session log.
 void LogLine(const char* line) noexcept;
+
+// Drain the calling thread's buffered session-log lines to disk. Logging is
+// otherwise batched; call this to make the log current at a checkpoint.
+void Flush() noexcept;
 
 // Record the current phase. `name` must be a string literal (static lifetime).
 void Stage(const char* name) noexcept;

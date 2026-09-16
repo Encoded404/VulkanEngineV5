@@ -1,5 +1,7 @@
 #include <CLI/CLI.hpp>
 
+#include "engine/core/EntryPoint.hpp"
+
 import std;
 
 import Runtime.Application;
@@ -8,7 +10,7 @@ import Runtime.Overrides;
 import VulkanEngine.Application;
 import Examples.BasicScene.Game;
 
-int main(int argc, char* const argv[]) {
+int VulkanEngine::AppMain(int argc, char* const argv[]) {
     Runtime::Cli cli{"VulkanEngineV5 Basic Scene"};
 
     Examples::BasicScene::Game::RenderMode render_mode = Examples::BasicScene::Game::RenderMode::Normal;

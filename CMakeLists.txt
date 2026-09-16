@@ -14,6 +14,7 @@ set(PROJECT_NAME "VulkanEngineV5")
 set(BACKEND_TARGET "VulkanBackend")
 set(ENGINE_TARGET "VulkanEngine")
 set(RUNTIME_TARGET "EngineRuntime")
+set(ENTRY_TARGET "EngineEntryPoint")
 
 set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "Use standard C++" FORCE)
 

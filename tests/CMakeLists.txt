@@ -41,6 +41,7 @@ function(setup_test_target TARGET)
 endfunction()
 
 add_subdirectory(backend)
+add_subdirectory(crash)
 add_subdirectory(engine)
 add_subdirectory(runtime)
 add_subdirectory(shared)

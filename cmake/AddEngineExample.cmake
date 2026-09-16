@@ -49,8 +49,17 @@ function(add_engine_example NAME)
         )
     endif()
 
+    # Windows: build as a GUI-subsystem executable so no console window appears
+    # when the app is double-clicked. The engine entry point supplies WinMain and
+    # re-attaches to a parent console when launched from a terminal, so CLI
+    # output (e.g. -l/--log-level) is still visible there.
+    if(WIN32)
+        set_target_properties(${NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
+
     target_link_libraries(${NAME} PRIVATE
         ${RUNTIME_TARGET}
+        ${ENTRY_TARGET}
         slang_shared_reflection
     )
 

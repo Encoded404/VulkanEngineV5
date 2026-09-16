@@ -4,6 +4,8 @@ module;
 
 #include <logging/logging_macros.hpp>
 
+#include "engine/core/Crash.hpp"
+
 export module Runtime.Application;
 
 import std;
@@ -50,6 +52,7 @@ export namespace VulkanEngine::Application {
     const bool discard_stale = config.present_policy == PresentPolicy::DiscardStale;
 
     auto cleanup = [&]() {
+        VulkanEngine::Crash::Stage("shutdown");
         VulkanShared::Timer t{true};
         double prev = 0.0;
         if (bootstrap_initialized && bootstrap) {
@@ -102,6 +105,7 @@ export namespace VulkanEngine::Application {
         VulkanEngine::Startup::InitializeLogger(config.log_level);
         LOGIFACE_LOG(info, config.app_name + " started");
 
+        VulkanEngine::Crash::Stage("platform init");
         const auto platform_backend = VulkanBackend::Platform::CreateSdlPlatformBackend();
         platform = std::make_unique<VulkanBackend::Platform::SdlPlatform>(platform_backend);
 
@@ -127,6 +131,7 @@ export namespace VulkanEngine::Application {
         bootstrap = std::make_unique<VulkanBackend::Vulkan::VulkanBootstrap>(vk_backend);
         auto bootstrap_config = config.bootstrap_config;
 
+        VulkanEngine::Crash::Stage("vulkan bootstrap init");
         // ── Frame pipeline is configured from the single ApplicationConfig ──
         // frame-clock: the device sync rings (command buffers, fences, semaphores)
         // and every engine FIF ring are sized from this value.
@@ -174,6 +179,7 @@ export namespace VulkanEngine::Application {
         }
         bootstrap_initialized = true;
 
+        VulkanEngine::Crash::Stage("runtime init");
         runtime = std::make_unique<VulkanBackend::Vulkan::FrameLoop>();
         if (!runtime->Initialize(config.runtime_config)) {
             return fail("Runtime shell initialization failed");
@@ -188,6 +194,7 @@ export namespace VulkanEngine::Application {
         context.platform_state = &platform->GetState();
         context.geometry_buffer_size_mb = config.geometry_buffer_size_mb;
 
+        VulkanEngine::Crash::Stage("app setup");
         if (!hooks.on_setup.Call(context)) {
             return fail("Application setup failed");
         }
@@ -195,6 +202,7 @@ export namespace VulkanEngine::Application {
 
         auto previous_time = std::chrono::steady_clock::now();
 
+        VulkanEngine::Crash::Stage("frame loop");
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
             auto platform_events = platform->PollEvents();
 

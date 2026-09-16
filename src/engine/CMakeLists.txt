@@ -134,6 +134,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/bindless/BindlessManager.cpp
     core/GameEngine.cpp
     core/EngineBootstrap.cpp
+    core/Crash.cpp
     render/passes/ExpandPass.cpp
     render/passes/HiZPass.cpp
     render/passes/OcclusionPass.cpp
@@ -293,6 +294,40 @@ endif()
 
 target_link_libraries(${ENGINE_TARGET} PUBLIC slang_shared_reflection)
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Engine-owned entry point
+# ═══════════════════════════════════════════════════════════════════════════
+# Provides the real process entry point (main, and WinMain on Windows) and
+# calls the application's VulkanEngine::AppMain hook after installing crash
+# handling and crash-safe log capture. Applications therefore never implement
+# the shim themselves.
+#
+# It lives in its own static library on purpose: an executable only pulls it in
+# when its own `main` is unresolved. A target that defines its own main (tests,
+# gtest, a game that opts out) links this as an archive member that is never
+# selected, so there is no duplicate-symbol conflict.
+add_library(${ENTRY_TARGET} STATIC)
+target_compile_features(${ENTRY_TARGET} PUBLIC cxx_std_23)
+target_sources(${ENTRY_TARGET} PRIVATE core/EntryPoint.cpp)
+target_link_libraries(${ENTRY_TARGET} PUBLIC ${ENGINE_TARGET})
+
+target_compile_options(${ENTRY_TARGET} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+)
+
+if(TARGET project_sanitizers)
+    target_link_libraries(${ENTRY_TARGET} PRIVATE project_sanitizers)
+endif()
+if(TARGET project_sections)
+    target_link_libraries(${ENTRY_TARGET} PRIVATE project_sections)
+endif()
+if(TARGET project_size)
+    target_link_libraries(${ENTRY_TARGET} PRIVATE project_size)
+endif()
+
 if(COMMAND enable_target_clang_tidy)
     enable_target_clang_tidy(${ENGINE_TARGET})
+    enable_target_clang_tidy(${ENTRY_TARGET})
 endif()

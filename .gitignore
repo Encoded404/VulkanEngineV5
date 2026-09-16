@@ -47,3 +47,16 @@
 /**/textures/*
 /vcpkg_installed
 /windows-build
+
+# Per-example build-time secrets: real values and the keyring stay local, only
+# the format documentation and templates are tracked.
+examples/*/secrets/*
+!examples/*/secrets/README.md
+!examples/*/secrets/manifest.txt
+!examples/*/secrets/*.example
+
+# Leaderboard server state (identity, accounts, scores). The identity must not
+# be committed: its private half is the server credential.
+leaderboard_server.identity
+leaderboard_server.accounts.json
+*.accounts.json

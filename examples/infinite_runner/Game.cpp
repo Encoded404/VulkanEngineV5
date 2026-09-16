@@ -17,37 +17,40 @@ import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.Components.MaterialOverride;
+import VulkanEngine.DataCipher;
+import Examples.InfiniteRunner.Balance;
 import Examples.InfiniteRunner.Sweep;
 import Examples.InfiniteRunner.Wall;
+import Examples.InfiniteRunner.Leaderboard.Account;
+import Examples.InfiniteRunner.Leaderboard.Client;
+import Examples.InfiniteRunner.Leaderboard.Config;
+import Examples.InfiniteRunner.Leaderboard.Log;
+import Examples.InfiniteRunner.Leaderboard.Protocol;
+import Examples.InfiniteRunner.Account.ProfileStore;
 
 namespace Examples::InfiniteRunner::Game {
 
 namespace {
 
-// ── Playfield tuning ──
-// Wall/corridor geometry lives in the Wall module, shared with the collision.
-constexpr float kPlayerSize = 0.9f;
-constexpr float kWallSpawnZ = -150.0f;   // far end (camera looks toward -Z)
-constexpr float kWallInitialSpawnZ = -10.0f;
-constexpr float kWallRecycleZ = 8.0f;   // once a wall passes this, wrap it back
-constexpr float kWallSpacingPowScaling = 0.75f;
-constexpr int kWallCount = 8;
-constexpr std::pair<float, float> kWallHoleSizes = {1.0f, 1.2f};
-constexpr float kWallHoleSizePowScaling = 0.08f;
-constexpr std::pair<float, float> kWallHolePlacementMinMaxDistance = {0.8f, 3.5f};
-constexpr float kWallSpeed = 15.0f;     // units/second toward the player
-constexpr float kPlayerSpeed = 9.0f;    // units/second sideways
-
-constexpr float kDifficultyScalingDivider = 10.0f;
-
-constexpr float WallSpacing() {
-    return (kWallRecycleZ - kWallSpawnZ) / static_cast<float>(kWallCount);
+// UTC calendar date for a score timestamp, or "-" when it predates date
+// recording. Local time would be friendlier but needs the OS timezone, and the
+// server is the authority on when a score was recorded.
+[[nodiscard]] std::string FormatDate(std::uint64_t unix_seconds) {
+    if (unix_seconds == 0) {
+        return "-";
+    }
+    const std::time_t seconds = static_cast<std::time_t>(unix_seconds);
+    const std::tm* utc = std::gmtime(&seconds);
+    if (utc == nullptr) {
+        return "-";
+    }
+    return std::format("{:04d}-{:02d}-{:02d}", utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday);
 }
 
 // Player cube box centred on the corridor at (center_x, 0, 0), for the
-// discrete overlap check.
-[[nodiscard]] Sweep::Aabb PlayerBox(const float center_x) {
-    const float half = kPlayerSize * 0.5f;
+// discrete overlap check. Extents come from the active ruleset.
+[[nodiscard]] Sweep::Aabb PlayerBox(const float center_x, const float player_size) {
+    const float half = player_size * 0.5f;
     return {{center_x - half, -half, -half}, {center_x + half, half, half}};
 }
 
@@ -198,6 +201,26 @@ VulkanEngine::Components::Transform* Game::CreateCubeEntity(
 }
 
 bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
+    // Fingerprint the active ruleset once; scores are reported under it.
+    balance_hash_ = balance_.Hash();
+
+    // Route leaderboard logging into the engine logger, and let the level be
+    // raised without a rebuild (VKENGINE_LEADERBOARD_LOG=trace|debug|info|warn|error).
+    if (const char* level = std::getenv("VKENGINE_LEADERBOARD_LOG"); level != nullptr) {
+        Leaderboard::SetLogLevel(
+            Leaderboard::ParseLogLevel(level).value_or(Leaderboard::LogLevel::Info));
+    }
+    Leaderboard::SetLogSink([](Leaderboard::LogLevel level, std::string_view message) {
+        switch (level) {
+            case Leaderboard::LogLevel::Trace: LOGIFACE_LOG(trace, std::string{message}); break;
+            case Leaderboard::LogLevel::Debug: LOGIFACE_LOG(debug, std::string{message}); break;
+            case Leaderboard::LogLevel::Info: LOGIFACE_LOG(info, std::string{message}); break;
+            case Leaderboard::LogLevel::Warn: LOGIFACE_LOG(warn, std::string{message}); break;
+            case Leaderboard::LogLevel::Error: LOGIFACE_LOG(error, std::string{message}); break;
+            case Leaderboard::LogLevel::Off: break;
+        }
+    });
+
     // 1. Engine setup + renderer using the engine's standard PBR mesh shader.
     VulkanEngine::GameConfig config{};
     config.enable_imgui = true;
@@ -267,16 +290,18 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     camera_->far_plane = 220.0f;
 
     // 5. Floor + player + wall pool.
-    float floor_height = 0.2f;
-    CreateCubeEntity(0.0f, -(kPlayerSize / 2) - (floor_height / 2), -(WallSpacing() * kWallCount + 20.0f) / 2 + 20.0f, 2.0f * kCorridorHalf + 2.0f, floor_height, WallSpacing() * kWallCount + 20.0f, floor_material_);
-    player_transform_ = CreateCubeEntity(0.0f, 0.0f, 0.0f, kPlayerSize, kPlayerSize, kPlayerSize, player_material_);
+    const float floor_height = 0.2f;
+    const float wall_spacing = balance_.WallSpacing();
+    const int wall_count = balance_.wall_count;
+    CreateCubeEntity(0.0f, -(balance_.player_size / 2) - (floor_height / 2), -(wall_spacing * static_cast<float>(wall_count) + 20.0f) / 2 + 20.0f, 2.0f * balance_.corridor_half + 2.0f, floor_height, wall_spacing * static_cast<float>(wall_count) + 20.0f, floor_material_);
+    player_transform_ = CreateCubeEntity(0.0f, 0.0f, 0.0f, balance_.player_size, balance_.player_size, balance_.player_size, player_material_);
 
-    walls_.reserve(kWallCount);
-    for (int i = 0; i < kWallCount; ++i) {
+    walls_.reserve(static_cast<std::size_t>(wall_count));
+    for (int i = 0; i < wall_count; ++i) {
         WallSlot slot{};
-        slot.left = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
-        slot.right = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, kWallHeight, kWallDepth, wall_material_);
-        slot.wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing();
+        slot.left = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, balance_.wall_height, balance_.wall_depth, wall_material_);
+        slot.right = CreateCubeEntity(0.0f, 0.0f, 0.0f, 1.0f, balance_.wall_height, balance_.wall_depth, wall_material_);
+        slot.wall.z = balance_.wall_initial_spawn_z + balance_.wall_spawn_z + static_cast<float>(i) * wall_spacing;
         RandomizeWall(slot.wall);
         ApplyWallTransform(slot);
         walls_.push_back(slot);
@@ -300,11 +325,56 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     input->AddBinding(restart_handle_, VulkanEngine::Input::InputBinding::GamepadButton(SDL_GAMEPAD_BUTTON_NORTH));
     ctx.quit_action_handle = input->BindAction("quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
 
-    // 7. HUD.
+    // 7. Local profiles, then the leaderboard client.
+    //
+    // A fresh clone has neither: no profile exists, and no sealed endpoint means
+    // no server. Both degrade to offline play, and the login window says so.
+    if (ctx.storage != nullptr) {
+        profiles_ = Account::ProfileStore::Create(*ctx.storage);
+    } else {
+        LOGIFACE_LOG(warn, "per-user storage unavailable; profiles disabled");
+    }
+
+    const std::optional<Leaderboard::Endpoint> endpoint = Leaderboard::LoadEndpoint();
+    if (endpoint.has_value()) {
+        Leaderboard::ClientOptions options;
+        options.host = endpoint->host;
+        options.port = endpoint->port;
+        options.config_hash = balance_hash_;
+        options.psk = Leaderboard::LoadSessionPsk();
+        options.server_public_key = Leaderboard::LoadServerPublicKey();
+        leaderboard_ = std::make_unique<Leaderboard::Client>(std::move(options));
+
+        // Credentials must be present before Start so the worker's first
+        // connection signs in automatically.
+        if (profiles_.has_value()) {
+            if (const Account::StoredProfile* active = profiles_->Active();
+                active != nullptr && !active->token.empty()) {
+                leaderboard_->SetCredentials(active->username, active->token);
+            }
+        }
+        leaderboard_->Start();
+    } else {
+        LOGIFACE_LOG(warn, "leaderboard disabled: no sealed endpoint available");
+    }
+
+    // Open the login window unless an existing profile can sign in silently.
+    login_open_ = true;
+    if (profiles_.has_value()) {
+        if (const Account::StoredProfile* active = profiles_->Active();
+            active != nullptr && !active->token.empty()) {
+            login_open_ = false;
+            leaderboard_public_ = active->synced.show_on_leaderboard;
+        }
+    }
+
+    // 8. HUD + login window.
     if (auto* imgui = engine_game_.GetImGuiSystem()) {
         imgui_draw_handle_ = imgui->draw_callbacks.Register([this]() {
+            DrawLoginWindow();
+
             const ImVec2 screen = ImGui::GetMainViewport()->Size;
-            ImGui::SetNextWindowPos(ImVec2(screen.x * 0.8f, screen.y * 0.05f), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(screen.x * 0.78f, screen.y * 0.05f), ImGuiCond_Always);
             ImGui::Begin("Infinite Runner", nullptr,
                          ImGuiWindowFlags_AlwaysAutoResize/* | ImGuiWindowFlags_NoMove*/);
             ImGui::Text("Score: %d", score_);
@@ -316,6 +386,73 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                 ImGui::TextUnformatted("A/D, Left/Right, or left stick to move");
                 ImGui::TextUnformatted("R to restart, Esc to quit");
             }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Leaderboard");
+            bool leaderboard_filters_changed = false;
+            if (profiles_.has_value() && profiles_->Active() != nullptr) {
+                const Account::StoredProfile* profile = profiles_->Active();
+                ImGui::Text("Player: %s", profile->display_name.c_str());
+                ImGui::Text("Local best: %d", profiles_->LocalBest(balance_hash_));
+                if (ImGui::Button("Players / Account")) {
+                    login_open_ = true;
+                }
+
+                // Display filters. Local-only: they change what this machine
+                // shows, not what the server records.
+                Account::LocalSettings local = profile->local;
+                int range = 0;
+                if (local.leaderboard_days >= 30) {
+                    range = 3;
+                } else if (local.leaderboard_days >= 7) {
+                    range = 2;
+                } else if (local.leaderboard_days >= 1) {
+                    range = 1;
+                }
+                ImGui::SetNextItemWidth(140.0f);
+                if (ImGui::Combo("Range", &range, "All time\0Today\0Last 7 days\0Last 30 days\0")) {
+                    local.leaderboard_days =
+                        range == 0 ? 0U : range == 1 ? 1U : range == 2 ? 7U : 30U;
+                    leaderboard_filters_changed = true;
+                }
+                if (ImGui::Checkbox("Best per player", &local.leaderboard_best_per_account)) {
+                    leaderboard_filters_changed = true;
+                }
+                if (leaderboard_filters_changed) {
+                    profiles_->UpdateLocal(profile->id, local);
+                }
+            } else {
+                ImGui::TextUnformatted("offline (no profile)");
+            }
+
+            if (leaderboard_ != nullptr) {
+                const Leaderboard::Client::Snapshot snapshot = leaderboard_->GetSnapshot();
+                if (!snapshot.connected) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", snapshot.status.c_str());
+                } else if (!snapshot.authenticated) {
+                    ImGui::TextUnformatted("connected (not signed in)");
+                } else if (snapshot.has_rank) {
+                    ImGui::Text("Rank %d / %d (server best %d)", snapshot.last_rank,
+                                snapshot.last_total, snapshot.last_best);
+                }
+                for (const Leaderboard::TopEntry& entry : snapshot.top) {
+                    const std::string who =
+                        entry.display_name.empty() ? std::string{"anonymous"} : entry.display_name;
+                    const std::string line = std::format("#{:<2} {:<16} {:>6}  {}", entry.rank, who,
+                                                         entry.score, FormatDate(entry.recorded_at));
+                    const bool mine = snapshot.authenticated && entry.user_id != 0 &&
+                                      entry.user_id == snapshot.account.id;
+                    if (mine) {
+                        ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", line.c_str());
+                    } else {
+                        ImGui::TextUnformatted(line.c_str());
+                    }
+                }
+            }
+            if (leaderboard_filters_changed && !login_open_) {
+                // Apply immediately rather than waiting for the periodic refresh.
+                RequestLeaderboard();
+            }
             ImGui::End();
         });
     }
@@ -323,17 +460,367 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     return true;
 }
 
+void Game::DrawLoginWindow() {
+    if (!login_open_) {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Player", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+    if (leaderboard_ == nullptr) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Offline: no leaderboard endpoint");
+    } else {
+        ImGui::Text("Server: %s", leaderboard_->GetSnapshot().status.c_str());
+    }
+    if (!login_status_.empty()) {
+        ImGui::TextWrapped("%s", login_status_.c_str());
+    }
+    ImGui::Separator();
+
+    if (profiles_.has_value() && !profiles_->Profiles().empty()) {
+        ImGui::TextUnformatted("Local players");
+        // A table keeps the name and the delete button on one row and gives
+        // them the same height, instead of a same-line widget of a different
+        // scale next to the selectable.
+        if (ImGui::BeginTable("local_players", 2,
+                              ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed);
+
+            for (const Account::StoredProfile& profile : profiles_->Profiles()) {
+                // The visible label is not unique (two profiles may share a
+                // display name), so each row is scoped to the profile id.
+                ImGui::PushID(profile.id.c_str());
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                const std::string label = profile.display_name + "  (" + profile.username + ")" +
+                                          (profile.token.empty() ? "  [not registered]" : "");
+                // SpanAllColumns makes the whole row selectable; AllowOverlap
+                // lets the button in the next column receive its own clicks.
+                if (ImGui::Selectable(label.c_str(), profile.id == profiles_->ActiveId(),
+                                      ImGuiSelectableFlags_SpanAllColumns |
+                                          ImGuiSelectableFlags_AllowOverlap,
+                                      ImVec2(0.0f, ImGui::GetFrameHeight()))) {
+                    SelectProfile(profile.id);
+                }
+
+                ImGui::TableSetColumnIndex(1);
+                if (ImGui::Button("Delete")) {
+                    delete_candidate_id_ = profile.id;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Separator();
+    }
+
+    // Delete confirmation. Drawn once, outside the row loop, so the popup has a
+    // single stable identity.
+    if (!delete_candidate_id_.empty()) {
+        ImGui::OpenPopup("Delete player?");
+    }
+    if (ImGui::BeginPopupModal("Delete player?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        delete_popup_open_ = true;
+        const Account::StoredProfile* target =
+            profiles_.has_value() ? profiles_->Find(delete_candidate_id_) : nullptr;
+        if (target == nullptr) {
+            delete_candidate_id_.clear();
+            ImGui::CloseCurrentPopup();
+        } else {
+            const std::string id = target->id;
+            ImGui::Text("Delete '%s' (%s)?", target->display_name.c_str(), target->username.c_str());
+            ImGui::TextUnformatted("This removes the local profile and its saved sign-in token.");
+            ImGui::TextUnformatted("Scores already submitted to the server are kept.");
+            if (target->token.empty()) {
+                ImGui::TextUnformatted("This player was never registered, so the name is released too.");
+            } else {
+                ImGui::TextUnformatted("The username stays reserved on the server.");
+            }
+            ImGui::Separator();
+            if (ImGui::Button("Delete")) {
+                profiles_->RemoveProfile(id);
+                delete_candidate_id_.clear();
+                if (profiles_->Active() != nullptr) {
+                    // Moves the selection and re-points the connection at the
+                    // surviving profile.
+                    SelectProfile(profiles_->ActiveId());
+                } else {
+                    RefreshActiveCredentials();
+                }
+                login_status_ = "Player removed.";
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                delete_candidate_id_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    } else if (delete_popup_open_) {
+        // Dismissed with Escape or the close button; drop the pending target so
+        // it does not reopen next frame.
+        delete_popup_open_ = false;
+        delete_candidate_id_.clear();
+    }
+
+    ImGui::TextUnformatted("New player");
+    ImGui::InputText("Username", username_input_.data(), username_input_.size());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(3-20, permanent)");
+    ImGui::InputText("Display name", display_name_input_.data(), display_name_input_.size());
+    if (ImGui::Button("Create")) {
+        const std::string username = username_input_.data();
+        const std::string display = display_name_input_.data();
+        const std::optional<std::string> canonical = Leaderboard::CanonicalizeUsername(username);
+        const std::optional<std::string> clean = Leaderboard::SanitizeDisplayName(display);
+        if (!canonical.has_value() || !clean.has_value()) {
+            login_status_ = "Username: 3-20 of a-z, 0-9, _ (start with a letter). Display name: 1-32 characters.";
+        } else if (profiles_.has_value()) {
+            StartRegistration(*canonical, *clean);
+        } else {
+            login_status_ = "Per-user storage is unavailable; cannot create a profile.";
+        }
+    }
+
+    if (!pending_future_.has_value()) {
+        ImGui::SameLine();
+        if (ImGui::Button("Play offline")) {
+            login_open_ = false;
+        }
+    }
+
+    if (profiles_.has_value() && profiles_->Active() != nullptr) {
+        const Account::StoredProfile* profile = profiles_->Active();
+        ImGui::Separator();
+        ImGui::Text("Selected: %s (%s)", profile->display_name.c_str(), profile->username.c_str());
+
+        if (profile->token.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+                               "Local only: scores stay on this machine");
+            const bool blocked = pending_future_.has_value() || leaderboard_ == nullptr;
+            if (blocked) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("Register with server")) {
+                RegisterLocalProfile(profile->id);
+            }
+            if (blocked) {
+                ImGui::EndDisabled();
+            }
+            if (leaderboard_ == nullptr) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(needs a server)");
+            }
+        } else {
+            ImGui::TextUnformatted("Registered account");
+        }
+
+        ImGui::InputText("Display name##edit", display_edit_.data(), display_edit_.size());
+        ImGui::Checkbox("Show on leaderboard", &leaderboard_public_);
+        const bool can_sync = leaderboard_ != nullptr && leaderboard_->GetSnapshot().authenticated;
+        if (!can_sync) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Save settings")) {
+            Leaderboard::SyncedSettings settings{};
+            settings.show_on_leaderboard = leaderboard_public_;
+            pending_op_ = PendingOp::UpdateSettings;
+            pending_profile_id_ = profile->id;
+            pending_future_ = leaderboard_->UpdateSettings(display_edit_.data(), settings);
+        }
+        if (!can_sync) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Play")) {
+            login_open_ = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Deregister locally")) {
+            profiles_->SetToken(profile->id, {});
+            RefreshActiveCredentials();
+            login_status_ = "Cleared the local sign-in token for this player.";
+        }
+    }
+
+    ImGui::End();
+}
+
+void Game::StartRegistration(std::string username, std::string display_name) {
+    if (!profiles_.has_value()) {
+        return;
+    }
+    const Account::StoredProfile& profile = profiles_->AddProfile(username, display_name);
+    pending_profile_id_ = profile.id;
+    pending_username_ = username;
+    leaderboard_public_ = profile.synced.show_on_leaderboard;
+    std::snprintf(display_edit_.data(), display_edit_.size(), "%s", profile.display_name.c_str());
+
+    if (leaderboard_ == nullptr) {
+        login_status_ = "Created an offline profile. It is not registered with a server.";
+        return;
+    }
+    login_status_ = "Registering...";
+    pending_op_ = PendingOp::Register;
+    pending_future_ = leaderboard_->Register(username, display_name);
+}
+
+void Game::RegisterLocalProfile(std::string_view profile_id) {
+    if (!profiles_.has_value()) {
+        return;
+    }
+    if (leaderboard_ == nullptr) {
+        login_status_ = "Cannot register: no leaderboard server is configured.";
+        return;
+    }
+    const Account::StoredProfile* profile = profiles_->Find(profile_id);
+    if (profile == nullptr) {
+        return;
+    }
+    if (!profile->token.empty()) {
+        login_status_ = "This player is already registered.";
+        return;
+    }
+    // The server owns username uniqueness, so a collision is possible when an
+    // offline profile's name was claimed elsewhere; the reply reports it.
+    pending_profile_id_ = profile->id;
+    pending_username_ = profile->username;
+    login_status_ = "Registering " + profile->username + " with the server...";
+    pending_op_ = PendingOp::Register;
+    pending_future_ = leaderboard_->Register(profile->username, profile->display_name);
+}
+
+void Game::PollPendingAccount() {
+    if (!pending_future_.has_value()) {
+        return;
+    }
+    if (pending_future_->wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    Leaderboard::AccountResult result = pending_future_->get();
+    pending_future_.reset();
+    const PendingOp op = pending_op_;
+    pending_op_ = PendingOp::None;
+
+    if (op == PendingOp::Register) {
+        if (result.ok() && profiles_.has_value()) {
+            profiles_->SetToken(pending_profile_id_, result.token);
+            profiles_->UpdateDisplayName(pending_profile_id_, result.display_name);
+            profiles_->SetActive(pending_profile_id_);
+            leaderboard_public_ = profiles_->Active()->synced.show_on_leaderboard;
+            std::snprintf(display_edit_.data(), display_edit_.size(), "%s",
+                          result.display_name.c_str());
+            login_status_ = "Registered. Username " + result.username + " is permanent.";
+        } else if (!result.ok()) {
+            login_status_ = "Registration failed: " + result.message;
+        }
+    } else if (op == PendingOp::UpdateSettings) {
+        if (result.ok() && profiles_.has_value()) {
+            profiles_->UpdateDisplayName(pending_profile_id_, result.display_name);
+            profiles_->UpdateSynced(pending_profile_id_, result.settings);
+            login_status_ = "Settings saved.";
+        } else if (!result.ok()) {
+            login_status_ = "Settings update failed: " + result.message;
+        }
+    }
+}
+
+void Game::RequestLeaderboard() {
+    if (leaderboard_ == nullptr) {
+        return;
+    }
+    std::size_t count = 5;
+    bool best_per_account = false;
+    std::uint32_t days = 0;
+    if (profiles_.has_value()) {
+        if (const Account::StoredProfile* active = profiles_->Active(); active != nullptr) {
+            count = active->local.top_count;
+            best_per_account = active->local.leaderboard_best_per_account;
+            days = active->local.leaderboard_days;
+        }
+    }
+    std::uint64_t since = 0;
+    if (days != 0) {
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
+        const auto window = static_cast<std::int64_t>(days) * 24 * 60 * 60;
+        since = static_cast<std::uint64_t>(std::max<std::int64_t>(0, now - window));
+    }
+    leaderboard_->RequestTop(count, best_per_account, since);
+}
+
+void Game::RefreshActiveCredentials() {
+    if (!profiles_.has_value() || leaderboard_ == nullptr) {
+        return;
+    }
+    if (const Account::StoredProfile* active = profiles_->Active();
+        active != nullptr && !active->token.empty()) {
+        leaderboard_->SetCredentials(active->username, active->token);
+    } else {
+        leaderboard_->ClearCredentials();
+    }
+    // The connection was authenticated for the previous profile, so it has to be
+    // rebuilt rather than reused.
+    leaderboard_->RequestReconnect();
+}
+
+void Game::SelectProfile(std::string_view profile_id) {
+    if (!profiles_.has_value()) {
+        return;
+    }
+    profiles_->SetActive(profile_id);
+    const Account::StoredProfile* profile = profiles_->Active();
+    if (profile == nullptr) {
+        return;
+    }
+    leaderboard_public_ = profile->synced.show_on_leaderboard;
+    std::snprintf(display_edit_.data(), display_edit_.size(), "%s", profile->display_name.c_str());
+    if (leaderboard_ == nullptr) {
+        return;
+    }
+    if (!profile->token.empty()) {
+        leaderboard_->SetCredentials(profile->username, profile->token);
+    } else {
+        leaderboard_->ClearCredentials();
+    }
+    leaderboard_->RequestReconnect();
+}
+
+void Game::SubmitRun(std::int32_t score) {
+    std::uint64_t run_id = 0;
+    if (leaderboard_ != nullptr) {
+        run_id = leaderboard_->SubmitScore(score);
+    } else {
+        const std::vector<std::byte> bytes = VulkanEngine::Security::RandomBytes(8);
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            run_id |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[i])) << (8 * i);
+        }
+    }
+    if (profiles_.has_value() && profiles_->Active() != nullptr) {
+        const Account::StoredProfile* profile = profiles_->Active();
+        const std::string shown =
+            profile->synced.show_on_leaderboard ? profile->display_name : std::string{};
+        profiles_->RecordRun(balance_hash_, run_id, score, shown);
+    }
+}
+
 void Game::RandomizeWall(Wall& wall) {
-    float difficulty = 2 - std::pow(std::max(1, score_), kWallHoleSizePowScaling);
-    std::uniform_real_distribution<float> half_dist(kWallHoleSizes.first * difficulty, kWallHoleSizes.second * difficulty);
+    const float difficulty = 2 - std::pow(std::max(1, score_), balance_.wall_hole_size_pow_scaling);
+    std::uniform_real_distribution<float> half_dist(balance_.wall_hole_min * difficulty, balance_.wall_hole_max * difficulty);
     const float gap_half = half_dist(rng_);
 
     constexpr float margin = 0.25f;
-    const float limit = kCorridorHalf - gap_half - margin;
+    const float limit = balance_.corridor_half - gap_half - margin;
     std::uniform_real_distribution<float> center_dist(-limit, limit);
     float gap_center = 0.0f;
     float gap_past_distance = std::abs(gap_center - prevGapCenter_);
-    while (gap_past_distance > kWallHolePlacementMinMaxDistance.second || gap_past_distance < kWallHolePlacementMinMaxDistance.first)
+    while (gap_past_distance > balance_.wall_hole_placement_max || gap_past_distance < balance_.wall_hole_placement_min)
     {
         gap_center = center_dist(rng_);
         gap_past_distance = std::abs(gap_center - prevGapCenter_);
@@ -354,15 +841,16 @@ void Game::ApplyWallTransform(WallSlot& slot) {
         transform->scale = box.Size();
     };
 
-    place(slot.left, slot.wall.LeftBlock());
-    place(slot.right, slot.wall.RightBlock());
+    place(slot.left, slot.wall.LeftBlock(balance_));
+    place(slot.right, slot.wall.RightBlock(balance_));
 }
 
 void Game::ResetWalls() {
-    float difficulty = std::pow(std::max(1, score_), kWallSpacingPowScaling);
+    const float difficulty = std::pow(std::max(1, score_), balance_.wall_spacing_pow_scaling);
+    const float wall_spacing = balance_.WallSpacing();
     for (int i = 0; i < static_cast<int>(walls_.size()); ++i) {
         auto& slot = walls_[static_cast<std::size_t>(i)];
-        slot.wall.z = kWallInitialSpawnZ + kWallSpawnZ + static_cast<float>(i) * WallSpacing() * std::max(1.0f, difficulty / kDifficultyScalingDivider);
+        slot.wall.z = balance_.wall_initial_spawn_z + balance_.wall_spawn_z + static_cast<float>(i) * wall_spacing * std::max(1.0f, difficulty / balance_.difficulty_scaling_divider);
         RandomizeWall(slot.wall);
         ApplyWallTransform(slot);
     }
@@ -379,15 +867,15 @@ void Game::ResetRun() {
 void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& /*ctx*/, const float delta_time) {
     const float direction = move_.Scalar();
 
-    const float limit = kCorridorHalf - kPlayerSize * 0.5f;
-    player_x_ = std::clamp(player_x_ + direction * kPlayerSpeed * delta_time, -limit, limit);
+    const float limit = balance_.corridor_half - balance_.player_size * 0.5f;
+    player_x_ = std::clamp(player_x_ + direction * balance_.player_speed * delta_time, -limit, limit);
     player_transform_->position = glm::vec3{player_x_, 0.0f, 0.0f};
     camera_->position.x = player_x_;
 }
 
 bool Game::StepWalls(const float delta_time, const float player_x_before, const float player_dx) {
-    const float difficulty = std::max(1, score_);
-    const float wall_dz = kWallSpeed * delta_time * std::max(1.0f, difficulty / kDifficultyScalingDivider);
+    const float difficulty = static_cast<float>(std::max(1, score_));
+    const float wall_dz = balance_.wall_speed * delta_time * std::max(1.0f, difficulty / balance_.difficulty_scaling_divider);
 
     // Player-centre sweep for this frame, expressed relative to a wall: the
     // wall's own +Z scroll enters as -wall_dz, so a wall that reaches the
@@ -402,12 +890,12 @@ bool Game::StepWalls(const float delta_time, const float player_x_before, const 
 
         // Tested against the pre-scroll box, before recycle/randomize, so the
         // geometry and z used here are the ones the wall actually had.
-        hit = hit || Sweep::SegmentIntersects(wall.LeftBlock(), from, to)
-                  || Sweep::SegmentIntersects(wall.RightBlock(), from, to);
+        hit = hit || Sweep::SegmentIntersects(wall.LeftBlock(balance_), from, to)
+                  || Sweep::SegmentIntersects(wall.RightBlock(balance_), from, to);
 
         wall.z += wall_dz;
-        if (wall.z > kWallRecycleZ) {
-            wall.z -= (kWallRecycleZ - kWallSpawnZ);
+        if (wall.z > balance_.wall_recycle_z) {
+            wall.z -= (balance_.wall_recycle_z - balance_.wall_spawn_z);
             RandomizeWall(wall);
         }
 
@@ -422,10 +910,10 @@ bool Game::StepWalls(const float delta_time, const float player_x_before, const 
 }
 
 bool Game::PlayerOverlapsAnyWall() const {
-    const Sweep::Aabb player = PlayerBox(player_x_);
+    const Sweep::Aabb player = PlayerBox(player_x_, balance_.player_size);
     for (const auto& slot : walls_) {
-        if (Sweep::Intersects(player, slot.wall.LeftBlock()) ||
-            Sweep::Intersects(player, slot.wall.RightBlock())) {
+        if (Sweep::Intersects(player, slot.wall.LeftBlock(balance_)) ||
+            Sweep::Intersects(player, slot.wall.RightBlock(balance_))) {
             return true;
         }
     }
@@ -433,11 +921,24 @@ bool Game::PlayerOverlapsAnyWall() const {
 }
 
 void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    const float delta_time = ctx.frame.delta_time;
+
+    // Account work is polled every frame, modal or not, so a registration or
+    // settings update completes without blocking the frame loop.
+    PollPendingAccount();
+
+    // While the login window is open the run is paused and the game's own
+    // actions are ignored. Events are deliberately not filtered: Esc must still
+    // reach the quit action, and ImGui consumes its own text input.
+    if (login_open_) {
+        engine_game_.FrameUpdate(ctx);
+        return;
+    }
+
     if (ctx.input_system->WasActionStarted(restart_handle_)) {
         ResetRun();
     }
 
-    const float delta_time = ctx.frame.delta_time;
     if (!game_over_) {
         const float player_x_before = player_x_;
         UpdatePlayer(ctx, delta_time);
@@ -447,6 +948,15 @@ void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ct
         const bool overlap_hit = PlayerOverlapsAnyWall();
         if (swept_hit || overlap_hit) {
             game_over_ = true;
+            SubmitRun(score_);
+        }
+    }
+
+    if (leaderboard_ != nullptr) {
+        leaderboard_request_timer_ += delta_time;
+        if (leaderboard_request_timer_ >= 2.0f) {
+            leaderboard_request_timer_ = 0.0f;
+            RequestLeaderboard();
         }
     }
 
@@ -459,6 +969,10 @@ void Game::OnFrameRender(const VulkanEngine::Application::ApplicationContext& ct
 
 void Game::OnShutdown(VulkanEngine::Application::ApplicationContext& /*ctx*/) {
     imgui_draw_handle_ = {};
+    if (leaderboard_ != nullptr) {
+        leaderboard_->Stop();
+        leaderboard_.reset();
+    }
     engine_game_.Shutdown();
 }
 

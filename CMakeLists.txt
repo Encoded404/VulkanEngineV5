@@ -535,6 +535,58 @@ else()
 	message(FATAL_ERROR "Missing MikkTSpace at external/MikkTSpace; run: git submodule update --init external/MikkTSpace")
 endif()
 
+# ----------------------------
+# secrets-gen (build-time secrets sealer)
+# ----------------------------
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/Monocypher/src/monocypher.c")
+    message(FATAL_ERROR "Missing Monocypher at external/Monocypher; run: git submodule update --init external/Monocypher")
+endif()
+
+# Runs on the build machine to seal each per-example secrets folder into a
+# generated C++ module. Like slang-spirv-compiler it is a host tool: when
+# cross-compiling it must be built for the host, never the target.
+set(VKENGINE_SECRETS_GEN_COMMAND "")
+set(VKENGINE_SECRETS_GEN_DEPENDS "")
+
+if(CMAKE_CROSSCOMPILING)
+    set(_secrets_gen_dir "${CMAKE_BINARY_DIR}/host-tools/secrets-gen")
+    find_program(_vkengine_secrets_host_cc NAMES clang gcc cc REQUIRED)
+    find_program(_vkengine_secrets_host_cxx NAMES clang++ g++ c++ REQUIRED)
+    if(CMAKE_HOST_WIN32)
+        set(_secrets_gen_exe "${_secrets_gen_dir}/bin/secrets-gen.exe")
+    else()
+        set(_secrets_gen_exe "${_secrets_gen_dir}/bin/secrets-gen")
+    endif()
+
+    include(ExternalProject)
+    ExternalProject_Add(secrets_gen_host
+        SOURCE_DIR "${CMAKE_SOURCE_DIR}/tools/secrets-gen"
+        BINARY_DIR "${_secrets_gen_dir}"
+        CMAKE_GENERATOR "Ninja"
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_C_COMPILER=${_vkengine_secrets_host_cc}
+            -DCMAKE_CXX_COMPILER=${_vkengine_secrets_host_cxx}
+        BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR>
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "${_secrets_gen_exe}"
+        USES_TERMINAL_CONFIGURE TRUE
+        USES_TERMINAL_BUILD TRUE
+    )
+    set(VKENGINE_SECRETS_GEN_COMMAND "${_secrets_gen_exe}")
+    set(VKENGINE_SECRETS_GEN_DEPENDS "${_secrets_gen_exe}")
+    unset(_secrets_gen_dir)
+    unset(_secrets_gen_exe)
+    unset(_vkengine_secrets_host_cc)
+    unset(_vkengine_secrets_host_cxx)
+else()
+    add_subdirectory("${CMAKE_SOURCE_DIR}/tools/secrets-gen" secrets-gen)
+    set(VKENGINE_SECRETS_GEN_COMMAND "$<TARGET_FILE:secrets-gen>")
+    set(VKENGINE_SECRETS_GEN_DEPENDS secrets-gen)
+endif()
+
+include(EmbedSecrets)
+
 option(CLANG_TIDY_ENABLED "Enable Clang-Tidy static analysis" ON)
 # disable Clang-Tidy if not using Clang or GCC
 if(CLANG_TIDY_ENABLED AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

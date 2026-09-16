@@ -72,6 +72,15 @@ struct Error {
     }
 };
 
+// Whether a file's contents are sensitive. Private files are created with
+// owner-only permissions on POSIX (0600); on Windows the per-user root
+// (%APPDATA%/%LOCALAPPDATA%) already carries a user-scoped ACL, so the flag is
+// a no-op there. Use it for credentials and tokens, not for ordinary saves.
+enum class Visibility {
+    Normal,
+    Private,
+};
+
 struct Options {
     // Upper bounds applied on read. A corrupt or runaway file must not become a
     // huge allocation; these are generous enough for real data and small enough
@@ -117,15 +126,17 @@ public:
     // The settings file as JSON text. The caller owns the schema; this layer
     // owns the file. NotFound means "nothing saved yet".
     [[nodiscard]] std::expected<std::string, Error> ReadConfig() const;
-    [[nodiscard]] std::expected<void, Error> WriteConfig(std::string_view json) const;
+    [[nodiscard]] std::expected<void, Error> WriteConfig(
+        std::string_view json, Visibility visibility = Visibility::Normal) const;
 
     // ── saves ───────────────────────────────────────────────────────────
     // One slot, one read and one write. `slot` is a single path component
     // (a slot name), rejected rather than sanitized if it is anything else.
     [[nodiscard]] std::expected<std::vector<std::byte>, Error>
     ReadSave(std::string_view slot) const;
-    [[nodiscard]] std::expected<void, Error> WriteSave(std::string_view slot,
-                                                       std::span<const std::byte> data) const;
+    [[nodiscard]] std::expected<void, Error> WriteSave(
+        std::string_view slot, std::span<const std::byte> data,
+        Visibility visibility = Visibility::Normal) const;
 
     // ── cache ───────────────────────────────────────────────────────────
     // `name` is a single path component under the cache root. Read and write
@@ -329,9 +340,67 @@ private:
     bool committed_ = false;
 };
 
+// Writes the staged file's contents. A POSIX private file is created 0600 with
+// open(2) rather than ofstream, because the stream API cannot set a mode at
+// creation and a follow-up chmod would leave a window where the file is
+// world-readable.
+[[nodiscard]] std::expected<void, Error> WriteStagedContents(const std::filesystem::path& path,
+                                                             std::span<const std::byte> data,
+                                                             Visibility visibility) {
+#if !defined(_WIN32)
+    if (visibility == Visibility::Private) {
+        const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) {
+            return std::unexpected(Error{.code = ErrorCode::OpenFailed,
+                                         .message = "cannot open for writing: " + DescribeErrno(errno),
+                                         .path = path});
+        }
+        std::size_t written = 0;
+        while (written < data.size()) {
+            const ssize_t count = ::write(fd, data.data() + written, data.size() - written);
+            if (count < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                const int saved = errno;
+                ::close(fd);
+                return std::unexpected(Error{.code = ErrorCode::WriteFailed,
+                                             .message = "write failed: " + DescribeErrno(saved),
+                                             .path = path});
+            }
+            written += static_cast<std::size_t>(count);
+        }
+        ::close(fd);
+        return {};
+    }
+#else
+    (void)visibility;
+#endif
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return std::unexpected(Error{.code = ErrorCode::OpenFailed,
+                                     .message = "cannot open for writing",
+                                     .path = path});
+    }
+    if (!data.empty()) {
+        out.write(reinterpret_cast<const char*>(data.data()),
+                  static_cast<std::streamsize>(data.size()));
+    }
+    // close() is what flushes the stream buffer, so the failure check has to
+    // come after it or a full disk is missed.
+    out.close();
+    if (out.fail()) {
+        return std::unexpected(Error{.code = ErrorCode::WriteFailed,
+                                     .message = "write failed",
+                                     .path = path});
+    }
+    return {};
+}
+
 [[nodiscard]] std::expected<void, Error> WriteFileAtomic(const std::filesystem::path& target,
                                                         std::span<const std::byte> data,
-                                                        bool durable) {
+                                                        bool durable,
+                                                        Visibility visibility) {
     if (auto ready = EnsureDirectory(target.parent_path()); !ready) {
         return ready;
     }
@@ -344,25 +413,8 @@ private:
     staging += std::format(".{}.{}.tmp", ProcessId(), NextWriteSequence());
     StagingFile guard{staging};
 
-    {
-        std::ofstream out(guard.Path(), std::ios::binary | std::ios::trunc);
-        if (!out) {
-            return std::unexpected(Error{.code = ErrorCode::OpenFailed,
-                                         .message = "cannot open for writing",
-                                         .path = guard.Path()});
-        }
-        if (!data.empty()) {
-            out.write(reinterpret_cast<const char*>(data.data()),
-                      static_cast<std::streamsize>(data.size()));
-        }
-        // close() is what flushes the stream buffer, so the failure check has to
-        // come after it or a full disk is missed.
-        out.close();
-        if (out.fail()) {
-            return std::unexpected(Error{.code = ErrorCode::WriteFailed,
-                                         .message = "write failed",
-                                         .path = guard.Path()});
-        }
+    if (auto written = WriteStagedContents(guard.Path(), data, visibility); !written) {
+        return written;
     }
 
     if (durable) {
@@ -510,7 +562,7 @@ std::expected<std::string, Error> Storage::ReadConfig() const {
     return std::string{reinterpret_cast<const char*>(bytes->data()), bytes->size()};
 }
 
-std::expected<void, Error> Storage::WriteConfig(std::string_view json) const {
+std::expected<void, Error> Storage::WriteConfig(std::string_view json, Visibility visibility) const {
     if (auto ready = EnsureDirectory(config_path_.parent_path()); !ready) {
         return ready;
     }
@@ -524,7 +576,8 @@ std::expected<void, Error> Storage::WriteConfig(std::string_view json) const {
                                        std::filesystem::copy_options::overwrite_existing, ec);
         }
     }
-    return WriteFileAtomic(config_path_, std::as_bytes(std::span{json}), options_.durable_writes);
+    return WriteFileAtomic(config_path_, std::as_bytes(std::span{json}), options_.durable_writes,
+                           visibility);
 }
 
 std::expected<std::vector<std::byte>, Error> Storage::ReadSave(std::string_view slot) const {
@@ -536,7 +589,8 @@ std::expected<std::vector<std::byte>, Error> Storage::ReadSave(std::string_view 
 }
 
 std::expected<void, Error> Storage::WriteSave(std::string_view slot,
-                                             std::span<const std::byte> data) const {
+                                             std::span<const std::byte> data,
+                                             Visibility visibility) const {
     auto path = ResolveLeaf(save_dir_, slot);
     if (!path) {
         return std::unexpected(path.error());
@@ -547,7 +601,7 @@ std::expected<void, Error> Storage::WriteSave(std::string_view slot,
                                                             data.size(), options_.max_save_bytes),
                                      .path = *path});
     }
-    return WriteFileAtomic(*path, data, options_.durable_writes);
+    return WriteFileAtomic(*path, data, options_.durable_writes, visibility);
 }
 
 std::expected<std::vector<std::byte>, Error> Storage::ReadCache(std::string_view name) const {
@@ -568,7 +622,7 @@ void Storage::WriteCache(std::string_view name, std::span<const std::byte> data)
         if (!path || data.size() > options_.max_cache_bytes) {
             return;
         }
-        static_cast<void>(WriteFileAtomic(*path, data, /*durable=*/false));
+        static_cast<void>(WriteFileAtomic(*path, data, /*durable=*/false, Visibility::Normal));
     } catch (...) {
         // A cache write must never be the reason a frame is lost.
     }

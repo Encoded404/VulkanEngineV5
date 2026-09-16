@@ -8,6 +8,10 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
     VulkanShared
 )
 
+# Engine-level data encryption (secrets, at-rest blobs). PUBLIC so anything
+# consuming the engine can `import VulkanEngine.DataCipher`.
+target_link_libraries(${ENGINE_TARGET} PUBLIC VulkanSecurity)
+
 find_package(Vulkan QUIET)
 find_package(Ktx CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
@@ -26,21 +30,40 @@ find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 
-# Runtime shader compilation links the Slang SDK. On a Windows/MinGW target the
-# only available Slang build is the MSVC-produced release archive, which is not
-# usable as a MinGW link input here, so hot reload defaults to OFF for Windows.
-# Shaders are still compiled ahead of time by the host slang-spirv-compiler
-# tool (which runs on the build machine), so the engine works normally.
+# Runtime shader compilation links the Slang SDK. Two constraints shape when it
+# is available:
+#
+#   * Windows/MinGW: the only available Slang build is the MSVC-produced release
+#     archive, which is not usable as a MinGW link input here, so hot reload is
+#     off entirely for that target.
+#   * Release: a shipped client never recompiles shaders, and libslang-compiler
+#     is a 31 MB shared library that is itself built against libstdc++. Linking
+#     it would force both it and libstdc++ into the client's runtime closure
+#     (see the vcpkg-overlays/ports/shader-slang notes). Hot reload is therefore
+#     confined to the debuggable configurations, Debug and RelWithDebInfo.
+#
+# In the configurations without it, ShaderWatcher still runs and reloads the
+# precompiled .spv from disk, so editing a shader still takes effect once the
+# build's shader step has re-emitted the .spv — only in-process Slang
+# recompilation is lost. Shaders are compiled ahead of time by the host
+# slang-spirv-compiler tool (which runs on the build machine) in every
+# configuration.
 if(WIN32)
     set(_vkengine_hot_reload_default OFF)
 else()
     set(_vkengine_hot_reload_default ON)
 endif()
-option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation" ${_vkengine_hot_reload_default})
+option(VKENGINE_HOT_RELOAD "Enable Slang SDK for runtime shader compilation (Debug/RelWithDebInfo)" ${_vkengine_hot_reload_default})
 if(VKENGINE_HOT_RELOAD)
     find_package(slang CONFIG REQUIRED)
-    target_link_libraries(${ENGINE_TARGET} PRIVATE slang::slang)
-    target_compile_definitions(${ENGINE_TARGET} PRIVATE VKENGINE_HOT_RELOAD=1)
+    # The macro selects between the real CompilerEngine::Compile and the stub,
+    # so the define and the link must be gated by the exact same condition: a
+    # configuration compiled against the Slang API needs the shared library,
+    # and one compiled without it must not acquire a DT_NEEDED on it.
+    target_link_libraries(${ENGINE_TARGET} PRIVATE
+        "$<$<CONFIG:Debug,RelWithDebInfo>:slang::slang>")
+    target_compile_definitions(${ENGINE_TARGET} PRIVATE
+        "$<$<CONFIG:Debug,RelWithDebInfo>:VKENGINE_HOT_RELOAD=1>")
 endif()
 
 # ── PhysicalCamera (webcam) support ─────────────────────────────────────

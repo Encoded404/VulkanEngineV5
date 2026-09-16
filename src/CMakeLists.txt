@@ -1,6 +1,7 @@
 # layered targets
 add_subdirectory(shared)
 add_subdirectory(backend)
+add_subdirectory(security)
 add_subdirectory(engine)
 add_subdirectory(runtime)
 

@@ -94,8 +94,9 @@ The executables end up in `build-windows/Release/`, with the required runtime
 DLLs copied next to them (run them with `wine` if you want to test on the host).
 
 Cross-compiling requires **CMake ≥ 4.2**. Shader hot reload
-(`-DVKENGINE_HOT_RELOAD`) is disabled for Windows targets; shaders are still
-compiled ahead of time.
+(`-DVKENGINE_HOT_RELOAD`) is disabled for Windows targets, and on the native
+build it is confined to Debug and RelWithDebInfo so that Release clients do not
+link the Slang compiler; shaders are compiled ahead of time in every case.
 
 See **[docs/cross-compiling-windows.md](docs/cross-compiling-windows.md)** for
 the full guide, details of what differs from the native build, and

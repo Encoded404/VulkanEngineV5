@@ -330,4 +330,30 @@ TEST(Storage, ReadRejectsADirectoryWhereAFileIsExpected) {
     EXPECT_EQ(read.error().code, ErrorCode::ReadFailed);
 }
 
+#if !defined(_WIN32)
+// A credential written as Private must not be readable by other local users.
+TEST(Storage, PrivateSavesAreOwnerOnlyAndNormalSavesAreNot) {
+    ScratchDir scratch;
+    auto storage = MakeStorage(scratch.Path());
+    ASSERT_TRUE(storage.has_value()) << storage.error().ToString();
+
+    const std::array<std::byte, 4> payload{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    ASSERT_TRUE(storage->WriteSave("secret", payload, VulkanShared::Storage::Visibility::Private).has_value());
+    ASSERT_TRUE(storage->WriteSave("plain", payload).has_value());
+
+    const auto mode_of = [](const std::filesystem::path& path) {
+        std::error_code ec;
+        const auto status = std::filesystem::status(path, ec);
+        return static_cast<unsigned>(status.permissions()) & 0x1FFU;
+    };
+
+    EXPECT_EQ(mode_of(storage->SavePath("secret")), 0600U);
+    EXPECT_NE(mode_of(storage->SavePath("plain")), 0600U);
+
+    // Re-writing through the private path keeps the mode.
+    ASSERT_TRUE(storage->WriteSave("secret", payload, VulkanShared::Storage::Visibility::Private).has_value());
+    EXPECT_EQ(mode_of(storage->SavePath("secret")), 0600U);
+}
+#endif
+
 } // namespace

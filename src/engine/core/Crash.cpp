@@ -828,6 +828,11 @@ void SetReportDirectory(const char* directory) noexcept {
         return;
     }
     try {
+        // The directory Boot() chose before the command line was known, i.e.
+        // beside the executable. It has served its purpose once the real
+        // location is known.
+        const std::string previous_dir = g_report_dir;
+
         FlushAllSlots();
         CloseSessionLog();
         if (directory != nullptr && *directory != '\0') {
@@ -840,6 +845,15 @@ void SetReportDirectory(const char* directory) noexcept {
             DeriveDefaultPaths();
         }
         OpenSessionLog();
+
+        // remove() refuses a non-empty directory, so this can never destroy a
+        // previous run's session log or crash report - it only takes away an
+        // unused, empty directory, which is what the executable-relative
+        // default leaves behind on every launch.
+        if (previous_dir != g_report_dir) {
+            std::error_code ec;
+            std::filesystem::remove(previous_dir, ec);
+        }
     } catch (...) {
         // Keep the previous directory on failure.
     }

@@ -18,7 +18,9 @@ import VulkanBackend.Platform.SdlPlatformBackend;
 import VulkanBackend.Vulkan.FrameLoop;
 import VulkanShared.CallbackList;
 import VulkanShared.ScopedSection;
+import VulkanShared.Storage;
 import VulkanShared.Timer;
+import VulkanShared.UserPaths;
 import VulkanEngine.Input;
 import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanBackend.Vulkan.VulkanBootstrapBackend;
@@ -38,6 +40,11 @@ export namespace VulkanEngine::Application {
     std::shared_ptr<VulkanBackend::Vulkan::IVulkanBootstrap> vk_backend{};
     std::unique_ptr<VulkanBackend::Vulkan::VulkanBootstrap> bootstrap{};
     std::unique_ptr<VulkanBackend::Vulkan::FrameLoop> runtime{};
+    // Resolved once, before anything downstream needs a writable directory, and
+    // held for the whole run so ApplicationContext can point at it. Declared out
+    // here rather than inside the try so its lifetime does not depend on where
+    // the setup steps end up.
+    std::optional<VulkanShared::Storage::Storage> storage{};
     VulkanEngine::Input::InputSystem input_system{};
     ApplicationContext context{};
     bool platform_initialized = false;
@@ -104,6 +111,59 @@ export namespace VulkanEngine::Application {
     try {
         VulkanEngine::Startup::InitializeLogger(config.log_level);
         LOGIFACE_LOG(info, config.app_name + " started");
+
+        // ── Per-user storage ───────────────────────────────────────────────
+        // Resolved before the platform and the device, so a saved setting can
+        // drive window creation and the shader cache has a real location before
+        // the engine bootstraps. Nothing here writes to the executable's
+        // directory: an installed application usually cannot.
+        VulkanShared::UserPaths::Options storage_options{};
+        if (!config.user_dir.empty()) {
+            storage_options.base_dir = VulkanShared::UserPaths::FromUtf8(config.user_dir);
+        }
+        if (!config.executable_path.empty()) {
+            storage_options.executable_dir = config.executable_path.parent_path();
+        }
+        storage_options.force_portable = config.force_portable;
+        storage_options.disable_portable = config.disable_portable;
+
+        auto storage_result = VulkanShared::Storage::Storage::Create(
+            VulkanShared::UserPaths::Identity{.org = config.org_id, .app = config.app_id},
+            storage_options);
+        if (!storage_result) {
+            return fail("Per-user storage unavailable: " + storage_result.error().ToString());
+        }
+        storage.emplace(std::move(*storage_result));
+
+        const VulkanShared::UserPaths::Roots& storage_roots = storage->GetRoots();
+        LOGIFACE_LOG(info, std::format("user data: {} ({})",
+                                       VulkanShared::UserPaths::ToUtf8(storage_roots.persistent),
+                                       VulkanShared::UserPaths::ToString(storage_roots.origin)));
+        if (!storage_roots.fallback_reason.empty()) {
+            LOGIFACE_LOG(warn, storage_roots.fallback_reason);
+        }
+        // Session logs and crash reports belong with the rest of the user's data
+        // rather than beside the executable, which is where Crash defaults to
+        // (and where an installed binary is usually not writable).
+        //
+        // Residual: Crash::Boot runs from the entry point, before argv is parsed,
+        // so whatever is logged between then and this point (a couple of lines at
+        // most) has already gone to an executable-relative session log. Moving
+        // that file is not worth the sequencing; an unwritable directory simply
+        // means those few lines are lost, and the crash report still contains the
+        // full in-memory ring.
+        //
+        // Known limitation: Crash.cpp opens these with CreateFileA and derives
+        // paths with GetModuleFileNameA, i.e. narrow byte paths. A Windows
+        // profile whose name is not representable in the active ANSI codepage
+        // therefore loses the session log and crash report (the path is
+        // truncated or mangled rather than rejected). Fixing it means switching
+        // that file to CreateFileW/GetModuleFileNameW plus an allocation-free
+        // UTF-8 conversion on the fault path, which is deliberately not done
+        // here: the crash handler is the one subsystem that must not be changed
+        // without a Windows runtime to test on.
+        VulkanEngine::Crash::SetReportDirectory(
+            VulkanShared::UserPaths::ToUtf8(storage_roots.log).c_str());
 
         VulkanEngine::Crash::Stage("platform init");
         const auto platform_backend = VulkanBackend::Platform::CreateSdlPlatformBackend();
@@ -190,6 +250,7 @@ export namespace VulkanEngine::Application {
         context.runtime = runtime.get();
         context.bootstrap = bootstrap.get();
         context.input_system = &input_system;
+        context.storage = &*storage;
         context.window = window;
         context.platform_state = &platform->GetState();
         context.geometry_buffer_size_mb = config.geometry_buffer_size_mb;

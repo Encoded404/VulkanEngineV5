@@ -14,6 +14,8 @@ import vulkan_hpp;
 import VulkanEngine.MeshManager;
 import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderWatcher;
+import VulkanShared.Storage;
+import VulkanShared.UserPaths;
 
 namespace VulkanEngine {
 
@@ -27,7 +29,22 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     vk_backend_ = ctx.bootstrap;
     config_ = config;
 
-    if (!bootstrap_.Initialize(ctx_, config, *ctx.bootstrap)) {
+    // An empty cache directory means "wherever the resolved per-user cache
+    // root is". It used to default to "data/cache", which is relative to the
+    // process working directory: the same build cached into a different place
+    // depending on how it was launched, and a user-data reset could not tell
+    // the cache apart from settings. Without storage (an embedded or test
+    // harness with its own bootstrap) fall back to the OS temp directory rather
+    // than to anything CWD-relative.
+    if (config_.shader_cache_dir.empty()) {
+        config_.shader_cache_dir =
+            ctx.storage != nullptr
+                ? VulkanShared::UserPaths::ToUtf8(ctx.storage->CacheDir())
+                : VulkanShared::UserPaths::ToUtf8(std::filesystem::temp_directory_path() /
+                                                  "vulkanengine_v5" / "cache");
+    }
+
+    if (!bootstrap_.Initialize(ctx_, config_, *ctx.bootstrap)) {
         return false;
     }
 

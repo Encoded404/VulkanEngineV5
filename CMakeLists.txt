@@ -16,6 +16,13 @@ set(ENGINE_TARGET "VulkanEngine")
 set(RUNTIME_TARGET "EngineRuntime")
 set(ENTRY_TARGET "EngineEntryPoint")
 
+# Org segment of the per-user storage path (<root>/<org>/<app>/...). One value
+# for the whole project so every executable built here shares a directory
+# group; a fork shipping its own product changes this in one place. Forks must
+# also change it rather than inherit, or two products would share user data.
+set(VKENGINE_DEFAULT_ORG_ID "VulkanEngineV5" CACHE STRING
+    "Organization id used as the first component of the per-user storage path")
+
 set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "Use standard C++" FORCE)
 
 set(USE_LIBCPP OFF CACHE BOOL "use libc++ instead of libstdc++, note: requires libc++ to have the std module supported.")

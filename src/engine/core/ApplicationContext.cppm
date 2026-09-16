@@ -14,6 +14,7 @@ import VulkanBackend.Event;
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanBackend.Vulkan.FrameLoop;
 import VulkanShared.CallbackList;
+import VulkanShared.Storage;
 import VulkanEngine.Input;
 import VulkanBackend.Vulkan.VulkanBootstrap;
 
@@ -48,6 +49,12 @@ struct ApplicationContext {
     VulkanBackend::Vulkan::FrameLoop* runtime = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::InputSystem* input_system = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Per-user storage, resolved once by RunApplication before anything needs a
+    // writable directory and owned there for the lifetime of the process. Not
+    // owned here, matching the raw pointers above. Null only when the caller is
+    // not driven by RunApplication (an embedded or test harness with its own
+    // bootstrap), which consumers must handle.
+    const VulkanShared::Storage::Storage* storage = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     SDL_Window* window = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     const VulkanBackend::Platform::PlatformState* platform_state = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -57,6 +64,23 @@ struct ApplicationContext {
 
 struct ApplicationConfig {
     std::string app_name = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Application identity, and therefore a pair of directory names under the
+    // per-user root. Distinct from app_name on purpose: app_name is the window
+    // and CLI title, which gets edited, while these must never change once
+    // shipped or every existing user's settings and saves move. Keep them
+    // ASCII, short and free of spaces where possible; both are sanitized before
+    // use, so punctuation degrades to a usable name rather than failing.
+    std::string org_id = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::string app_id = "VulkanEngineV5"; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Location of the running executable. Used only to detect portable mode
+    // (a marker file beside the binary); empty disables that check.
+    std::filesystem::path executable_path{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Explicit base directory for all per-user data. Empty means "platform
+    // convention, or portable mode", which is what a shipped build wants; a
+    // test or a portable launcher sets it to pin every write to one tree.
+    std::string user_dir; // NOLINT(misc-non-private-member-variables-in-classes)
+    bool force_portable = false; // NOLINT(misc-non-private-member-variables-in-classes)
+    bool disable_portable = false; // NOLINT(misc-non-private-member-variables-in-classes)
     std::string log_level = "info"; // NOLINT(misc-non-private-member-variables-in-classes)
     // ── Frame pipeline (single source of truth) ──
     // Number of frames that may be in flight (CPU slots running ahead of the GPU).

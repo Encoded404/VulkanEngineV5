@@ -12,6 +12,7 @@ import vulkan_hpp;
 
 import VulkanShared.FileIO;
 import VulkanShared.ThreadPool;
+import VulkanShared.UserPaths;
 import VulkanEngine.CompilerEngine;
 import VulkanEngine.ShaderLoader;
 
@@ -34,7 +35,11 @@ ShaderManager::ShaderManager(const vk::raii::Device& device, const VulkanBackend
     : device_(device)
 {
     auto uuid_hex = uuidToHex(caps.GetProperties().pipelineCacheUUID);
-    cache_path_ = std::format("{}/pipeline_cache_{}.bin", cache_dir, uuid_hex);
+    // path::operator/ rather than a formatted "dir/file" string: it is the only
+    // form that survives a trailing separator or a separator that differs from
+    // the platform's.
+    cache_path_ = std::filesystem::path{cache_dir} /
+                  std::format("pipeline_cache_{}.bin", uuid_hex);
 
     auto initial_data = VulkanShared::FileIO::ReadBinary(cache_path_);
     vk::PipelineCacheCreateInfo ci{};
@@ -53,7 +58,8 @@ ShaderManager::ShaderManager(const vk::raii::Device& device, const VulkanBackend
             cache_ = device_.createPipelineCache(ci);
         }
     }
-    LOGIFACE_LOG(info, std::format("ShaderManager: pipeline cache at {}", cache_path_.string()));
+    LOGIFACE_LOG(info, std::format("ShaderManager: pipeline cache at {}",
+                                   VulkanShared::UserPaths::ToUtf8(cache_path_)));
 }
 
 ShaderManager::~ShaderManager() {

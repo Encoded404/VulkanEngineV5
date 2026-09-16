@@ -1,5 +1,7 @@
 add_executable(shared_tests
   teardown_tests.cpp
+  user_paths_tests.cpp
+  storage_tests.cpp
 )
 target_link_libraries(shared_tests PRIVATE
   VulkanShared

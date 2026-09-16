@@ -46,7 +46,11 @@ struct GameConfig {
     std::uint64_t geometry_buffer_size_mb = 128;
     bool enable_imgui = true;
     std::string shader_data_dir;
-    std::string shader_cache_dir = "data/cache";
+    // Empty means "the resolved per-user cache root" (see GameEngine::Setup).
+    // Never give this a CWD-relative default: a pipeline cache must survive
+    // relaunches and a user-data reset, which a path relative to the working
+    // directory does not.
+    std::string shader_cache_dir;
     VulkanEngine::ShaderSystem::GplPolicy gpl_policy = VulkanEngine::ShaderSystem::GplPolicy::Auto;
     VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
 #ifdef VKENGINE_PHYSICAL_CAMERA

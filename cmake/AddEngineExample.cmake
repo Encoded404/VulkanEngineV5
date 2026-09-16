@@ -5,6 +5,8 @@ include_guard(GLOBAL)
 #
 #   add_engine_example(<name>
 #     [APP_TITLE <title>]            # window/CLI app title (default: <name>)
+#     [ORG_ID <id>]                  # storage org segment (default: VKENGINE_DEFAULT_ORG_ID)
+#     [APP_ID <id>]                  # storage app segment (default: <name>)
 #     [MODULE_PREFIX <prefix>]       # C++ module prefix (default: Examples.<name>)
 #     [SHADER_NAMESPACE <ns>]        # shader namespace segment (default: <name>)
 #     SOURCES <file...>              # .cpp implementation files
@@ -20,11 +22,19 @@ include_guard(GLOBAL)
 #   - asset dirs are copied to <exe_dir>/<dir>
 #   - modules are C++23 std-module based (Clang)
 #   - sanitizers/sections glue and clang-tidy are applied like the engine libs
+#
+# ORG_ID/APP_ID are exported to the target as VKENGINE_ORG_ID/VKENGINE_APP_ID.
+# They are the application's storage identity: the two path components under the
+# per-user root that settings, saves, caches and logs live in, so every example
+# gets its own directory instead of sharing one. They are compile-time defaults
+# only - the application receives them as runtime values (Runtime::Cli ->
+# ApplicationConfig) so --user-dir and VKENGINE_USER_DIR can still override the
+# location.
 #=======================================================================]
 function(add_engine_example NAME)
     cmake_parse_arguments(PARSE_ARGV 1 AEG
         ""
-        "MODULE_PREFIX;SHADER_NAMESPACE;APP_TITLE"
+        "MODULE_PREFIX;SHADER_NAMESPACE;APP_TITLE;ORG_ID;APP_ID"
         "SOURCES;MODULES;SHADERS;ASSET_DIRS"
     )
 
@@ -36,6 +46,15 @@ function(add_engine_example NAME)
     endif()
     if(NOT AEG_APP_TITLE)
         set(AEG_APP_TITLE "${NAME}")
+    endif()
+    if(NOT AEG_ORG_ID)
+        set(AEG_ORG_ID "${VKENGINE_DEFAULT_ORG_ID}")
+    endif()
+    # The target name is already a stable, ASCII, separator-free slug, which is
+    # exactly what a directory component needs - unlike APP_TITLE, which is UI
+    # copy that may be reworded.
+    if(NOT AEG_APP_ID)
+        set(AEG_APP_ID "${NAME}")
     endif()
 
     add_executable(${NAME} ${AEG_SOURCES})
@@ -185,6 +204,8 @@ function(add_engine_example NAME)
 
     target_compile_definitions(${NAME} PRIVATE
         VKENGINE_SLANG_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/shaders/"
+        VKENGINE_ORG_ID="${AEG_ORG_ID}"
+        VKENGINE_APP_ID="${AEG_APP_ID}"
     )
 
     target_compile_options(${NAME} PRIVATE

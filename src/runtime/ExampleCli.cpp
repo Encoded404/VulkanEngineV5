@@ -16,9 +16,11 @@ import Runtime.Overrides;
 
 namespace Runtime {
 
-Cli::Cli(std::string_view app_name)
+Cli::Cli(std::string_view app_name, std::string_view org_id, std::string_view app_id)
     : app_(std::string{app_name})
-    , app_name_(app_name) {
+    , app_name_(app_name)
+    , org_id_(org_id)
+    , app_id_(app_id) {
     app_.formatter(std::make_shared<RawFooterFormatter>());
 
     app_.add_option("-l,--log-level", log_level_,
@@ -27,6 +29,18 @@ Cli::Cli(std::string_view app_name)
 
     app_.add_flag("--validation", force_validation_, "Enable the Vulkan validation layer");
     app_.add_flag("--no-validation", force_no_validation_, "Disable the Vulkan validation layer");
+
+    // Storage options. Everything the application writes (settings, saves,
+    // pipeline caches, logs) lives under the resolved root; these only decide
+    // where that root is. --user-dir wins over --portable.
+    app_.add_option("--user-dir", user_dir_,
+                    "Store settings, saves, cache and logs under this directory instead of the "
+                    "per-user platform location (also VKENGINE_USER_DIR)")
+       ->type_name("DIR");
+    app_.add_flag("--portable", force_portable_,
+                  "Store user data next to the executable (implies a writable install directory)");
+    app_.add_flag("--no-portable", force_no_portable_,
+                  "Ignore a portable marker next to the executable");
 
     app_.add_option("--overwrite", overwrite_values_,
                     "Testing overrides; run --help for the full key list")
@@ -77,6 +91,12 @@ bool Cli::Parse(int argc, char* const argv[]) {
 VulkanEngine::Application::ApplicationConfig Cli::MakeConfig() const {
     VulkanEngine::Application::ApplicationConfig config{};
     config.app_name = app_name_;
+    config.org_id = org_id_;
+    config.app_id = app_id_;
+    config.executable_path = executable_path_;
+    config.user_dir = user_dir_;
+    config.force_portable = force_portable_;
+    config.disable_portable = DisablePortable();
     config.log_level = log_level_;
     // The config's default is build-type aware (debug: on, optimized: off);
     // explicit CLI flags override it in either direction. Both given: --validation wins.

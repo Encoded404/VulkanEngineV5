@@ -21,7 +21,12 @@ export namespace Runtime {
 // values.
 class Cli {
 public:
-    explicit Cli(std::string_view app_name);
+    // `app_name` is the user-facing title (window and --help). `org_id` and
+    // `app_id` are the storage identity: two path components under the per-user
+    // root, which must stay stable across releases. build systems normally
+    // supply them (see add_engine_example) so that every executable gets its own
+    // directory; passing the title as app_id would make all of them share one.
+    explicit Cli(std::string_view app_name, std::string_view org_id, std::string_view app_id);
 
     // Register an example-defined --overwrite key. Must be called before
     // Parse() so the option validation and the --help footer see it.
@@ -42,6 +47,11 @@ public:
     // the user passed --no-validation and did not also pass --validation.
     [[nodiscard]] bool NoValidation() const {
         return force_no_validation_ && !force_validation_;
+    }
+
+    // Effective portable-mode choice: --portable wins when both flags are given.
+    [[nodiscard]] bool DisablePortable() const {
+        return force_no_portable_ && !force_portable_;
     }
 
     // Application config assembled from the standard options and the overrides.
@@ -78,12 +88,17 @@ private:
 
     CLI::App app_{};
     std::string app_name_{};
+    std::string org_id_{};
+    std::string app_id_{};
     Overrides overrides_{};
     std::vector<std::string> overwrite_values_{};
     std::vector<std::string> force_disabled_extensions_{};
     std::string log_level_ = "info";
+    std::string user_dir_{};
     bool force_validation_ = false;
     bool force_no_validation_ = false;
+    bool force_portable_ = false;
+    bool force_no_portable_ = false;
     int exit_code_ = 0;
     std::filesystem::path executable_path_{};
 };

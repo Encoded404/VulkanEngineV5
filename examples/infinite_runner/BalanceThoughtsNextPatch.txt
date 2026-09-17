@@ -1,0 +1,12 @@
+im thinking of turning
+wall_spacing_pow_scaling
+up to 0.85 or so from its current 0.75.
+
+this is to promote longer runs. which is generally where most of the current fun is.
+
+maybe increase wall_hole_placement_pow_scaling to 0.1? (current 0.08)
+
+maybe increase base speed, that way the start is a little quicker (15 -> 20?)
+
+maybe turn the difficulty_scaling_divider up to 12? (current 10) more time at each speed essentially
+(for the players feeling of the controls and such, not in actual values)

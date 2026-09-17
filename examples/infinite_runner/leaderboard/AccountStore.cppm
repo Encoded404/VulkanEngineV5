@@ -20,14 +20,23 @@ struct AccountStoreOptions {
     // Server-side credential work factor. Tests inject tiny parameters.
     VulkanEngine::Security::Argon2Params argon2{};
     std::size_t max_run_ids_per_account = 256;
+    // Server policy for usernames and display names: blocked substrings plus an
+    // allow list of roots that exempt the span they cover.
+    NamePolicy name_policy{};
 };
 
 // Persistent account records. Stores only Argon2id verifiers, never the raw
 // registration token, so a leaked accounts file cannot be replayed.
+//
+// `hidden` is a legacy field kept only so a protocol-v2 client that still
+// carries the old "show on leaderboard" setting keeps working: the server
+// accepts its submissions but does not record them. Protocol-v3 accounts are
+// always public and ignore it.
 class AccountStore {
 public:
     struct RegisterResult {
         SyncStatus status = SyncStatus::ServerError;
+        std::string reason; // populated for refusals (Rejected / invalid name)
         UserId user_id = 0;
         std::string token; // hex, present only when status == Ok
         std::string display_name;
@@ -35,14 +44,14 @@ public:
 
     struct LoginResult {
         SyncStatus status = SyncStatus::ServerError;
+        std::string reason;
         AccountInfo account{};
-        SyncedSettings settings{};
     };
 
     struct UpdateResult {
         SyncStatus status = SyncStatus::ServerError;
+        std::string reason;
         AccountInfo account{};
-        SyncedSettings settings{};
     };
 
     enum class ScoreResult {
@@ -63,14 +72,23 @@ public:
 
     [[nodiscard]] LoginResult Login(std::string_view username, std::string_view token_hex);
 
-    [[nodiscard]] UpdateResult UpdateSettings(UserId id, std::string_view display_name,
-                                              const SyncedSettings& settings);
+    // Renames the account (display name only). Does not touch the legacy
+    // visibility bit, so a rename can never reveal a hidden v2 account.
+    [[nodiscard]] UpdateResult Rename(UserId id, std::string_view display_name);
+
+    // Legacy protocol-v2 settings update: display name plus the old
+    // show_on_leaderboard flag, stored inverted as `hidden`.
+    [[nodiscard]] UpdateResult UpdateLegacy(UserId id, std::string_view display_name,
+                                            bool show_on_leaderboard);
 
     // Idempotent score recording: a retried run_id is accepted once.
     [[nodiscard]] ScoreResult RecordRun(UserId id, std::uint64_t run_id);
 
     [[nodiscard]] std::optional<AccountInfo> FindById(UserId id) const;
-    [[nodiscard]] std::optional<SyncedSettings> SettingsOf(UserId id) const;
+    // Name to show on a public board: nullopt when the account is unknown, the
+    // empty string when the legacy hidden bit is set, otherwise the name.
+    [[nodiscard]] std::optional<std::string> ShownName(UserId id) const;
+    [[nodiscard]] bool IsHidden(UserId id) const;
     [[nodiscard]] std::size_t AccountCount() const;
 
 private:
@@ -79,7 +97,7 @@ private:
         std::string username;    // canonical
         std::string display_name;
         std::string verifier;    // Argon2id encoded string
-        SyncedSettings settings{};
+        bool hidden = false;     // legacy v2 "do not record my scores"
         std::uint64_t created_at = 0;
         std::uint64_t last_seen = 0;
         std::vector<std::uint64_t> run_ids;
@@ -90,6 +108,9 @@ private:
     [[nodiscard]] Record* FindByUsername(std::string_view canonical);
     [[nodiscard]] const Record* FindByUsername(std::string_view canonical) const;
     [[nodiscard]] Record* FindByIdInternal(UserId id);
+    // Structural validation + server policy. `reason` is set on failure.
+    [[nodiscard]] std::optional<std::string> ValidateDisplayName(std::string_view raw,
+                                                                std::string& reason) const;
 
     AccountStoreOptions options_;
     mutable std::mutex mutex_;

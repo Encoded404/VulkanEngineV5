@@ -341,7 +341,6 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         options.host = endpoint->host;
         options.port = endpoint->port;
         options.config_hash = balance_hash_;
-        options.psk = Leaderboard::LoadSessionPsk();
         options.server_public_key = Leaderboard::LoadServerPublicKey();
         leaderboard_ = std::make_unique<Leaderboard::Client>(std::move(options));
 
@@ -364,7 +363,6 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         if (const Account::StoredProfile* active = profiles_->Active();
             active != nullptr && !active->token.empty()) {
             login_open_ = false;
-            leaderboard_public_ = active->synced.show_on_leaderboard;
         }
     }
 
@@ -418,6 +416,9 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                 if (ImGui::Checkbox("Best per player", &local.leaderboard_best_per_account)) {
                     leaderboard_filters_changed = true;
                 }
+                if (ImGui::Checkbox("Only my scores", &local.leaderboard_only_mine)) {
+                    leaderboard_filters_changed = true;
+                }
                 if (leaderboard_filters_changed) {
                     profiles_->UpdateLocal(profile->id, local);
                 }
@@ -432,8 +433,12 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                 } else if (!snapshot.authenticated) {
                     ImGui::TextUnformatted("connected (not signed in)");
                 } else if (snapshot.has_rank) {
-                    ImGui::Text("Rank %d / %d (server best %d)", snapshot.last_rank,
-                                snapshot.last_total, snapshot.last_best);
+                    const bool per_account = profiles_.has_value() &&
+                                             profiles_->Active() != nullptr &&
+                                             profiles_->Active()->local.leaderboard_best_per_account;
+                    const std::int32_t rank =
+                        per_account ? snapshot.last_rank_accounts : snapshot.last_rank_runs;
+                    ImGui::Text("Rank %d (server best %d)", rank, snapshot.last_best);
                 }
                 for (const Leaderboard::TopEntry& entry : snapshot.top) {
                     const std::string who =
@@ -621,17 +626,14 @@ void Game::DrawLoginWindow() {
         }
 
         ImGui::InputText("Display name##edit", display_edit_.data(), display_edit_.size());
-        ImGui::Checkbox("Show on leaderboard", &leaderboard_public_);
         const bool can_sync = leaderboard_ != nullptr && leaderboard_->GetSnapshot().authenticated;
         if (!can_sync) {
             ImGui::BeginDisabled();
         }
-        if (ImGui::Button("Save settings")) {
-            Leaderboard::SyncedSettings settings{};
-            settings.show_on_leaderboard = leaderboard_public_;
-            pending_op_ = PendingOp::UpdateSettings;
+        if (ImGui::Button("Rename")) {
+            pending_op_ = PendingOp::Rename;
             pending_profile_id_ = profile->id;
-            pending_future_ = leaderboard_->UpdateSettings(display_edit_.data(), settings);
+            pending_future_ = leaderboard_->Rename(display_edit_.data());
         }
         if (!can_sync) {
             ImGui::EndDisabled();
@@ -658,7 +660,6 @@ void Game::StartRegistration(std::string username, std::string display_name) {
     const Account::StoredProfile& profile = profiles_->AddProfile(username, display_name);
     pending_profile_id_ = profile.id;
     pending_username_ = username;
-    leaderboard_public_ = profile.synced.show_on_leaderboard;
     std::snprintf(display_edit_.data(), display_edit_.size(), "%s", profile.display_name.c_str());
 
     if (leaderboard_ == nullptr) {
@@ -712,20 +713,22 @@ void Game::PollPendingAccount() {
             profiles_->SetToken(pending_profile_id_, result.token);
             profiles_->UpdateDisplayName(pending_profile_id_, result.display_name);
             profiles_->SetActive(pending_profile_id_);
-            leaderboard_public_ = profiles_->Active()->synced.show_on_leaderboard;
             std::snprintf(display_edit_.data(), display_edit_.size(), "%s",
                           result.display_name.c_str());
             login_status_ = "Registered. Username " + result.username + " is permanent.";
         } else if (!result.ok()) {
             login_status_ = "Registration failed: " + result.message;
         }
-    } else if (op == PendingOp::UpdateSettings) {
+    } else if (op == PendingOp::Rename) {
         if (result.ok() && profiles_.has_value()) {
             profiles_->UpdateDisplayName(pending_profile_id_, result.display_name);
-            profiles_->UpdateSynced(pending_profile_id_, result.settings);
-            login_status_ = "Settings saved.";
+            std::snprintf(display_edit_.data(), display_edit_.size(), "%s",
+                          result.display_name.c_str());
+            login_status_ = "Renamed.";
+            // Names are resolved live, so refresh the visible board.
+            RequestLeaderboard();
         } else if (!result.ok()) {
-            login_status_ = "Settings update failed: " + result.message;
+            login_status_ = "Rename failed: " + result.message;
         }
     }
 }
@@ -736,11 +739,13 @@ void Game::RequestLeaderboard() {
     }
     std::size_t count = 5;
     bool best_per_account = false;
+    bool only_mine = false;
     std::uint32_t days = 0;
     if (profiles_.has_value()) {
         if (const Account::StoredProfile* active = profiles_->Active(); active != nullptr) {
             count = active->local.top_count;
             best_per_account = active->local.leaderboard_best_per_account;
+            only_mine = active->local.leaderboard_only_mine;
             days = active->local.leaderboard_days;
         }
     }
@@ -752,7 +757,7 @@ void Game::RequestLeaderboard() {
         const auto window = static_cast<std::int64_t>(days) * 24 * 60 * 60;
         since = static_cast<std::uint64_t>(std::max<std::int64_t>(0, now - window));
     }
-    leaderboard_->RequestTop(count, best_per_account, since);
+    leaderboard_->RequestTop(count, best_per_account, since, only_mine);
 }
 
 void Game::RefreshActiveCredentials() {
@@ -779,7 +784,6 @@ void Game::SelectProfile(std::string_view profile_id) {
     if (profile == nullptr) {
         return;
     }
-    leaderboard_public_ = profile->synced.show_on_leaderboard;
     std::snprintf(display_edit_.data(), display_edit_.size(), "%s", profile->display_name.c_str());
     if (leaderboard_ == nullptr) {
         return;
@@ -793,9 +797,13 @@ void Game::SelectProfile(std::string_view profile_id) {
 }
 
 void Game::SubmitRun(std::int32_t score) {
+    bool best_per_account = true;
+    if (profiles_.has_value() && profiles_->Active() != nullptr) {
+        best_per_account = profiles_->Active()->local.leaderboard_best_per_account;
+    }
     std::uint64_t run_id = 0;
     if (leaderboard_ != nullptr) {
-        run_id = leaderboard_->SubmitScore(score);
+        run_id = leaderboard_->SubmitScore(score, best_per_account);
     } else {
         const std::vector<std::byte> bytes = VulkanEngine::Security::RandomBytes(8);
         for (std::size_t i = 0; i < bytes.size(); ++i) {
@@ -804,9 +812,7 @@ void Game::SubmitRun(std::int32_t score) {
     }
     if (profiles_.has_value() && profiles_->Active() != nullptr) {
         const Account::StoredProfile* profile = profiles_->Active();
-        const std::string shown =
-            profile->synced.show_on_leaderboard ? profile->display_name : std::string{};
-        profiles_->RecordRun(balance_hash_, run_id, score, shown);
+        profiles_->RecordRun(balance_hash_, run_id, score, profile->display_name);
     }
 }
 

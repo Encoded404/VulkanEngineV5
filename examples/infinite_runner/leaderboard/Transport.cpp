@@ -132,6 +132,30 @@ void SetSocketTimeout(NativeSocket socket, int option, std::chrono::milliseconds
 #endif
 }
 
+// SO_RCVTIMEO/SO_SNDTIMEO expiry. POSIX reports EAGAIN/EWOULDBLOCK; Winsock
+// reports WSAETIMEDOUT for a timeout, so WouldBlock alone is not enough.
+[[nodiscard]] bool IsTimeout() noexcept {
+#ifdef _WIN32
+    const int error = WSAGetLastError();
+    return error == WSAETIMEDOUT || error == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+// The peer is gone: clean shutdown (recv == 0) is handled by the caller, this
+// covers a reset or a write to a connection the peer already closed.
+[[nodiscard]] bool IsDisconnected() noexcept {
+#ifdef _WIN32
+    const int error = WSAGetLastError();
+    return error == WSAECONNRESET || error == WSAECONNABORTED || error == WSAENOTCONN ||
+           error == WSAESHUTDOWN || error == WSAETIMEDOUT;
+#else
+    return errno == ECONNRESET || errno == ECONNABORTED || errno == ENOTCONN || errno == EPIPE ||
+           errno == ETIMEDOUT;
+#endif
+}
+
 // select() keeps the placeholder portable between POSIX and Winsock. Both wait
 // helpers retry on EINTR against a steady deadline, so frequent signals cannot
 // extend the wait past the caller's timeout.
@@ -274,9 +298,9 @@ std::optional<TcpSocket> TcpSocket::Connect(std::string_view host, std::uint16_t
     return result;
 }
 
-bool TcpSocket::SendAll(std::span<const std::byte> data) {
+IoStatus TcpSocket::SendAll(std::span<const std::byte> data) {
     if (!IsOpen()) {
-        return false;
+        return IoStatus::Disconnected;
     }
     const NativeSocket socket = ToNative(handle_);
     std::size_t sent = 0;
@@ -293,47 +317,66 @@ bool TcpSocket::SendAll(std::span<const std::byte> data) {
         if (rc < 0 && IsInterrupted()) {
             continue;
         }
-        return false;
+        if (IsTimeout()) {
+            return IoStatus::Timeout;
+        }
+        if (IsDisconnected()) {
+            return IoStatus::Disconnected;
+        }
+        return IoStatus::Error;
     }
-    return true;
+    return IoStatus::Ok;
 }
 
-bool TcpSocket::RecvSome(std::span<std::byte> out, std::size_t& received) {
+IoStatus TcpSocket::RecvSome(std::span<std::byte> out, std::size_t& received) {
     received = 0;
     if (!IsOpen()) {
-        return false;
+        return IoStatus::Disconnected;
     }
     for (;;) {
         const int rc = ::recv(ToNative(handle_), reinterpret_cast<char*>(out.data()),
                               static_cast<int>(out.size()), 0);
         if (rc > 0) {
             received = static_cast<std::size_t>(rc);
-            return true;
+            return IoStatus::Ok;
         }
         if (rc == 0) {
-            return true; // clean EOF
+            return IoStatus::Disconnected; // clean EOF
         }
         // Interrupted by a signal: the recv did not fail, so retry it.
         if (IsInterrupted()) {
             continue;
         }
-        return false;
+        if (IsTimeout()) {
+            return IoStatus::Timeout;
+        }
+        if (IsDisconnected()) {
+            return IoStatus::Disconnected;
+        }
+        return IoStatus::Error;
     }
 }
 
-bool TcpSocket::RecvExactly(std::span<std::byte> out) {
+IoStatus TcpSocket::RecvExactly(std::span<std::byte> out) {
     std::size_t got = 0;
     while (got < out.size()) {
         std::size_t chunk = 0;
-        if (!RecvSome(out.subspan(got), chunk)) {
-            return false;
+        const IoStatus status = RecvSome(out.subspan(got), chunk);
+        if (status != IoStatus::Ok) {
+            // A timeout that lands after some bytes of this frame have already
+            // arrived leaves the stream mid-frame, so it can no longer be
+            // resumed by the next call: report the connection as unusable.
+            if (status == IoStatus::Timeout && got > 0) {
+                return IoStatus::Disconnected;
+            }
+            return status;
         }
         if (chunk == 0) {
-            return false; // EOF before the requested bytes arrived
+            return IoStatus::Disconnected; // EOF before the requested bytes arrived
         }
         got += chunk;
     }
-    return true;
+    return IoStatus::Ok;
 }
 
 void TcpSocket::SetTimeouts(std::chrono::milliseconds recv_timeout, std::chrono::milliseconds send_timeout) {
@@ -342,6 +385,17 @@ void TcpSocket::SetTimeouts(std::chrono::milliseconds recv_timeout, std::chrono:
     }
     SetSocketTimeout(ToNative(handle_), SO_RCVTIMEO, recv_timeout);
     SetSocketTimeout(ToNative(handle_), SO_SNDTIMEO, send_timeout);
+}
+
+void TcpSocket::Shutdown() {
+    if (handle_ == -1) {
+        return;
+    }
+#ifdef _WIN32
+    ::shutdown(ToNative(handle_), SD_BOTH);
+#else
+    ::shutdown(ToNative(handle_), SHUT_RDWR);
+#endif
 }
 
 void TcpSocket::Close() {
@@ -477,12 +531,12 @@ bool TcpListener::IsOpen() const {
     return handle_ != -1;
 }
 
-bool SendFrame(TcpSocket& socket, std::span<const std::byte> payload) {
+IoStatus SendFrame(TcpSocket& socket, std::span<const std::byte> payload) {
     if (payload.size() > kMaxFrameBytes) {
         LogMessage(LogLevel::Warn,
                    std::format("transport: refusing to send {} byte frame (limit {})",
                                payload.size(), kMaxFrameBytes));
-        return false;
+        return IoStatus::Error;
     }
     const auto length = static_cast<std::uint32_t>(payload.size());
     std::array<std::byte, 4> prefix{};
@@ -490,13 +544,18 @@ bool SendFrame(TcpSocket& socket, std::span<const std::byte> payload) {
     prefix[1] = static_cast<std::byte>((length >> 8) & 0xFFU);
     prefix[2] = static_cast<std::byte>((length >> 16) & 0xFFU);
     prefix[3] = static_cast<std::byte>((length >> 24) & 0xFFU);
-    return socket.SendAll(prefix) && socket.SendAll(payload);
+    const IoStatus header_status = socket.SendAll(prefix);
+    if (header_status != IoStatus::Ok) {
+        return header_status;
+    }
+    return socket.SendAll(payload);
 }
 
-bool RecvFrame(TcpSocket& socket, std::vector<std::byte>& payload) {
+IoStatus RecvFrame(TcpSocket& socket, std::vector<std::byte>& payload) {
     std::array<std::byte, 4> prefix{};
-    if (!socket.RecvExactly(prefix)) {
-        return false;
+    const IoStatus prefix_status = socket.RecvExactly(prefix);
+    if (prefix_status != IoStatus::Ok) {
+        return prefix_status;
     }
     const auto length = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(prefix[0])) |
                         (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(prefix[1])) << 8) |
@@ -506,10 +565,13 @@ bool RecvFrame(TcpSocket& socket, std::vector<std::byte>& payload) {
         LogMessage(LogLevel::Warn,
                    std::format("transport: peer announced a {} byte frame (limit {})", length,
                                kMaxFrameBytes));
-        return false;
+        return IoStatus::Error;
     }
     payload.resize(length);
-    return length == 0 || socket.RecvExactly(payload);
+    if (length == 0) {
+        return IoStatus::Ok;
+    }
+    return socket.RecvExactly(payload);
 }
 
 } // namespace Examples::InfiniteRunner::Leaderboard

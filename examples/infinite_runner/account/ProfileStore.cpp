@@ -111,12 +111,13 @@ void ProfileStore::LoadActiveData() {
     }
     if (profile != nullptr) {
         profile->token = ValueOr<std::string>(document, "token", {});
-        profile->synced.show_on_leaderboard = ValueOr<bool>(document, "show_on_leaderboard", true);
         profile->local.top_count = ValueOr<std::size_t>(document, "top_count", 5);
         profile->local.show_login_modal_on_start =
             ValueOr<bool>(document, "show_login_modal_on_start", true);
         profile->local.leaderboard_best_per_account =
-            ValueOr<bool>(document, "leaderboard_best_per_account", false);
+            ValueOr<bool>(document, "leaderboard_best_per_account", true);
+        profile->local.leaderboard_only_mine =
+            ValueOr<bool>(document, "leaderboard_only_mine", false);
         profile->local.leaderboard_days =
             ValueOr<std::uint32_t>(document, "leaderboard_days", 0);
     }
@@ -149,18 +150,18 @@ std::filesystem::path ProfileStore::ProfileSlot(std::string_view id) const {
 nlohmann::json ProfileStore::ProfileDataToJson() const {
     nlohmann::json document;
     document["token"] = "";
-    document["show_on_leaderboard"] = true;
     document["top_count"] = 5;
     document["show_login_modal_on_start"] = true;
-    document["leaderboard_best_per_account"] = false;
+    document["leaderboard_best_per_account"] = true;
+    document["leaderboard_only_mine"] = false;
     document["leaderboard_days"] = 0;
 
     if (const StoredProfile* profile = Active(); profile != nullptr) {
         document["token"] = profile->token;
-        document["show_on_leaderboard"] = profile->synced.show_on_leaderboard;
         document["top_count"] = profile->local.top_count;
         document["show_login_modal_on_start"] = profile->local.show_login_modal_on_start;
         document["leaderboard_best_per_account"] = profile->local.leaderboard_best_per_account;
+        document["leaderboard_only_mine"] = profile->local.leaderboard_only_mine;
         document["leaderboard_days"] = profile->local.leaderboard_days;
     }
 
@@ -299,16 +300,6 @@ bool ProfileStore::UpdateDisplayName(std::string_view id, std::string display_na
     return false;
 }
 
-bool ProfileStore::UpdateSynced(std::string_view id, SyncedSettings settings) {
-    for (StoredProfile& profile : profiles_) {
-        if (profile.id == id) {
-            profile.synced = settings;
-            return Save();
-        }
-    }
-    return false;
-}
-
 bool ProfileStore::UpdateLocal(std::string_view id, LocalSettings settings) {
     for (StoredProfile& profile : profiles_) {
         if (profile.id == id) {
@@ -319,8 +310,8 @@ bool ProfileStore::UpdateLocal(std::string_view id, LocalSettings settings) {
     return false;
 }
 
-std::vector<ScoreEntry> ProfileStore::LocalTop(std::uint64_t config_hash, std::size_t count) const {
-    std::vector<ScoreEntry> out;
+std::vector<LocalEntry> ProfileStore::LocalTop(std::uint64_t config_hash, std::size_t count) const {
+    std::vector<LocalEntry> out;
     const auto it = scores_.find(config_hash);
     if (it == scores_.end()) {
         return out;
@@ -328,8 +319,8 @@ std::vector<ScoreEntry> ProfileStore::LocalTop(std::uint64_t config_hash, std::s
     const std::size_t limit = std::min(count, it->second.size());
     out.reserve(limit);
     for (std::size_t i = 0; i < limit; ++i) {
-        out.push_back(ScoreEntry{static_cast<std::int32_t>(i) + 1, it->second[i].score,
-                                 it->second[i].display_name});
+        out.push_back(LocalEntry{static_cast<std::int32_t>(i) + 1, it->second[i].score,
+                                 it->second[i].display_name, it->second[i].at});
     }
     return out;
 }

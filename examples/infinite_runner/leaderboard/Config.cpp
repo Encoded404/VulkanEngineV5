@@ -6,15 +6,12 @@ import std;
 
 import VulkanEngine.KeyExchange;
 import Examples.InfiniteRunner.Balance;
+import Examples.InfiniteRunner.Leaderboard.Log;
 import Examples.InfiniteRunner.Secrets;
 
 namespace Examples::InfiniteRunner::Leaderboard {
 
 namespace {
-
-// Development-only session secret. Used when no sealed PSK is present so the
-// example still works out of the box; never rely on it for anything real.
-constexpr std::string_view kDevPsk = "infinite-runner-dev-psk-do-not-use-in-production";
 
 [[nodiscard]] std::string Trim(std::string_view text) {
     std::size_t begin = 0;
@@ -28,32 +25,32 @@ constexpr std::string_view kDevPsk = "infinite-runner-dev-psk-do-not-use-in-prod
     return std::string{text.substr(begin, end - begin)};
 }
 
-[[nodiscard]] std::uint8_t HexNibble(char c) {
+[[nodiscard]] int HexNibble(char c) {
     if (c >= '0' && c <= '9') {
-        return static_cast<std::uint8_t>(c - '0');
+        return c - '0';
     }
     if (c >= 'a' && c <= 'f') {
-        return static_cast<std::uint8_t>(c - 'a' + 10);
+        return c - 'a' + 10;
     }
-    return static_cast<std::uint8_t>(c - 'A' + 10);
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
 }
 
-[[nodiscard]] std::vector<std::byte> PskFromHex(std::string_view text) {
+[[nodiscard]] std::vector<std::byte> BytesFromHex(std::string_view text) {
     std::vector<std::byte> out;
     if (text.size() % 2 != 0) {
         return out;
     }
     out.reserve(text.size() / 2);
     for (std::size_t i = 0; i < text.size(); i += 2) {
-        out.push_back(static_cast<std::byte>((HexNibble(text[i]) << 4) | HexNibble(text[i + 1])));
-    }
-    return out;
-}
-
-[[nodiscard]] std::vector<std::byte> PskFromText(std::string_view text) {
-    std::vector<std::byte> out(32);
-    for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(text[i % text.size()]);
+        const int high = HexNibble(text[i]);
+        const int low = HexNibble(text[i + 1]);
+        if (high < 0 || low < 0) {
+            return {};
+        }
+        out.push_back(static_cast<std::byte>((high << 4) | low));
     }
     return out;
 }
@@ -103,26 +100,6 @@ std::optional<Endpoint> LoadEndpoint() {
     return Endpoint{host, static_cast<std::uint16_t>(port)};
 }
 
-std::vector<std::byte> LoadSessionPsk() {
-    const std::optional<std::string> text = Secrets::GetString(kPskSecret);
-    if (text.has_value()) {
-        if (const std::optional<std::string> content = FirstContentLine(*text);
-            content.has_value()) {
-            // Accept a hex key; anything else is treated as raw text so a short
-            // local file still produces a deterministic key.
-            if (content->size() == 64 &&
-                std::all_of(content->begin(), content->end(),
-                            [](unsigned char c) { return std::isxdigit(c) != 0; })) {
-                return PskFromHex(*content);
-            }
-            if (!content->empty()) {
-                return PskFromText(*content);
-            }
-        }
-    }
-    return PskFromText(kDevPsk);
-}
-
 std::optional<VulkanEngine::Security::X25519Key> LoadServerPublicKey() {
     const std::optional<std::string> text = Secrets::GetString(kServerPublicKeySecret);
     if (!text.has_value()) {
@@ -132,7 +109,7 @@ std::optional<VulkanEngine::Security::X25519Key> LoadServerPublicKey() {
     if (!content.has_value() || content->size() != VulkanEngine::Security::kX25519KeyBytes * 2) {
         return std::nullopt;
     }
-    const std::vector<std::byte> bytes = PskFromHex(*content);
+    const std::vector<std::byte> bytes = BytesFromHex(*content);
     if (bytes.size() != VulkanEngine::Security::kX25519KeyBytes) {
         return std::nullopt;
     }
@@ -143,6 +120,87 @@ std::optional<VulkanEngine::Security::X25519Key> LoadServerPublicKey() {
 
 std::uint64_t CurrentBalanceHash() {
     return BalanceConfig{}.Hash();
+}
+
+std::vector<std::uint64_t> LoadAcceptedConfigs(const std::filesystem::path& path) {
+    std::vector<std::uint64_t> configs;
+    std::ifstream stream(path);
+    if (!stream) {
+        return configs;
+    }
+    std::string line;
+    while (std::getline(stream, line)) {
+        const std::string trimmed = Trim(line);
+        if (trimmed.empty() || trimmed[0] == '#') {
+            continue;
+        }
+        try {
+            configs.push_back(std::stoull(trimmed, nullptr, 16));
+        } catch (const std::exception&) {
+            // A malformed line is skipped; the startup check still guarantees
+            // the current hash is listed.
+        }
+    }
+    return configs;
+}
+
+NamePolicy LoadNamePolicy(const std::filesystem::path& path) {
+    NamePolicy policy;
+    std::ifstream stream(path);
+    if (!stream) {
+        return policy;
+    }
+    std::string line;
+    while (std::getline(stream, line)) {
+        const std::string trimmed = Trim(line);
+        if (trimmed.empty() || trimmed[0] == '#') {
+            continue;
+        }
+        const std::size_t split = trimmed.find_first_of(" \t");
+        const std::string directive =
+            split == std::string::npos ? trimmed : trimmed.substr(0, split);
+        const std::string value =
+            split == std::string::npos ? std::string{} : Trim(std::string_view{trimmed}.substr(split));
+        if (value.empty()) {
+            LogMessage(LogLevel::Warn,
+                       std::format("names: '{}' directive without a value in {}", directive,
+                                   path.string()));
+            continue;
+        }
+        const std::string normalized = NormalizeNameForPolicy(value);
+        if (normalized.empty()) {
+            continue;
+        }
+        if (normalized.find(' ') != std::string::npos) {
+            // Matching is per whitespace token, so a phrase can never match.
+            LogMessage(LogLevel::Warn,
+                       std::format("names: '{} {}' is multi-word and cannot match; use single "
+                                   "tokens (skipped)",
+                                   directive, normalized));
+            continue;
+        }
+        // Entries meet name tokens in compacted form, so a blocked entry may be
+        // written with separators ("f.u.c.k") and still match.
+        const std::string entry = CompactNameForPolicy(normalized);
+        if (entry.empty()) {
+            continue;
+        }
+        if (directive == "block") {
+            policy.blocked.push_back(entry);
+        } else if (directive == "allow") {
+            policy.allowed.insert(entry);
+        } else {
+            LogMessage(LogLevel::Warn,
+                       std::format("names: unknown directive '{}' in {}", directive, path.string()));
+        }
+    }
+    std::sort(policy.blocked.begin(), policy.blocked.end());
+    policy.blocked.erase(std::unique(policy.blocked.begin(), policy.blocked.end()),
+                         policy.blocked.end());
+    LogMessage(LogLevel::Info,
+               std::format("names: loaded {} blocked and {} allowed entries from {}",
+                           policy.blocked.size(), policy.allowed.size(), path.string()));
+    return policy;
 }
 
 } // namespace Examples::InfiniteRunner::Leaderboard

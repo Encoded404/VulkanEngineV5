@@ -1,0 +1,24 @@
+# Username and display-name content policy, one directive per line.
+#
+#   block <token>   reject a name whose token contains this substring
+#   allow <token>   exempt the span this substring covers, so a blocked
+#                   substring inside it is not flagged
+#
+# Names are split on whitespace, then each token is compacted by removing
+# punctuation, so "b.a.d" and "xXdickXx" are still checked as "bad" and
+# "xxdickxx". Matching is per token, so `allow dickin` lets dickinson,
+# dickinger and friends through while `dick` on its own is still rejected.
+# One allow prefix therefore covers every name built on it.
+#
+# Tokens are matched as substrings; entries must be single words.
+#
+# Reserved names, so players cannot impersonate staff.
+block admin
+block administrator
+block moderator
+block official
+block server
+
+# Add your own below. A common pattern:
+#   block <slur-or-abuse-root>
+#   allow <legitimate-name-root-containing-it>

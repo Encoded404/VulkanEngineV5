@@ -8,23 +8,29 @@ import std;
 
 import VulkanShared.Storage;
 import Examples.InfiniteRunner.Leaderboard.Account;
-import Examples.InfiniteRunner.Leaderboard.Store;
 
 export namespace Examples::InfiniteRunner::Account {
 
 using Leaderboard::LocalSettings;
-using Leaderboard::ScoreEntry;
-using Leaderboard::SyncedSettings;
+
+// A locally recorded score. Local boards are a player's own history, so they
+// keep the name that was shown at the time rather than resolving it live.
+struct LocalEntry {
+    std::int32_t rank = 0;
+    std::int32_t score = 0;
+    std::string display_name;
+    std::uint64_t at = 0;
+};
 
 // A local player profile. The username is permanent; the display name is
-// mutable and synced; the token is the account credential and is never written
-// anywhere but the private per-profile save slot.
+// mutable and updated on the server by a rename; the token is the account
+// credential and is never written anywhere but the private per-profile save
+// slot.
 struct StoredProfile {
     std::string id;  // generated once, used as the save slot name
     std::string username;
     std::string display_name;
     std::string token;  // registration token (hex); empty until registered
-    SyncedSettings synced{};
     LocalSettings local{};
 };
 
@@ -59,11 +65,10 @@ public:
 
     bool SetToken(std::string_view id, std::string token);
     bool UpdateDisplayName(std::string_view id, std::string display_name);
-    bool UpdateSynced(std::string_view id, SyncedSettings settings);
     bool UpdateLocal(std::string_view id, LocalSettings settings);
 
     // ── local scores (active profile) ──
-    [[nodiscard]] std::vector<ScoreEntry> LocalTop(std::uint64_t config_hash, std::size_t count) const;
+    [[nodiscard]] std::vector<LocalEntry> LocalTop(std::uint64_t config_hash, std::size_t count) const;
     [[nodiscard]] std::int32_t LocalBest(std::uint64_t config_hash) const;
     void RecordRun(std::uint64_t config_hash, std::uint64_t run_id, std::int32_t score,
                    std::string_view display_name);

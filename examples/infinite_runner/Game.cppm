@@ -107,11 +107,10 @@ private:
     std::array<char, 64> username_input_{};
     std::array<char, 64> display_name_input_{};
     std::array<char, 64> display_edit_{};
-    bool leaderboard_public_ = true;
 
-    // An account request (register / settings) in flight. The UI thread must not
+    // An account request (register / rename) in flight. The UI thread must not
     // block on the network, so the future is polled once per frame.
-    enum class PendingOp { None, Register, UpdateSettings };
+    enum class PendingOp { None, Register, Rename };
     PendingOp pending_op_ = PendingOp::None;
     std::optional<std::future<Examples::InfiniteRunner::Leaderboard::AccountResult>> pending_future_{};
     std::string pending_profile_id_{};

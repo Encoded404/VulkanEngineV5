@@ -87,6 +87,20 @@ add_executable(leaderboard_server
 target_compile_features(leaderboard_server PRIVATE cxx_std_23)
 target_link_libraries(leaderboard_server PRIVATE infinite_runner_leaderboard)
 
+# Build-time check: BalanceConfig is fingerprinted at runtime (its Hash() is
+# deliberately not constexpr), so the earliest gate is running the freshly built
+# server against the committed list. A balance change that forgets to record the
+# new fingerprint fails the build instead of shipping a server that rejects its
+# own clients.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_custom_command(TARGET leaderboard_server POST_BUILD
+        COMMAND "$<TARGET_FILE:leaderboard_server>" --check-configs
+                "${CMAKE_SOURCE_DIR}/examples/infinite_runner/leaderboard/accepted_configs.txt"
+        COMMENT "Verifying the current ruleset is listed in accepted_configs.txt"
+        VERBATIM
+    )
+endif()
+
 target_compile_options(leaderboard_server PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra>
     $<$<CXX_COMPILER_ID:Clang>:-Wall -Wextra>

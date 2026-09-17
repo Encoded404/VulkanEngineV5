@@ -147,7 +147,7 @@ TEST(ProfileStoreTest, DeleteRemovesProfileAndItsCredential) {
     std::filesystem::remove_all(base, ec);
 }
 
-TEST(ProfileStoreTest, DisplayNameAndSyncedSettingsUpdate) {
+TEST(ProfileStoreTest, DisplayNameAndLocalSettingsUpdate) {
     const std::filesystem::path base = ScratchBase();
     VulkanShared::Storage::Storage storage = MakeStorage(base);
 
@@ -156,13 +156,18 @@ TEST(ProfileStoreTest, DisplayNameAndSyncedSettingsUpdate) {
     const std::string id = store->AddProfile("carol", "Carol").id;
 
     ASSERT_TRUE(store->UpdateDisplayName(id, "Carol Two"));
-    Examples::InfiniteRunner::Leaderboard::SyncedSettings hidden{};
-    hidden.show_on_leaderboard = false;
-    ASSERT_TRUE(store->UpdateSynced(id, hidden));
+    Examples::InfiniteRunner::Leaderboard::LocalSettings local = store->Active()->local;
+    // Best-per-player is the default; flip it and set the extra filter so the
+    // round trip is observable.
+    EXPECT_TRUE(local.leaderboard_best_per_account);
+    local.leaderboard_best_per_account = false;
+    local.leaderboard_only_mine = true;
+    ASSERT_TRUE(store->UpdateLocal(id, local));
 
     ASSERT_NE(store->Active(), nullptr);
     EXPECT_EQ(store->Active()->display_name, "Carol Two");
-    EXPECT_FALSE(store->Active()->synced.show_on_leaderboard);
+    EXPECT_FALSE(store->Active()->local.leaderboard_best_per_account);
+    EXPECT_TRUE(store->Active()->local.leaderboard_only_mine);
 
     std::error_code ec;
     std::filesystem::remove_all(base, ec);

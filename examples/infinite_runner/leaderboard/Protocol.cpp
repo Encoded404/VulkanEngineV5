@@ -151,49 +151,57 @@ std::optional<FrameHeader> DecodeHeader(std::span<const std::byte> bytes) {
     return header;
 }
 
-std::vector<std::byte> Encode(const HelloMessage& message) {
+std::vector<std::byte> Encode(const HelloSecureMessage& message) {
     std::vector<std::byte> out;
     PutU16(out, message.max_proto);
     PutU16(out, message.cipher_mask);
     PutU64(out, message.config_hash);
     PutBytes(out, message.client_nonce);
+    PutBytes(out, message.client_public_key);
     return out;
 }
 
-std::optional<HelloMessage> DecodeHello(std::span<const std::byte> payload) {
+std::optional<HelloSecureMessage> DecodeHello(std::span<const std::byte> payload) {
     Reader reader{payload};
-    HelloMessage message{};
+    HelloSecureMessage message{};
     std::span<const std::byte> nonce;
+    std::span<const std::byte> key;
     if (!reader.ReadU16(message.max_proto) || !reader.ReadU16(message.cipher_mask) ||
-        !reader.ReadU64(message.config_hash) || !reader.ReadBytes(kNonceSize, nonce)) {
+        !reader.ReadU64(message.config_hash) || !reader.ReadBytes(kNonceSize, nonce) ||
+        !reader.ReadBytes(kPublicKeySize, key)) {
         return std::nullopt;
     }
     std::copy(nonce.begin(), nonce.end(), message.client_nonce.begin());
+    std::copy(key.begin(), key.end(), message.client_public_key.begin());
     return message;
 }
 
-std::vector<std::byte> Encode(const HelloAckMessage& message) {
+std::vector<std::byte> Encode(const HelloAckSecureMessage& message) {
     std::vector<std::byte> out;
     PutU16(out, message.proto);
     PutU16(out, message.cipher_variant);
     out.push_back(static_cast<std::byte>(message.key_id));
     out.push_back(std::byte{0});
     PutBytes(out, message.server_nonce);
+    PutBytes(out, message.server_public_key);
     PutU32(out, message.session_id);
     return out;
 }
 
-std::optional<HelloAckMessage> DecodeHelloAck(std::span<const std::byte> payload) {
+std::optional<HelloAckSecureMessage> DecodeHelloAck(std::span<const std::byte> payload) {
     Reader reader{payload};
-    HelloAckMessage message{};
+    HelloAckSecureMessage message{};
     std::uint8_t reserved = 0;
     std::span<const std::byte> nonce;
+    std::span<const std::byte> key;
     if (!reader.ReadU16(message.proto) || !reader.ReadU16(message.cipher_variant) ||
         !reader.ReadU8(message.key_id) || !reader.ReadU8(reserved) ||
-        !reader.ReadBytes(kNonceSize, nonce) || !reader.ReadU32(message.session_id)) {
+        !reader.ReadBytes(kNonceSize, nonce) || !reader.ReadBytes(kPublicKeySize, key) ||
+        !reader.ReadU32(message.session_id)) {
         return std::nullopt;
     }
     std::copy(nonce.begin(), nonce.end(), message.server_nonce.begin());
+    std::copy(key.begin(), key.end(), message.server_public_key.begin());
     return message;
 }
 
@@ -212,6 +220,28 @@ std::optional<SubmitMessage> DecodeSubmit(std::span<const std::byte> payload) {
         return std::nullopt;
     }
     message.score = static_cast<std::int32_t>(score);
+    return message;
+}
+
+std::vector<std::byte> Encode(const SubmitV3Message& message) {
+    std::vector<std::byte> out;
+    PutU64(out, message.run_id);
+    PutU32(out, static_cast<std::uint32_t>(message.score));
+    out.push_back(static_cast<std::byte>(message.best_per_account ? 1 : 0));
+    return out;
+}
+
+std::optional<SubmitV3Message> DecodeSubmitV3(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    SubmitV3Message message{};
+    std::uint32_t score = 0;
+    std::uint8_t best_per_account = 0;
+    if (!reader.ReadU64(message.run_id) || !reader.ReadU32(score) ||
+        !reader.ReadU8(best_per_account) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    message.score = static_cast<std::int32_t>(score);
+    message.best_per_account = best_per_account != 0;
     return message;
 }
 
@@ -238,6 +268,30 @@ std::optional<SubmitAckMessage> DecodeSubmitAck(std::span<const std::byte> paylo
     return message;
 }
 
+std::vector<std::byte> Encode(const SubmitAckV3Message& message) {
+    std::vector<std::byte> out;
+    PutU32(out, static_cast<std::uint32_t>(message.rank_runs));
+    PutU32(out, static_cast<std::uint32_t>(message.rank_accounts));
+    PutU32(out, static_cast<std::uint32_t>(message.best));
+    return out;
+}
+
+std::optional<SubmitAckV3Message> DecodeSubmitAckV3(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    SubmitAckV3Message message{};
+    std::uint32_t rank_runs = 0;
+    std::uint32_t rank_accounts = 0;
+    std::uint32_t best = 0;
+    if (!reader.ReadU32(rank_runs) || !reader.ReadU32(rank_accounts) || !reader.ReadU32(best) ||
+        !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    message.rank_runs = static_cast<std::int32_t>(rank_runs);
+    message.rank_accounts = static_cast<std::int32_t>(rank_accounts);
+    message.best = static_cast<std::int32_t>(best);
+    return message;
+}
+
 std::vector<std::byte> Encode(const TopRequestMessage& message) {
     std::vector<std::byte> out;
     PutU16(out, message.count);
@@ -255,6 +309,29 @@ std::optional<TopRequestMessage> DecodeTopRequest(std::span<const std::byte> pay
         return std::nullopt;
     }
     message.best_per_account = best_per_account != 0;
+    return message;
+}
+
+std::vector<std::byte> Encode(const TopRequestV3Message& message) {
+    std::vector<std::byte> out;
+    PutU16(out, message.count);
+    out.push_back(static_cast<std::byte>(message.best_per_account ? 1 : 0));
+    PutU64(out, message.since);
+    out.push_back(static_cast<std::byte>(message.only_mine ? 1 : 0));
+    return out;
+}
+
+std::optional<TopRequestV3Message> DecodeTopRequestV3(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    TopRequestV3Message message{};
+    std::uint8_t best_per_account = 0;
+    std::uint8_t only_mine = 0;
+    if (!reader.ReadU16(message.count) || !reader.ReadU8(best_per_account) ||
+        !reader.ReadU64(message.since) || !reader.ReadU8(only_mine) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    message.best_per_account = best_per_account != 0;
+    message.only_mine = only_mine != 0;
     return message;
 }
 
@@ -331,7 +408,6 @@ std::optional<VulkanEngine::Security::CipherVariant> PickCipher(std::uint16_t pe
     return std::nullopt;
 }
 
-
 std::string_view ToString(MessageType type) {
     switch (type) {
         case MessageType::Hello: return "hello";
@@ -349,62 +425,16 @@ std::string_view ToString(MessageType type) {
         case MessageType::ResumeReply: return "resume-reply";
         case MessageType::SettingsUpdate: return "settings-update";
         case MessageType::SettingsReply: return "settings-reply";
+        case MessageType::SubmitV3: return "submit-v3";
+        case MessageType::SubmitAckV3: return "submit-ack-v3";
+        case MessageType::TopRequestV3: return "top-request-v3";
+        case MessageType::RegisterReplyV3: return "register-reply-v3";
+        case MessageType::RenameRequest: return "rename";
+        case MessageType::RenameReplyV3: return "rename-reply";
+        case MessageType::Ping: return "ping";
+        case MessageType::Pong: return "pong";
     }
     return "unknown";
-}
-
-std::vector<std::byte> Encode(const HelloV2Message& message) {
-    std::vector<std::byte> out;
-    PutU16(out, message.max_proto);
-    PutU16(out, message.cipher_mask);
-    PutU64(out, message.config_hash);
-    PutBytes(out, message.client_nonce);
-    PutBytes(out, message.client_public_key);
-    return out;
-}
-
-std::optional<HelloV2Message> DecodeHelloV2(std::span<const std::byte> payload) {
-    Reader reader{payload};
-    HelloV2Message message{};
-    std::span<const std::byte> nonce;
-    std::span<const std::byte> key;
-    if (!reader.ReadU16(message.max_proto) || !reader.ReadU16(message.cipher_mask) ||
-        !reader.ReadU64(message.config_hash) || !reader.ReadBytes(kNonceSize, nonce) ||
-        !reader.ReadBytes(kPublicKeySize, key)) {
-        return std::nullopt;
-    }
-    std::copy(nonce.begin(), nonce.end(), message.client_nonce.begin());
-    std::copy(key.begin(), key.end(), message.client_public_key.begin());
-    return message;
-}
-
-std::vector<std::byte> Encode(const HelloAckV2Message& message) {
-    std::vector<std::byte> out;
-    PutU16(out, message.proto);
-    PutU16(out, message.cipher_variant);
-    out.push_back(static_cast<std::byte>(message.key_id));
-    out.push_back(std::byte{0});
-    PutBytes(out, message.server_nonce);
-    PutBytes(out, message.server_public_key);
-    PutU32(out, message.session_id);
-    return out;
-}
-
-std::optional<HelloAckV2Message> DecodeHelloAckV2(std::span<const std::byte> payload) {
-    Reader reader{payload};
-    HelloAckV2Message message{};
-    std::uint8_t reserved = 0;
-    std::span<const std::byte> nonce;
-    std::span<const std::byte> key;
-    if (!reader.ReadU16(message.proto) || !reader.ReadU16(message.cipher_variant) ||
-        !reader.ReadU8(message.key_id) || !reader.ReadU8(reserved) ||
-        !reader.ReadBytes(kNonceSize, nonce) || !reader.ReadBytes(kPublicKeySize, key) ||
-        !reader.ReadU32(message.session_id)) {
-        return std::nullopt;
-    }
-    std::copy(nonce.begin(), nonce.end(), message.server_nonce.begin());
-    std::copy(key.begin(), key.end(), message.server_public_key.begin());
-    return message;
 }
 
 std::vector<std::byte> Encode(const RegisterRequestMessage& message) {
@@ -449,6 +479,29 @@ std::optional<RegisterReplyMessage> DecodeRegisterReply(std::span<const std::byt
     return message;
 }
 
+std::vector<std::byte> Encode(const RegisterReplyV3Message& message) {
+    std::vector<std::byte> out;
+    out.push_back(static_cast<std::byte>(message.status));
+    PutString(out, message.reason.substr(0, kMaxReasonText));
+    PutU64(out, message.user_id);
+    PutString(out, message.token);
+    PutString(out, message.display_name);
+    return out;
+}
+
+std::optional<RegisterReplyV3Message> DecodeRegisterReplyV3(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    RegisterReplyV3Message message{};
+    std::uint8_t status = 0;
+    if (!reader.ReadU8(status) || !reader.ReadString(message.reason) ||
+        !reader.ReadU64(message.user_id) || !reader.ReadString(message.token) ||
+        !reader.ReadString(message.display_name) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    message.status = static_cast<SyncStatus>(status);
+    return message;
+}
+
 std::vector<std::byte> Encode(const LoginRequestMessage& message) {
     std::vector<std::byte> out;
     PutString(out, message.username);
@@ -471,7 +524,7 @@ std::vector<std::byte> Encode(const LoginReplyMessage& message) {
     PutU64(out, message.account.id);
     PutString(out, message.account.username);
     PutString(out, message.account.display_name);
-    out.push_back(static_cast<std::byte>(message.settings.show_on_leaderboard ? 1 : 0));
+    out.push_back(static_cast<std::byte>(message.show_on_leaderboard ? 1 : 0));
     PutString(out, message.session_token);
     PutU64(out, message.session_expires_at);
     return out;
@@ -489,7 +542,7 @@ std::optional<LoginReplyMessage> DecodeLoginReply(std::span<const std::byte> pay
         return std::nullopt;
     }
     message.status = static_cast<SyncStatus>(status);
-    message.settings.show_on_leaderboard = show != 0;
+    message.show_on_leaderboard = show != 0;
     return message;
 }
 
@@ -511,7 +564,7 @@ std::optional<ResumeRequestMessage> DecodeResumeRequest(std::span<const std::byt
 std::vector<std::byte> Encode(const SettingsUpdateMessage& message) {
     std::vector<std::byte> out;
     PutString(out, message.display_name.substr(0, kMaxNameField));
-    out.push_back(static_cast<std::byte>(message.settings.show_on_leaderboard ? 1 : 0));
+    out.push_back(static_cast<std::byte>(message.show_on_leaderboard ? 1 : 0));
     return out;
 }
 
@@ -522,7 +575,7 @@ std::optional<SettingsUpdateMessage> DecodeSettingsUpdate(std::span<const std::b
     if (!reader.ReadString(message.display_name) || !reader.ReadU8(show) || !reader.AtEnd()) {
         return std::nullopt;
     }
-    message.settings.show_on_leaderboard = show != 0;
+    message.show_on_leaderboard = show != 0;
     return message;
 }
 
@@ -532,7 +585,7 @@ std::vector<std::byte> Encode(const SettingsReplyMessage& message) {
     PutU64(out, message.account.id);
     PutString(out, message.account.username);
     PutString(out, message.account.display_name);
-    out.push_back(static_cast<std::byte>(message.settings.show_on_leaderboard ? 1 : 0));
+    out.push_back(static_cast<std::byte>(message.show_on_leaderboard ? 1 : 0));
     return out;
 }
 
@@ -547,7 +600,75 @@ std::optional<SettingsReplyMessage> DecodeSettingsReply(std::span<const std::byt
         return std::nullopt;
     }
     message.status = static_cast<SyncStatus>(status);
-    message.settings.show_on_leaderboard = show != 0;
+    message.show_on_leaderboard = show != 0;
+    return message;
+}
+
+std::vector<std::byte> Encode(const RenameRequestMessage& message) {
+    std::vector<std::byte> out;
+    PutString(out, message.display_name.substr(0, kMaxNameField));
+    return out;
+}
+
+std::optional<RenameRequestMessage> DecodeRenameRequest(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    RenameRequestMessage message{};
+    if (!reader.ReadString(message.display_name) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    return message;
+}
+
+std::vector<std::byte> Encode(const RenameReplyV3Message& message) {
+    std::vector<std::byte> out;
+    out.push_back(static_cast<std::byte>(message.status));
+    PutString(out, message.reason.substr(0, kMaxReasonText));
+    PutU64(out, message.account.id);
+    PutString(out, message.account.username);
+    PutString(out, message.account.display_name);
+    return out;
+}
+
+std::optional<RenameReplyV3Message> DecodeRenameReplyV3(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    RenameReplyV3Message message{};
+    std::uint8_t status = 0;
+    if (!reader.ReadU8(status) || !reader.ReadString(message.reason) ||
+        !reader.ReadU64(message.account.id) || !reader.ReadString(message.account.username) ||
+        !reader.ReadString(message.account.display_name) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    message.status = static_cast<SyncStatus>(status);
+    return message;
+}
+
+std::vector<std::byte> Encode(const PingMessage& message) {
+    std::vector<std::byte> out;
+    PutU64(out, message.token);
+    return out;
+}
+
+std::optional<PingMessage> DecodePing(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    PingMessage message{};
+    if (!reader.ReadU64(message.token) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
+    return message;
+}
+
+std::vector<std::byte> Encode(const PongMessage& message) {
+    std::vector<std::byte> out;
+    PutU64(out, message.token);
+    return out;
+}
+
+std::optional<PongMessage> DecodePong(std::span<const std::byte> payload) {
+    Reader reader{payload};
+    PongMessage message{};
+    if (!reader.ReadU64(message.token) || !reader.AtEnd()) {
+        return std::nullopt;
+    }
     return message;
 }
 

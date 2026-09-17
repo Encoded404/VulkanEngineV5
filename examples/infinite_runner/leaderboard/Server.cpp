@@ -24,7 +24,7 @@ using VulkanEngine::Security::CipherVariant;
     const std::array<std::byte, kHeaderSize> header_bytes = EncodeHeader(header);
     std::vector<std::byte> frame(header_bytes.begin(), header_bytes.end());
     frame.insert(frame.end(), payload.begin(), payload.end());
-    return SendFrame(socket, frame);
+    return SendFrame(socket, frame) == IoStatus::Ok;
 }
 
 [[nodiscard]] bool SendEncrypted(TcpSocket& socket, std::span<const std::byte> session_key,
@@ -78,8 +78,12 @@ using VulkanEngine::Security::CipherVariant;
 
 Server::Server(ServerOptions options)
     : options_(std::move(options)),
-      store_(options_.store_path),
-      accounts_(AccountStoreOptions{.path = options_.account_path, .argon2 = options_.argon2}),
+      store_(ScoreStoreOptions{.directory = options_.store_path,
+                               .legacy_file = options_.legacy_store_path,
+                               .max_scores_per_account = options_.max_scores_per_account}),
+      accounts_(AccountStoreOptions{.path = options_.account_path,
+                                    .argon2 = options_.argon2,
+                                    .name_policy = options_.name_policy}),
       sessions_(SessionStoreOptions{.ttl = options_.session_ttl}) {}
 
 Server::~Server() {
@@ -136,27 +140,55 @@ bool Server::LoadOrCreateIdentity() {
     return true;
 }
 
+bool Server::ConfigAccepted(std::uint64_t config_hash) const {
+    if (options_.accept_unknown_configs) {
+        return true;
+    }
+    if (config_hash == CurrentBalanceHash()) {
+        return true;
+    }
+    return std::find(options_.accepted_configs.begin(), options_.accepted_configs.end(),
+                     config_hash) != options_.accepted_configs.end();
+}
+
 bool Server::Start() {
     std::optional<TcpListener> listener = TcpListener::Bind(options_.port);
     if (!listener.has_value()) {
         return false;
     }
     listener_ = std::move(*listener);
-    // A server without a usable identity cannot perform the v2 handshake, so a
-    // failure here is fatal rather than a silent fallback.
+    // A server without a usable identity cannot perform the secure handshake, so
+    // a failure here is fatal rather than a silent fallback.
     if (!LoadOrCreateIdentity()) {
         LogMessage(LogLevel::Error, "server: could not load or create a server identity");
         listener_.Close();
         return false;
     }
+    if (!options_.accept_unknown_configs) {
+        const std::uint64_t current = CurrentBalanceHash();
+        const bool listed = std::find(options_.accepted_configs.begin(),
+                                      options_.accepted_configs.end(),
+                                      current) != options_.accepted_configs.end();
+        if (!listed) {
+            LogMessage(LogLevel::Error,
+                       std::format("server: current ruleset {:#x} is not in the accepted-configs "
+                                   "list; add it before starting",
+                                   current));
+            listener_.Close();
+            return false;
+        }
+    }
     running_.store(true);
     LogMessage(LogLevel::Info, std::format("server: listening on port {}", listener_.BoundPort()));
     LogMessage(LogLevel::Info, std::format("server: identity public key {}",
                                            TokenToHex(identity_.public_key).substr(0, 16)));
-    if (!options_.account_path.empty()) {
-        LogMessage(LogLevel::Info,
-                   std::format("server: accounts at {}", options_.account_path.string()));
-    }
+    LogMessage(LogLevel::Info,
+               std::format("server: accepting {} ruleset(s), up to {} scores per account",
+                           options_.accept_unknown_configs ? std::string_view{"all"}
+                                                           : options_.accepted_configs.size() == 0
+                                                                 ? std::string_view{"current only"}
+                                                                 : std::string_view{"listed"},
+                           options_.max_scores_per_account));
     if (options_.store_path.empty()) {
         LogMessage(LogLevel::Warn,
                    "server: scores are in memory only (ephemeral) and will be lost on exit");
@@ -172,20 +204,29 @@ void Server::Stop() {
     listener_.Close();
 
     // Let every in-flight handler finish before the stores and identity are
-    // destroyed underneath it.
-    std::vector<std::future<void>> pending;
-    {
-        std::lock_guard lock(clients_mutex_);
-        pending.swap(clients_);
-    }
-    for (std::future<void>& client : pending) {
-        if (client.valid()) {
-            client.wait();
+    // destroyed underneath it. A connection accepted just before the listener
+    // closed may still be starting, so drain repeatedly rather than once.
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        std::vector<std::future<void>> pending;
+        {
+            std::lock_guard lock(clients_mutex_);
+            pending.swap(clients_);
+        }
+        if (pending.empty()) {
+            break;
+        }
+        for (std::future<void>& client : pending) {
+            if (client.valid()) {
+                client.wait();
+            }
         }
     }
+    // Persist whatever the timer had not yet written.
+    store_.Flush();
 }
 
 void Server::Run() {
+    auto last_flush = std::chrono::steady_clock::now();
     while (running_.load()) {
         std::optional<TcpSocket> socket = listener_.Accept(std::chrono::milliseconds(200));
         if (socket.has_value()) {
@@ -210,12 +251,44 @@ void Server::Run() {
         std::erase_if(clients_, [](std::future<void>& client) {
             return client.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
         });
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_flush >= options_.flush_interval) {
+            store_.Flush();
+            last_flush = now;
+        }
+    }
+}
+
+IoStatus Server::RecvFrameWithIdle(TcpSocket& socket, std::vector<std::byte>& frame,
+                                   std::chrono::steady_clock::time_point deadline) {
+    for (;;) {
+        if (!running_.load()) {
+            return IoStatus::Disconnected;
+        }
+        const IoStatus status = RecvFrame(socket, frame);
+        if (status != IoStatus::Timeout) {
+            return status;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return IoStatus::Timeout;
+        }
     }
 }
 
 void Server::HandleClient(TcpSocket socket) {
+    // The recv timeout is the poll tick, not the idle budget: RecvFrameWithIdle
+    // is what enforces the deadline, so a timeout there means "still healthy".
+    socket.SetTimeouts(options_.socket_poll_interval, options_.send_timeout);
+
     std::vector<std::byte> frame;
-    if (!RecvFrame(socket, frame) || frame.size() < kHeaderSize) {
+    const auto handshake_deadline = std::chrono::steady_clock::now() + options_.idle_timeout;
+    const IoStatus handshake_status = RecvFrameWithIdle(socket, frame, handshake_deadline);
+    if (handshake_status == IoStatus::Timeout) {
+        LogMessage(LogLevel::Debug, "server: closing a connection idle before the handshake");
+        return;
+    }
+    if (handshake_status != IoStatus::Ok || frame.size() < kHeaderSize) {
         LogMessage(LogLevel::Warn, "server: client sent no readable handshake");
         return;
     }
@@ -226,83 +299,71 @@ void Server::HandleClient(TcpSocket socket) {
                                hello_header.has_value() ? ToString(hello_header->type) : "a bad header"));
         return;
     }
-
-    // ── Negotiate version, cipher and (v2) key agreement ──
-    CipherVariant variant = CipherVariant::XChaCha20Poly1305;
-    std::vector<std::byte> session_key;
-    std::uint16_t negotiated_proto = kProtocolMinVersion;
-    std::uint64_t config_hash = hello_header->config_hash;
-    std::vector<std::byte> client_nonce;
-    std::vector<std::byte> server_nonce;
-    std::vector<std::byte> hello_ack_payload;
-
-    if (hello_header->proto >= 2) {
-        const std::optional<HelloV2Message> hello =
-            DecodeHelloV2(std::span<const std::byte>(frame).subspan(kHeaderSize));
-        if (!hello.has_value()) {
-            return;
-        }
-        config_hash = hello->config_hash;
-        client_nonce.assign(hello->client_nonce.begin(), hello->client_nonce.end());
-        server_nonce = VulkanEngine::Security::RandomBytes(kNonceSize);
-
-        const std::optional<CipherVariant> picked = PickCipher(hello->cipher_mask);
-        if (!picked.has_value()) {
-            (void)SendError(socket, 2, config_hash, 0, 3, "no common cipher", {}, variant, false);
-            return;
-        }
-        variant = *picked;
-
-        VulkanEngine::Security::X25519Key client_public{};
-        std::copy(hello->client_public_key.begin(), hello->client_public_key.end(), client_public.begin());
-        const std::optional<VulkanEngine::Security::X25519Key> shared =
-            VulkanEngine::Security::X25519SharedSecret(identity_.secret, client_public);
-        if (!shared.has_value()) {
-            return;
-        }
-
-        negotiated_proto = std::min<std::uint16_t>(2, hello->max_proto);
-        LogMessage(LogLevel::Info,
-                   std::format("server: v2 handshake (proto {}, cipher {}, config {:#x})",
-                               negotiated_proto, static_cast<int>(variant), config_hash));
-        HelloAckV2Message ack{};
-        ack.proto = negotiated_proto;
-        ack.cipher_variant = static_cast<std::uint16_t>(variant);
-        ack.key_id = kSessionKeyId;
-        std::copy(server_nonce.begin(), server_nonce.end(), ack.server_nonce.begin());
-        std::copy(identity_.public_key.begin(), identity_.public_key.end(), ack.server_public_key.begin());
-        hello_ack_payload = Encode(ack);
-        session_key = DeriveX25519SessionKey(*shared, client_nonce, server_nonce, config_hash);
-    } else {
-        const std::optional<HelloMessage> hello =
-            DecodeHello(std::span<const std::byte>(frame).subspan(kHeaderSize));
-        if (!hello.has_value()) {
-            return;
-        }
-        config_hash = hello->config_hash;
-        client_nonce.assign(hello->client_nonce.begin(), hello->client_nonce.end());
-        server_nonce = VulkanEngine::Security::RandomBytes(kNonceSize);
-
-        const std::optional<CipherVariant> picked = PickCipher(hello->cipher_mask);
-        if (!picked.has_value()) {
-            (void)SendError(socket, 1, config_hash, 0, 3, "no common cipher", {}, variant, false);
-            return;
-        }
-        variant = *picked;
-        negotiated_proto = std::min<std::uint16_t>(1, hello->max_proto);
-        LogMessage(LogLevel::Info,
-                   std::format("server: v1 handshake (proto {}, cipher {}, config {:#x})",
-                               negotiated_proto, static_cast<int>(variant), config_hash));
-
-        HelloAckMessage ack{};
-        ack.proto = negotiated_proto;
-        ack.cipher_variant = static_cast<std::uint16_t>(variant);
-        ack.key_id = kSessionKeyId;
-        std::copy(server_nonce.begin(), server_nonce.end(), ack.server_nonce.begin());
-        hello_ack_payload = Encode(ack);
-        session_key = DerivePskSessionKey(options_.psk, client_nonce, server_nonce, config_hash);
+    if (hello_header->proto < kProtocolMinVersion || hello_header->proto > kProtocolVersion) {
+        LogMessage(LogLevel::Warn,
+                   std::format("server: client speaks v{}, server supports {}-{}",
+                               hello_header->proto, kProtocolMinVersion, kProtocolVersion));
+        (void)SendError(socket, kProtocolMinVersion, hello_header->config_hash, 0, 1,
+                        std::format("unsupported protocol v{}; server speaks {}-{}",
+                                    hello_header->proto, kProtocolMinVersion, kProtocolVersion),
+                        {}, CipherVariant::XChaCha20Poly1305, false);
+        return;
     }
 
+    const std::optional<HelloSecureMessage> hello =
+        DecodeHello(std::span<const std::byte>(frame).subspan(kHeaderSize));
+    if (!hello.has_value()) {
+        return;
+    }
+    const std::uint64_t config_hash = hello->config_hash;
+
+    // ── Negotiate cipher, version and key agreement ──
+    CipherVariant variant = CipherVariant::XChaCha20Poly1305;
+    std::vector<std::byte> session_key;
+    const std::uint16_t negotiated_proto =
+        std::min<std::uint16_t>(kProtocolVersion, hello->max_proto);
+    const std::vector<std::byte> client_nonce(hello->client_nonce.begin(),
+                                              hello->client_nonce.end());
+    const std::vector<std::byte> server_nonce = VulkanEngine::Security::RandomBytes(kNonceSize);
+
+    // Reject an unknown ruleset before the key exchange: the client then fails
+    // inside its handshake loop (which backs off) and reads an actionable
+    // reason, and the server skips the expensive X25519 work.
+    if (!ConfigAccepted(config_hash)) {
+        LogMessage(LogLevel::Warn,
+                   std::format("server: rejected unknown ruleset {:#x}", config_hash));
+        (void)SendError(socket, negotiated_proto, config_hash, 0, 2, "unknown ruleset", {}, variant,
+                        false);
+        return;
+    }
+
+    const std::optional<CipherVariant> picked = PickCipher(hello->cipher_mask);
+    if (!picked.has_value()) {
+        (void)SendError(socket, negotiated_proto, config_hash, 0, 3, "no common cipher", {}, variant,
+                        false);
+        return;
+    }
+    variant = *picked;
+
+    VulkanEngine::Security::X25519Key client_public{};
+    std::copy(hello->client_public_key.begin(), hello->client_public_key.end(), client_public.begin());
+    const std::optional<VulkanEngine::Security::X25519Key> shared =
+        VulkanEngine::Security::X25519SharedSecret(identity_.secret, client_public);
+    if (!shared.has_value()) {
+        return;
+    }
+    LogMessage(LogLevel::Info,
+               std::format("server: handshake (proto {}, cipher {}, config {:#x})",
+                           negotiated_proto, static_cast<int>(variant), config_hash));
+
+    HelloAckSecureMessage ack{};
+    ack.proto = negotiated_proto;
+    ack.cipher_variant = static_cast<std::uint16_t>(variant);
+    ack.key_id = kSessionKeyId;
+    std::copy(server_nonce.begin(), server_nonce.end(), ack.server_nonce.begin());
+    std::copy(identity_.public_key.begin(), identity_.public_key.end(), ack.server_public_key.begin());
+    const std::vector<std::byte> hello_ack_payload = Encode(ack);
+    session_key = DeriveX25519SessionKey(*shared, client_nonce, server_nonce, config_hash);
     if (session_key.size() != 32) {
         return;
     }
@@ -312,22 +373,31 @@ void Server::HandleClient(TcpSocket socket) {
         return;
     }
 
-    if (!options_.accept_unknown_configs && config_hash != CurrentBalanceHash()) {
-        (void)SendError(socket, negotiated_proto, config_hash, 0, 2, "unknown ruleset", session_key,
-                        variant, true);
-        return;
-    }
-
     ConnectionState connection{};
     connection.proto = negotiated_proto;
 
+    // Simple per-connection token bucket. A zero refill disables it.
+    const bool rate_limited = options_.rate_limit_refill.count() > 0;
+    double tokens = static_cast<double>(options_.rate_limit_burst);
+    auto last_refill = std::chrono::steady_clock::now();
+
     // ── Serve requests ──
     LogMessage(LogLevel::Debug, "server: session established, serving requests");
+    auto idle_deadline = std::chrono::steady_clock::now() + options_.idle_timeout;
     while (running_.load()) {
-        if (!RecvFrame(socket, frame) || frame.size() < kHeaderSize) {
+        const IoStatus receive_status = RecvFrameWithIdle(socket, frame, idle_deadline);
+        if (receive_status == IoStatus::Timeout) {
+            LogMessage(LogLevel::Debug,
+                       std::format("server: closing a connection idle for {}s",
+                                   options_.idle_timeout.count()));
+            return;
+        }
+        if (receive_status != IoStatus::Ok || frame.size() < kHeaderSize) {
             LogMessage(LogLevel::Debug, "server: client disconnected");
             return;
         }
+        // Any frame counts as activity, including a keepalive Ping.
+        idle_deadline = std::chrono::steady_clock::now() + options_.idle_timeout;
         const std::optional<FrameHeader> header = DecodeHeader(frame);
         if (!header.has_value() || header->config_hash != config_hash) {
             LogMessage(LogLevel::Warn, "server: dropping a frame with a bad header or ruleset");
@@ -357,6 +427,24 @@ void Server::HandleClient(TcpSocket socket) {
                                  config_hash, header->seq, Encode(ErrorMessage{0, std::string{text}}));
         };
 
+        if (rate_limited) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = now - last_refill;
+            if (elapsed >= options_.rate_limit_refill) {
+                const auto steps = elapsed / options_.rate_limit_refill;
+                tokens = std::min<double>(
+                    tokens + static_cast<double>(steps),
+                    static_cast<double>(options_.rate_limit_burst));
+                last_refill += options_.rate_limit_refill * steps;
+            }
+            if (tokens < 1.0) {
+                LogMessage(LogLevel::Warn, "server: rate limited a connection");
+                (void)fail("rate limited");
+                return;
+            }
+            tokens -= 1.0;
+        }
+
         switch (header->type) {
             case MessageType::RegisterRequest: {
                 const std::optional<RegisterRequestMessage> request = DecodeRegisterRequest(*plain);
@@ -368,20 +456,31 @@ void Server::HandleClient(TcpSocket socket) {
                 LogMessage(result.status == SyncStatus::Ok ? LogLevel::Info : LogLevel::Warn,
                            std::format("server: register '{}' -> {}", request->username,
                                        ToString(result.status)));
-                RegisterReplyMessage reply_message{};
-                reply_message.status = result.status;
-                reply_message.user_id = result.user_id;
-                reply_message.token = result.token;
-                reply_message.display_name = result.display_name;
                 if (result.status == SyncStatus::Ok) {
                     connection.authenticated = true;
-                    connection.account = AccountInfo{result.user_id, request->username, result.display_name};
-                    if (const auto settings = accounts_.SettingsOf(result.user_id); settings.has_value()) {
-                        connection.settings = *settings;
-                    }
+                    connection.account =
+                        AccountInfo{result.user_id, request->username, result.display_name};
+                    connection.hidden = false;
                 }
-                if (!reply(MessageType::RegisterReply, Encode(reply_message))) {
-                    return;
+                if (connection.proto >= 3) {
+                    RegisterReplyV3Message reply_message{};
+                    reply_message.status = result.status;
+                    reply_message.reason = result.reason;
+                    reply_message.user_id = result.user_id;
+                    reply_message.token = result.token;
+                    reply_message.display_name = result.display_name;
+                    if (!reply(MessageType::RegisterReplyV3, Encode(reply_message))) {
+                        return;
+                    }
+                } else {
+                    RegisterReplyMessage reply_message{};
+                    reply_message.status = result.status;
+                    reply_message.user_id = result.user_id;
+                    reply_message.token = result.token;
+                    reply_message.display_name = result.display_name;
+                    if (!reply(MessageType::RegisterReply, Encode(reply_message))) {
+                        return;
+                    }
                 }
                 break;
             }
@@ -399,12 +498,12 @@ void Server::HandleClient(TcpSocket socket) {
                 if (result.status == SyncStatus::Ok) {
                     const SessionStore::Issued session = sessions_.Issue(result.account.id);
                     reply_message.account = result.account;
-                    reply_message.settings = result.settings;
+                    reply_message.show_on_leaderboard = !accounts_.IsHidden(result.account.id);
                     reply_message.session_token = session.token;
                     reply_message.session_expires_at = session.expires_at;
                     connection.authenticated = true;
                     connection.account = result.account;
-                    connection.settings = result.settings;
+                    connection.hidden = !reply_message.show_on_leaderboard;
                 }
                 if (!reply(MessageType::LoginReply, Encode(reply_message))) {
                     return;
@@ -428,16 +527,15 @@ void Server::HandleClient(TcpSocket socket) {
                            !account.has_value()) {
                     reply_message.status = SyncStatus::UnknownAccount;
                 } else {
-                    const std::optional<SyncedSettings> settings = accounts_.SettingsOf(*user_id);
                     reply_message.status = SyncStatus::Ok;
                     reply_message.account = *account;
-                    reply_message.settings = settings.value_or(SyncedSettings{});
+                    reply_message.show_on_leaderboard = !accounts_.IsHidden(*user_id);
                     const SessionStore::Issued session = sessions_.Issue(*user_id);
                     reply_message.session_token = session.token;
                     reply_message.session_expires_at = session.expires_at;
                     connection.authenticated = true;
                     connection.account = *account;
-                    connection.settings = reply_message.settings;
+                    connection.hidden = !reply_message.show_on_leaderboard;
                 }
                 if (!reply(MessageType::LoginReply, Encode(reply_message))) {
                     return;
@@ -445,6 +543,7 @@ void Server::HandleClient(TcpSocket socket) {
                 break;
             }
             case MessageType::SettingsUpdate: {
+                // Legacy v2 rename + visibility. A v3 client never sends this.
                 const std::optional<SettingsUpdateMessage> request = DecodeSettingsUpdate(*plain);
                 if (!request.has_value()) {
                     return;
@@ -454,17 +553,17 @@ void Server::HandleClient(TcpSocket socket) {
                     LogMessage(LogLevel::Warn, "server: settings update without a signed-in account");
                     reply_message.status = SyncStatus::NotAuthenticated;
                 } else {
-                    const AccountStore::UpdateResult result = accounts_.UpdateSettings(
-                        connection.account.id, request->display_name, request->settings);
+                    const AccountStore::UpdateResult result = accounts_.UpdateLegacy(
+                        connection.account.id, request->display_name, request->show_on_leaderboard);
                     LogMessage(result.status == SyncStatus::Ok ? LogLevel::Info : LogLevel::Warn,
-                               std::format("server: settings for '{}' -> {}",
+                               std::format("server: legacy settings for '{}' -> {}",
                                            connection.account.username, ToString(result.status)));
                     reply_message.status = result.status;
                     if (result.status == SyncStatus::Ok) {
                         reply_message.account = result.account;
-                        reply_message.settings = result.settings;
+                        reply_message.show_on_leaderboard = request->show_on_leaderboard;
                         connection.account = result.account;
-                        connection.settings = result.settings;
+                        connection.hidden = !request->show_on_leaderboard;
                     }
                 }
                 if (!reply(MessageType::SettingsReply, Encode(reply_message))) {
@@ -472,22 +571,79 @@ void Server::HandleClient(TcpSocket socket) {
                 }
                 break;
             }
-            case MessageType::Submit: {
-                const std::optional<SubmitMessage> submit = DecodeSubmit(*plain);
-                if (!submit.has_value()) {
+            case MessageType::RenameRequest: {
+                const std::optional<RenameRequestMessage> request = DecodeRenameRequest(*plain);
+                if (!request.has_value()) {
                     return;
+                }
+                RenameReplyV3Message reply_message{};
+                if (!connection.authenticated) {
+                    LogMessage(LogLevel::Warn, "server: rename without a signed-in account");
+                    reply_message.status = SyncStatus::NotAuthenticated;
+                    reply_message.reason = "not authenticated";
+                } else {
+                    const AccountStore::UpdateResult result =
+                        accounts_.Rename(connection.account.id, request->display_name);
+                    LogMessage(result.status == SyncStatus::Ok ? LogLevel::Info : LogLevel::Warn,
+                               std::format("server: rename '{}' -> {}", connection.account.username,
+                                           ToString(result.status)));
+                    reply_message.status = result.status;
+                    reply_message.reason = result.reason;
+                    reply_message.account = result.account;
+                    if (result.status == SyncStatus::Ok) {
+                        connection.account = result.account;
+                    }
+                }
+                if (!reply(MessageType::RenameReplyV3, Encode(reply_message))) {
+                    return;
+                }
+                break;
+            }
+            case MessageType::Ping: {
+                const std::optional<PingMessage> request = DecodePing(*plain);
+                if (!request.has_value()) {
+                    LogMessage(LogLevel::Warn, "server: malformed ping");
+                    return;
+                }
+                LogMessage(LogLevel::Trace, std::format("server: ping (token {:#x})", request->token));
+                if (!reply(MessageType::Pong, Encode(PongMessage{request->token}))) {
+                    return;
+                }
+                break;
+            }
+            case MessageType::Submit:
+            case MessageType::SubmitV3: {
+                std::uint64_t run_id = 0;
+                std::int32_t score = 0;
+                bool best_per_account = false;
+                const bool v3 = header->type == MessageType::SubmitV3;
+                if (v3) {
+                    const std::optional<SubmitV3Message> submit = DecodeSubmitV3(*plain);
+                    if (!submit.has_value()) {
+                        return;
+                    }
+                    run_id = submit->run_id;
+                    score = submit->score;
+                    best_per_account = submit->best_per_account;
+                } else {
+                    const std::optional<SubmitMessage> submit = DecodeSubmit(*plain);
+                    if (!submit.has_value()) {
+                        return;
+                    }
+                    run_id = submit->run_id;
+                    score = submit->score;
                 }
                 if (!connection.authenticated) {
                     LogMessage(LogLevel::Warn,
                                std::format("server: rejected score {} from an anonymous connection",
-                                           submit->score));
+                                           score));
                     if (!fail("not authenticated")) {
                         return;
                     }
                     break;
                 }
                 const AccountStore::ScoreResult recorded =
-                    accounts_.RecordRun(connection.account.id, submit->run_id);
+                    accounts_.RecordRun(connection.account.id, run_id);
                 if (recorded == AccountStore::ScoreResult::UnknownAccount) {
                     LogMessage(LogLevel::Warn,
                                std::format("server: score for unknown account {}", connection.account.id));
@@ -496,56 +652,97 @@ void Server::HandleClient(TcpSocket socket) {
                     }
                     break;
                 }
-                SubmitAckMessage ack{};
-                if (recorded == AccountStore::ScoreResult::Accepted) {
-                    const std::string shown =
-                        connection.settings.show_on_leaderboard ? connection.account.display_name
-                                                                : std::string{};
+                ScoreStore::RankInfo ranks{};
+                if (recorded == AccountStore::ScoreResult::Accepted && !connection.hidden) {
                     const ScoreStore::SubmitResult stored =
-                        store_.Submit(config_hash, submit->score, shown, connection.account.id,
-                                      UnixNowSeconds());
+                        store_.Submit(config_hash, score, connection.account.id, UnixNowSeconds());
+                    ranks = ScoreStore::RankInfo{stored.rank_runs, stored.rank_accounts, stored.best};
                     LogMessage(LogLevel::Info,
-                               std::format("server: score {} from '{}' accepted (rank {}/{})",
-                                           submit->score, connection.account.username, stored.rank,
-                                           stored.total));
-                    ack.rank = stored.rank;
-                    ack.total = stored.total;
-                    ack.best = stored.best;
+                               std::format("server: score {} from '{}' accepted (rank {}/{})", score,
+                                           connection.account.username, stored.rank_runs,
+                                           stored.rank_accounts));
                 } else {
+                    // Duplicate run, or a legacy v2 client that hid itself:
+                    // acknowledge without recording.
+                    const std::optional<ScoreStore::RankInfo> info =
+                        store_.RankOf(config_hash, connection.account.id);
+                    if (info.has_value()) {
+                        ranks = *info;
+                    }
                     LogMessage(LogLevel::Debug,
-                               std::format("server: duplicate run {} from '{}' ignored", submit->run_id,
-                                           connection.account.username));
-                    // Duplicate: report the current board state without recording twice.
-                    const std::vector<ScoreEntry> top = store_.Top(config_hash, 1);
-                    ack.best = top.empty() ? 0 : top.front().score;
-                    ack.total = static_cast<std::int32_t>(store_.Size(config_hash));
-                    ack.rank = 1;
+                               std::format("server: run {} from '{}' not recorded (hidden or duplicate)",
+                                           run_id, connection.account.username));
                 }
-                if (!reply(MessageType::SubmitAck, Encode(ack))) {
-                    return;
+                if (v3) {
+                    SubmitAckV3Message ack{};
+                    ack.rank_runs = ranks.rank_runs;
+                    ack.rank_accounts = ranks.rank_accounts;
+                    ack.best = ranks.best;
+                    (void)best_per_account; // both standings travel; the UI picks.
+                    if (!reply(MessageType::SubmitAckV3, Encode(ack))) {
+                        return;
+                    }
+                } else {
+                    SubmitAckMessage ack{};
+                    ack.rank = ranks.rank_runs;
+                    ack.total = static_cast<std::int32_t>(store_.Size(config_hash));
+                    ack.best = ranks.best;
+                    if (!reply(MessageType::SubmitAck, Encode(ack))) {
+                        return;
+                    }
                 }
                 break;
             }
-            case MessageType::TopRequest: {
-                const std::optional<TopRequestMessage> request = DecodeTopRequest(*plain);
-                if (!request.has_value()) {
-                    return;
+            case MessageType::TopRequest:
+            case MessageType::TopRequestV3: {
+                std::size_t count = 10;
+                bool best_per_account = false;
+                std::uint64_t since = 0;
+                bool only_mine = false;
+                if (header->type == MessageType::TopRequestV3) {
+                    const std::optional<TopRequestV3Message> request = DecodeTopRequestV3(*plain);
+                    if (!request.has_value()) {
+                        return;
+                    }
+                    count = request->count;
+                    best_per_account = request->best_per_account;
+                    since = request->since;
+                    only_mine = request->only_mine;
+                } else {
+                    const std::optional<TopRequestMessage> request = DecodeTopRequest(*plain);
+                    if (!request.has_value()) {
+                        return;
+                    }
+                    count = request->count;
+                    best_per_account = request->best_per_account;
+                    since = request->since;
+                }
+                if (only_mine && !connection.authenticated) {
+                    if (!fail("not authenticated")) {
+                        return;
+                    }
+                    break;
                 }
                 TopOptions options{};
-                options.best_per_account = request->best_per_account;
-                options.since = request->since;
+                options.best_per_account = best_per_account;
+                options.since = since;
+                options.only_user = only_mine ? connection.account.id : 0;
                 const std::vector<ScoreEntry> top =
-                    store_.Top(config_hash, std::min<std::size_t>(request->count, 100), options);
+                    store_.Top(config_hash, std::min<std::size_t>(count, 100), options);
                 LogMessage(LogLevel::Debug,
-                           std::format("server: top {} for {:#x} ({} rows, best-per-account {}, since {})",
-                                       request->count, config_hash, top.size(),
-                                       request->best_per_account, request->since));
+                           std::format("server: top {} for {:#x} ({} rows, best-per-account {}, "
+                                       "since {}, only-mine {})",
+                                       count, config_hash, top.size(), best_per_account, since,
+                                       only_mine));
                 TopReplyMessage reply_message{};
                 reply_message.entries.reserve(top.size());
                 for (const ScoreEntry& entry : top) {
-                    reply_message.entries.push_back(TopEntry{entry.rank, entry.score,
-                                                             entry.display_name, entry.user_id,
-                                                             entry.recorded_at});
+                    // Names are resolved live, so a rename is reflected on every
+                    // historical row and a hidden legacy account stays nameless.
+                    const std::string name =
+                        accounts_.ShownName(entry.user_id).value_or(std::string{});
+                    reply_message.entries.push_back(TopEntry{entry.rank, entry.score, name,
+                                                             entry.user_id, entry.recorded_at});
                 }
                 if (!reply(MessageType::TopReply, Encode(reply_message))) {
                     return;
@@ -553,8 +750,11 @@ void Server::HandleClient(TcpSocket socket) {
                 break;
             }
             default:
+                // The session key is established, so the peer can be told why
+                // it is about to be dropped instead of just seeing EOF.
                 LogMessage(LogLevel::Warn,
-                           std::format("server: unexpected message {}", ToString(header->type)));
+                           std::format("server: unsupported message {}", ToString(header->type)));
+                (void)fail("unsupported message");
                 return;
         }
     }

@@ -1,0 +1,8 @@
+# Ruleset fingerprints the leaderboard server will serve, one 64-bit hex hash
+# per line. The server refuses to start if the current build's fingerprint
+# (Examples.InfiniteRunner.Leaderboard.CurrentBalanceHash) is not listed, and
+# rejects any client whose fingerprint is absent.
+#
+# Add the previous hash here whenever BalanceConfig changes, so players on the
+# old build can still submit and see their board.
+c9816d8af4a9d26a

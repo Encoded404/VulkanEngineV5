@@ -19,6 +19,17 @@ export namespace Examples::InfiniteRunner::Leaderboard {
 // A frame is a u32 little-endian length followed by that many payload bytes.
 inline constexpr std::uint32_t kMaxFrameBytes = 64U * 1024U;
 
+// Result of a socket operation. A timeout is deliberately distinct from a
+// disconnect: a blocking recv() that hits SO_RCVTIMEO has not failed, and a
+// caller that wants an idle deadline (the server) must keep waiting while a
+// caller that wants a bounded request (the client) can give up.
+enum class IoStatus : std::uint8_t {
+    Ok = 0,        // the whole operation completed
+    Timeout,       // the configured deadline elapsed; the socket is still usable
+    Disconnected,  // clean EOF, or the peer closed/reset the connection
+    Error,         // any other socket failure
+};
+
 class TcpSocket {
 public:
     using NativeHandle = std::intptr_t;
@@ -38,12 +49,17 @@ public:
     // Adopt an already-connected native handle (used by TcpListener::Accept).
     [[nodiscard]] static TcpSocket Adopt(NativeHandle handle) noexcept { return TcpSocket(handle); }
 
-    [[nodiscard]] bool SendAll(std::span<const std::byte> data);
-    [[nodiscard]] bool RecvExactly(std::span<std::byte> out);
-    // Returns false on error/timeout; `received` is 0 on a clean EOF.
-    [[nodiscard]] bool RecvSome(std::span<std::byte> out, std::size_t& received);
+    [[nodiscard]] IoStatus SendAll(std::span<const std::byte> data);
+    [[nodiscard]] IoStatus RecvExactly(std::span<std::byte> out);
+    // On IoStatus::Ok `received` is the byte count; 0 never means EOF (that is
+    // IoStatus::Disconnected). On Timeout nothing was read.
+    [[nodiscard]] IoStatus RecvSome(std::span<std::byte> out, std::size_t& received);
 
     void SetTimeouts(std::chrono::milliseconds recv_timeout, std::chrono::milliseconds send_timeout);
+    // Shuts the connection down for both directions. Unlike Close, this is safe
+    // to call from another thread to interrupt a blocked recv/send; the owning
+    // thread still calls Close.
+    void Shutdown();
     void Close();
     [[nodiscard]] bool IsOpen() const;
     [[nodiscard]] NativeHandle Handle() const { return handle_; }
@@ -75,8 +91,9 @@ private:
     std::uint16_t port_ = 0;
 };
 
-// Length-prefixed frame I/O. Both fail rather than throwing.
-[[nodiscard]] bool SendFrame(TcpSocket& socket, std::span<const std::byte> payload);
-[[nodiscard]] bool RecvFrame(TcpSocket& socket, std::vector<std::byte>& payload);
+// Length-prefixed frame I/O. Both never throw; a Timeout leaves the connection
+// usable, so callers can retry or enforce their own deadline.
+[[nodiscard]] IoStatus SendFrame(TcpSocket& socket, std::span<const std::byte> payload);
+[[nodiscard]] IoStatus RecvFrame(TcpSocket& socket, std::vector<std::byte>& payload);
 
 } // namespace Examples::InfiniteRunner::Leaderboard

@@ -65,7 +65,9 @@ void AccountStore::Load() {
         record.username = entry.value("username", std::string{});
         record.display_name = entry.value("display_name", std::string{});
         record.verifier = entry.value("verifier", std::string{});
-        record.settings.show_on_leaderboard = entry.value("show_on_leaderboard", true);
+        // The stored key is the old positive form; the in-memory field is its
+        // inverse. Absent means visible, matching the old default.
+        record.hidden = !entry.value("show_on_leaderboard", true);
         record.created_at = entry.value("created_at", 0ULL);
         record.last_seen = entry.value("last_seen", 0ULL);
         if (entry.contains("run_ids") && entry["run_ids"].is_array()) {
@@ -95,7 +97,7 @@ bool AccountStore::Save() const {
         entry["username"] = record.username;
         entry["display_name"] = record.display_name;
         entry["verifier"] = record.verifier;
-        entry["show_on_leaderboard"] = record.settings.show_on_leaderboard;
+        entry["show_on_leaderboard"] = !record.hidden;
         entry["created_at"] = record.created_at;
         entry["last_seen"] = record.last_seen;
         entry["run_ids"] = record.run_ids;
@@ -155,39 +157,65 @@ AccountStore::Record* AccountStore::FindByIdInternal(UserId id) {
     return nullptr;
 }
 
+std::optional<std::string> AccountStore::ValidateDisplayName(std::string_view raw,
+                                                             std::string& reason) const {
+    const std::optional<std::string> clean = SanitizeDisplayName(raw);
+    if (!clean.has_value()) {
+        reason = std::format("display name must be {}-{} visible characters",
+                             kDisplayNameMinLength, kDisplayNameMaxLength);
+        return std::nullopt;
+    }
+    if (const std::optional<std::string> policy_reason = options_.name_policy.Check(*clean);
+        policy_reason.has_value()) {
+        reason = "display name " + *policy_reason;
+        return std::nullopt;
+    }
+    return clean;
+}
+
 AccountStore::RegisterResult AccountStore::Register(std::string_view username,
                                                     std::string_view display_name) {
     // Every early return is just a status, so build the result in one place
     // rather than partially initialising it with designated initializers.
-    const auto failure = [](SyncStatus status) {
+    const auto failure = [](SyncStatus status, std::string reason) {
         RegisterResult result;
         result.status = status;
+        result.reason = std::move(reason);
         return result;
     };
 
     const std::optional<std::string> canonical = CanonicalizeUsername(username);
     if (!canonical.has_value()) {
-        return failure(SyncStatus::InvalidUsername);
+        return failure(SyncStatus::InvalidUsername,
+                       std::format("username must be {}-{} of a-z, 0-9, _ (start with a letter)",
+                                   kUsernameMinLength, kUsernameMaxLength));
     }
-    const std::optional<std::string> clean_name = SanitizeDisplayName(display_name);
+    // Usernames are permanent and public, so they get the same content policy
+    // as display names.
+    if (const std::optional<std::string> policy_reason = options_.name_policy.Check(*canonical);
+        policy_reason.has_value()) {
+        return failure(SyncStatus::Rejected, "username " + *policy_reason);
+    }
+    std::string reason;
+    const std::optional<std::string> clean_name = ValidateDisplayName(display_name, reason);
     if (!clean_name.has_value()) {
-        return failure(SyncStatus::InvalidDisplayName);
+        return failure(SyncStatus::Rejected, std::move(reason));
     }
 
     const std::string token = RandomTokenHex();
     const std::optional<std::vector<std::byte>> token_bytes = TokenBytes(token);
     if (!token_bytes.has_value()) {
-        return failure(SyncStatus::ServerError);
+        return failure(SyncStatus::ServerError, "cannot mint a credential");
     }
     const std::string verifier =
         VulkanEngine::Security::HashPassword(*token_bytes, options_.argon2);
     if (verifier.empty()) {
-        return failure(SyncStatus::ServerError);
+        return failure(SyncStatus::ServerError, "cannot hash a credential");
     }
 
     std::lock_guard lock(mutex_);
     if (FindByUsername(*canonical) != nullptr) {
-        return failure(SyncStatus::UsernameTaken);
+        return failure(SyncStatus::UsernameTaken, "username is taken");
     }
 
     Record record{};
@@ -203,10 +231,12 @@ AccountStore::RegisterResult AccountStore::Register(std::string_view username,
                            accounts_.back().id));
 
     (void)Save();
-    return RegisterResult{.status = SyncStatus::Ok,
-                          .user_id = accounts_.back().id,
-                          .token = token,
-                          .display_name = accounts_.back().display_name};
+    RegisterResult result{};
+    result.status = SyncStatus::Ok;
+    result.user_id = accounts_.back().id;
+    result.token = token;
+    result.display_name = accounts_.back().display_name;
+    return result;
 }
 
 AccountStore::LoginResult AccountStore::Login(std::string_view username,
@@ -214,16 +244,16 @@ AccountStore::LoginResult AccountStore::Login(std::string_view username,
     const std::optional<std::string> canonical = CanonicalizeUsername(username);
     const std::optional<std::vector<std::byte>> token = TokenBytes(token_hex);
     if (!canonical.has_value() || !token.has_value()) {
-        return LoginResult{.status = SyncStatus::InvalidToken};
+        return LoginResult{.status = SyncStatus::InvalidToken, .reason = "invalid credential"};
     }
 
     std::lock_guard lock(mutex_);
     Record* record = FindByUsername(*canonical);
     if (record == nullptr) {
-        return LoginResult{.status = SyncStatus::UnknownAccount};
+        return LoginResult{.status = SyncStatus::UnknownAccount, .reason = "unknown account"};
     }
     if (!VulkanEngine::Security::VerifyPassword(*token, record->verifier)) {
-        return LoginResult{.status = SyncStatus::InvalidToken};
+        return LoginResult{.status = SyncStatus::InvalidToken, .reason = "invalid credential"};
     }
 
     record->last_seen = UnixNowSeconds();
@@ -232,30 +262,50 @@ AccountStore::LoginResult AccountStore::Login(std::string_view username,
     LoginResult result{};
     result.status = SyncStatus::Ok;
     result.account = AccountInfo{record->id, record->username, record->display_name};
-    result.settings = record->settings;
     return result;
 }
 
-AccountStore::UpdateResult AccountStore::UpdateSettings(UserId id, std::string_view display_name,
-                                                        const SyncedSettings& settings) {
-    const std::optional<std::string> clean_name = SanitizeDisplayName(display_name);
+AccountStore::UpdateResult AccountStore::Rename(UserId id, std::string_view display_name) {
+    std::string reason;
+    const std::optional<std::string> clean_name = ValidateDisplayName(display_name, reason);
     if (!clean_name.has_value()) {
-        return UpdateResult{.status = SyncStatus::InvalidDisplayName};
+        return UpdateResult{.status = SyncStatus::Rejected, .reason = std::move(reason)};
     }
 
     std::lock_guard lock(mutex_);
     Record* record = FindByIdInternal(id);
     if (record == nullptr) {
-        return UpdateResult{.status = SyncStatus::UnknownAccount};
+        return UpdateResult{.status = SyncStatus::UnknownAccount, .reason = "unknown account"};
     }
     record->display_name = *clean_name;
-    record->settings = settings;
     (void)Save();
 
     UpdateResult result{};
     result.status = SyncStatus::Ok;
     result.account = AccountInfo{record->id, record->username, record->display_name};
-    result.settings = record->settings;
+    return result;
+}
+
+AccountStore::UpdateResult AccountStore::UpdateLegacy(UserId id, std::string_view display_name,
+                                                      bool show_on_leaderboard) {
+    std::string reason;
+    const std::optional<std::string> clean_name = ValidateDisplayName(display_name, reason);
+    if (!clean_name.has_value()) {
+        return UpdateResult{.status = SyncStatus::Rejected, .reason = std::move(reason)};
+    }
+
+    std::lock_guard lock(mutex_);
+    Record* record = FindByIdInternal(id);
+    if (record == nullptr) {
+        return UpdateResult{.status = SyncStatus::UnknownAccount, .reason = "unknown account"};
+    }
+    record->display_name = *clean_name;
+    record->hidden = !show_on_leaderboard;
+    (void)Save();
+
+    UpdateResult result{};
+    result.status = SyncStatus::Ok;
+    result.account = AccountInfo{record->id, record->username, record->display_name};
     return result;
 }
 
@@ -277,14 +327,32 @@ AccountStore::ScoreResult AccountStore::RecordRun(UserId id, std::uint64_t run_i
     return ScoreResult::Accepted;
 }
 
-std::optional<SyncedSettings> AccountStore::SettingsOf(UserId id) const {
+std::optional<std::string> AccountStore::ShownName(UserId id) const {
+    std::lock_guard lock(mutex_);
+    const Record* record = nullptr;
+    for (const Record& candidate : accounts_) {
+        if (candidate.id == id) {
+            record = &candidate;
+            break;
+        }
+    }
+    if (record == nullptr) {
+        return std::nullopt;
+    }
+    if (record->hidden) {
+        return std::string{};
+    }
+    return record->display_name;
+}
+
+bool AccountStore::IsHidden(UserId id) const {
     std::lock_guard lock(mutex_);
     for (const Record& record : accounts_) {
         if (record.id == id) {
-            return record.settings;
+            return record.hidden;
         }
     }
-    return std::nullopt;
+    return false;
 }
 
 std::optional<AccountInfo> AccountStore::FindById(UserId id) const {

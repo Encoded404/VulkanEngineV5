@@ -45,14 +45,6 @@ namespace {
 
 } // namespace
 
-std::vector<std::byte> DerivePskSessionKey(std::span<const std::byte> psk,
-                                           std::span<const std::byte> client_nonce,
-                                           std::span<const std::byte> server_nonce,
-                                           std::uint64_t config_hash) {
-    const std::vector<std::byte> salt = MakeSessionSalt(client_nonce, server_nonce, config_hash);
-    return VulkanEngine::Security::DeriveKey(psk, salt, "IRLB-session-v1", 32);
-}
-
 std::vector<std::byte> DeriveX25519SessionKey(std::span<const std::byte> shared_secret,
                                               std::span<const std::byte> client_nonce,
                                               std::span<const std::byte> server_nonce,

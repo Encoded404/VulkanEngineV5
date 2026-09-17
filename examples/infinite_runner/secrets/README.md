@@ -11,7 +11,6 @@ Only this README, `manifest.txt` and `*.example` files are tracked.
 | `.keyring` | no | key id -> 32-byte hex key, used to seal at build time |
 | `manifest.txt` | yes | optional per-file variant / key id / AAD override |
 | `leaderboard_endpoint.txt` | no | `host:port` the client connects to |
-| `leaderboard_psk.txt` | no | v1 pre-shared key (hex, 32 bytes) |
 | `leaderboard_server_pubkey.txt` | no | pinned server X25519 public key (hex, 32 bytes) |
 | `*.example` | yes | templates describing the real files' formats |
 
@@ -44,7 +43,7 @@ to bind a blob to a purpose. Unlisted files use the defaults.
 
 The leaderboard server has a long-term X25519 keypair. Its private half lives
 only on the server; the client pins the public half, which is what authenticates
-the server during the v2 handshake.
+the server during the handshake.
 
 For local development, put the server's private identity in this folder as
 `.server_identity` (hex, 32 bytes). At build time `secrets-gen` derives
@@ -73,8 +72,12 @@ If `.server_identity` is absent, an explicit `leaderboard_server_pubkey.txt` is
 used instead — that is the path for pinning a remote server whose private key
 you do not hold. Because either source is sealed into the client at build time,
 **changing the identity requires a rebuild** of the game. If neither is present
-the client falls back to the v1 pre-shared-key handshake, which cannot carry
-accounts.
+the client cannot authenticate and stays offline; play on a local profile
+instead.
+
+The server also needs the ruleset fingerprint it is serving to be listed in
+`leaderboard/accepted_configs.txt` (see that file). Keeping a previous
+fingerprint there lets clients built against the previous balance keep playing.
 
 ## Logging
 

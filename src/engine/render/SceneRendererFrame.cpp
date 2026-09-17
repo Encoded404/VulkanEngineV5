@@ -34,7 +34,6 @@ namespace VulkanEngine::SceneRenderer {
         struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };
         struct OccluderSelectPC { std::uint32_t cnt; std::uint32_t minAreaPx; std::uint32_t screenW; std::uint32_t screenH; };
         struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
-        static constexpr std::uint32_t HIZ_BATCH = 2;
 
         template<typename Handle>
         std::uint64_t HandleToU64(Handle h) {
@@ -513,7 +512,11 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
     const std::array<vk::DescriptorSet, 1> ds{ fr.hiz_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *hiz_pipeline_layout_,
                              0, ds, {});
-    for (std::uint32_t bl = 0; bl < hiz_mip_count_ - 1; bl += HIZ_BATCH) {
+    // Every level the cull shaders can sample must be produced here. Iterating
+    // to hiz_mip_count_ (not hiz_mip_count_ - 1) lets the final iteration run
+    // with bc == 1, whose second reduction the shader already guards out; the
+    // old bound skipped the top level whenever hiz_mip_count_ was odd.
+    for (std::uint32_t bl = 0; bl < hiz_mip_count_; bl += HIZ_BATCH) {
         const std::uint32_t bc = std::min(HIZ_BATCH, hiz_mip_count_ - bl);
         const std::uint32_t sw = w >> bl;
         const std::uint32_t sh = h >> bl;

@@ -251,9 +251,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // occluder, or a texel showing the object's own depth) must keep it alive.
     uint refineSteps = pc.refineLevel;
     bool fullyOccluded = true;
+    bool ranRefinement = false;
     while (refineSteps > 0 && obbMip > 0) {
         obbMip--;
         refineSteps--;
+        ranRefinement = true;
 
         uint dimX, dimY, dimL;
         hizTex.GetDimensions(uint(obbMip), dimX, dimY, dimL);
@@ -287,7 +289,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         if (capped) fullyOccluded = false;
         if (!fullyOccluded) break;
     }
-    if (fullyOccluded) {
+    // The coarse single-texel test above returns early when it proves occlusion.
+    // Reaching here means it did not, so cull only when a refinement actually ran
+    // and every covered texel was occluding. With obbMip == 0 or refineLevel == 0
+    // the loop cannot run and the object must be kept.
+    if (ranRefinement && fullyOccluded) {
         CullSubmesh(block, elemIndex);
     }
 }

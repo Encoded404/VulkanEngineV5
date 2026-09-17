@@ -1,5 +1,7 @@
 module;
 
+#include <cassert>
+
 #include <logging/logging_macros.hpp>
 
 module VulkanEngine.SceneRenderer;
@@ -637,6 +639,24 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         }
         hiz_mip_count_ = mip_levels;
     }
+
+#ifndef NDEBUG
+    // Invariant: DispatchHiZGen must produce every level the cull shaders can
+    // sample. The generator's coverage and the shaders' MaxHizMip() clamp are
+    // independent derivations of the same range, so assert they agree; a
+    // regression here leaves a sampled mip unwritten, which reads as undefined
+    // memory and false-culls large screen footprints on some launches.
+    {
+        const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
+        const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
+        [[maybe_unused]] std::uint32_t cull_max_mip = 0; // == floor(log2(max(hiz_w, hiz_h)))
+        for (std::uint32_t m = std::max(hiz_w, hiz_h); m > 1; m >>= 1) ++cull_max_mip;
+        assert(LastHiZLevelWritten(hiz_mip_count_) == hiz_mip_count_ - 1 &&
+               "Hi-Z generator does not cover every level; cull shaders may sample an unwritten mip");
+        assert(cull_max_mip <= LastHiZLevelWritten(hiz_mip_count_) &&
+               "cull shaders can sample a Hi-Z mip the generator never writes");
+    }
+#endif
 
     // ── Lighting system (descriptor set 4) ──
     {

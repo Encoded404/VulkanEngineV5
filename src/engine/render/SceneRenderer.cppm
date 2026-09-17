@@ -81,11 +81,28 @@ struct SceneCapacity {
 class SceneRenderer {
 public:
     static constexpr std::uint32_t MAX_HIZ_MIPS = 12;
+    // DispatchHiZGen emits up to this many levels per iteration (base and
+    // base+1). The generator and the initialization-time coverage assert share
+    // this value so the two cannot drift apart.
+    static constexpr std::uint32_t HIZ_BATCH = 2;
     static constexpr std::uint32_t MAX_VERTEX_BUFFERS = 64;
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
     static constexpr std::uint32_t BLOCK_ENTRIES = 256;
     static constexpr std::uint32_t MAX_BLOCKS = 1024;
     static constexpr std::uint32_t MAX_TECHNIQUES = 256;
+
+    // Highest Hi-Z level covered by whole HIZ_BATCH-sized DispatchHiZGen
+    // iterations for a `mip_count`-level pyramid. The cull shaders clamp their
+    // sampling independently (MaxHizMip() = floor(log2(max(hizW, hizH))));
+    // Initialize asserts the two derivations agree so a sampled level can never
+    // be left unwritten.
+    static constexpr std::uint32_t LastHiZLevelWritten(std::uint32_t mip_count) {
+        std::uint32_t last = 0;
+        for (std::uint32_t bl = 0; bl < mip_count; bl += HIZ_BATCH) {
+            last = bl + ((mip_count - bl < HIZ_BATCH) ? (mip_count - bl) : HIZ_BATCH) - 1;
+        }
+        return last;
+    }
 
     SceneRenderer() = default;
     ~SceneRenderer();

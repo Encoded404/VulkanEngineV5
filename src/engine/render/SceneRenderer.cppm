@@ -132,6 +132,14 @@ public:
     // pools and technique graphics pipelines are mode-independent and reused.
     void Reinitialize(DrawMode mode);
 
+    // Re-creates the resolution-dependent Hi-Z image ring and sampler when the
+    // swapchain render extent changes (window resize). Idempotent: no-op when
+    // the extent already matches the current allocation. Called once per frame
+    // from the renderer after the swapchain extent is known. The render graph
+    // needs no rebuild: the "hiz-image" resolver re-reads the handles each
+    // frame.
+    void EnsureRenderExtent(std::uint32_t width, std::uint32_t height);
+
     [[nodiscard]] DrawMode GetDrawMode() const { return draw_mode_; }
     [[nodiscard]] const SceneCapacity& GetSceneCapacity() const { return scene_capacity_; }
     [[nodiscard]] bool IsDrawModeSupported(DrawMode mode) const;
@@ -465,6 +473,13 @@ private:
     // capacity. Called by Initialize and EnsureSceneCapacity/Reinitialize.
     bool CreateFrameBuffers();
     void DestroyFrameBuffers();
+    // Create/destroy the resolution-dependent Hi-Z image ring + sampler at the
+    // current depth_width_/depth_height_. Called by Initialize and
+    // EnsureRenderExtent. CreateHiZResources recomputes hiz_mip_count_, rewrites
+    // the hiz-set storage/sampler/depth bindings, and asserts the generator's
+    // mip coverage matches what the cull shaders sample.
+    bool CreateHiZResources();
+    void DestroyHiZResources();
     // Rebuild the kCompactionMode-specialized compute pipelines (pre-cull,
     // occluder-select, collect count/compact, collect write).
     bool RebuildCompactionPipelines();

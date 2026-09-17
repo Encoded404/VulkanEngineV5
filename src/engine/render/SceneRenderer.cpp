@@ -512,151 +512,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     (void)be.GetSwapchainExtent(depth_width_, depth_height_);
 
-    // Create Hi-Z image and sampler for each frame
-    {
-        const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
-        const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
-        std::uint32_t max_dim = std::max(hiz_w, hiz_h);
-        std::uint32_t mip_levels = 1;
-        while (max_dim > 1) { max_dim >>= 1; ++mip_levels; }
-        mip_levels = std::min(mip_levels, MAX_HIZ_MIPS);
-        const vk::Format hiz_format = vk::Format::eR32Sfloat;
-
-        vk::SamplerCreateInfo sampler_ci{};
-        sampler_ci.magFilter = vk::Filter::eNearest;
-        sampler_ci.minFilter = vk::Filter::eNearest;
-        sampler_ci.mipmapMode = vk::SamplerMipmapMode::eNearest;
-        // Clamp instead of the default Repeat: out-of-range UVs (e.g. a sphere center
-        // off-screen) must sample the edge texel, whose max depth is a conservative
-        // proxy, never a wrapped texel from the opposite edge.
-        sampler_ci.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-        sampler_ci.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-        sampler_ci.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-        sampler_ci.minLod = 0.0f;
-        sampler_ci.maxLod = static_cast<float>(mip_levels);
-        hiz_sampler_ = std::make_unique<vk::raii::Sampler>(dev, sampler_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_sampler_, "hiz-sampler");
-
-        for (auto& fr : frames_) {
-            vk::ImageCreateInfo img_ci{};
-            img_ci.imageType = vk::ImageType::e2D;
-            img_ci.format = hiz_format;
-            img_ci.extent = vk::Extent3D(hiz_w, hiz_h, 1);
-            img_ci.mipLevels = mip_levels;
-            img_ci.arrayLayers = 1;
-            img_ci.samples = vk::SampleCountFlagBits::e1;
-            img_ci.tiling = vk::ImageTiling::eOptimal;
-            img_ci.usage = vk::ImageUsageFlagBits::eStorage |
-                           vk::ImageUsageFlagBits::eSampled |
-                           vk::ImageUsageFlagBits::eTransferDst;
-            img_ci.initialLayout = vk::ImageLayout::eUndefined;
-            fr.hiz_image = vk::raii::Image(dev, img_ci);
-
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_image, "hiz-image");
-
-            const vk::MemoryRequirements mem_req = fr.hiz_image.getMemoryRequirements();
-            vk::MemoryAllocateInfo alloc_ci{};
-            alloc_ci.allocationSize = mem_req.size;
-            alloc_ci.memoryTypeIndex = VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
-                be.GetPhysicalDevice(), mem_req.memoryTypeBits,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            fr.hiz_memory = vk::raii::DeviceMemory(dev, alloc_ci);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_memory, "hiz-memory");
-            fr.hiz_image.bindMemory(*fr.hiz_memory, 0);
-
-            fr.hiz_mip_views.clear();
-            fr.hiz_mip_views.reserve(mip_levels);
-            for (std::uint32_t mip = 0; mip < mip_levels; ++mip) {
-                vk::ImageViewCreateInfo view_ci{};
-                view_ci.image = *fr.hiz_image;
-                view_ci.viewType = vk::ImageViewType::e2D;
-                view_ci.format = hiz_format;
-                view_ci.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-                view_ci.subresourceRange.baseMipLevel = mip;
-                view_ci.subresourceRange.levelCount = 1;
-                view_ci.subresourceRange.baseArrayLayer = 0;
-                view_ci.subresourceRange.layerCount = 1;
-                fr.hiz_mip_views.emplace_back(dev, view_ci);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_mip_views.back(), "hiz-mip-view-" + std::to_string(mip));
-            }
-
-            vk::ImageViewCreateInfo full_view_ci{};
-            full_view_ci.image = *fr.hiz_image;
-            full_view_ci.viewType = vk::ImageViewType::e2D;
-            full_view_ci.format = hiz_format;
-            full_view_ci.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-            full_view_ci.subresourceRange.baseMipLevel = 0;
-            full_view_ci.subresourceRange.levelCount = mip_levels;
-            full_view_ci.subresourceRange.baseArrayLayer = 0;
-            full_view_ci.subresourceRange.layerCount = 1;
-            fr.hiz_full_view = vk::raii::ImageView(dev, full_view_ci);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_full_view, "hiz-full-view");
-
-            // Bind Hi-Z mip views as storage image array and sampler
-            std::vector<vk::DescriptorImageInfo> storage_infos;
-            storage_infos.reserve(mip_levels);
-            for (std::uint32_t mip = 0; mip < mip_levels; ++mip) {
-                storage_infos.emplace_back(
-                    nullptr, *fr.hiz_mip_views[mip],
-                    vk::ImageLayout::eGeneral);
-            }
-            {
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.hiz_set.GetHandle();
-                w.dstBinding = 2;
-                w.dstArrayElement = 0;
-                w.descriptorCount = mip_levels;
-                w.descriptorType = vk::DescriptorType::eStorageImage;
-                w.pImageInfo = storage_infos.data();
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            // Bind hiz mip 0 as placeholder depth input (binding 0). Uses eGeneral
-            // layout to match the storage image binding at binding 2 on same subresource.
-            {
-                const vk::DescriptorImageInfo depth_info(
-                    nullptr, *fr.hiz_mip_views[0],
-                    vk::ImageLayout::eGeneral);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.hiz_set.GetHandle();
-                w.dstBinding = 0;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eSampledImage;
-                w.pImageInfo = &depth_info;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            {
-                const vk::DescriptorImageInfo sampler_info(
-                    **hiz_sampler_, nullptr,
-                    vk::ImageLayout::eShaderReadOnlyOptimal);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = fr.hiz_set.GetHandle();
-                w.dstBinding = 1;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eSampler;
-                w.pImageInfo = &sampler_info;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-        }
-        hiz_mip_count_ = mip_levels;
-    }
-
-#ifndef NDEBUG
-    // Invariant: DispatchHiZGen must produce every level the cull shaders can
-    // sample. The generator's coverage and the shaders' MaxHizMip() clamp are
-    // independent derivations of the same range, so assert they agree; a
-    // regression here leaves a sampled mip unwritten, which reads as undefined
-    // memory and false-culls large screen footprints on some launches.
-    {
-        const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
-        const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
-        [[maybe_unused]] std::uint32_t cull_max_mip = 0; // == floor(log2(max(hiz_w, hiz_h)))
-        for (std::uint32_t m = std::max(hiz_w, hiz_h); m > 1; m >>= 1) ++cull_max_mip;
-        assert(LastHiZLevelWritten(hiz_mip_count_) == hiz_mip_count_ - 1 &&
-               "Hi-Z generator does not cover every level; cull shaders may sample an unwritten mip");
-        assert(cull_max_mip <= LastHiZLevelWritten(hiz_mip_count_) &&
-               "cull shaders can sample a Hi-Z mip the generator never writes");
-    }
-#endif
+    if (!CreateHiZResources()) return false;
 
     // ── Lighting system (descriptor set 4) ──
     {
@@ -926,6 +782,196 @@ void SceneRenderer::DestroyFrameBuffers() {
         fr.tech_counts_buffer = GpuResources::GpuBuffer{};
         fr.intermediate_buffer = GpuResources::GpuBuffer{};
     }
+}
+
+void SceneRenderer::DestroyHiZResources() {
+    for (auto& fr : frames_) {
+        // Views must outlive the image; the image must be destroyed before the
+        // device memory it is bound to is freed.
+        fr.hiz_mip_views.clear();
+        fr.hiz_full_view = vk::raii::ImageView(nullptr);
+        fr.hiz_image = vk::raii::Image(nullptr);
+        fr.hiz_memory = vk::raii::DeviceMemory(nullptr);
+    }
+    hiz_sampler_.reset();
+    hiz_mip_count_ = 0;
+}
+
+bool SceneRenderer::CreateHiZResources() {
+    if (!backend_) return false;
+    auto& be = *backend_;
+    const auto& dev = be.GetDevice();
+
+    const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
+    const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
+    std::uint32_t max_dim = std::max(hiz_w, hiz_h);
+    std::uint32_t mip_levels = 1;
+    while (max_dim > 1) { max_dim >>= 1; ++mip_levels; }
+    mip_levels = std::min(mip_levels, MAX_HIZ_MIPS);
+    const vk::Format hiz_format = vk::Format::eR32Sfloat;
+
+    vk::SamplerCreateInfo sampler_ci{};
+    sampler_ci.magFilter = vk::Filter::eNearest;
+    sampler_ci.minFilter = vk::Filter::eNearest;
+    sampler_ci.mipmapMode = vk::SamplerMipmapMode::eNearest;
+    // Clamp instead of the default Repeat: out-of-range UVs (e.g. a sphere center
+    // off-screen) must sample the edge texel, whose max depth is a conservative
+    // proxy, never a wrapped texel from the opposite edge.
+    sampler_ci.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    sampler_ci.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    sampler_ci.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+    sampler_ci.minLod = 0.0f;
+    sampler_ci.maxLod = static_cast<float>(mip_levels);
+    hiz_sampler_ = std::make_unique<vk::raii::Sampler>(dev, sampler_ci);
+    VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_sampler_, "hiz-sampler");
+
+    for (auto& fr : frames_) {
+        vk::ImageCreateInfo img_ci{};
+        img_ci.imageType = vk::ImageType::e2D;
+        img_ci.format = hiz_format;
+        img_ci.extent = vk::Extent3D(hiz_w, hiz_h, 1);
+        img_ci.mipLevels = mip_levels;
+        img_ci.arrayLayers = 1;
+        img_ci.samples = vk::SampleCountFlagBits::e1;
+        img_ci.tiling = vk::ImageTiling::eOptimal;
+        img_ci.usage = vk::ImageUsageFlagBits::eStorage |
+                       vk::ImageUsageFlagBits::eSampled |
+                       vk::ImageUsageFlagBits::eTransferDst;
+        img_ci.initialLayout = vk::ImageLayout::eUndefined;
+        fr.hiz_image = vk::raii::Image(dev, img_ci);
+
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_image, "hiz-image");
+
+        const vk::MemoryRequirements mem_req = fr.hiz_image.getMemoryRequirements();
+        vk::MemoryAllocateInfo alloc_ci{};
+        alloc_ci.allocationSize = mem_req.size;
+        alloc_ci.memoryTypeIndex = VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
+            be.GetPhysicalDevice(), mem_req.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        fr.hiz_memory = vk::raii::DeviceMemory(dev, alloc_ci);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_memory, "hiz-memory");
+        fr.hiz_image.bindMemory(*fr.hiz_memory, 0);
+
+        fr.hiz_mip_views.clear();
+        fr.hiz_mip_views.reserve(mip_levels);
+        for (std::uint32_t mip = 0; mip < mip_levels; ++mip) {
+            vk::ImageViewCreateInfo view_ci{};
+            view_ci.image = *fr.hiz_image;
+            view_ci.viewType = vk::ImageViewType::e2D;
+            view_ci.format = hiz_format;
+            view_ci.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            view_ci.subresourceRange.baseMipLevel = mip;
+            view_ci.subresourceRange.levelCount = 1;
+            view_ci.subresourceRange.baseArrayLayer = 0;
+            view_ci.subresourceRange.layerCount = 1;
+            fr.hiz_mip_views.emplace_back(dev, view_ci);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_mip_views.back(), "hiz-mip-view-" + std::to_string(mip));
+        }
+
+        vk::ImageViewCreateInfo full_view_ci{};
+        full_view_ci.image = *fr.hiz_image;
+        full_view_ci.viewType = vk::ImageViewType::e2D;
+        full_view_ci.format = hiz_format;
+        full_view_ci.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        full_view_ci.subresourceRange.baseMipLevel = 0;
+        full_view_ci.subresourceRange.levelCount = mip_levels;
+        full_view_ci.subresourceRange.baseArrayLayer = 0;
+        full_view_ci.subresourceRange.layerCount = 1;
+        fr.hiz_full_view = vk::raii::ImageView(dev, full_view_ci);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_full_view, "hiz-full-view");
+
+        // Bind the whole storage-image array declared by the layout
+        // (descriptorCount = MAX_HIZ_MIPS). Re-pointing the tail levels (beyond
+        // mip_levels) at the coarsest mip keeps every descriptor valid after a
+        // shrink; leaving them would dangle at the previous resize's views.
+        std::vector<vk::DescriptorImageInfo> storage_infos;
+        storage_infos.reserve(MAX_HIZ_MIPS);
+        for (std::uint32_t mip = 0; mip < MAX_HIZ_MIPS; ++mip) {
+            const std::uint32_t view_index = std::min(mip, mip_levels - 1);
+            storage_infos.emplace_back(
+                nullptr, *fr.hiz_mip_views[view_index],
+                vk::ImageLayout::eGeneral);
+        }
+        {
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.hiz_set.GetHandle();
+            w.dstBinding = 2;
+            w.dstArrayElement = 0;
+            w.descriptorCount = MAX_HIZ_MIPS;
+            w.descriptorType = vk::DescriptorType::eStorageImage;
+            w.pImageInfo = storage_infos.data();
+            dev.updateDescriptorSets(w, nullptr);
+        }
+        // Bind hiz mip 0 as placeholder depth input (binding 0). Uses eGeneral
+        // layout to match the storage image binding at binding 2 on same subresource.
+        {
+            const vk::DescriptorImageInfo depth_info(
+                nullptr, *fr.hiz_mip_views[0],
+                vk::ImageLayout::eGeneral);
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.hiz_set.GetHandle();
+            w.dstBinding = 0;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eSampledImage;
+            w.pImageInfo = &depth_info;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+        {
+            const vk::DescriptorImageInfo sampler_info(
+                **hiz_sampler_, nullptr,
+                vk::ImageLayout::eShaderReadOnlyOptimal);
+            vk::WriteDescriptorSet w{};
+            w.dstSet = fr.hiz_set.GetHandle();
+            w.dstBinding = 1;
+            w.descriptorCount = 1;
+            w.descriptorType = vk::DescriptorType::eSampler;
+            w.pImageInfo = &sampler_info;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+    }
+    hiz_mip_count_ = mip_levels;
+
+#ifndef NDEBUG
+    // Invariant: DispatchHiZGen must produce every level the cull shaders can
+    // sample. The generator's coverage and the shaders' MaxHizMip() clamp are
+    // independent derivations of the same range, so assert they agree; a
+    // regression here leaves a sampled mip unwritten, which reads as undefined
+    // memory and false-culls large screen footprints on some launches.
+    {
+        [[maybe_unused]] std::uint32_t cull_max_mip = 0; // == floor(log2(max(hiz_w, hiz_h)))
+        for (std::uint32_t m = std::max(hiz_w, hiz_h); m > 1; m >>= 1) ++cull_max_mip;
+        assert(LastHiZLevelWritten(hiz_mip_count_) == hiz_mip_count_ - 1 &&
+               "Hi-Z generator does not cover every level; cull shaders may sample an unwritten mip");
+        assert(cull_max_mip <= LastHiZLevelWritten(hiz_mip_count_) &&
+               "cull shaders can sample a Hi-Z mip the generator never writes");
+    }
+#endif
+
+    return true;
+}
+
+void SceneRenderer::EnsureRenderExtent(std::uint32_t width, std::uint32_t height) {
+    if (!backend_ || width == 0 || height == 0) return;
+    if (width == depth_width_ && height == depth_height_) return;
+
+    // Swapchain recreation already idled the device, but match the
+    // EnsureSceneCapacity/Reinitialize pattern so this is safe however it is
+    // reached. Hi-Z is derived per-frame (non-temporal), so the old pyramid is
+    // discarded rather than rescaled; the next frame's hiz-gen refills it.
+    backend_->GetDevice().waitIdle();
+
+    DestroyHiZResources();
+    depth_width_ = width;
+    depth_height_ = height;
+    if (!CreateHiZResources()) {
+        LOGIFACE_LOG(error, "SceneRenderer::EnsureRenderExtent: failed to create Hi-Z resources");
+        return;
+    }
+    hiz_initialized_ = false;
+
+    LOGIFACE_LOG(info, "SceneRenderer: render extent changed to " +
+        std::to_string(width) + "x" + std::to_string(height) +
+        " (Hi-Z mips=" + std::to_string(hiz_mip_count_) + ")");
 }
 
 void SceneRenderer::EnsureSceneCapacity(const SceneCapacity& required) {

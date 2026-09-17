@@ -418,6 +418,11 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                  " img=" + std::to_string(image_index) + " w=" + std::to_string(width) +
                  " h=" + std::to_string(height));
 
+    // The swapchain extent may have changed (window resize). Re-create the
+    // resolution-dependent Hi-Z ring at the new size before this frame binds its
+    // descriptors or dispatches any pass; it is a no-op when unchanged.
+    scene_renderer.EnsureRenderExtent(width, height);
+
     if (imgui && imgui->IsInitialized()) {
         imgui->NewFrame();
     }

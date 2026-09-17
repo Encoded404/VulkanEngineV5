@@ -157,8 +157,9 @@ void ApplySun(VulkanEngine::GameEngine& engine, const SunSettings& sun) {
 
 } // namespace
 
-Game::Game(const std::filesystem::path& executable_path)
-    : exe_dir_(executable_path.parent_path()) {
+Game::Game(const std::filesystem::path& executable_path, EndpointOverride endpoint)
+    : exe_dir_(executable_path.parent_path())
+    , endpoint_override_(std::move(endpoint)) {
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -335,11 +336,22 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         LOGIFACE_LOG(warn, "per-user storage unavailable; profiles disabled");
     }
 
-    const std::optional<Leaderboard::Endpoint> endpoint = Leaderboard::LoadEndpoint();
-    if (endpoint.has_value()) {
+    const std::optional<Leaderboard::Endpoint> sealed_endpoint = Leaderboard::LoadEndpoint();
+    Leaderboard::Endpoint endpoint{};
+    if (sealed_endpoint.has_value()) {
+        endpoint = *sealed_endpoint;
+    }
+    if (!endpoint_override_.host.empty()) {
+        endpoint.host = endpoint_override_.host;
+    }
+    if (endpoint_override_.port != 0) {
+        endpoint.port = endpoint_override_.port;
+    }
+
+    if (!endpoint.host.empty() && endpoint.port != 0) {
         Leaderboard::ClientOptions options;
-        options.host = endpoint->host;
-        options.port = endpoint->port;
+        options.host = endpoint.host;
+        options.port = endpoint.port;
         options.config_hash = balance_hash_;
         options.server_public_key = Leaderboard::LoadServerPublicKey();
         leaderboard_ = std::make_unique<Leaderboard::Client>(std::move(options));
@@ -354,7 +366,8 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         }
         leaderboard_->Start();
     } else {
-        LOGIFACE_LOG(warn, "leaderboard disabled: no sealed endpoint available");
+        LOGIFACE_LOG(warn, "leaderboard disabled: no sealed endpoint or --leaderboard-host/"
+                           "--leaderboard-port override available");
     }
 
     // Open the login window unless an existing profile can sign in silently.
@@ -817,20 +830,36 @@ void Game::SubmitRun(std::int32_t score) {
 }
 
 void Game::RandomizeWall(Wall& wall) {
-    const float difficulty = 2 - std::pow(std::max(1, score_), balance_.wall_hole_size_pow_scaling);
-    std::uniform_real_distribution<float> half_dist(balance_.wall_hole_min * difficulty, balance_.wall_hole_max * difficulty);
+    const float HoleSizeDifficulty = 2 - std::pow(std::max(1, score_), balance_.wall_hole_size_pow_scaling);
+    const float PlacementSizeDifficulty = 2 - std::pow(std::max(1, score_), balance_.wall_hole_placement_pow_scaling);
+    std::uniform_real_distribution<float> half_dist(balance_.wall_hole_min * HoleSizeDifficulty, balance_.wall_hole_max * HoleSizeDifficulty);
     const float gap_half = half_dist(rng_);
+
+    const float scaled_wall_hole_placement_min = balance_.wall_hole_placement_min * PlacementSizeDifficulty;
+    const float scaled_wall_hole_placement_max = balance_.wall_hole_placement_max * PlacementSizeDifficulty;
 
     constexpr float margin = 0.25f;
     const float limit = balance_.corridor_half - gap_half - margin;
-    std::uniform_real_distribution<float> center_dist(-limit, limit);
-    float gap_center = 0.0f;
-    float gap_past_distance = std::abs(gap_center - prevGapCenter_);
-    while (gap_past_distance > balance_.wall_hole_placement_max || gap_past_distance < balance_.wall_hole_placement_min)
+    const float distance_clamp_size_left =
+        std::max(-limit, prevGapCenter_ - scaled_wall_hole_placement_min)
+        - std::max(-limit, prevGapCenter_ - scaled_wall_hole_placement_max);
+    const float distance_clamp_size_right =
+        std::min(limit, prevGapCenter_ + scaled_wall_hole_placement_max)
+        - std::min(limit, prevGapCenter_ + scaled_wall_hole_placement_min);
+    const float distance_clamp_size = distance_clamp_size_left + distance_clamp_size_right;
+    std::uniform_real_distribution<float> center_dist(0, distance_clamp_size);
+    const float local_r_pos = center_dist(rng_);
+    const float offset = local_r_pos - distance_clamp_size_left;
+    const float sign = (offset < 0.0f ? -1.0f : 1.0f);
+    const float gap_center = prevGapCenter_ + offset + scaled_wall_hole_placement_min * sign;
+
+#ifndef NDEBUG
+    const float gap_past_distance = std::abs(gap_center - prevGapCenter_);
+    if (gap_past_distance > scaled_wall_hole_placement_max || gap_past_distance < scaled_wall_hole_placement_min)
     {
-        gap_center = center_dist(rng_);
-        gap_past_distance = std::abs(gap_center - prevGapCenter_);
+        LOGIFACE_LOG(warn, "Gap past distance is out of bounds: " + std::to_string(gap_past_distance));
     }
+#endif
 
     prevGapCenter_ = gap_center;
 

@@ -15,6 +15,14 @@ import Examples.InfiniteRunner.Account.ProfileStore;
 
 export namespace Examples::InfiniteRunner::Game {
 
+// Optional command-line overrides for the sealed leaderboard endpoint. An empty
+// host or zero port leaves the corresponding value from the sealed entry intact,
+// so either half can be redirected on its own.
+struct EndpointOverride {
+    std::string host;
+    std::uint16_t port = 0;
+};
+
 // Infinite runner built entirely on the game layer.
 //
 // A fixed pool of wall entities scrolls toward a stationary player cube. Each
@@ -24,7 +32,7 @@ export namespace Examples::InfiniteRunner::Game {
 // discrete box against the block geometry and as a ray swept between frames.
 class Game {
 public:
-    explicit Game(const std::filesystem::path& executable_path);
+    explicit Game(const std::filesystem::path& executable_path, EndpointOverride endpoint = {});
     ~Game();
 
     Game(const Game&) = delete;
@@ -71,6 +79,7 @@ private:
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};
 
     std::filesystem::path exe_dir_{};
+    EndpointOverride endpoint_override_{};
     VulkanEngine::GameEngine engine_game_{};
 
     // Single source of truth for every gameplay-affecting value. Rehashed once

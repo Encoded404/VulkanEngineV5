@@ -49,6 +49,7 @@ std::uint64_t BalanceConfig::Hash() const noexcept {
     h = FoldFloat(h, wall_hole_size_pow_scaling);
     h = FoldFloat(h, wall_hole_placement_min);
     h = FoldFloat(h, wall_hole_placement_max);
+    h = FoldFloat(h, wall_hole_placement_pow_scaling);
     h = FoldFloat(h, difficulty_scaling_divider);
     return h;
 }

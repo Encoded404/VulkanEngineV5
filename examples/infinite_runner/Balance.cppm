@@ -15,8 +15,9 @@ export namespace Examples::InfiniteRunner {
 //
 // The whole set is fingerprinted by Hash(); leaderboards are separated per
 // fingerprint, so bump kVersion whenever a value or the field order changes.
+// NOLINTBEGIN(misc-non-private-member-variables-in-classes)
 struct BalanceConfig {
-    static constexpr std::uint32_t kVersion = 1;
+    static constexpr std::uint32_t kVersion = 2;
 
     // ── Corridor geometry ──
     // Shared by the swept collision test and the render transforms so the
@@ -28,7 +29,7 @@ struct BalanceConfig {
 
     // ── Player ──
     float player_size  = 0.9f;
-    float player_speed = 9.0f; // units/second sideways
+    float player_speed = 8.0f; // units/second sideways
 
     // ── Wall streaming ──
     float wall_speed               = 15.0f;  // units/second toward the player
@@ -41,9 +42,12 @@ struct BalanceConfig {
     // ── Gap generation ──
     float wall_hole_min              = 1.0f;
     float wall_hole_max              = 1.2f;
-    float wall_hole_size_pow_scaling = 0.08f;
-    float wall_hole_placement_min    = 0.8f;
-    float wall_hole_placement_max    = 3.5f;
+    float wall_hole_size_pow_scaling = 0.06f;
+
+    // gap position
+    float wall_hole_placement_min         = 0.8f;
+    float wall_hole_placement_max         = 3.5f;
+    float wall_hole_placement_pow_scaling = 0.08f;
 
     // ── Difficulty ramp ──
     float difficulty_scaling_divider = 10.0f;
@@ -63,5 +67,6 @@ struct BalanceConfig {
     // mechanism — a client can always report whatever it likes.
     [[nodiscard]] std::uint64_t Hash() const noexcept;
 };
+// NOLINTEND(misc-non-private-member-variables-in-classes)
 
 } // namespace Examples::InfiniteRunner

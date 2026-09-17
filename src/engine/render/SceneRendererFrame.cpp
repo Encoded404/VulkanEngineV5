@@ -501,7 +501,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
         return;
     }
     if (w != depth_width_ || h != depth_height_) {
-        LOGIFACE_LOG(debug, "DispatchHiZGen: dimensions changed (" + std::to_string(w) + "x" +
+        LOGIFACE_LOG(warn, "DispatchHiZGen: dimensions changed (" + std::to_string(w) + "x" +
                      std::to_string(h) + " != " + std::to_string(depth_width_) + "x" +
                      std::to_string(depth_height_) + "), skipping");
         return;

@@ -5,7 +5,7 @@ find_package(CLI11 CONFIG REQUIRED)
 add_library(${RUNTIME_TARGET} STATIC)
 target_compile_features(${RUNTIME_TARGET} PUBLIC cxx_std_20)
 target_link_libraries(${RUNTIME_TARGET} PUBLIC ${ENGINE_TARGET} ${BACKEND_TARGET} CLI11::CLI11)
-target_include_directories(${RUNTIME_TARGET} PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(${RUNTIME_TARGET} PUBLIC ${CMAKE_SOURCE_DIR})
 
 target_compile_options(${RUNTIME_TARGET} PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>

@@ -1,5 +1,5 @@
-#ifndef VULKANENGINE_CORE_ENTRYPOINT_HPP
-#define VULKANENGINE_CORE_ENTRYPOINT_HPP
+#ifndef VULKANENGINE_CORE_BOOTSTRAP_ENTRYPOINT_HPP
+#define VULKANENGINE_CORE_BOOTSTRAP_ENTRYPOINT_HPP
 
 // Engine-owned process entry point.
 //
@@ -20,4 +20,4 @@ int AppMain(int argc, char* const argv[]);
 
 } // namespace VulkanEngine
 
-#endif // VULKANENGINE_CORE_ENTRYPOINT_HPP
+#endif // VULKANENGINE_CORE_BOOTSTRAP_ENTRYPOINT_HPP

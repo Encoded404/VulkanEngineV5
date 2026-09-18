@@ -91,7 +91,7 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
 )
 
 target_include_directories(${ENGINE_TARGET} PUBLIC ${Stb_INCLUDE_DIR})
-target_include_directories(${ENGINE_TARGET} PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(${ENGINE_TARGET} PUBLIC ${CMAKE_SOURCE_DIR})
 
 target_compile_definitions(${ENGINE_TARGET} PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -155,9 +155,9 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/PipelineFactory.cpp
     render/ShaderWatcher.cpp
     render/bindless/BindlessManager.cpp
-    core/GameEngine.cpp
-    core/EngineBootstrap.cpp
-    core/Crash.cpp
+    GameEngine.cpp
+    bootstrap/EngineBootstrap.cpp
+    bootstrap/Crash.cpp
     render/passes/ExpandPass.cpp
     render/passes/HiZPass.cpp
     render/passes/OcclusionPass.cpp
@@ -231,8 +231,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/NormalEncoding.cppm
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
-            core/Startup.cppm
-            core/ApplicationContext.cppm
+            bootstrap/Startup.cppm
+            ApplicationContext.cppm
             ecs/ComponentRegistry.cppm
             components/Transform.cppm
             components/Camera.cppm
@@ -284,9 +284,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/PipelineFactory.cppm
             render/ShaderWatcher.cppm
             render/ShaderRegistration.cppm
-            core/GameEngine.cppm
-            core/EngineContext.cppm
-            core/EngineBootstrap.cppm
+            GameEngine.cppm
+            EngineContext.cppm
+            bootstrap/EngineBootstrap.cppm
             render_graph/RenderGraph.cppm
             render/passes/ExpandPass.cppm
             render/passes/OccluderSelectPass.cppm
@@ -331,7 +331,7 @@ target_link_libraries(${ENGINE_TARGET} PUBLIC slang_shared_reflection)
 # selected, so there is no duplicate-symbol conflict.
 add_library(${ENTRY_TARGET} STATIC)
 target_compile_features(${ENTRY_TARGET} PUBLIC cxx_std_23)
-target_sources(${ENTRY_TARGET} PRIVATE core/EntryPoint.cpp)
+target_sources(${ENTRY_TARGET} PRIVATE bootstrap/EntryPoint.cpp)
 target_link_libraries(${ENTRY_TARGET} PUBLIC ${ENGINE_TARGET})
 
 target_compile_options(${ENTRY_TARGET} PRIVATE

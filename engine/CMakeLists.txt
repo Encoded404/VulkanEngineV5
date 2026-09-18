@@ -2,7 +2,7 @@
 add_subdirectory(shared)
 add_subdirectory(backend)
 add_subdirectory(security)
-add_subdirectory(engine)
+add_subdirectory(core)
 add_subdirectory(runtime)
 
 if(ENABLE_SANITIZERS)

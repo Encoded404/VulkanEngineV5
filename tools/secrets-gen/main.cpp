@@ -6,7 +6,7 @@
 // runtime accessors. The sealing key ring is embedded too, because the client
 // has to open the blobs; treat this as obfuscation-with-integrity, not secrecy.
 //
-// The envelope format lives in src/security/cipher_format.hpp, shared with the
+// The envelope format lives in engine/security/cipher_format.hpp, shared with the
 // runtime VulkanSecurity target, so generator and runtime cannot drift.
 //
 // Files whose name starts with '.' and the manifest/README are skipped, so the
@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "monocypher.h"
-#include "security/cipher_format.hpp"
+#include "engine/security/cipher_format.hpp"
 
 namespace fs = std::filesystem;
 namespace fmt = ::vkengine::security::format;

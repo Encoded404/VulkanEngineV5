@@ -1,6 +1,6 @@
 #include <CLI/CLI.hpp>
 
-#include "engine/core/EntryPoint.hpp"
+#include "engine/core/bootstrap/EntryPoint.hpp"
 
 import std;
 

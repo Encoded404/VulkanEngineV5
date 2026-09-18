@@ -616,8 +616,8 @@ if(WIN32)
 	unset(_vkengine_vcpkg_runtime_dir)
 endif()
 
-# Add subdirectories for source, examples and tests
-add_subdirectory(src)
+# Add subdirectories for engine, examples and tests
+add_subdirectory(engine)
 add_subdirectory(examples)
 
 if(BUILD_TESTING)

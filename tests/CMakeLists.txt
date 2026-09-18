@@ -42,7 +42,7 @@ endfunction()
 
 add_subdirectory(backend)
 add_subdirectory(crash)
-add_subdirectory(engine)
+add_subdirectory(core)
 add_subdirectory(runtime)
 add_subdirectory(shared)
 add_subdirectory(security)

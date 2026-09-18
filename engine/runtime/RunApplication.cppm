@@ -4,7 +4,7 @@ module;
 
 #include <logging/logging_macros.hpp>
 
-#include "engine/core/Crash.hpp"
+#include "engine/core/bootstrap/Crash.hpp"
 
 export module Runtime.Application;
 

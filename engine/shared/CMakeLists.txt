@@ -8,7 +8,7 @@ find_package(Vulkan QUIET)
 target_link_libraries(VulkanShared PUBLIC Vulkan::HppModule)
 
 target_include_directories(VulkanShared PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_options(VulkanShared PRIVATE

@@ -7,10 +7,10 @@
 # the crash report and session log it left behind.
 
 add_executable(crash_probe
-  ${CMAKE_SOURCE_DIR}/src/engine/core/Crash.cpp
+  ${CMAKE_SOURCE_DIR}/engine/core/bootstrap/Crash.cpp
   crash_probe.cpp
 )
-target_include_directories(crash_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(crash_probe PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(crash_probe PRIVATE cxx_std_23)
 set_target_properties(crash_probe PROPERTIES CXX_MODULE_STD ON)
 target_compile_options(crash_probe PRIVATE ${TEST_COMPILE_OPTS})

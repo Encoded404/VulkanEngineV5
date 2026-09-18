@@ -12,7 +12,7 @@
 
 #include <csignal>
 
-#include "engine/core/Crash.hpp"
+#include "engine/core/bootstrap/Crash.hpp"
 
 import std;
 import std.compat;

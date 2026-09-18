@@ -22,7 +22,7 @@ target_link_libraries(infinite_runner_leaderboard PUBLIC
 )
 
 target_include_directories(infinite_runner_leaderboard PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_options(infinite_runner_leaderboard PRIVATE

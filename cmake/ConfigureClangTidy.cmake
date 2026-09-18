@@ -6,7 +6,7 @@ endif()
 
 # Function to enable clang-tidy for a specific target.
 # Usage: enable_target_clang_tidy(<target> [HEADER_FILTER <regex>])
-# If no HEADER_FILTER is supplied the default is ^${CMAKE_SOURCE_DIR}/src/.
+# If no HEADER_FILTER is supplied the default is ^${CMAKE_SOURCE_DIR}/engine/.
 function(enable_target_clang_tidy target)
     cmake_parse_arguments(CT "" "HEADER_FILTER" "" ${ARGN})
 
@@ -20,7 +20,7 @@ function(enable_target_clang_tidy target)
         return()
     endif()
 
-    set(CLANG_TIDY_CMD "${CLANG_TIDY_EXECUTABLE};-p=${CMAKE_BINARY_DIR};--system-headers=0;--header-filter=^${CMAKE_SOURCE_DIR}/(src|tests)/")
+    set(CLANG_TIDY_CMD "${CLANG_TIDY_EXECUTABLE};-p=${CMAKE_BINARY_DIR};--system-headers=0;--header-filter=^${CMAKE_SOURCE_DIR}/(engine|tests)/")
     set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_CMD}")
     message(STATUS "Clang-Tidy enabled for target '${target}'.")
 endfunction()

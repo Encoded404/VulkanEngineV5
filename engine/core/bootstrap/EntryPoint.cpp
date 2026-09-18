@@ -1,6 +1,6 @@
-#include "engine/core/EntryPoint.hpp"
+#include "engine/core/bootstrap/EntryPoint.hpp"
 
-#include "engine/core/Crash.hpp"
+#include "engine/core/bootstrap/Crash.hpp"
 
 #include <cstdio>
 #include <exception>

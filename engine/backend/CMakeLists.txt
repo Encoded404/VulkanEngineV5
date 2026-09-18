@@ -13,7 +13,7 @@ target_link_libraries(${BACKEND_TARGET} PRIVATE
 )
 
 target_include_directories(${BACKEND_TARGET} PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_options(${BACKEND_TARGET} PRIVATE

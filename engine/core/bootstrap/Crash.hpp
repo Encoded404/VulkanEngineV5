@@ -1,5 +1,5 @@
-#ifndef VULKANENGINE_CORE_CRASH_HPP
-#define VULKANENGINE_CORE_CRASH_HPP
+#ifndef VULKANENGINE_CORE_BOOTSTRAP_CRASH_HPP
+#define VULKANENGINE_CORE_BOOTSTRAP_CRASH_HPP
 
 // Engine-owned crash handling and crash-safe log capture.
 //
@@ -66,4 +66,4 @@ void Report(const char* reason, const char* detail) noexcept;
 
 } // namespace VulkanEngine::Crash
 
-#endif // VULKANENGINE_CORE_CRASH_HPP
+#endif // VULKANENGINE_CORE_BOOTSTRAP_CRASH_HPP

@@ -3,7 +3,7 @@ module;
 // The envelope format lives in a plain header so the build-time secrets
 // generator can compile the exact same seal/open code. Included from the global
 // module fragment: Monocypher's C declarations stay in the global module.
-#include "security/cipher_format.hpp"
+#include "engine/security/cipher_format.hpp"
 
 module VulkanEngine.DataCipher;
 

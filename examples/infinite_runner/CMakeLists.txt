@@ -11,7 +11,7 @@ find_package(glm CONFIG REQUIRED)
 target_link_libraries(infinite_runner_core PUBLIC glm::glm)
 
 target_include_directories(infinite_runner_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_options(infinite_runner_core PRIVATE

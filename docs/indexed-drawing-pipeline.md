@@ -204,28 +204,28 @@ This is mandatory for streaming, entity churn, and any real scene; fixed init-ti
 
 | File | Change |
 |---|---|
-| `src/engine/shaders/expand.slang` | rewrite: entries + `draw_indices` replay + two counters; delete entry stamping |
-| `src/engine/shaders/main_indir.slang` | drop `baseVertex`/`SV_StartVertexLocation`; fetch `vertexEntries[vertexId]` |
-| `src/engine/shaders/depth_indir.slang` | binding rename to `vertexEntries` |
-| `src/engine/shaders/pre_cull.slang` | index copy (mono) / command emission (MID), `kCompactionMode`, `indexBase` rename |
-| `src/engine/shaders/occluder_select.slang` | same split for the occluder leg |
-| `src/engine/shaders/collect_count_compact.slang` | 4 B index copy / alive-submesh count + command emission, spec constant |
-| `src/engine/shaders/collect_write.slang` | indexed command fields; monolithic-only (no spec constant, not dispatched in MID) |
-| `src/engine/shaders/occlusion_cull.slang` | `indirOffset → indexBase` rename only |
-| `src/engine/render/SceneRenderer.cppm` | `DrawMode`, `SceneCapacity`, frame-struct buffer members, feature check, config plumbing |
-| `src/engine/render/SceneRenderer.cpp` | per-mode buffer allocation + usage flags + capacity growth, descriptor bindings, pipeline creation for active variant, `Reinitialize` |
-| `src/engine/render/SceneRendererFrame.cpp` | `DepthPrepass`/`OccluderPrepass`/`Render` indexed draws, `DispatchCollect` modes, per-frame descriptor writes, counter zeroing |
-| `src/engine/render/Renderer.cpp` | render-graph buffer resources + `IndexInput` read declarations (mode-independent) |
-| `src/shared/render_graph/RenderGraphTypes.cppm` | `PipelineStageIntent::IndexInput → eVertexInput`; `eIndexRead` access |
-| `src/engine/render/PipelineFactory.cppm` / `.cpp` | specialization-constant fields in `ComputePipelineDesc` + `pSpecializationInfo` in `CreateCompute` |
-| `src/engine/render/MeshGatherSystem.cpp` | `StaticEntry` + window/span (28 B), mirror + `static_assert`, totals + `EnsureSceneCapacity` |
-| `src/engine/assets/MeshTypes.cppm` | `SubMesh` window/span fields |
-| `src/engine/gpu/MeshData.cppm` | compute window/span in `EnsureSubmeshBounds` |
-| `src/engine/assets/MeshCache.cpp` | no change needed: the window is computed from index *values*, which the `index_offset` adjustment does not alter; `EnsureSubmeshBounds` still (re)computes it here |
-| `src/engine/render/MeshUploadManager.*` | no change needed: totals and the 24-bit invariant are handled in `MeshGatherSystem` where the heap offset is known; `RegisterStreamed`/`UploadPersistent` already call `EnsureSubmeshBounds` so streamed windows are populated |
-| `src/engine/core/GameEngine.cpp` / `EngineContext.cppm` | `DrawMode` in `GameConfig`, initial capacity, capacity call |
-| `src/backend/vulkan/VulkanCapabilities.cppm` / `.cpp` | `drawIndirectCount` optional feature + mapping |
-| `src/engine/render/passes/MainPass.cpp` | delete the stale duplicate draw path |
+| `engine/core/shaders/expand.slang` | rewrite: entries + `draw_indices` replay + two counters; delete entry stamping |
+| `engine/core/shaders/main_indir.slang` | drop `baseVertex`/`SV_StartVertexLocation`; fetch `vertexEntries[vertexId]` |
+| `engine/core/shaders/depth_indir.slang` | binding rename to `vertexEntries` |
+| `engine/core/shaders/pre_cull.slang` | index copy (mono) / command emission (MID), `kCompactionMode`, `indexBase` rename |
+| `engine/core/shaders/occluder_select.slang` | same split for the occluder leg |
+| `engine/core/shaders/collect_count_compact.slang` | 4 B index copy / alive-submesh count + command emission, spec constant |
+| `engine/core/shaders/collect_write.slang` | indexed command fields; monolithic-only (no spec constant, not dispatched in MID) |
+| `engine/core/shaders/occlusion_cull.slang` | `indirOffset → indexBase` rename only |
+| `engine/core/render/SceneRenderer.cppm` | `DrawMode`, `SceneCapacity`, frame-struct buffer members, feature check, config plumbing |
+| `engine/core/render/SceneRenderer.cpp` | per-mode buffer allocation + usage flags + capacity growth, descriptor bindings, pipeline creation for active variant, `Reinitialize` |
+| `engine/core/render/SceneRendererFrame.cpp` | `DepthPrepass`/`OccluderPrepass`/`Render` indexed draws, `DispatchCollect` modes, per-frame descriptor writes, counter zeroing |
+| `engine/core/render/Renderer.cpp` | render-graph buffer resources + `IndexInput` read declarations (mode-independent) |
+| `engine/shared/render_graph/RenderGraphTypes.cppm` | `PipelineStageIntent::IndexInput → eVertexInput`; `eIndexRead` access |
+| `engine/core/render/PipelineFactory.cppm` / `.cpp` | specialization-constant fields in `ComputePipelineDesc` + `pSpecializationInfo` in `CreateCompute` |
+| `engine/core/render/MeshGatherSystem.cpp` | `StaticEntry` + window/span (28 B), mirror + `static_assert`, totals + `EnsureSceneCapacity` |
+| `engine/core/assets/MeshTypes.cppm` | `SubMesh` window/span fields |
+| `engine/core/gpu/MeshData.cppm` | compute window/span in `EnsureSubmeshBounds` |
+| `engine/core/assets/MeshCache.cpp` | no change needed: the window is computed from index *values*, which the `index_offset` adjustment does not alter; `EnsureSubmeshBounds` still (re)computes it here |
+| `engine/core/render/MeshUploadManager.*` | no change needed: totals and the 24-bit invariant are handled in `MeshGatherSystem` where the heap offset is known; `RegisterStreamed`/`UploadPersistent` already call `EnsureSubmeshBounds` so streamed windows are populated |
+| `engine/core/GameEngine.cpp` / `EngineContext.cppm` | `DrawMode` in `GameConfig`, initial capacity, capacity call |
+| `engine/backend/vulkan/VulkanCapabilities.cppm` / `.cpp` | `drawIndirectCount` optional feature + mapping |
+| `engine/core/render/passes/MainPass.cpp` | delete the stale duplicate draw path |
 
 ---
 

@@ -1,5 +1,5 @@
 // Shared GPU-side decoding for the packed 32-bit tangent frame.
-// Packed layout (see src/engine/assets/NormalEncoding.cppm for the encoder):
+// Packed layout (see engine/core/assets/NormalEncoding.cppm for the encoder):
 //   [31]    handedness (1 = -1.0)
 //   [30..21] tangent diamond d (10 bits)
 //   [19..10] octahedral normal y (10 bits)

@@ -24,7 +24,7 @@ add_executable(secrets-gen
 
 target_compile_features(secrets-gen PRIVATE cxx_std_20)
 target_include_directories(secrets-gen PRIVATE
-    "${VULKAN_ENGINE_ROOT}/src"
+    "${VULKAN_ENGINE_ROOT}"
     "${VULKAN_ENGINE_ROOT}/external/Monocypher/src"
 )
 

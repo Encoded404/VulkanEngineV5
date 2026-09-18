@@ -1,4 +1,4 @@
-#include "engine/core/Crash.hpp"
+#include "engine/core/bootstrap/Crash.hpp"
 
 #include <atomic>
 #include <cerrno>

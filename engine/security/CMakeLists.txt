@@ -16,13 +16,13 @@ add_library(${SECURITY_TARGET} STATIC
 )
 target_compile_features(${SECURITY_TARGET} PUBLIC cxx_std_23)
 
-# Private: Monocypher headers. Public: the project root so the shared
-# security/cipher_format.hpp is reachable from the module implementations.
+# Private: Monocypher headers. Public: the project root so
+# engine/security/cipher_format.hpp is reachable from the module implementations.
 target_include_directories(${SECURITY_TARGET} PRIVATE
     "${CMAKE_SOURCE_DIR}/external/Monocypher/src"
 )
 target_include_directories(${SECURITY_TARGET} PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_options(${SECURITY_TARGET} PRIVATE

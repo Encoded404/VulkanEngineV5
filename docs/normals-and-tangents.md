@@ -120,11 +120,11 @@ plain SNORM8 per-axis is ≈ 0.9° max.
 
 | Location | Role |
 |---|---|
-| `src/engine/assets/NormalEncoding.cppm` | CPU-side encoder: octahedral + Duff basis + diamond + handedness → `uint32`. Single source of truth for the bit layout. |
-| `src/engine/shaders/normal_encoding.slang` | GPU-side decoder (shared Slang include), mirror of the encoder. |
-| `src/engine/render/MeshPipeline.cppm` | Canonical `Vertex` struct + `static_assert(sizeof(Vertex) == 24)`. |
-| `src/engine/shaders/main_indir.slang`, `depth_indir.slang` | SSBO vertex fetch; `Vertex` structs MUST change in lockstep with the C++ struct. |
-| `src/engine/assets/FileLoaders/Mesh/TangentGenerator.cppm` | MikkTSpace wrapper producing per-vertex tangents. |
+| `engine/core/assets/NormalEncoding.cppm` | CPU-side encoder: octahedral + Duff basis + diamond + handedness → `uint32`. Single source of truth for the bit layout. |
+| `engine/core/shaders/normal_encoding.slang` | GPU-side decoder (shared Slang include), mirror of the encoder. |
+| `engine/core/render/MeshPipeline.cppm` | Canonical `Vertex` struct + `static_assert(sizeof(Vertex) == 24)`. |
+| `engine/core/shaders/main_indir.slang`, `depth_indir.slang` | SSBO vertex fetch; `Vertex` structs MUST change in lockstep with the C++ struct. |
+| `engine/core/assets/FileLoaders/Mesh/TangentGenerator.cppm` | MikkTSpace wrapper producing per-vertex tangents. |
 
 **The encoder and decoder MUST be changed together.** There is no test harness
 yet; adding a CPU round-trip test (pack → unpack → angular error < 0.5° over

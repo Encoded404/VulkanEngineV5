@@ -7,7 +7,7 @@ module;
 #include <time.h>
 
 // Crash.hpp includes no standard headers either: safe in the GMF.
-#include "engine/core/Crash.hpp"
+#include "engine/core/bootstrap/Crash.hpp"
 
 export module VulkanEngine.Startup;
 

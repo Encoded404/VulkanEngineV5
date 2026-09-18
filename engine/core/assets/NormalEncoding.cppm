@@ -22,7 +22,7 @@ export namespace VulkanEngine::NormalEncoding {
 //            trig-free decode.
 //   Bit 20 is spare (reserved for a future zero-length-tangent sentinel).
 //
-// Decoding mirror lives in src/engine/shaders/normal_encoding.slang. The two
+// Decoding mirror lives in engine/core/shaders/normal_encoding.slang. The two
 // MUST be changed together. Error characteristics (Kapoulkine, "Quantizing
 // Tangent Frames", 2026): ~0.04° avg / 0.14° max normal error,
 // ~0.09° avg / 0.24° max tangent error.

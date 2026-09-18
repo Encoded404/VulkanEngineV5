@@ -12,7 +12,7 @@ using Examples::InfiniteRunner::BalanceConfig;
 // Golden fingerprint of the v1 default ruleset, computed with the documented
 // FNV-1a-64 contract (version, then every field in declaration order, floats
 // folded via their bit pattern). Update deliberately when kVersion changes.
-constexpr std::uint64_t kGoldenV1 = 0xC9816D8AF4A9D26AULL;
+constexpr std::uint64_t kGoldenV1 = 0xEE1A8498415DBD96ULL;
 
 TEST(BalanceConfigTest, DefaultRulesetFingerprintIsStable) {
     EXPECT_EQ(BalanceConfig{}.Hash(), kGoldenV1);

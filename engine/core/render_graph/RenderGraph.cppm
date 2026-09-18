@@ -11,6 +11,17 @@ export import VulkanShared.RenderGraphTypes;
 
 export namespace VulkanEngine::RenderGraph {
 
+// Structured reason a builder mutation was rejected. Mutators validate before
+// touching any container, so an invalid handle can never index out of bounds.
+enum class GraphBuildError : std::uint8_t {
+    None,
+    InvalidPassHandle,
+    InvalidResourceHandle,
+    IncompatibleResourceState,
+    IncompatibleResourceKind,
+    SelfDependency,
+};
+
 class RenderGraphBuilder {
 public:
     struct ReadInfo {
@@ -22,24 +33,28 @@ public:
     ResourceHandle CreateTransientResource(std::string name, ResourceKind kind);
     ResourceHandle ImportResource(std::string name, ResourceKind kind);
 
-    bool SetTransientImageInfo(ResourceHandle resource, TransientImageInfo info);
-    bool SetTransientBufferInfo(ResourceHandle resource, TransientBufferInfo info);
+    std::expected<void, GraphBuildError> SetTransientImageInfo(ResourceHandle resource, TransientImageInfo info);
+    std::expected<void, GraphBuildError> SetTransientBufferInfo(ResourceHandle resource, TransientBufferInfo info);
 
-    bool SetInitialState(ResourceHandle resource, ResourceState state);
-    bool SetFinalState(ResourceHandle resource, ResourceState state);
+    std::expected<void, GraphBuildError> SetInitialState(ResourceHandle resource, ResourceState state);
+    std::expected<void, GraphBuildError> SetFinalState(ResourceHandle resource, ResourceState state);
 
     PassHandle AddPass(std::string name,
                        QueueType queue = QueueType::Graphics,
                        bool enabled = true,
                        PassExecutionCallback execute = {});
 
-    bool AddRead(PassHandle pass, ResourceHandle resource);
-    bool AddRead(PassHandle pass, ResourceHandle resource,
-                 PipelineStageIntent stage, AccessIntent access);
-    bool AddWrite(PassHandle pass, ResourceHandle resource);
-    bool AddDependency(PassHandle before, PassHandle after);
+    std::expected<void, GraphBuildError> AddRead(PassHandle pass, ResourceHandle resource);
+    std::expected<void, GraphBuildError> AddRead(PassHandle pass, ResourceHandle resource,
+                                                               PipelineStageIntent stage, AccessIntent access);
+    std::expected<void, GraphBuildError> AddWrite(PassHandle pass, ResourceHandle resource);
+    std::expected<void, GraphBuildError> AddDependency(PassHandle before, PassHandle after);
 
-    bool SetPassAttachments(PassHandle pass, PassAttachmentSetup setup);
+    std::expected<void, GraphBuildError> SetPassAttachments(PassHandle pass, PassAttachmentSetup setup);
+
+    // Clears the model so the same builder can be rebuilt from scratch without
+    // leaking earlier slots into the new pass/resource numbering.
+    void Reset();
 
     [[nodiscard]] CompiledRenderGraph Compile() const;
 
@@ -47,6 +62,10 @@ private:
     struct ResourceNode {
         std::string name{};
         ResourceKind kind = ResourceKind::Image;
+        // Slot identity policy: a slot's generation is bumped when a tombstoned
+        // slot is reused (removal + tombstones arrive with the Phase 6
+        // registration API), so a stale ResourceHandle fails IsValidResourceHandle
+        // instead of aliasing a different resource.
         std::uint32_t generation = 1;
         bool imported = false;
         bool transient = false;
@@ -71,6 +90,7 @@ private:
 
     [[nodiscard]] bool IsValidResourceHandle(ResourceHandle handle) const;
     [[nodiscard]] bool IsValidPassHandle(PassHandle handle) const;
+    [[nodiscard]] std::uint32_t FindResourceByName(std::string_view name, ResourceKind kind) const;
 
     std::vector<ResourceNode> resources_{};
     std::vector<PassNode> passes_{};

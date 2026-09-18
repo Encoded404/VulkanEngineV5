@@ -1,5 +1,5 @@
 add_library(VulkanShared STATIC)
-target_compile_features(VulkanShared PUBLIC cxx_std_20)
+target_compile_features(VulkanShared PUBLIC cxx_std_23)
 
 # Vulkan targets (Vulkan::HppModule, Vulkan::Vulkan) are configured by the
 # top-level CMakeLists; on Windows targets the loader is provided by vcpkg's

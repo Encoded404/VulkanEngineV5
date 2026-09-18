@@ -154,43 +154,33 @@ struct TransientImageInfo {
     vk::SampleCountFlagBits sample_count = vk::SampleCountFlagBits::e1;
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment;
     vk::ImageTiling tiling = vk::ImageTiling::eOptimal;
+    // Reserved for Phase 2 interval aliasing. Aliasable images must be created
+    // with VK_IMAGE_CREATE_ALIAS_BIT and must carry an Undefined initial
+    // layout, which Phase 2 enforces.
+    bool aliasable = false;
 };
 
 struct TransientBufferInfo {
     vk::DeviceSize size = 0;
     vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer;
     vk::MemoryPropertyFlags memory_properties = vk::MemoryPropertyFlagBits::eDeviceLocal;
+    bool aliasable = false;
 };
 
-// ── Barrier and transition types ──
+// ── Resource metadata ──
 
-struct ImageBarrier {
-    vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-    vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-    vk::AccessFlags src_access = {};
-    vk::AccessFlags dst_access = {};
-    vk::ImageLayout old_layout = vk::ImageLayout::eUndefined;
-    vk::ImageLayout new_layout = vk::ImageLayout::eUndefined;
-    vk::Image image = {};
-    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
-    vk::ImageSubresourceRange subresource_range = {};
-    std::uint32_t src_queue_family = vk::QueueFamilyIgnored;
-    std::uint32_t dst_queue_family = vk::QueueFamilyIgnored;
+struct ResourceInfo {
+    std::string name{};
+    ResourceKind kind = ResourceKind::Image;
+    bool imported = false;
+    std::optional<TransientImageInfo> image_info{};
+    std::optional<TransientBufferInfo> buffer_info{};
 };
 
-struct BufferBarrier {
-    vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-    vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-    vk::AccessFlags src_access = {};
-    vk::AccessFlags dst_access = {};
-    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t src_queue_family = vk::QueueFamilyIgnored;
-    std::uint32_t dst_queue_family = vk::QueueFamilyIgnored;
-};
+// ── Pass execution ──
 
-struct ResourceTransition {
-    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
-    ResourceState target_state{};
+struct PassExecutionCallback {
+    std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> callback{};
 };
 
 // ── Attachment types ──
@@ -211,20 +201,23 @@ struct PassAttachmentSetup {
     bool auto_begin_rendering = false;
 };
 
-// ── Pass execution ──
-
-struct PassExecutionCallback {
-    std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> callback{};
-};
-
-// ── Resource metadata ──
-
-struct ResourceInfo {
-    std::string name{};
-    ResourceKind kind = ResourceKind::Image;
-    bool imported = false;
-    std::optional<TransientImageInfo> image_info{};
-    std::optional<TransientBufferInfo> buffer_info{};
+// ── Planned transitions ──
+//
+// A ResourceTransition is resolved entirely by the compiler: `from_state` is
+// the state the resource was left in by the previous use (or the Undefined
+// state when `from_known` is false), and the stage/access flag pairs are the
+// OR of every use this pass makes of the resource. Read+write on the same
+// resource in one pass therefore collapses into a single transition, which is
+// what makes the emitted barrier correct for a combined read/write hazard.
+struct ResourceTransition {
+    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
+    ResourceState from_state{};
+    ResourceState target_state{};
+    bool from_known = false;
+    vk::PipelineStageFlags2 src_stage{};
+    vk::AccessFlags2 src_access{};
+    vk::PipelineStageFlags2 dst_stage{};
+    vk::AccessFlags2 dst_access{};
 };
 
 // ── Compiled pass description ──
@@ -262,6 +255,7 @@ struct CompiledRenderGraph {
     mutable std::vector<ResourceState> initial_states{};
     mutable std::vector<bool> has_initial_state{};
     std::vector<vk::Image> resource_images{};
+    std::vector<vk::Buffer> resource_buffers{};
     std::vector<vk::Format> resource_formats{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
@@ -278,10 +272,91 @@ struct CompiledRenderGraph {
         }
     }
 
+    void SetResourceBuffer(std::uint32_t resource_index, vk::Buffer buffer) {
+        if (resource_index < resource_buffers.size()) {
+            resource_buffers[resource_index] = buffer;
+        }
+    }
+
     void SetResourceFormat(std::uint32_t resource_index, vk::Format format) {
         if (resource_index < resource_formats.size()) {
             resource_formats[resource_index] = format;
         }
+    }
+};
+
+// ── Resolved handles + barrier plan (pure planner output) ──
+
+// Vulkan handles resolved at the execute boundary, indexed by resource index.
+// Kept separate from CompiledRenderGraph so the planner stays a pure function
+// over graph data + handles and never touches the device.
+struct ResolvedResourceHandles {
+    std::vector<vk::Image> images{};
+    std::vector<vk::Buffer> buffers{};
+    std::vector<vk::Format> formats{};
+};
+
+// Reserved for Phase 2. Empty in Phase 1: no alias reuse is planned, but the
+// planner signature and BarrierPlan carry the seam so Phase 2 can fill it
+// without an API break.
+struct PlannedAliasDependency {
+    std::uint32_t aliased_resource = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t after_resource = std::numeric_limits<std::uint32_t>::max();
+    std::int32_t pass_index = -1;
+};
+
+struct AliasIntervals {
+    std::vector<PlannedAliasDependency> dependencies{};
+};
+
+struct PlannedImageBarrier {
+    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
+    vk::Image image = {};
+    vk::PipelineStageFlags2 src_stage{};
+    vk::PipelineStageFlags2 dst_stage{};
+    vk::AccessFlags2 src_access{};
+    vk::AccessFlags2 dst_access{};
+    vk::ImageLayout old_layout = vk::ImageLayout::eUndefined;
+    vk::ImageLayout new_layout = vk::ImageLayout::eUndefined;
+    vk::ImageSubresourceRange range{};
+};
+
+struct PlannedBufferBarrier {
+    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
+    // Null when the engine could not resolve a concrete buffer for this
+    // resource. The executor then falls back to a conservative global memory
+    // barrier with the same scopes; correctness is preserved, only the
+    // precision is lost until a resolver is registered.
+    vk::Buffer buffer = {};
+    vk::PipelineStageFlags2 src_stage{};
+    vk::PipelineStageFlags2 dst_stage{};
+    vk::AccessFlags2 src_access{};
+    vk::AccessFlags2 dst_access{};
+    vk::DeviceSize offset = 0;
+    vk::DeviceSize size = vk::WholeSize;
+};
+
+struct PlannedPassBarriers {
+    std::uint32_t pass_index = std::numeric_limits<std::uint32_t>::max();
+    std::string pass_name{};
+    std::vector<PlannedImageBarrier> pre_image{};
+    std::vector<PlannedBufferBarrier> pre_buffer{};
+    std::vector<PlannedImageBarrier> post_image{};
+    std::vector<PlannedBufferBarrier> post_buffer{};
+};
+
+struct BarrierPlan {
+    bool valid = false;
+    std::vector<PlannedPassBarriers> passes{};
+
+    [[nodiscard]] bool HasBarriers() const {
+        for (const auto& pass : passes) {
+            if (!pass.pre_image.empty() || !pass.pre_buffer.empty() ||
+                !pass.post_image.empty() || !pass.post_buffer.empty()) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -296,61 +371,62 @@ inline bool StatesEqual(const ResourceState& a, const ResourceState& b) {
     return true;
 }
 
-inline vk::PipelineStageFlags IntentToPipelineStage(PipelineStageIntent intent, AccessIntent access) {
+// sync2 (core in Vulkan 1.3). TopOfPipe/BottomOfPipe/Present collapse to eNone:
+// the deprecated top/bottom stages have no sync2 equivalent, and an Undefined
+// source needs no source scope. Callers must OR these into 64-bit masks.
+inline vk::PipelineStageFlags2 IntentToPipelineStage(PipelineStageIntent intent, AccessIntent access) {
+    (void)access;
     switch (intent) {
         case PipelineStageIntent::None:
-            return {};
-        case PipelineStageIntent::Transfer:
-            return vk::PipelineStageFlagBits::eTransfer;
-        case PipelineStageIntent::ColorAttachment:
-            return vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        case PipelineStageIntent::DepthAttachment:
-            return vk::PipelineStageFlagBits::eEarlyFragmentTests |
-                   vk::PipelineStageFlagBits::eLateFragmentTests;
-        case PipelineStageIntent::VertexShader:
-            return vk::PipelineStageFlagBits::eVertexShader;
-        case PipelineStageIntent::IndexInput:
-            return vk::PipelineStageFlagBits::eVertexInput |
-                   vk::PipelineStageFlagBits::eVertexShader;
-        case PipelineStageIntent::FragmentShader:
-            return vk::PipelineStageFlagBits::eFragmentShader;
-        case PipelineStageIntent::ComputeShader:
-            return vk::PipelineStageFlagBits::eComputeShader;
-        case PipelineStageIntent::IndirectDraw:
-            return vk::PipelineStageFlagBits::eDrawIndirect;
         case PipelineStageIntent::Present:
-            return vk::PipelineStageFlagBits::eBottomOfPipe;
         case PipelineStageIntent::TopOfPipe:
-            return vk::PipelineStageFlagBits::eTopOfPipe;
         case PipelineStageIntent::BottomOfPipe:
-            return vk::PipelineStageFlagBits::eBottomOfPipe;
+            return vk::PipelineStageFlagBits2::eNone;
+        case PipelineStageIntent::Transfer:
+            return vk::PipelineStageFlagBits2::eTransfer;
+        case PipelineStageIntent::ColorAttachment:
+            return vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        case PipelineStageIntent::DepthAttachment:
+            return vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                   vk::PipelineStageFlagBits2::eLateFragmentTests;
+        case PipelineStageIntent::VertexShader:
+            return vk::PipelineStageFlagBits2::eVertexShader;
+        case PipelineStageIntent::IndexInput:
+            return vk::PipelineStageFlagBits2::eVertexInput |
+                   vk::PipelineStageFlagBits2::eVertexShader;
+        case PipelineStageIntent::FragmentShader:
+            return vk::PipelineStageFlagBits2::eFragmentShader;
+        case PipelineStageIntent::ComputeShader:
+            return vk::PipelineStageFlagBits2::eComputeShader;
+        case PipelineStageIntent::IndirectDraw:
+            return vk::PipelineStageFlagBits2::eDrawIndirect;
     }
-    return vk::PipelineStageFlagBits::eTopOfPipe;
+    return vk::PipelineStageFlagBits2::eNone;
 }
 
-inline vk::AccessFlags IntentToAccessFlags(PipelineStageIntent stage, AccessIntent access) {
+inline vk::AccessFlags2 IntentToAccessFlags(PipelineStageIntent stage, AccessIntent access) {
     if (access == AccessIntent::None) return {};
 
-    auto stage_access = [](PipelineStageIntent s, bool is_write) -> vk::AccessFlags {
+    auto stage_access = [](PipelineStageIntent s, bool is_write) -> vk::AccessFlags2 {
         switch (s) {
             case PipelineStageIntent::Transfer:
-                return is_write ? vk::AccessFlagBits::eTransferWrite
-                                : vk::AccessFlagBits::eTransferRead;
+                return is_write ? vk::AccessFlagBits2::eTransferWrite
+                                : vk::AccessFlagBits2::eTransferRead;
             case PipelineStageIntent::ColorAttachment:
-                return vk::AccessFlagBits::eColorAttachmentWrite;
+                return vk::AccessFlagBits2::eColorAttachmentWrite;
             case PipelineStageIntent::DepthAttachment:
-                return vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+                return vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
             case PipelineStageIntent::VertexShader:
             case PipelineStageIntent::FragmentShader:
             case PipelineStageIntent::ComputeShader:
-                return is_write ? vk::AccessFlagBits::eShaderWrite
-                                : vk::AccessFlagBits::eShaderRead;
+                return is_write ? vk::AccessFlagBits2::eShaderWrite
+                                : vk::AccessFlagBits2::eShaderRead;
             case PipelineStageIntent::IndexInput:
-                return is_write ? vk::AccessFlagBits::eShaderWrite
-                                : (vk::AccessFlagBits::eIndexRead |
-                                   vk::AccessFlagBits::eShaderRead);
+                return is_write ? vk::AccessFlagBits2::eShaderWrite
+                                : (vk::AccessFlagBits2::eIndexRead |
+                                   vk::AccessFlagBits2::eShaderRead);
             case PipelineStageIntent::IndirectDraw:
-                return vk::AccessFlagBits::eIndirectCommandRead;
+                return vk::AccessFlagBits2::eIndirectCommandRead;
             case PipelineStageIntent::Present:
             default:
                 return {};
@@ -395,6 +471,81 @@ inline vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
         default:
             return vk::ImageAspectFlagBits::eColor;
     }
+}
+
+inline vk::ImageSubresourceRange DefaultImageSubresourceRange(vk::Format format) {
+    return {FormatToAspectFlags(format), 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers};
+}
+
+// Pure barrier planning: translates the compiler-resolved transitions into
+// concrete barriers with no device access. `resolved` supplies the handles;
+// unresolved handles yield no image barrier / a conservative global memory
+// barrier for buffers. `aliases` is reserved for Phase 2.
+inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
+                                const ResolvedResourceHandles& resolved,
+                                const AliasIntervals& aliases) {
+    (void)aliases;
+    BarrierPlan plan{};
+    plan.valid = graph.success;
+    plan.passes.reserve(graph.passes.size());
+
+    const auto image_range = [&](std::uint32_t index) {
+        if (index < resolved.formats.size()) {
+            return DefaultImageSubresourceRange(resolved.formats[index]);
+        }
+        return DefaultImageSubresourceRange(vk::Format::eUndefined);
+    };
+
+    for (std::size_t pass_index = 0; pass_index < graph.passes.size(); ++pass_index) {
+        const auto& pass = graph.passes[pass_index];
+        PlannedPassBarriers planned{};
+        planned.pass_index = static_cast<std::uint32_t>(pass_index);
+        planned.pass_name = pass.name;
+
+        const auto emit = [&](const std::vector<ResourceTransition>& transitions,
+                              std::vector<PlannedImageBarrier>& image_out,
+                              std::vector<PlannedBufferBarrier>& buffer_out) {
+            for (const auto& transition : transitions) {
+                const std::uint32_t index = transition.resource_index;
+                if (index >= graph.resource_info.size()) {
+                    continue;
+                }
+
+                if (graph.resource_info[index].kind == ResourceKind::Image) {
+                    PlannedImageBarrier barrier{};
+                    barrier.resource_index = index;
+                    if (index < resolved.images.size()) {
+                        barrier.image = resolved.images[index];
+                    }
+                    barrier.src_stage = transition.src_stage;
+                    barrier.dst_stage = transition.dst_stage;
+                    barrier.src_access = transition.src_access;
+                    barrier.dst_access = transition.dst_access;
+                    barrier.old_layout = IntentToImageLayout(transition.from_state.layout);
+                    barrier.new_layout = IntentToImageLayout(transition.target_state.layout);
+                    barrier.range = image_range(index);
+                    image_out.push_back(barrier);
+                } else {
+                    PlannedBufferBarrier barrier{};
+                    barrier.resource_index = index;
+                    if (index < resolved.buffers.size()) {
+                        barrier.buffer = resolved.buffers[index];
+                    }
+                    barrier.src_stage = transition.src_stage;
+                    barrier.dst_stage = transition.dst_stage;
+                    barrier.src_access = transition.src_access;
+                    barrier.dst_access = transition.dst_access;
+                    buffer_out.push_back(barrier);
+                }
+            }
+        };
+
+        emit(pass.pre_pass_transitions, planned.pre_image, planned.pre_buffer);
+        emit(pass.post_pass_transitions, planned.post_image, planned.post_buffer);
+        plan.passes.push_back(std::move(planned));
+    }
+
+    return plan;
 }
 
 }  // namespace VulkanEngine::RenderGraph

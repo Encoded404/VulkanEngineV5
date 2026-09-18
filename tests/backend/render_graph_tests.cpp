@@ -104,7 +104,8 @@ TEST(RenderGraphTest, CompiledGraphExecutesCallbacksInOrder) {
     const auto result = builder.Compile();
     ASSERT_TRUE(result.success);
 
-    VulkanBackend::Vulkan::ExecuteRenderGraph(result, nullptr, {});
+    const auto plan = PlanBarriers(result, ResolvedResourceHandles{}, AliasIntervals{});
+    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, result, nullptr, {});
 
     ASSERT_EQ(call_order.size(), 2u);
     EXPECT_EQ(call_order[0], 1);

@@ -55,6 +55,7 @@ enum class Feature : std::uint16_t {
     // core 1.3
     DynamicRendering,
     PipelineCreationCacheControl,
+    Synchronization2,      // vkCmdPipelineBarrier2 and friends (render-graph barriers)
     // EXT
     GraphicsPipelineLibrary,
     Count,
@@ -113,6 +114,7 @@ inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count
     { "drawIndirectCount", Requirement::Optional },
     { "dynamicRendering", Requirement::Required },
     { "pipelineCreationCacheControl", Requirement::Required },
+    { "synchronization2", Requirement::Required },
     { "graphicsPipelineLibrary", Requirement::Optional },
 }};
 

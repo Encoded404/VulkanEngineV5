@@ -19,7 +19,36 @@ using RenderGraph::ResourceState;
 
 [[maybe_unused]] bool IsResourceStateCompatible(ResourceKind kind, const ResourceState& state);
 [[maybe_unused]] bool ContainsResource(const std::vector<ResourceHandle>& handles, ResourceHandle value);
-[[maybe_unused]] bool ContainsReadResource(const std::vector<ReadInfo>& reads, ResourceHandle value);
+
+namespace {
+
+// Single place the compiler's queue assignment lives. VulkanEngine currently
+// records everything on the graphics queue; per-pass routing (and exposing
+// QueueType to applications) is Phase 10, so this is deliberately not a
+// compiler input yet.
+constexpr QueueType kCompilerQueue = QueueType::Graphics;
+
+[[nodiscard]] ResourceState UndefinedStateFor(ResourceKind kind) {
+    if (kind == ResourceKind::Image) {
+        return ResourceState::ImageState(PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                                         kCompilerQueue, ImageLayoutIntent::Undefined);
+    }
+    return ResourceState::BufferState(PipelineStageIntent::TopOfPipe, AccessIntent::None,
+                                      kCompilerQueue);
+}
+
+// The single destination state a pass leaves a resource in. A write always
+// wins the layout; reads contribute only their stage/access scope so a
+// read+write in one pass collapses to one transition with an OR'd scope.
+struct CombinedUse {
+    bool has_use = false;
+    bool written = false;
+    ResourceState target{};
+    vk::PipelineStageFlags2 dst_stage{};
+    vk::AccessFlags2 dst_access{};
+};
+
+}  // namespace
 
 CompiledRenderGraph RenderGraphBuilder::Compile() const {
     CompiledRenderGraph result{};
@@ -135,25 +164,30 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         }
     }
 
-    std::queue<std::uint32_t> ready{};
+    // Index-ordered ready set: independent passes always run in ascending slot
+    // order, and a newly unblocked lower slot is preferred over a higher one
+    // that was already ready (the 0,3,5 interleaving case). A FIFO queue does
+    // not provide this guarantee.
+    std::set<std::uint32_t> ready{};
     for (std::uint32_t pass_index = 0; pass_index < pass_count; ++pass_index) {
         if (!passes_[pass_index].enabled) {
             continue;
         }
         if (indegree[pass_index] == 0) {
-            ready.push(pass_index);
+            ready.insert(pass_index);
         }
     }
 
     std::vector<std::uint32_t> sorted_indices{};
+    sorted_indices.reserve(pass_count);
     while (!ready.empty()) {
-        const std::uint32_t current = ready.front();
-        ready.pop();
+        const std::uint32_t current = *ready.begin();
+        ready.erase(ready.begin());
         sorted_indices.push_back(current);
 
         for (const std::uint32_t dependent : edges[current]) {
             if (--indegree[dependent] == 0) {
-                ready.push(dependent);
+                ready.insert(dependent);
             }
         }
     }
@@ -171,13 +205,35 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         return result;
     }
 
+    // Last ordered use of each resource, so end-of-frame final states are
+    // attached to the pass that actually consumed the resource last.
+    const auto uses_resource = [&](std::uint32_t pass_index, std::uint32_t resource_index) {
+        const auto& pass = passes_[pass_index];
+        const ResourceHandle handle{.index = resource_index,
+                                    .generation = resources_[resource_index].generation};
+        if (ContainsResource(pass.writes, handle)) {
+            return true;
+        }
+        return std::ranges::any_of(pass.reads, [&](const ReadInfo& read) {
+            return read.resource.index == resource_index;
+        });
+    };
+
+    std::vector<std::int32_t> last_use(sorted_indices.size() > 0 ? resources_.size() : 0, -1);
+    for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
+        for (std::size_t ordered = 0; ordered < sorted_indices.size(); ++ordered) {
+            if (uses_resource(sorted_indices[ordered], resource_index)) {
+                last_use[resource_index] = static_cast<std::int32_t>(ordered);
+            }
+        }
+    }
+
     struct ResourcePassState {
         ResourceState state{};
         bool has_state = false;
     };
 
     std::vector<ResourcePassState> resource_states(resources_.size());
-
     for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
         const auto& resource = resources_[resource_index];
         if (resource.has_initial_state) {
@@ -188,177 +244,154 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     std::vector<CompiledPass> compiled_passes;
     compiled_passes.reserve(sorted_indices.size());
 
-    auto make_transition = [&](std::uint32_t res_idx, const ResourceState& target) -> ResourceTransition {
-        ResourceTransition t{};
-        t.resource_index = res_idx;
-        t.target_state = target;
-        return t;
-    };
-
-    for (const unsigned int pass_index : sorted_indices) {
+    for (std::size_t ordered = 0; ordered < sorted_indices.size(); ++ordered) {
+        const std::uint32_t pass_index = sorted_indices[ordered];
         const auto& pass = passes_[pass_index];
-        const PassHandle handle{.index = pass_index, .generation = pass.generation};
 
         CompiledPass compiled_pass{};
-        compiled_pass.handle = handle;
+        compiled_pass.handle = PassHandle{.index = pass_index, .generation = pass.generation};
         compiled_pass.name = pass.name;
         compiled_pass.queue = pass.queue;
         compiled_pass.execute = pass.execute;
         compiled_pass.attachment_setup = pass.attachment_setup;
 
+        // Collapse every read/write of one resource in this pass into a single
+        // combined use.
+        std::vector<std::pair<std::uint32_t, CombinedUse>> combined;
+        const auto combined_for = [&](std::uint32_t resource_index) -> CombinedUse& {
+            const auto it = std::ranges::find_if(combined, [&](const auto& entry) {
+                return entry.first == resource_index;
+            });
+            if (it != combined.end()) {
+                return it->second;
+            }
+            combined.emplace_back(resource_index, CombinedUse{});
+            return combined.back().second;
+        };
+
         for (const auto& read : pass.reads) {
-            if (!IsValidResourceHandle(read.resource)) continue;
+            if (!IsValidResourceHandle(read.resource)) {
+                continue;
+            }
+            auto& use = combined_for(read.resource.index);
+            use.has_use = true;
+            use.dst_stage |= IntentToPipelineStage(read.stage, read.access);
+            use.dst_access |= IntentToAccessFlags(read.stage, read.access);
+
             const auto& resource = resources_[read.resource.index];
-            auto& current_state = resource_states[read.resource.index];
-
             if (resource.kind == ResourceKind::Image) {
-                ImageLayoutIntent layout = ImageLayoutIntent::ShaderReadOnly;
-                if (read.stage == PipelineStageIntent::DepthAttachment) {
-                    layout = ImageLayoutIntent::DepthReadOnly;
+                const ImageLayoutIntent layout = read.stage == PipelineStageIntent::DepthAttachment
+                                                     ? ImageLayoutIntent::DepthReadOnly
+                                                     : ImageLayoutIntent::ShaderReadOnly;
+                if (!use.written) {
+                    use.target = ResourceState::ImageState(read.stage, read.access, kCompilerQueue, layout);
                 }
-                const ResourceState target_state = ResourceState::ImageState(
-                    read.stage, read.access,
-                    QueueType::Graphics, layout);
-
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::ImageState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics, ImageLayoutIntent::Undefined);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(read.resource.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(read.resource.index, target_state));
-                }
-
-                current_state.state = target_state;
-                current_state.has_state = true;
-            } else if (resource.kind == ResourceKind::Buffer) {
-                const ResourceState target_state = ResourceState::BufferState(
-                    read.stage, read.access, QueueType::Graphics);
-
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::BufferState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(read.resource.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(read.resource.index, target_state));
-                }
-
-                current_state.state = target_state;
-                current_state.has_state = true;
+            } else if (!use.written) {
+                use.target = ResourceState::BufferState(read.stage, read.access, kCompilerQueue);
             }
         }
 
         for (const auto& write : pass.writes) {
-            if (!IsValidResourceHandle(write)) continue;
-            const auto& resource = resources_[write.index];
-            auto& current_state = resource_states[write.index];
+            if (!IsValidResourceHandle(write)) {
+                continue;
+            }
+            auto& use = combined_for(write.index);
+            use.has_use = true;
+            use.written = true;
 
+            const auto& resource = resources_[write.index];
             if (resource.kind == ResourceKind::Image) {
-                ResourceState target_state;
-                bool is_attachment = false;
+                ResourceState target = ResourceState::ImageState(
+                    PipelineStageIntent::ComputeShader, AccessIntent::Write,
+                    kCompilerQueue, ImageLayoutIntent::General);
                 if (pass.attachment_setup) {
                     if (pass.attachment_setup->depth_attachment &&
                         pass.attachment_setup->depth_attachment->resource.index == write.index) {
-                        target_state = ResourceState::ImageState(
+                        target = ResourceState::ImageState(
                             PipelineStageIntent::DepthAttachment, AccessIntent::Write,
-                            QueueType::Graphics, ImageLayoutIntent::DepthAttachment);
-                        is_attachment = true;
+                            kCompilerQueue, ImageLayoutIntent::DepthAttachment);
                     } else {
                         for (const auto& color : pass.attachment_setup->color_attachments) {
                             if (color.resource.index == write.index) {
-                                target_state = ResourceState::ImageState(
+                                target = ResourceState::ImageState(
                                     PipelineStageIntent::ColorAttachment, AccessIntent::Write,
-                                    QueueType::Graphics, ImageLayoutIntent::ColorAttachment);
-                                is_attachment = true;
+                                    kCompilerQueue, ImageLayoutIntent::ColorAttachment);
                                 break;
                             }
                         }
                     }
                 }
-                if (!is_attachment) {
-                    target_state = ResourceState::ImageState(
-                        PipelineStageIntent::ComputeShader, AccessIntent::Write,
-                        QueueType::Graphics, ImageLayoutIntent::General);
-                }
+                use.target = target;
+            } else {
+                use.target = ResourceState::BufferState(
+                    PipelineStageIntent::ComputeShader, AccessIntent::Write, kCompilerQueue);
+            }
+            use.dst_stage |= IntentToPipelineStage(use.target.stage, use.target.access);
+            use.dst_access |= IntentToAccessFlags(use.target.stage, use.target.access);
+        }
 
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::ImageState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics, ImageLayoutIntent::Undefined);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(write.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(write.index, target_state));
-                }
+        std::ranges::sort(combined, [](const auto& a, const auto& b) { return a.first < b.first; });
 
-                current_state.state = target_state;
-                current_state.has_state = true;
-            } else if (resource.kind == ResourceKind::Buffer) {
-                const ResourceState target_state = ResourceState::BufferState(
-                    PipelineStageIntent::ComputeShader, AccessIntent::Write,
-                    QueueType::Graphics);
+        for (const auto& [resource_index, use] : combined) {
+            if (!use.has_use) {
+                continue;
+            }
 
-                if (!current_state.has_state) {
-                    const ResourceState undefined_state = ResourceState::BufferState(
-                        PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                        QueueType::Graphics);
-                    if (!StatesEqual(undefined_state, target_state)) {
-                        compiled_pass.pre_pass_transitions.push_back(
-                            make_transition(write.index, target_state));
-                    }
-                } else if (!StatesEqual(current_state.state, target_state)) {
-                    compiled_pass.pre_pass_transitions.push_back(
-                        make_transition(write.index, target_state));
-                }
+            const auto& resource = resources_[resource_index];
+            auto& current = resource_states[resource_index];
 
-                current_state.state = target_state;
-                current_state.has_state = true;
+            const ResourceState from = current.has_state
+                                           ? current.state
+                                           : UndefinedStateFor(resource.kind);
+            if (!StatesEqual(from, use.target)) {
+                ResourceTransition transition{};
+                transition.resource_index = resource_index;
+                transition.from_state = from;
+                transition.from_known = current.has_state;
+                transition.target_state = use.target;
+                transition.src_stage = IntentToPipelineStage(from.stage, from.access);
+                transition.src_access = IntentToAccessFlags(from.stage, from.access);
+                transition.dst_stage = use.dst_stage;
+                transition.dst_access = use.dst_access;
+                compiled_pass.pre_pass_transitions.push_back(transition);
+            }
+
+            current.state = use.target;
+            current.has_state = true;
+        }
+
+        // End-of-frame final state belongs to the last pass that writes the
+        // resource, evaluated against that pass's state, not the frame-end one.
+        for (const auto& write : pass.writes) {
+            if (!IsValidResourceHandle(write)) {
+                continue;
+            }
+            const auto& resource = resources_[write.index];
+            if (resource.kind != ResourceKind::Image || !resource.has_final_state) {
+                continue;
+            }
+            if (last_use[write.index] != static_cast<std::int32_t>(ordered)) {
+                continue;
+            }
+
+            auto& current = resource_states[write.index];
+            if (!current.has_state || !StatesEqual(current.state, resource.final_state)) {
+                ResourceTransition transition{};
+                transition.resource_index = write.index;
+                transition.from_state = current.has_state ? current.state : UndefinedStateFor(resource.kind);
+                transition.from_known = current.has_state;
+                transition.target_state = resource.final_state;
+                transition.src_stage = IntentToPipelineStage(transition.from_state.stage, transition.from_state.access);
+                transition.src_access = IntentToAccessFlags(transition.from_state.stage, transition.from_state.access);
+                transition.dst_stage = IntentToPipelineStage(resource.final_state.stage, resource.final_state.access);
+                transition.dst_access = IntentToAccessFlags(resource.final_state.stage, resource.final_state.access);
+                compiled_pass.post_pass_transitions.push_back(transition);
+                current.state = resource.final_state;
+                current.has_state = true;
             }
         }
 
         compiled_passes.push_back(std::move(compiled_pass));
-    }
-
-    for (std::size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
-        const std::uint32_t pass_index = sorted_indices[ordered_index];
-        const auto& pass = passes_[pass_index];
-
-        for (const auto& write : pass.writes) {
-            if (!IsValidResourceHandle(write)) continue;
-            const auto& resource = resources_[write.index];
-            if (resource.kind != ResourceKind::Image || !resource.has_final_state) continue;
-
-            const std::int32_t current_oi = static_cast<std::int32_t>(ordered_index);
-            std::int32_t last_usage = -1;
-            for (std::int32_t oi = static_cast<std::int32_t>(sorted_indices.size()) - 1; oi > current_oi; --oi) {
-                const auto& p = passes_[sorted_indices[static_cast<std::size_t>(oi)]];
-                const ResourceHandle h{.index = write.index, .generation = resource.generation};
-                if (ContainsResource(p.writes, h) || ContainsReadResource(p.reads, h)) {
-                    last_usage = oi;
-                    break;
-                }
-            }
-
-            if (last_usage < 0) {
-                auto& current_state = resource_states[write.index];
-                if (current_state.has_state && !StatesEqual(current_state.state, resource.final_state)) {
-                    compiled_passes[ordered_index].post_pass_transitions.push_back(
-                        make_transition(write.index, resource.final_state));
-                }
-            }
-        }
     }
 
     result.passes = std::move(compiled_passes);
@@ -368,6 +401,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     result.initial_states.resize(resources_.size());
     result.has_initial_state.resize(resources_.size(), false);
     result.resource_images.resize(resources_.size());
+    result.resource_buffers.resize(resources_.size());
     result.resource_formats.resize(resources_.size(), vk::Format::eUndefined);
 
     for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {
@@ -375,15 +409,12 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
         std::int32_t first = -1;
         std::int32_t last = -1;
-        for (std::size_t ordered_index = 0; ordered_index < sorted_indices.size(); ++ordered_index) {
-            const auto pass_index = sorted_indices[ordered_index];
-            const auto& pass = passes_[pass_index];
-            const ResourceHandle handle{.index = resource_index, .generation = resource.generation};
-            if (ContainsReadResource(pass.reads, handle) || ContainsResource(pass.writes, handle)) {
+        for (std::size_t ordered = 0; ordered < sorted_indices.size(); ++ordered) {
+            if (uses_resource(sorted_indices[ordered], resource_index)) {
                 if (first < 0) {
-                    first = static_cast<std::int32_t>(ordered_index);
+                    first = static_cast<std::int32_t>(ordered);
                 }
-                last = static_cast<std::int32_t>(ordered_index);
+                last = static_cast<std::int32_t>(ordered);
             }
         }
 

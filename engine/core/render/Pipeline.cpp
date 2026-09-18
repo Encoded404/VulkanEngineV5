@@ -143,6 +143,10 @@ void RenderPipeline::RegisterResourceResolver(const std::string& name,
     };
 }
 
+void RenderPipeline::RegisterBufferResolver(const std::string& name, BufferResolver resolve_buffer) {
+    buffer_resolvers_[name] = std::move(resolve_buffer);
+}
+
 VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipelinePassDesc& desc) {
     VulkanEngine::RenderGraph::PassExecutionCallback callback{};
     callback.callback = desc.execute;
@@ -239,15 +243,15 @@ const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& RenderPipeline::GetB
 
 bool RenderPipeline::AddDependency(VulkanEngine::RenderGraph::PassHandle before,
                                    VulkanEngine::RenderGraph::PassHandle after) {
-    return graph_builder_.AddDependency(before, after);
+    return graph_builder_.AddDependency(before, after).has_value();
 }
 
 bool RenderPipeline::SetInitialState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state) {
-    return graph_builder_.SetInitialState(resource, state);
+    return graph_builder_.SetInitialState(resource, state).has_value();
 }
 
 bool RenderPipeline::SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state) {
-    return graph_builder_.SetFinalState(resource, state);
+    return graph_builder_.SetFinalState(resource, state).has_value();
 }
 
 void RenderPipeline::Compile() {
@@ -293,7 +297,15 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
 
     ResolveResources(resolved_graph, image_index);
 
-    VulkanBackend::Vulkan::ExecuteRenderGraph(resolved_graph, user_data, command_buffer);
+    VulkanEngine::RenderGraph::ResolvedResourceHandles resolved{};
+    resolved.images = resolved_graph.resource_images;
+    resolved.buffers = resolved_graph.resource_buffers;
+    resolved.formats = resolved_graph.resource_formats;
+
+    const auto plan = VulkanEngine::RenderGraph::PlanBarriers(
+        resolved_graph, resolved, VulkanEngine::RenderGraph::AliasIntervals{});
+
+    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, resolved_graph, user_data, command_buffer);
 }
 
 void RenderPipeline::AllocateTransients() {
@@ -360,20 +372,31 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
 
     for (std::size_t i = 0; i < graph.resource_lifetimes.size(); ++i) {
         const auto& resource = graph.resource_lifetimes[i];
+        const bool is_buffer = i < graph.resource_info.size() &&
+                               graph.resource_info[i].kind == VulkanEngine::RenderGraph::ResourceKind::Buffer;
 
         if (resource.imported) {
-            auto it = resource_resolvers_.find(resource.name);
-            if (it != resource_resolvers_.end()) {
-                graph.SetResourceImage(static_cast<std::uint32_t>(i), it->second.resolve_image(image_index));
-                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+            if (is_buffer) {
+                auto buffer_it = buffer_resolvers_.find(resource.name);
+                if (buffer_it != buffer_resolvers_.end()) {
+                    graph.SetResourceBuffer(static_cast<std::uint32_t>(i), buffer_it->second(image_index));
+                }
+            } else {
+                auto it = resource_resolvers_.find(resource.name);
+                if (it != resource_resolvers_.end()) {
+                    graph.SetResourceImage(static_cast<std::uint32_t>(i), it->second.resolve_image(image_index));
+                    graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+                }
             }
         } else {
-            if (i < transient_images_.size()) {
+            if (!is_buffer && i < transient_images_.size()) {
                 graph.SetResourceImage(static_cast<std::uint32_t>(i), *transient_images_[i]);
             }
-            auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
-            if (it != transient_image_descs_.end()) {
-                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+            if (!is_buffer) {
+                auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
+                if (it != transient_image_descs_.end()) {
+                    graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+                }
             }
         }
     }

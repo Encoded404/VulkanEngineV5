@@ -48,6 +48,8 @@ bool VulkanCapabilitiesBuilder::GetSupportedFeature(const SupportedDeviceState& 
             return supported.vulkan13.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
             return supported.vulkan13.pipelineCreationCacheControl == vk::True;
+        case Feature::Synchronization2:
+            return supported.vulkan13.synchronization2 == vk::True;
         case Feature::GraphicsPipelineLibrary:
             return supported.gpl.graphicsPipelineLibrary == vk::True;
         case Feature::Count:
@@ -90,6 +92,8 @@ bool VulkanCapabilitiesBuilder::GetRequestedFeature(const VulkanCapabilities& ca
             return caps.vulkan13_features_.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
             return caps.vulkan13_features_.pipelineCreationCacheControl == vk::True;
+        case Feature::Synchronization2:
+            return caps.vulkan13_features_.synchronization2 == vk::True;
         case Feature::GraphicsPipelineLibrary:
             return caps.gpl_features_.graphicsPipelineLibrary == vk::True;
         case Feature::Count:
@@ -148,6 +152,9 @@ void VulkanCapabilitiesBuilder::SetRequestedFeature(VulkanCapabilities& caps, Fe
             break;
         case Feature::PipelineCreationCacheControl:
             caps.vulkan13_features_.pipelineCreationCacheControl = bit;
+            break;
+        case Feature::Synchronization2:
+            caps.vulkan13_features_.synchronization2 = bit;
             break;
         case Feature::GraphicsPipelineLibrary:
             caps.gpl_features_.graphicsPipelineLibrary = bit;

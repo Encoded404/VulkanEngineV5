@@ -6,6 +6,7 @@ add_executable(backend_tests
   graph_execution_bridge_tests.cpp
   render_graph_tests.cpp
   render_graph_diagnostics_tests.cpp
+  render_graph_barrier_plan_tests.cpp
   runtime_shell_tests.cpp
   event_system_tests.cpp
   component_system_tests.cpp
@@ -20,5 +21,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       ${CMAKE_SOURCE_DIR}/tests/runtime/test_logging.cppm
   )
 endif()
+
+enable_test_support_modules(backend_tests)
 
 setup_test_target(backend_tests)

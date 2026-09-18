@@ -19,6 +19,7 @@ using VulkanEngine::RenderGraph::ResourceState;
 using VulkanEngine::RenderGraph::PipelineStageIntent;
 using VulkanEngine::RenderGraph::AccessIntent;
 using VulkanEngine::RenderGraph::ImageLayoutIntent;
+using VulkanEngine::RenderGraph::GraphBuildError;
 
 
 
@@ -49,7 +50,23 @@ namespace VulkanEngine::RenderGraph {
 
 // NOLINTEND(misc-use-internal-linkage)
 
+std::uint32_t RenderGraphBuilder::FindResourceByName(std::string_view name, ResourceKind kind) const {
+    for (std::uint32_t index = 0; index < resources_.size(); ++index) {
+        if (resources_[index].kind == kind && resources_[index].name == name) {
+            return index;
+        }
+    }
+    return std::numeric_limits<std::uint32_t>::max();
+}
+
 ResourceHandle RenderGraphBuilder::CreateTransientResource(std::string name, ResourceKind kind) {
+    // Idempotent by (name, kind): asking twice yields the same slot, so a
+    // rebuild-from-model never appends a duplicate.
+    if (const std::uint32_t existing = FindResourceByName(name, kind);
+        existing != std::numeric_limits<std::uint32_t>::max()) {
+        return ResourceHandle{.index = existing, .generation = resources_[existing].generation};
+    }
+
     const std::uint32_t index = static_cast<std::uint32_t>(resources_.size());
     resources_.push_back(ResourceNode{
         .name = std::move(name),
@@ -63,6 +80,11 @@ ResourceHandle RenderGraphBuilder::CreateTransientResource(std::string name, Res
 }
 
 ResourceHandle RenderGraphBuilder::ImportResource(std::string name, ResourceKind kind) {
+    if (const std::uint32_t existing = FindResourceByName(name, kind);
+        existing != std::numeric_limits<std::uint32_t>::max()) {
+        return ResourceHandle{.index = existing, .generation = resources_[existing].generation};
+    }
+
     LOGIFACE_LOG(trace, "Importing resource '" + name + "'");
 
     const std::uint32_t index = static_cast<std::uint32_t>(resources_.size());
@@ -77,62 +99,62 @@ ResourceHandle RenderGraphBuilder::ImportResource(std::string name, ResourceKind
     return ResourceHandle{.index = index, .generation = resources_.back().generation};
 }
 
-bool RenderGraphBuilder::SetTransientImageInfo(ResourceHandle resource, TransientImageInfo info) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::SetTransientImageInfo(ResourceHandle resource, TransientImageInfo info) {
     if (!IsValidResourceHandle(resource)) {
-        return false;
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
     }
 
     auto& resource_node = resources_[resource.index];
     if (!resource_node.transient || resource_node.kind != ResourceKind::Image) {
-        return false;
+        return std::unexpected(GraphBuildError::IncompatibleResourceKind);
     }
 
     resource_node.image_info = info;
-    return true;
+    return {};
 }
 
-bool RenderGraphBuilder::SetTransientBufferInfo(ResourceHandle resource, TransientBufferInfo info) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::SetTransientBufferInfo(ResourceHandle resource, TransientBufferInfo info) {
     if (!IsValidResourceHandle(resource)) {
-        return false;
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
     }
 
     auto& resource_node = resources_[resource.index];
     if (!resource_node.transient || resource_node.kind != ResourceKind::Buffer) {
-        return false;
+        return std::unexpected(GraphBuildError::IncompatibleResourceKind);
     }
 
     resource_node.buffer_info = info;
-    return true;
+    return {};
 }
 
-bool RenderGraphBuilder::SetInitialState(ResourceHandle resource, ResourceState state) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::SetInitialState(ResourceHandle resource, ResourceState state) {
     if (!IsValidResourceHandle(resource)) {
-        return false;
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
     }
 
     auto& resource_node = resources_[resource.index];
     if (!IsResourceStateCompatible(resource_node.kind, state)) {
-        return false;
+        return std::unexpected(GraphBuildError::IncompatibleResourceState);
     }
 
     resource_node.initial_state = state;
     resource_node.has_initial_state = true;
-    return true;
+    return {};
 }
 
-bool RenderGraphBuilder::SetFinalState(ResourceHandle resource, ResourceState state) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::SetFinalState(ResourceHandle resource, ResourceState state) {
     if (!IsValidResourceHandle(resource)) {
-        return false;
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
     }
 
     auto& resource_node = resources_[resource.index];
     if (!IsResourceStateCompatible(resource_node.kind, state)) {
-        return false;
+        return std::unexpected(GraphBuildError::IncompatibleResourceState);
     }
 
     resource_node.final_state = state;
     resource_node.has_final_state = true;
-    return true;
+    return {};
 }
 
 PassHandle RenderGraphBuilder::AddPass(std::string name, QueueType queue, bool enabled, PassExecutionCallback execute) {
@@ -150,43 +172,55 @@ PassHandle RenderGraphBuilder::AddPass(std::string name, QueueType queue, bool e
     return PassHandle{.index = index, .generation = passes_.back().generation};
 }
 
-bool RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource) {
     return AddRead(pass, resource, PipelineStageIntent::FragmentShader, AccessIntent::Read);
 }
 
-bool RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource,
-                                 PipelineStageIntent stage, AccessIntent access) {
-    if (!IsValidPassHandle(pass) || !IsValidResourceHandle(resource)) {
-        return false;
+std::expected<void, GraphBuildError> RenderGraphBuilder::AddRead(PassHandle pass, ResourceHandle resource,
+                                                                 PipelineStageIntent stage, AccessIntent access) {
+    if (!IsValidPassHandle(pass)) {
+        return std::unexpected(GraphBuildError::InvalidPassHandle);
+    }
+    if (!IsValidResourceHandle(resource)) {
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
     }
 
-    auto& pass_node = passes_[pass.index];
-    if (!ContainsReadResource(pass_node.reads, resource)) {
-        pass_node.reads.push_back(ReadInfo{resource, stage, access});
-    }
-
-    return true;
+    // Multiple reads of the same resource with different stages are kept and
+    // merged by the compiler; dropping the later ones would silently lose a
+    // required synchronization scope (e.g. index fetch + shader read).
+    passes_[pass.index].reads.push_back(ReadInfo{resource, stage, access});
+    return {};
 }
 
-bool RenderGraphBuilder::AddWrite(PassHandle pass, ResourceHandle resource) {
-    LOGIFACE_LOG(trace, "Adding write to pass '" + passes_[pass.index].name + "' for resource '" + resources_[resource.index].name + "'");
-
-    if (!IsValidPassHandle(pass) || !IsValidResourceHandle(resource)) {
-        return false;
+std::expected<void, GraphBuildError> RenderGraphBuilder::AddWrite(PassHandle pass, ResourceHandle resource) {
+    // Validate before any indexing: the previous implementation read the pass
+    // name out of bounds before checking the handle.
+    if (!IsValidPassHandle(pass)) {
+        return std::unexpected(GraphBuildError::InvalidPassHandle);
     }
+    if (!IsValidResourceHandle(resource)) {
+        return std::unexpected(GraphBuildError::InvalidResourceHandle);
+    }
+
+    LOGIFACE_LOG(trace, "Adding write to pass '" + passes_[pass.index].name + "' for resource '" + resources_[resource.index].name + "'");
 
     auto& pass_node = passes_[pass.index];
     if (!ContainsResource(pass_node.writes, resource)) {
         pass_node.writes.push_back(resource);
     }
 
-    LOGIFACE_LOG(trace, "returning from AddWrite successfully");
-    return true;
+    return {};
 }
 
-bool RenderGraphBuilder::AddDependency(PassHandle before, PassHandle after) {
-    if (!IsValidPassHandle(before) || !IsValidPassHandle(after) || before == after) {
-        return false;
+std::expected<void, GraphBuildError> RenderGraphBuilder::AddDependency(PassHandle before, PassHandle after) {
+    if (!IsValidPassHandle(before)) {
+        return std::unexpected(GraphBuildError::InvalidPassHandle);
+    }
+    if (!IsValidPassHandle(after)) {
+        return std::unexpected(GraphBuildError::InvalidPassHandle);
+    }
+    if (before == after) {
+        return std::unexpected(GraphBuildError::SelfDependency);
     }
 
     const std::pair<PassHandle, PassHandle> dependency{before, after};
@@ -194,16 +228,22 @@ bool RenderGraphBuilder::AddDependency(PassHandle before, PassHandle after) {
         explicit_dependencies_.emplace_back(before, after);
     }
 
-    return true;
+    return {};
 }
 
-bool RenderGraphBuilder::SetPassAttachments(PassHandle pass, PassAttachmentSetup setup) {
+std::expected<void, GraphBuildError> RenderGraphBuilder::SetPassAttachments(PassHandle pass, PassAttachmentSetup setup) {
     if (!IsValidPassHandle(pass)) {
-        return false;
+        return std::unexpected(GraphBuildError::InvalidPassHandle);
     }
 
     passes_[pass.index].attachment_setup = std::move(setup);
-    return true;
+    return {};
+}
+
+void RenderGraphBuilder::Reset() {
+    resources_.clear();
+    passes_.clear();
+    explicit_dependencies_.clear();
 }
 
 bool RenderGraphBuilder::IsValidResourceHandle(ResourceHandle handle) const {

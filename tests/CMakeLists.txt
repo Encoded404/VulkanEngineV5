@@ -1,6 +1,10 @@
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
 
+# Directory holding the shared test modules (fakes, device probe). Exposed as a
+# normal variable so the helper below works from every test subdirectory.
+set(TEST_SUPPORT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/support)
+
 # Shared options and helper shared by all test subdirectories
 set(TEST_COMPILE_OPTS
   $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
@@ -15,7 +19,23 @@ set(TEST_COMPILE_OPTS_DEBUG
   "$<$<CONFIG:Release>:-O3>"
 )
 
+# Adds the shared test-support modules to a test target's CXX_MODULES file set.
+# Compiled per target (rather than linked as a library) to avoid BMI/link
+# ordering issues across test executables.
+function(enable_test_support_modules TARGET)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_sources(${TARGET} PRIVATE
+      FILE_SET CXX_MODULES
+      BASE_DIRS ${TEST_SUPPORT_DIR}
+      FILES
+        ${TEST_SUPPORT_DIR}/test_vulkan_fakes.cppm
+        ${TEST_SUPPORT_DIR}/test_gpu.cppm
+    )
+  endif()
+endfunction()
+
 function(setup_test_target TARGET)
+  cmake_parse_arguments(ARG "" "" "LABELS" ${ARGN})
   target_link_libraries(${TARGET} PRIVATE GTest::gtest GTest::gtest_main)
   target_compile_definitions(${TARGET} PRIVATE LOGIFACE_ENABLE_LOGGING=1)
   target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS})
@@ -34,15 +54,22 @@ function(setup_test_target TARGET)
   if(TARGET project_size)
     target_link_libraries(${TARGET} PRIVATE project_size)
   endif()
+  if(ARG_LABELS)
+    set(TEST_LABELS "${ARG_LABELS}")
+  else()
+    set(TEST_LABELS "")
+  endif()
   gtest_discover_tests(${TARGET}
     PROPERTIES
       ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"
+      LABELS "${TEST_LABELS}"
   )
 endfunction()
 
 add_subdirectory(backend)
 add_subdirectory(crash)
 add_subdirectory(core)
+add_subdirectory(gpu)
 add_subdirectory(runtime)
 add_subdirectory(shared)
 add_subdirectory(security)

@@ -14,166 +14,144 @@ import vulkan_hpp;
 import VulkanShared.RenderGraphTypes;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 
-using VulkanEngine::RenderGraph::ResourceState;
-using VulkanEngine::RenderGraph::PipelineStageIntent;
-using VulkanEngine::RenderGraph::AccessIntent;
-using VulkanEngine::RenderGraph::ImageLayoutIntent;
+using VulkanEngine::RenderGraph::BarrierPlan;
+using VulkanEngine::RenderGraph::CompiledPass;
+using VulkanEngine::RenderGraph::CompiledRenderGraph;
+using VulkanEngine::RenderGraph::PlannedBufferBarrier;
+using VulkanEngine::RenderGraph::PlannedImageBarrier;
+using VulkanEngine::RenderGraph::PlannedPassBarriers;
+using VulkanEngine::RenderGraph::ResourceKind;
 
 namespace VulkanBackend::Vulkan {
 
-void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
-                         const void* user_data,
-                         vk::CommandBuffer command_buffer) {
-    if (!graph.success) {
+namespace {
+
+// sync2 only: a single dependency info carries the image/buffer/global
+// barriers. Unresolved buffers degrade to a conservative global memory barrier
+// with the same stage/access scopes, so correctness does not depend on a
+// resolver having been registered.
+void EmitPlannedBarriers(vk::CommandBuffer command_buffer,
+                         const std::vector<PlannedImageBarrier>& planned_images,
+                         const std::vector<PlannedBufferBarrier>& planned_buffers) {
+    std::vector<vk::ImageMemoryBarrier2> image_barriers;
+    std::vector<vk::BufferMemoryBarrier2> buffer_barriers;
+    std::vector<vk::MemoryBarrier2> global_barriers;
+
+    image_barriers.reserve(planned_images.size());
+    const auto add_image = [&](const PlannedImageBarrier& barrier) {
+        if (!barrier.image) {
+            return;
+        }
+        image_barriers.emplace_back(barrier.src_stage,
+                                    barrier.src_access,
+                                    barrier.dst_stage,
+                                    barrier.dst_access,
+                                    barrier.old_layout,
+                                    barrier.new_layout,
+                                    vk::QueueFamilyIgnored,
+                                    vk::QueueFamilyIgnored,
+                                    barrier.image,
+                                    barrier.range);
+    };
+
+    const auto add_buffer = [&](const PlannedBufferBarrier& barrier) {
+        if (!barrier.buffer) {
+            global_barriers.emplace_back(barrier.src_stage,
+                                         barrier.src_access,
+                                         barrier.dst_stage,
+                                         barrier.dst_access);
+            return;
+        }
+        buffer_barriers.emplace_back(barrier.src_stage,
+                                     barrier.src_access,
+                                     barrier.dst_stage,
+                                     barrier.dst_access,
+                                     vk::QueueFamilyIgnored,
+                                     vk::QueueFamilyIgnored,
+                                     barrier.buffer,
+                                     barrier.offset,
+                                     barrier.size);
+    };
+
+    for (const auto& barrier : planned_images) add_image(barrier);
+    for (const auto& barrier : planned_buffers) add_buffer(barrier);
+
+    if (image_barriers.empty() && buffer_barriers.empty() && global_barriers.empty()) {
         return;
     }
 
-    std::vector<ResourceState> current_states = graph.initial_states;
-    std::vector<bool> has_state = graph.has_initial_state;
+    vk::DependencyInfo dependency{};
+    dependency.dependencyFlags = vk::DependencyFlags{};
+    dependency.memoryBarrierCount = static_cast<std::uint32_t>(global_barriers.size());
+    dependency.pMemoryBarriers = global_barriers.empty() ? nullptr : global_barriers.data();
+    dependency.bufferMemoryBarrierCount = static_cast<std::uint32_t>(buffer_barriers.size());
+    dependency.pBufferMemoryBarriers = buffer_barriers.empty() ? nullptr : buffer_barriers.data();
+    dependency.imageMemoryBarrierCount = static_cast<std::uint32_t>(image_barriers.size());
+    dependency.pImageMemoryBarriers = image_barriers.empty() ? nullptr : image_barriers.data();
 
-    for (const auto& pass : graph.passes) {
+    command_buffer.pipelineBarrier2(dependency);
+}
+
+}  // namespace
+
+void ExecuteRenderGraph(const BarrierPlan& plan,
+                        const CompiledRenderGraph& graph,
+                        const void* user_data,
+                        vk::CommandBuffer command_buffer) {
+    if (!graph.success || !plan.valid) {
+        return;
+    }
+
+    for (std::size_t pass_index = 0; pass_index < graph.passes.size(); ++pass_index) {
+        const auto& pass = graph.passes[pass_index];
+        const PlannedPassBarriers* planned =
+            pass_index < plan.passes.size() ? &plan.passes[pass_index] : nullptr;
+
         BeginDebugUtilsLabel(command_buffer, pass.name);
 
-        if (!pass.pre_pass_transitions.empty()) {
-            std::vector<vk::ImageMemoryBarrier> image_barriers;
-            std::vector<vk::MemoryBarrier> memory_barriers;
-            vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-            vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-
-            for (const auto& transition : pass.pre_pass_transitions) {
-                const auto& res_info = graph.resource_info[transition.resource_index];
-
-                if (res_info.kind == VulkanEngine::RenderGraph::ResourceKind::Image) {
-                    if (!has_state[transition.resource_index]) {
-                        const ResourceState undefined_state = ResourceState::ImageState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                            VulkanEngine::RenderGraph::QueueType::Graphics, ImageLayoutIntent::Undefined);
-                        current_states[transition.resource_index] = undefined_state;
-                        has_state[transition.resource_index] = true;
-                    }
-
-                    const auto& from = current_states[transition.resource_index];
-                    const auto& to = transition.target_state;
-
-                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
-                        vk::ImageMemoryBarrier barrier{};
-                        barrier.image = graph.resource_images[transition.resource_index];
-                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
-                        barrier.oldLayout = VulkanEngine::RenderGraph::IntentToImageLayout(from.layout);
-                        barrier.newLayout = VulkanEngine::RenderGraph::IntentToImageLayout(to.layout);
-                        barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-                        barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-
-                        const auto format = graph.resource_formats[transition.resource_index];
-                        barrier.subresourceRange = {
-                            VulkanEngine::RenderGraph::FormatToAspectFlags(format),
-                            0, vk::RemainingMipLevels,
-                            0, vk::RemainingArrayLayers
-                        };
-
-                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
-
-                        image_barriers.push_back(barrier);
-                        current_states[transition.resource_index] = to;
-                    }
-                } else {
-                    if (!has_state[transition.resource_index]) {
-                        const ResourceState undefined_state = ResourceState::BufferState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None, VulkanEngine::RenderGraph::QueueType::Graphics);
-                        current_states[transition.resource_index] = undefined_state;
-                        has_state[transition.resource_index] = true;
-                    }
-
-                    const auto& from = current_states[transition.resource_index];
-                    const auto& to = transition.target_state;
-
-                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
-                        vk::MemoryBarrier barrier{};
-                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
-
-                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
-
-                        memory_barriers.push_back(barrier);
-                        current_states[transition.resource_index] = to;
-                    }
-                }
-            }
-
-            if (dst_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
-                dst_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
-                if (dst_stage == vk::PipelineStageFlags{}) {
-                    dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-                }
-                for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : memory_barriers) b.dstAccessMask = {};
-            }
-            if (src_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
-                src_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
-                if (src_stage == vk::PipelineStageFlags{}) {
-                    src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-                }
-                for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : memory_barriers) b.srcAccessMask = {};
-            }
-            if (dst_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
-                for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : memory_barriers) b.dstAccessMask = {};
-            }
-            if (src_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
-                for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : memory_barriers) b.srcAccessMask = {};
-            }
-
-            if (!image_barriers.empty() || !memory_barriers.empty()) {
-                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, memory_barriers, {}, image_barriers);
-            }
+        if (planned != nullptr) {
+            EmitPlannedBarriers(command_buffer, planned->pre_image, planned->pre_buffer);
         }
 
-        if (pass.attachment_setup.has_value()) {
-            if (pass.attachment_setup->auto_begin_rendering) {
-                const auto& setup = *pass.attachment_setup;
+        if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) {
+            const auto& setup = *pass.attachment_setup;
 
-                std::vector<vk::RenderingAttachmentInfo> color_attachments;
-                color_attachments.reserve(setup.color_attachments.size());
-                for (const auto& attach : setup.color_attachments) {
-                    vk::RenderingAttachmentInfo info{};
-                    info.imageView = attach.image_view;
-                    info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                    info.loadOp = attach.load_op;
-                    info.storeOp = attach.store_op;
-                    if (attach.load_op == vk::AttachmentLoadOp::eClear) {
-                        info.clearValue = vk::ClearValue(attach.clear_color);
-                    }
-                    color_attachments.push_back(info);
+            std::vector<vk::RenderingAttachmentInfo> color_attachments;
+            color_attachments.reserve(setup.color_attachments.size());
+            for (const auto& attach : setup.color_attachments) {
+                vk::RenderingAttachmentInfo info{};
+                info.imageView = attach.image_view;
+                info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+                info.loadOp = attach.load_op;
+                info.storeOp = attach.store_op;
+                if (attach.load_op == vk::AttachmentLoadOp::eClear) {
+                    info.clearValue = vk::ClearValue(attach.clear_color);
                 }
-
-                std::optional<vk::RenderingAttachmentInfo> depth_attachment;
-                if (setup.depth_attachment.has_value()) {
-                    depth_attachment = vk::RenderingAttachmentInfo{};
-                    depth_attachment->imageView = setup.depth_attachment->image_view;
-                    depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-                    depth_attachment->loadOp = setup.depth_attachment->load_op;
-                    depth_attachment->storeOp = setup.depth_attachment->store_op;
-                    if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) {
-                        depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth);
-                    }
-                }
-
-                vk::RenderingInfo render_info{};
-                render_info.renderArea = setup.render_area;
-                render_info.layerCount = 1;
-                render_info.colorAttachmentCount = static_cast<std::uint32_t>(color_attachments.size());
-                render_info.pColorAttachments = color_attachments.data();
-                if (depth_attachment) {
-                    render_info.pDepthAttachment = &*depth_attachment;
-                }
-
-                command_buffer.beginRendering(render_info);
+                color_attachments.push_back(info);
             }
+
+            std::optional<vk::RenderingAttachmentInfo> depth_attachment;
+            if (setup.depth_attachment.has_value()) {
+                depth_attachment = vk::RenderingAttachmentInfo{};
+                depth_attachment->imageView = setup.depth_attachment->image_view;
+                depth_attachment->imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+                depth_attachment->loadOp = setup.depth_attachment->load_op;
+                depth_attachment->storeOp = setup.depth_attachment->store_op;
+                if (setup.depth_attachment->load_op == vk::AttachmentLoadOp::eClear) {
+                    depth_attachment->clearValue = vk::ClearValue(setup.depth_attachment->clear_depth);
+                }
+            }
+
+            vk::RenderingInfo render_info{};
+            render_info.renderArea = setup.render_area;
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = static_cast<std::uint32_t>(color_attachments.size());
+            render_info.pColorAttachments = color_attachments.data();
+            if (depth_attachment) {
+                render_info.pDepthAttachment = &*depth_attachment;
+            }
+
+            command_buffer.beginRendering(render_info);
         }
 
         if (pass.execute.callback) {
@@ -185,103 +163,8 @@ void ExecuteRenderGraph(const VulkanEngine::RenderGraph::CompiledRenderGraph& gr
             command_buffer.endRendering();
         }
 
-        if (!pass.post_pass_transitions.empty()) {
-            std::vector<vk::ImageMemoryBarrier> image_barriers;
-            std::vector<vk::MemoryBarrier> memory_barriers;
-            vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-            vk::PipelineStageFlags dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-
-            for (const auto& transition : pass.post_pass_transitions) {
-                const auto& res_info = graph.resource_info[transition.resource_index];
-
-                if (res_info.kind == VulkanEngine::RenderGraph::ResourceKind::Image) {
-                    if (!has_state[transition.resource_index]) {
-                        const ResourceState undefined_state = ResourceState::ImageState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None,
-                            VulkanEngine::RenderGraph::QueueType::Graphics, ImageLayoutIntent::Undefined);
-                        current_states[transition.resource_index] = undefined_state;
-                        has_state[transition.resource_index] = true;
-                    }
-
-                    const auto& from = current_states[transition.resource_index];
-                    const auto& to = transition.target_state;
-
-                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
-                        vk::ImageMemoryBarrier barrier{};
-                        barrier.image = graph.resource_images[transition.resource_index];
-                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
-                        barrier.oldLayout = VulkanEngine::RenderGraph::IntentToImageLayout(from.layout);
-                        barrier.newLayout = VulkanEngine::RenderGraph::IntentToImageLayout(to.layout);
-                        barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-                        barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-
-                        const auto format = graph.resource_formats[transition.resource_index];
-                        barrier.subresourceRange = {
-                            VulkanEngine::RenderGraph::FormatToAspectFlags(format),
-                            0, vk::RemainingMipLevels,
-                            0, vk::RemainingArrayLayers
-                        };
-
-                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
-
-                        image_barriers.push_back(barrier);
-                        current_states[transition.resource_index] = to;
-                    }
-                } else {
-                    if (!has_state[transition.resource_index]) {
-                        const ResourceState undefined_state = ResourceState::BufferState(
-                            PipelineStageIntent::TopOfPipe, AccessIntent::None, VulkanEngine::RenderGraph::QueueType::Graphics);
-                        current_states[transition.resource_index] = undefined_state;
-                        has_state[transition.resource_index] = true;
-                    }
-
-                    const auto& from = current_states[transition.resource_index];
-                    const auto& to = transition.target_state;
-
-                    if (!VulkanEngine::RenderGraph::StatesEqual(from, to)) {
-                        vk::MemoryBarrier barrier{};
-                        barrier.srcAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(from.stage, from.access);
-                        barrier.dstAccessMask = VulkanEngine::RenderGraph::IntentToAccessFlags(to.stage, to.access);
-
-                        src_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(from.stage, from.access);
-                        dst_stage |= VulkanEngine::RenderGraph::IntentToPipelineStage(to.stage, to.access);
-
-                        memory_barriers.push_back(barrier);
-                        current_states[transition.resource_index] = to;
-                    }
-                }
-            }
-
-            if (dst_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
-                dst_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
-                if (dst_stage == vk::PipelineStageFlags{}) {
-                    dst_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-                }
-                for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : memory_barriers) b.dstAccessMask = {};
-            }
-            if (src_stage & vk::PipelineStageFlagBits::eBottomOfPipe) {
-                src_stage &= ~vk::PipelineStageFlagBits::eBottomOfPipe;
-                if (src_stage == vk::PipelineStageFlags{}) {
-                    src_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-                }
-                for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : memory_barriers) b.srcAccessMask = {};
-            }
-            if (dst_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
-                for (auto& b : image_barriers) b.dstAccessMask = {};
-                for (auto& b : memory_barriers) b.dstAccessMask = {};
-            }
-            if (src_stage == vk::PipelineStageFlagBits::eTopOfPipe) {
-                for (auto& b : image_barriers) b.srcAccessMask = {};
-                for (auto& b : memory_barriers) b.srcAccessMask = {};
-            }
-
-            if (!image_barriers.empty() || !memory_barriers.empty()) {
-                command_buffer.pipelineBarrier(src_stage, dst_stage, {}, memory_barriers, {}, image_barriers);
-            }
+        if (planned != nullptr) {
+            EmitPlannedBarriers(command_buffer, planned->post_image, planned->post_buffer);
         }
 
         EndDebugUtilsLabel(command_buffer);

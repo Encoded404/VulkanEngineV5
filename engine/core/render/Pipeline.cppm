@@ -48,10 +48,16 @@ public:
 
     using ImageResolver = std::function<vk::Image(std::uint32_t image_index)>;
     using ImageViewResolver = std::function<vk::ImageView(std::uint32_t image_index)>;
+    using BufferResolver = std::function<vk::Buffer(std::uint32_t image_index)>;
     void RegisterResourceResolver(const std::string& name,
                                   ImageResolver resolve_image,
                                   ImageViewResolver resolve_image_view,
                                   vk::Format format);
+
+    // Registers the concrete buffer backing an imported Buffer resource. Until
+    // a resolver exists the planned barrier for that resource falls back to a
+    // conservative global memory barrier instead of being skipped.
+    void RegisterBufferResolver(const std::string& name, BufferResolver resolve_buffer);
 
     VulkanEngine::RenderGraph::PassHandle AddPass(const RenderPipelinePassDesc& desc);
 
@@ -99,6 +105,7 @@ private:
         vk::Format format = vk::Format::eUndefined;
     };
     std::unordered_map<std::string, ExternalResourceResolver> resource_resolvers_{};
+    std::unordered_map<std::string, BufferResolver> buffer_resolvers_{};
 
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};

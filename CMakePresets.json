@@ -132,17 +132,41 @@
     {
       "name": "debug",
       "configurePreset": "default",
-      "configuration": "Debug"
+      "configuration": "Debug",
+      "filter": { "exclude": { "label": "gpu" } }
     },
     {
       "name": "release",
       "configurePreset": "default",
-      "configuration": "Release"
+      "configuration": "Release",
+      "filter": { "exclude": { "label": "gpu" } }
     },
     {
       "name": "relwithdebinfo",
       "configurePreset": "default",
-      "configuration": "RelWithDebInfo"
+      "configuration": "RelWithDebInfo",
+      "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "debug-gpu",
+      "configurePreset": "default",
+      "configuration": "Debug",
+      "displayName": "Debug (GPU tests only)",
+      "filter": { "include": { "label": "gpu" } }
+    },
+    {
+      "name": "release-gpu",
+      "configurePreset": "default",
+      "configuration": "Release",
+      "displayName": "Release (GPU tests only)",
+      "filter": { "include": { "label": "gpu" } }
+    },
+    {
+      "name": "relwithdebinfo-gpu",
+      "configurePreset": "default",
+      "configuration": "RelWithDebInfo",
+      "displayName": "RelWithDebInfo (GPU tests only)",
+      "filter": { "include": { "label": "gpu" } }
     }
   ]
 }

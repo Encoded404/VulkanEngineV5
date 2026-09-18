@@ -194,6 +194,11 @@ private:
     [[nodiscard]] VulkanEngine::RenderGraph::PassHandle AddModelPass(ModelPass model);
     void TrackImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle, const std::string& name,
                                VulkanEngine::RenderGraph::ResourceKind kind);
+    [[nodiscard]] bool IsImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle) const;
+    // Rolls the graph builder and the pipeline's resource bookkeeping back to a
+    // ResourceCount() snapshot taken before a pass's Setup(), so a registration
+    // that is rejected after Setup() does not leave orphaned transients.
+    void RollbackPassSetupResources(std::size_t resource_count);
 
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     ShaderSystem::ShaderManager* shader_manager_ = nullptr;

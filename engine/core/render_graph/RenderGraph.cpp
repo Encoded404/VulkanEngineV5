@@ -251,6 +251,12 @@ void RenderGraphBuilder::ResetPasses() {
     explicit_dependencies_.clear();
 }
 
+void RenderGraphBuilder::RollbackResources(std::size_t count) {
+    if (count < resources_.size()) {
+        resources_.resize(count);
+    }
+}
+
 bool RenderGraphBuilder::IsValidResourceHandle(ResourceHandle handle) const {
     if (!handle.IsValid()) {
         return false;

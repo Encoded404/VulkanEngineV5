@@ -159,4 +159,129 @@ TEST(PassPipelineTest, BindResourceValidatesAgainstDeclarations) {
     EXPECT_EQ(reserved.error().code, VulkanEngine::RenderPipeline::PassErrorCode::InvalidDeclaration);
 }
 
+// A registration rejected after Setup() must roll back the graph resources
+// Setup() created, so the allocator never sees an orphaned transient.
+TEST(PassPipelineTest, FailedRegistrationRollsBackCreatedTransients) {
+    class FailingPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "failing-transient-pass"; }
+
+        void Setup(PassSetupContext& ctx) override {
+            const auto target = ctx.CreateTransientBuffer(
+                TransientBufferDesc{.name = "orphan-buffer", .size = 128});
+            // BindResource without a matching DeclareBindings is rejected after
+            // Setup() has already registered "orphan-buffer".
+            ctx.BindResource(5, 0, target);
+            ctx.RequestComputePipeline(13);
+        }
+
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    VulkanEngine::RenderPipeline::RenderPipeline pipeline;
+    const auto rejected = pipeline.RegisterPass(std::make_unique<FailingPass>());
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code, VulkanEngine::RenderPipeline::PassErrorCode::InvalidDeclaration);
+
+    pipeline.Compile();
+    for (const auto& lifetime : pipeline.GetCompiledGraph().resource_lifetimes) {
+        EXPECT_NE(lifetime.name, "orphan-buffer");
+    }
+}
+
+// A pass on the compute queue may not touch imported (graphics-exclusive)
+// resources, request a graphics pipeline, or declare render attachments.
+TEST(PassPipelineTest, ComputeQueuePassRejectsImportedResources) {
+    class ComputeBackbufferPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "compute-backbuffer"; }
+
+        void Setup(PassSetupContext& ctx) override {
+            const auto backbuffer = ctx.ReadBackbuffer();
+            ctx.AddRead(backbuffer, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
+                        VulkanEngine::RenderGraph::AccessIntent::Read);
+            ctx.RequestComputePipeline(1);
+            ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+        }
+
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    VulkanEngine::RenderPipeline::RenderPipeline pipeline;
+    pipeline.SetAsyncComputeAvailable(true);
+    pipeline.RegisterResourceResolver("swapchain-backbuffer",
+        [](std::uint32_t) { return vk::Image{}; },
+        [](std::uint32_t) { return vk::ImageView{}; },
+        vk::Format::eR8G8B8A8Unorm);
+
+    const auto handle = pipeline.RegisterPass(std::make_unique<ComputeBackbufferPass>());
+    ASSERT_FALSE(handle.has_value());
+    EXPECT_EQ(handle.error().code, VulkanEngine::RenderPipeline::PassErrorCode::InvalidDeclaration);
+}
+
+TEST(PassPipelineTest, ComputeQueuePassRejectsGraphicsPipelineAndAttachments) {
+    class GraphicsPipelineOnCompute final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "graphics-on-compute"; }
+        void Setup(PassSetupContext& ctx) override {
+            ctx.RequestGraphicsPipeline(1, 2);
+            ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+    class AttachmentsOnCompute final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "attachments-on-compute"; }
+        void Setup(PassSetupContext& ctx) override {
+            const auto target = ctx.CreateTransientImage(TransientImageDesc{
+                .name = "compute-attachment", .format = vk::Format::eR8G8B8A8Unorm,
+                .width = 64, .height = 64});
+            ctx.AddWrite(target);
+            VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
+            setup.auto_begin_rendering = true;
+            VulkanEngine::RenderGraph::AttachmentInfo color{};
+            color.resource = target;
+            setup.color_attachments.push_back(color);
+            ctx.SetPassAttachments(setup);
+            ctx.RequestComputePipeline(1);
+            ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    VulkanEngine::RenderPipeline::RenderPipeline pipeline;
+    pipeline.SetAsyncComputeAvailable(true);
+
+    const auto graphics = pipeline.RegisterPass(std::make_unique<GraphicsPipelineOnCompute>());
+    ASSERT_FALSE(graphics.has_value());
+    EXPECT_EQ(graphics.error().code, VulkanEngine::RenderPipeline::PassErrorCode::ValidationFailed);
+
+    const auto attachments = pipeline.RegisterPass(std::make_unique<AttachmentsOnCompute>());
+    ASSERT_FALSE(attachments.has_value());
+    EXPECT_EQ(attachments.error().code, VulkanEngine::RenderPipeline::PassErrorCode::ValidationFailed);
+}
+
+// Positive control: a compute-queue pass operating only on transients registers.
+TEST(PassPipelineTest, ComputeQueuePassWithTransientsSucceeds) {
+    class ComputeTransientPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "compute-transient"; }
+        void Setup(PassSetupContext& ctx) override {
+            const auto target = ctx.CreateTransientBuffer(
+                TransientBufferDesc{.name = "compute-only-buffer", .size = 64});
+            ctx.AddWrite(target);
+            ctx.RequestComputePipeline(1);
+            ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    VulkanEngine::RenderPipeline::RenderPipeline pipeline;
+    pipeline.SetAsyncComputeAvailable(true);
+    const auto handle = pipeline.RegisterPass(std::make_unique<ComputeTransientPass>());
+    ASSERT_TRUE(handle.has_value());
+    pipeline.Compile();
+    EXPECT_TRUE(pipeline.IsCompiled());
+}
+
 }  // namespace

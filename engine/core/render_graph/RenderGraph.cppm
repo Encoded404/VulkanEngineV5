@@ -61,6 +61,15 @@ public:
     // where imported/transient resource identity must survive.
     void ResetPasses();
 
+    // Number of resource slots registered so far. Snapshot before a transaction
+    // (e.g. an application pass registration) that may create transients.
+    [[nodiscard]] std::size_t ResourceCount() const { return resources_.size(); }
+
+    // Drops every resource registered after `count`, restoring a snapshot taken
+    // with ResourceCount(). Only valid when no surviving pass references the
+    // dropped slots; used to roll back a failed pass registration.
+    void RollbackResources(std::size_t count);
+
     [[nodiscard]] CompiledRenderGraph Compile() const;
 
 private:

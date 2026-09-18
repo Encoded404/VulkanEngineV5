@@ -244,11 +244,21 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
         return std::unexpected(PassError{PassErrorCode::DuplicateName, "duplicate pass name", name});
     }
 
+    // Setup() creates graph resources directly (transients, imports), so snapshot
+    // the resource table first: a registration rejected after Setup() rolls back
+    // everything it created instead of leaving orphaned allocations behind.
+    const std::size_t resource_checkpoint = graph_builder_.ResourceCount();
+    const auto fail = [&](PassError error)
+        -> std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> {
+        RollbackPassSetupResources(resource_checkpoint);
+        return std::unexpected(std::move(error));
+    };
+
     // The pipeline constructs the context (with the current extent) and calls
     // Setup() itself, so the app never has to.
     VulkanEngine::PipelinePass::PassSetupContext ctx(*this, render_width_, render_height_);
     if (!pass->Validate()) {
-        return std::unexpected(PassError{PassErrorCode::ValidationFailed, "pass Validate() returned false", name});
+        return fail(PassError{PassErrorCode::ValidationFailed, "pass Validate() returned false", name});
     }
     pass->Setup(ctx);
 
@@ -256,7 +266,7 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
     model.name = name;
     model.queue = ctx.GetQueueType();
     if (model.queue != VulkanEngine::RenderGraph::QueueType::Graphics && !async_compute_available_) {
-        return std::unexpected(PassError{
+        return fail(PassError{
             PassErrorCode::ValidationFailed,
             "pass requests a non-graphics queue but no async compute queue is available",
             name});
@@ -301,6 +311,52 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
                                          : VulkanEngine::RenderGraph::AccessIntent::Read,
         });
     }
+    // A pass on a non-graphics queue is recorded into a command buffer on that
+    // queue: dynamic rendering and graphics pipelines are not valid there, and
+    // imported (engine-owned) resources are exclusive to the graphics family,
+    // so only transients may be touched.
+    if (model.queue != VulkanEngine::RenderGraph::QueueType::Graphics) {
+        if (model.attachments.has_value() &&
+            (!model.attachments->color_attachments.empty() ||
+             model.attachments->depth_attachment.has_value())) {
+            return fail(PassError{PassErrorCode::ValidationFailed,
+                                  "pass on a non-graphics queue cannot declare render attachments",
+                                  name});
+        }
+        if (model.pipeline_request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Graphics) {
+            return fail(PassError{PassErrorCode::ValidationFailed,
+                                  "pass on a non-graphics queue cannot use a graphics pipeline",
+                                  name});
+        }
+        const auto check_queue_resource = [&](VulkanEngine::RenderGraph::ResourceHandle resource)
+            -> std::optional<PassError> {
+            if (!IsImportedResource(resource)) {
+                return std::nullopt;
+            }
+            const auto name_it = resource_names_.find(resource.index);
+            return PassError{PassErrorCode::InvalidDeclaration,
+                             "pass on a non-graphics queue cannot access imported resource '" +
+                                 (name_it != resource_names_.end() ? name_it->second
+                                                                   : std::string{"?"}) +
+                                 "'; use a transient",
+                             name};
+        };
+        for (const auto& read : model.reads) {
+            if (auto error = check_queue_resource(read.resource); error.has_value()) {
+                return fail(*error);
+            }
+        }
+        for (const auto write : model.writes) {
+            if (auto error = check_queue_resource(write); error.has_value()) {
+                return fail(*error);
+            }
+        }
+        for (const auto& assignment : model.binding_assignments) {
+            if (auto error = check_queue_resource(assignment.resource); error.has_value()) {
+                return fail(*error);
+            }
+        }
+    }
     // Declared resources must be known, and imported images must be resolvable.
     // Imported buffers without a resolver are allowed: engine logical buffers
     // (e.g. "scene-buffers") are hazard-only and carry no Vulkan handle.
@@ -324,19 +380,19 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
     };
     for (const auto& read : model.reads) {
         if (auto error = validate_resource(read.resource); error.has_value()) {
-            return std::unexpected(*error);
+            return fail(*error);
         }
     }
     for (const auto write : model.writes) {
         if (auto error = validate_resource(write); error.has_value()) {
-            return std::unexpected(*error);
+            return fail(*error);
         }
     }
     // Every descriptor assignment must target a declared app binding and a
     // valid resource.
     for (const auto& assignment : model.binding_assignments) {
         if (assignment.set < VulkanEngine::Render::kFirstAppDescriptorSet) {
-            return std::unexpected(PassError{
+            return fail(PassError{
                 PassErrorCode::InvalidDeclaration,
                 "descriptor binding targets a reserved engine set", name});
         }
@@ -345,12 +401,12 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
                 return decl.set == assignment.set && decl.binding == assignment.binding;
             });
         if (!declared) {
-            return std::unexpected(PassError{
+            return fail(PassError{
                 PassErrorCode::InvalidDeclaration,
                 "BindResource references an undeclared descriptor binding", name});
         }
         if (auto error = validate_resource(assignment.resource); error.has_value()) {
-            return std::unexpected(*error);
+            return fail(*error);
         }
     }
     model.pass = std::move(pass);
@@ -462,6 +518,27 @@ void RenderPipeline::TrackImportedResource(VulkanEngine::RenderGraph::ResourceHa
     resource_names_[handle.index] = name;
     imported_resource_indices_.insert(handle.index);
     imported_resource_kinds_[handle.index] = kind;
+}
+
+bool RenderPipeline::IsImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle) const {
+    return handle.IsValid() && imported_resource_indices_.contains(handle.index);
+}
+
+void RenderPipeline::RollbackPassSetupResources(std::size_t resource_count) {
+    graph_builder_.RollbackResources(resource_count);
+
+    const auto erase_indexed = [resource_count](auto& map) {
+        std::erase_if(map, [resource_count](const auto& entry) {
+            return entry.first >= resource_count;
+        });
+    };
+    erase_indexed(resource_names_);
+    erase_indexed(transient_image_descs_);
+    erase_indexed(transient_buffer_descs_);
+    erase_indexed(imported_resource_kinds_);
+    std::erase_if(imported_resource_indices_, [resource_count](std::uint32_t index) {
+        return index >= resource_count;
+    });
 }
 
 void RenderPipeline::ApplyChanges() {

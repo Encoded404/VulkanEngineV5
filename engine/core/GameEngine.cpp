@@ -235,8 +235,11 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     return true;
 }
 
-void GameEngine::RefreshShaderWatcher() {
-    if (ctx_.shader_watcher) {
+VulkanEngine::RenderPipeline::RenderPipeline& GameEngine::GetRenderPipeline() {
+    return ctx_.renderer->GetRenderPipeline();
+}
+
+void GameEngine::RefreshShaderWatcher() {    if (ctx_.shader_watcher) {
         ctx_.shader_watcher->Refresh();
     }
 }

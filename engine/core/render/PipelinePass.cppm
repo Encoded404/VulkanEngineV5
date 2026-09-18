@@ -19,14 +19,24 @@ export import VulkanEngine.DescriptorDecl;
 export namespace VulkanEngine::PipelinePass {
 
 // ── Built-in pass ordering points ──
+// Exhaustive: every real built-in pass, so an application can order around any
+// of them. `Count` is the array size for anchors.
 enum class BuiltinPass : std::uint8_t {
     Expand,
+    OccluderSelect,
+    OccluderPrepass,
+    HiZGenPre,
+    PreCull,
     DepthPrepass,
     HiZGen,
     Occlusion,
     Collect,
     MainPass,
+    ImGui,
+    Count,
 };
+
+inline constexpr std::size_t kBuiltinPassCount = static_cast<std::size_t>(BuiltinPass::Count);
 
 // ── Opaque typed handles for FrameContext ──
 struct BindlessTextureSet  { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -467,6 +477,10 @@ public:
 
     // Optional: validate configuration before compilation
     [[nodiscard]] virtual bool Validate() const { return true; }
+
+    // Stable, human-readable name used for graph diagnostics, ordering, and
+    // duplicate-name validation. Override for application passes.
+    [[nodiscard]] virtual std::string_view GetName() const { return "AppPass"; }
 };
 
 } // namespace VulkanEngine::PipelinePass

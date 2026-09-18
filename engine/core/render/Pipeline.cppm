@@ -38,6 +38,27 @@ struct RenderPipelinePassDesc {
 using VulkanEngine::PipelinePass::TransientImageDesc;
 using VulkanEngine::PipelinePass::TransientBufferDesc;
 
+// ── Structured registration errors ──
+enum class PassErrorCode : std::uint8_t {
+    None,
+    DuplicateName,
+    InvalidHandle,
+    MissingResolver,
+    InvalidDeclaration,
+    SetupFailed,
+    ValidationFailed,
+    CompileFailed,
+    PipelineFailed,
+};
+
+struct PassError {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    PassErrorCode code = PassErrorCode::None;
+    std::string message{};
+    std::string pass{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
 class RenderPipeline : public VulkanEngine::PipelinePass::IResourceRegistry {
 public:
     RenderPipeline();
@@ -82,10 +103,35 @@ public:
         std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass,
         VulkanEngine::PipelinePass::PassSetupContext& ctx);
 
+    // ── Engine-managed registration (Phase 6) ──
+    // The pipeline constructs the PassSetupContext (with the current render
+    // extent) and calls Setup() itself, validates the result, and tracks the
+    // pass in the stable model. Changes apply at the next ApplyChanges().
+    [[nodiscard]] std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RegisterPass(
+        std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass);
+    // Marks a pass dead (tombstone); its pass object is freed once the frame
+    // that last used it is GPU-complete.
+    [[nodiscard]] bool RemovePass(VulkanEngine::RenderGraph::PassHandle handle);
+    [[nodiscard]] bool SetPassEnabled(VulkanEngine::RenderGraph::PassHandle handle, bool enabled);
+    // Marks the model dirty; ApplyChanges() rebuilds and recompiles.
+    void RequestRebuild();
+    [[nodiscard]] const std::vector<VulkanEngine::RenderGraph::CompileDiagnostic>& GetDiagnostics() const;
+    // Structured errors from the last model validation (missing resolvers,
+    // duplicate names, invalid declarations).
+    [[nodiscard]] const std::vector<PassError>& GetValidationErrors() const;
+    // Increments on every model rebuild; unchanged when ApplyChanges() is a no-op.
+    [[nodiscard]] std::uint32_t GetRevision() const { return revision_; }
+    // Rebuilds the graph from the pass model if dirty and recompiles. Called at
+    // a frame boundary (top of Renderer::RenderFrame).
+    void ApplyChanges();
+    void SetRenderExtent(std::uint32_t width, std::uint32_t height);
+
     // ── Built-in pass handle access ──
     // The caller (Renderer) populates these after registering all built-in passes.
-    void SetBuiltinHandles(const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& handles);
-    [[nodiscard]] const std::array<VulkanEngine::RenderGraph::PassHandle, 6>& GetBuiltinHandles() const;
+    void SetBuiltinHandles(const std::array<VulkanEngine::RenderGraph::PassHandle,
+                                               VulkanEngine::PipelinePass::kBuiltinPassCount>& handles);
+    [[nodiscard]] const std::array<VulkanEngine::RenderGraph::PassHandle,
+                                   VulkanEngine::PipelinePass::kBuiltinPassCount>& GetBuiltinHandles() const;
 
     bool AddDependency(VulkanEngine::RenderGraph::PassHandle before,
                        VulkanEngine::RenderGraph::PassHandle after);
@@ -103,15 +149,49 @@ public:
     // Engine-owned pipeline declaration for a pass (nullptr when none declared).
     [[nodiscard]] const VulkanEngine::PipelinePass::PassPipelineRequest* GetPassPipelineRequest(
         VulkanEngine::RenderGraph::PassHandle handle) const;
+    [[nodiscard]] const VulkanEngine::PipelinePass::PassPipelineRequest* GetPassPipelineRequestByName(
+        std::string_view name) const;
     [[nodiscard]] vk::PipelineLayout GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle handle) const;
     [[nodiscard]] vk::PipelineLayout GetPassPipelineLayoutByName(std::string_view name) const;
 
 private:
+    // ── Pass model (stable identity, rebuildable) ──
+    struct ModelRead {
+        VulkanEngine::RenderGraph::ResourceHandle resource{};
+        VulkanEngine::RenderGraph::PipelineStageIntent stage =
+            VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader;
+        VulkanEngine::RenderGraph::AccessIntent access = VulkanEngine::RenderGraph::AccessIntent::Read;
+    };
+
+    struct ModelPass {
+        std::string name{};
+        std::uint32_t slot = 0;
+        std::uint32_t generation = 1;
+        bool enabled = true;
+        bool builtin = false;
+        bool alive = true; // false == tombstone
+        VulkanEngine::RenderGraph::QueueType queue = VulkanEngine::RenderGraph::QueueType::Graphics;
+        std::vector<ModelRead> reads{};
+        std::vector<VulkanEngine::RenderGraph::ResourceHandle> writes{};
+        std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{};
+        VulkanEngine::PipelinePass::PassPipelineRequest pipeline_request{};
+        std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings{};
+        std::function<void(const void*, vk::CommandBuffer)> execute{};
+        std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass{};
+    };
+
     void SyncTransients();
     void BuildPassPipelines();
     void PollPassPipelines(std::uint32_t fif_slot);
+    void RebuildFromModel();
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
                           std::uint32_t image_index, std::uint32_t fif_slot);
+    [[nodiscard]] bool ValidateModel(std::vector<PassError>& errors) const;
+    void CollectRemovedPasses(std::uint32_t fif_slot);
+    [[nodiscard]] ModelPass* FindModelPass(VulkanEngine::RenderGraph::PassHandle handle);
+    [[nodiscard]] bool IsValidModelHandle(VulkanEngine::RenderGraph::PassHandle handle) const;
+    [[nodiscard]] VulkanEngine::RenderGraph::PassHandle AddModelPass(ModelPass model);
+    void TrackImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle, const std::string& name);
 
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     ShaderSystem::ShaderManager* shader_manager_ = nullptr;
@@ -119,6 +199,20 @@ private:
     std::array<vk::DescriptorSetLayout, 5> engine_set_layouts_{};
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
+
+    std::vector<ModelPass> model_passes_{};
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> model_dependencies_{}; // slots
+    // Removed pass objects awaiting GPU completion before destruction.
+    std::vector<std::pair<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>, std::uint32_t>>
+        pending_removals_{};
+    bool dirty_ = true;
+    bool applying_ = false;
+    // True while Execute() records the frame; mutations are rejected then.
+    bool executing_ = false;
+    std::uint32_t revision_ = 0;
+    std::uint32_t render_width_ = 0;
+    std::uint32_t render_height_ = 0;
+    std::uint32_t last_fif_slot_ = 0;
 
     std::unordered_map<std::uint32_t, TransientImageDesc> transient_image_descs_{};
     std::unordered_map<std::uint32_t, TransientBufferDesc> transient_buffer_descs_{};
@@ -133,6 +227,11 @@ private:
     std::unordered_map<std::string, BufferResolver> buffer_resolvers_{};
     std::unordered_set<std::string> image_resolver_names_{};
     std::unordered_set<std::string> buffer_resolver_names_{};
+
+    // Resource identity: index -> registered name, for resolver validation.
+    std::unordered_map<std::uint32_t, std::string> resource_names_{};
+    std::unordered_set<std::uint32_t> imported_resource_indices_{};
+    std::vector<PassError> validation_errors_{};
 
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
@@ -149,7 +248,8 @@ private:
 
     // Custom pass storage and built-in handles
     std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};
-    std::array<VulkanEngine::RenderGraph::PassHandle, 6> builtin_handles_{};
+    std::array<VulkanEngine::RenderGraph::PassHandle,
+               VulkanEngine::PipelinePass::kBuiltinPassCount> builtin_handles_{};
 
     // Engine-owned pass pipelines: one retire ring per pass that declared a
     // pipeline request. The engine builds the VkPipeline from the request (and

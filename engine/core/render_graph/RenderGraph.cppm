@@ -56,6 +56,11 @@ public:
     // leaking earlier slots into the new pass/resource numbering.
     void Reset();
 
+    // Clears only passes and explicit dependencies, keeping the resource table
+    // (and therefore resource handles) intact. Used by model-driven rebuilds
+    // where imported/transient resource identity must survive.
+    void ResetPasses();
+
     [[nodiscard]] CompiledRenderGraph Compile() const;
 
 private:

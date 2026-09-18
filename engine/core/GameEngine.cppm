@@ -33,6 +33,7 @@ export import VulkanEngine.PhysicalCameraSystem;
 import VulkanBackend.Platform.SdlPlatform;
 import VulkanShared.CallbackList;
 import VulkanEngine.MeshManager;
+import VulkanEngine.RenderPipeline;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.EngineBootstrap;
@@ -85,6 +86,8 @@ public:
     SceneRenderer::SceneRenderer& GetSceneRenderer() { return *ctx_.scene_renderer; }
     TechniqueManager::TechniqueManager& GetTechniqueManager() { return *ctx_.technique_mgr; }
     Renderer::Renderer& GetRenderer() { return *ctx_.renderer; }
+    // Engine-managed render pass registration/reconfiguration surface.
+    VulkanEngine::RenderPipeline::RenderPipeline& GetRenderPipeline();
     ImGui::ImGuiSystem* GetImGuiSystem() { return ctx_.imgui_system.get(); }
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return ctx_.vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return ctx_.index_heap; }

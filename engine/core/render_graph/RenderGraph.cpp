@@ -246,6 +246,11 @@ void RenderGraphBuilder::Reset() {
     explicit_dependencies_.clear();
 }
 
+void RenderGraphBuilder::ResetPasses() {
+    passes_.clear();
+    explicit_dependencies_.clear();
+}
+
 bool RenderGraphBuilder::IsValidResourceHandle(ResourceHandle handle) const {
     if (!handle.IsValid()) {
         return false;

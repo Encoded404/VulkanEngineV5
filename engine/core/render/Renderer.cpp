@@ -37,6 +37,14 @@ void Renderer::SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout,
     }
 }
 
+VulkanEngine::RenderPipeline::RenderPipeline& Renderer::GetRenderPipeline() {
+    return *pipeline_;
+}
+
+const VulkanEngine::RenderPipeline::RenderPipeline& Renderer::GetRenderPipeline() const {
+    return *pipeline_;
+}
+
 bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   const RendererConfig& config,
                                   VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
@@ -344,6 +352,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     });
 
     // ── Pass 7: ImGui overlay ──
+    VulkanEngine::RenderGraph::PassHandle imgui_handle{};
     if (config.enable_imgui) {
         VulkanEngine::RenderGraph::PassAttachmentSetup imgui_setup{};
         imgui_setup.auto_begin_rendering = false;
@@ -354,7 +363,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         imgui_color_attach.store_op = vk::AttachmentStoreOp::eStore;
         imgui_setup.color_attachments.push_back(imgui_color_attach);
 
-        pipeline_->AddPass({
+        imgui_handle = pipeline_->AddPass({
             .name = "imgui-overlay",
             .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
             .writes = {backbuffer},
@@ -385,6 +394,28 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_->AddDependency(hiz_handle, occlusion_handle);
     pipeline_->AddDependency(occlusion_handle, collect_handle);
     pipeline_->AddDependency(collect_handle, main_handle);
+
+    // Capture the render extent for RegisterPass()'s PassSetupContext and expose
+    // every built-in as an ordering anchor before app passes apply.
+    std::uint32_t init_width = 0;
+    std::uint32_t init_height = 0;
+    (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
+    pipeline_->SetRenderExtent(init_width, init_height);
+    pipeline_->SetBuiltinHandles(std::array<
+        VulkanEngine::RenderGraph::PassHandle,
+        VulkanEngine::PipelinePass::kBuiltinPassCount>{
+        expand_handle,
+        occluder_select_handle,
+        occluder_prepass_handle,
+        hiz_pre_handle,
+        pre_cull_handle,
+        depth_handle,
+        hiz_handle,
+        occlusion_handle,
+        collect_handle,
+        main_handle,
+        imgui_handle,
+    });
 
     pipeline_->Compile();
     if (!pipeline_->IsCompiled()) return false;
@@ -428,10 +459,15 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                    , VulkanEngine::PhysicalCamera::PhysicalCameraSystem* physical_cameras
 #endif
                                    ) {
-    if (!pipeline_ || !pipeline_->IsCompiled()) return;
+    if (!pipeline_) return;
+    // Rebuild the graph at a frame boundary if passes were added/removed/enabled
+    // since the last frame. Removals are freed once their last frame completes.
+    pipeline_->ApplyChanges();
+    if (!pipeline_->IsCompiled()) return;
 
     std::uint32_t width = 0, height = 0;
     (void)bootstrap.GetBackend().GetSwapchainExtent(width, height);
+    pipeline_->SetRenderExtent(width, height);
 
     LOGIFACE_LOG(trace, "RenderFrame frame=" + std::to_string(frame_counter_) +
                  " img=" + std::to_string(image_index) + " w=" + std::to_string(width) +

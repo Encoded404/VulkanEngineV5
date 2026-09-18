@@ -59,6 +59,9 @@ public:
     // Engine-standard set layouts (0-4) used to build custom-pass pipelines.
     void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
 
+    [[nodiscard]] VulkanEngine::RenderPipeline::RenderPipeline& GetRenderPipeline();
+    [[nodiscard]] const VulkanEngine::RenderPipeline::RenderPipeline& GetRenderPipeline() const;
+
     void Shutdown();
 
     void RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,

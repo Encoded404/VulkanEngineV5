@@ -1132,6 +1132,11 @@ bool RenderPipeline::SetFinalState(VulkanEngine::RenderGraph::ResourceHandle res
 
 void RenderPipeline::BeginFrame(const void* user_data, std::uint32_t image_index,
                                 std::uint32_t fif_slot) {
+    // Never leave the previous frame's plan or data visible if this frame bails
+    // early. queue_runs_ is cached at compile time by RebuildFromModel, so it is
+    // not cleared here.
+    barrier_plan_ = {};
+    frame_data_ = {};
     if (!compiled_ || !initialized_ || !bootstrap_) {
         return;
     }
@@ -1263,15 +1268,6 @@ void RenderPipeline::RecordRun(std::uint32_t run_index, vk::CommandBuffer comman
 
 void RenderPipeline::EndFrame() {
     executing_ = false;
-}
-
-void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer,
-                             std::uint32_t image_index, std::uint32_t fif_slot) {
-    BeginFrame(user_data, image_index, fif_slot);
-    for (std::uint32_t run = 0; run < queue_runs_.runs.size(); ++run) {
-        RecordRun(run, command_buffer);
-    }
-    EndFrame();
 }
 
 void RenderPipeline::SyncTransients() {

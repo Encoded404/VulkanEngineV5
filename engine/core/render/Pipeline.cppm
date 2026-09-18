@@ -128,13 +128,12 @@ public:
     bool SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state);
 
     void Compile();
-    void Execute(const void* user_data, vk::CommandBuffer command_buffer,
-                 std::uint32_t image_index, std::uint32_t fif_slot);
 
-    // Multi-queue recording: BeginFrame resolves resources and builds the
-    // barrier/run plan; RecordRun records one queue run into its own command
-    // buffer; EndFrame releases execution-time mutation blocking. Execute() is
-    // the single-command convenience wrapper.
+    // Multi-queue recording: BeginFrame resolves resources and attaches this
+    // frame's data; RecordRun records one queue run into its own command buffer;
+    // EndFrame releases execution-time mutation blocking. A frame is always
+    // recorded run-by-run so per-queue command buffers and barrier scopes stay
+    // correct; there is deliberately no single-command-buffer convenience path.
     void BeginFrame(const void* user_data, std::uint32_t image_index, std::uint32_t fif_slot);
     void RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,
                    bool compute_queue = false);

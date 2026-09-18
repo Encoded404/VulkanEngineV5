@@ -339,3 +339,258 @@ TEST(RenderGraphBarrierPlanTest, GoldenRepresentativePlanSnapshot) {
         << "golden BarrierPlan hash changed; actual=" << hash
         << " serialized=" << SerializePlan(plan);
 }
+
+// ── Queue scope clamping ──
+//
+// A barrier recorded into a compute run may not name graphics-only stages or
+// accesses. The planner clamps the scopes to the pass's queue; the cross-queue
+// semaphore carries the producer/consumer dependency, and the layout transition
+// is preserved.
+
+TEST(RenderGraphBarrierPlanTest, QueueScopeClampHelpers) {
+    // Graphics is identity.
+    EXPECT_EQ(ClampStagesToQueue(vk::PipelineStageFlagBits2::eFragmentShader, QueueType::Graphics),
+              vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eFragmentShader});
+    EXPECT_EQ(ClampAccessToQueue(vk::AccessFlagBits2::eColorAttachmentWrite, QueueType::Graphics),
+              vk::AccessFlags2{vk::AccessFlagBits2::eColorAttachmentWrite});
+
+    // Compute keeps compute/transfer/indirect-dispatch stages and drops the rest.
+    const auto compute_stages =
+        ClampStagesToQueue(vk::PipelineStageFlagBits2::eVertexShader |
+                               vk::PipelineStageFlagBits2::eComputeShader |
+                               vk::PipelineStageFlagBits2::eDrawIndirect,
+                           QueueType::Compute);
+    EXPECT_TRUE((compute_stages & vk::PipelineStageFlagBits2::eComputeShader) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_TRUE((compute_stages & vk::PipelineStageFlagBits2::eDrawIndirect) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_EQ(compute_stages & vk::PipelineStageFlagBits2::eVertexShader, vk::PipelineStageFlags2{});
+    // An emptied mask collapses to eNone.
+    EXPECT_EQ(ClampStagesToQueue(vk::PipelineStageFlagBits2::eFragmentShader, QueueType::Compute),
+              vk::PipelineStageFlagBits2::eNone);
+
+    // Transfer supports only transfer.
+    EXPECT_TRUE((ClampStagesToQueue(vk::PipelineStageFlagBits2::eTransfer, QueueType::Transfer) &
+                 vk::PipelineStageFlagBits2::eTransfer) != vk::PipelineStageFlags2{});
+    EXPECT_EQ(ClampStagesToQueue(vk::PipelineStageFlagBits2::eComputeShader, QueueType::Transfer),
+              vk::PipelineStageFlagBits2::eNone);
+
+    // Access: graphics-only bits are dropped, shared bits survive.
+    const auto access = ClampAccessToQueue(
+        vk::AccessFlagBits2::eColorAttachmentWrite | vk::AccessFlagBits2::eShaderRead,
+        QueueType::Compute);
+    EXPECT_TRUE((access & vk::AccessFlagBits2::eShaderRead) != vk::AccessFlags2{});
+    EXPECT_EQ(access & vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlags2{});
+
+    // Stage and access are clamped as a pair: an access bit never survives
+    // without a stage that can produce it (the validation rule that caught a
+    // shader read left behind after the fragment stage was dropped).
+    const auto fragment_read = ClampScopesToQueue(
+        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead,
+        QueueType::Compute);
+    EXPECT_EQ(fragment_read.stage, vk::PipelineStageFlagBits2::eNone);
+    EXPECT_EQ(fragment_read.access, vk::AccessFlags2{});
+
+    const auto compute_read = ClampScopesToQueue(
+        vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead,
+        QueueType::Compute);
+    EXPECT_EQ(compute_read.stage, vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eComputeShader});
+    EXPECT_EQ(compute_read.access, vk::AccessFlags2{vk::AccessFlagBits2::eShaderRead});
+
+    // Transfer access only survives a transfer stage.
+    const auto compute_transfer = ClampScopesToQueue(
+        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+        QueueType::Compute);
+    EXPECT_TRUE((compute_transfer.stage & vk::PipelineStageFlagBits2::eTransfer) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_EQ(compute_transfer.access, vk::AccessFlags2{vk::AccessFlagBits2::eTransferWrite});
+
+    // Graphics identity.
+    const auto graphics = ClampScopesToQueue(
+        vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eColorAttachmentWrite,
+        QueueType::Graphics);
+    EXPECT_EQ(graphics.stage, vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eFragmentShader});
+    EXPECT_EQ(graphics.access, vk::AccessFlags2{vk::AccessFlagBits2::eShaderRead} |
+                                   vk::AccessFlags2{vk::AccessFlagBits2::eColorAttachmentWrite});
+
+    EXPECT_TRUE(QueueSupportsAllStages(QueueType::Graphics));
+    EXPECT_FALSE(QueueSupportsAllStages(QueueType::Compute));
+    EXPECT_TRUE((QueueSupportedStages(QueueType::Compute) &
+                 vk::PipelineStageFlagBits2::eComputeShader) != vk::PipelineStageFlags2{});
+}
+
+TEST(RenderGraphBarrierPlanTest, ComputePassClampsGraphicsProducerScope) {
+    RenderGraphBuilder builder;
+    const auto tex = builder.CreateTransientResource("tex", ResourceKind::Image);
+    builder.SetTransientImageInfo(tex, TransientImageInfo{
+                                           .format = vk::Format::eR8G8B8A8Unorm,
+                                           .width = 64,
+                                           .height = 64,
+                                           .usage = vk::ImageUsageFlagBits::eColorAttachment |
+                                                    vk::ImageUsageFlagBits::eSampled});
+
+    const auto graphics = builder.AddPass("graphics-write", QueueType::Graphics, true, {});
+    const auto compute = builder.AddPass("compute-read", QueueType::Compute, true, {});
+    ASSERT_TRUE(builder.AddWrite(graphics, tex));
+
+    PassAttachmentSetup setup{};
+    setup.auto_begin_rendering = true;
+    AttachmentInfo color{};
+    color.resource = tex;
+    setup.color_attachments.push_back(color);
+    ASSERT_TRUE(builder.SetPassAttachments(graphics, setup));
+
+    ASSERT_TRUE(builder.AddRead(compute, tex, PipelineStageIntent::ComputeShader, AccessIntent::Read));
+    ASSERT_TRUE(builder.AddDependency(graphics, compute));
+
+    const auto graph = builder.Compile();
+    ASSERT_TRUE(graph.success);
+    const auto plan = PlanBarriers(graph, ResolvedResourceHandles{}, AliasIntervals{});
+    ASSERT_EQ(plan.passes.size(), 2u);
+    EXPECT_EQ(plan.passes[0].queue, QueueType::Graphics);
+    EXPECT_EQ(plan.passes[1].queue, QueueType::Compute);
+
+    // The graphics producer keeps its real color-attachment scope.
+    ASSERT_EQ(plan.passes[0].pre_image.size(), 1u);
+    EXPECT_TRUE((plan.passes[0].pre_image[0].dst_stage &
+                 vk::PipelineStageFlagBits2::eColorAttachmentOutput) != vk::PipelineStageFlags2{});
+
+    // The compute consumer drops the graphics-only source scope to eNone, but
+    // keeps the layout transition and the compute destination scope.
+    ASSERT_EQ(plan.passes[1].pre_image.size(), 1u);
+    const auto& barrier = plan.passes[1].pre_image[0];
+    EXPECT_EQ(barrier.src_stage, vk::PipelineStageFlagBits2::eNone);
+    EXPECT_EQ(barrier.src_access, vk::AccessFlags2{});
+    EXPECT_TRUE((barrier.dst_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_TRUE((barrier.dst_access & vk::AccessFlagBits2::eShaderRead) != vk::AccessFlags2{});
+    EXPECT_EQ(barrier.old_layout, vk::ImageLayout::eColorAttachmentOptimal);
+    EXPECT_EQ(barrier.new_layout, vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+TEST(RenderGraphBarrierPlanTest, ComputePassClampsGraphicsConsumerScope) {
+    RenderGraphBuilder builder;
+    const auto tex = builder.CreateTransientResource("tex", ResourceKind::Image);
+    builder.SetTransientImageInfo(tex, TransientImageInfo{
+                                           .format = vk::Format::eR8G8B8A8Unorm,
+                                           .width = 64,
+                                           .height = 64,
+                                           .usage = vk::ImageUsageFlagBits::eTransferSrc});
+    ASSERT_TRUE(builder.SetFinalState(
+        tex, ResourceState::ImageState(PipelineStageIntent::ColorAttachment, AccessIntent::Write,
+                                       QueueType::Graphics, ImageLayoutIntent::ColorAttachment)));
+
+    const auto compute = builder.AddPass("compute-write", QueueType::Compute, true, {});
+    ASSERT_TRUE(builder.AddWrite(compute, tex));
+
+    const auto graph = builder.Compile();
+    ASSERT_TRUE(graph.success);
+    const auto plan = PlanBarriers(graph, ResolvedResourceHandles{}, AliasIntervals{});
+    ASSERT_EQ(plan.passes.size(), 1u);
+    ASSERT_EQ(plan.passes[0].pre_image.size(), 1u);
+    // Pre (Undefined -> General) keeps compute-valid scopes.
+    EXPECT_TRUE((plan.passes[0].pre_image[0].dst_stage &
+                 vk::PipelineStageFlagBits2::eComputeShader) != vk::PipelineStageFlags2{});
+
+    // Post (General -> ColorAttachment) drops the graphics-only destination
+    // scope while keeping the compute source scope and the layout transition.
+    ASSERT_EQ(plan.passes[0].post_image.size(), 1u);
+    const auto& post = plan.passes[0].post_image[0];
+    EXPECT_TRUE((post.src_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_EQ(post.dst_stage, vk::PipelineStageFlagBits2::eNone);
+    EXPECT_EQ(post.dst_access, vk::AccessFlags2{});
+    EXPECT_EQ(post.new_layout, vk::ImageLayout::eColorAttachmentOptimal);
+}
+
+TEST(RenderGraphBarrierPlanTest, SameQueueComputeKeepsRealScopes) {
+    RenderGraphBuilder builder;
+    const auto scratch = builder.CreateTransientResource("scratch", ResourceKind::Buffer);
+    const auto write = builder.AddPass("compute-write", QueueType::Compute, true, {});
+    const auto read = builder.AddPass("compute-read", QueueType::Compute, true, {});
+    ASSERT_TRUE(builder.AddWrite(write, scratch));
+    ASSERT_TRUE(builder.AddRead(read, scratch, PipelineStageIntent::ComputeShader, AccessIntent::Read));
+    ASSERT_TRUE(builder.AddDependency(write, read));
+
+    const auto graph = builder.Compile();
+    ASSERT_TRUE(graph.success);
+    const auto plan = PlanBarriers(graph, ResolvedResourceHandles{}, AliasIntervals{});
+    ASSERT_EQ(plan.passes.size(), 2u);
+    ASSERT_EQ(plan.passes[1].pre_buffer.size(), 1u);
+    const auto& barrier = plan.passes[1].pre_buffer[0];
+    // Same-queue dependency: the real compute scopes are preserved.
+    EXPECT_TRUE((barrier.src_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_TRUE((barrier.src_access & vk::AccessFlagBits2::eShaderWrite) != vk::AccessFlags2{});
+    EXPECT_TRUE((barrier.dst_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                vk::PipelineStageFlags2{});
+    EXPECT_TRUE((barrier.dst_access & vk::AccessFlagBits2::eShaderRead) != vk::AccessFlags2{});
+}
+
+// Property: every barrier planned for a compute pass names only scopes a
+// compute command buffer may use.
+TEST(RenderGraphBarrierPlanTest, ComputePassBarriersAreQueueValid) {
+    RenderGraphBuilder builder;
+    const auto tex = builder.CreateTransientResource("tex", ResourceKind::Image);
+    builder.SetTransientImageInfo(tex, TransientImageInfo{
+                                           .format = vk::Format::eR8G8B8A8Unorm,
+                                           .width = 64,
+                                           .height = 64,
+                                           .usage = vk::ImageUsageFlagBits::eColorAttachment |
+                                                    vk::ImageUsageFlagBits::eSampled});
+
+    const auto graphics_write = builder.AddPass("graphics-write", QueueType::Graphics, true, {});
+    const auto compute_read = builder.AddPass("compute-read", QueueType::Compute, true, {});
+    const auto compute_write = builder.AddPass("compute-write", QueueType::Compute, true, {});
+    const auto graphics_read = builder.AddPass("graphics-read", QueueType::Graphics, true, {});
+
+    PassAttachmentSetup setup{};
+    setup.auto_begin_rendering = true;
+    AttachmentInfo color{};
+    color.resource = tex;
+    setup.color_attachments.push_back(color);
+    ASSERT_TRUE(builder.SetPassAttachments(graphics_write, setup));
+    ASSERT_TRUE(builder.AddWrite(graphics_write, tex));
+    ASSERT_TRUE(builder.AddRead(compute_read, tex, PipelineStageIntent::ComputeShader, AccessIntent::Read));
+    ASSERT_TRUE(builder.AddRead(compute_write, tex, PipelineStageIntent::ComputeShader, AccessIntent::Read));
+
+    const auto scratch = builder.CreateTransientResource("scratch", ResourceKind::Buffer);
+    ASSERT_TRUE(builder.AddWrite(compute_write, scratch));
+    ASSERT_TRUE(builder.AddRead(graphics_read, scratch, PipelineStageIntent::FragmentShader, AccessIntent::Read));
+
+    ASSERT_TRUE(builder.AddDependency(graphics_write, compute_read));
+    ASSERT_TRUE(builder.AddDependency(compute_read, compute_write));
+    ASSERT_TRUE(builder.AddDependency(compute_write, graphics_read));
+
+    const auto graph = builder.Compile();
+    ASSERT_TRUE(graph.success);
+    const auto plan = PlanBarriers(graph, ResolvedResourceHandles{}, AliasIntervals{});
+
+    const vk::PipelineStageFlags2 supported_stages = QueueSupportedStages(QueueType::Compute);
+    const vk::AccessFlags2 unsupported_access = QueueUnsupportedAccess();
+    bool saw_compute_barrier = false;
+    for (const auto& pass : plan.passes) {
+        if (pass.queue != QueueType::Compute) {
+            continue;
+        }
+        const auto check = [&](const auto& barriers) {
+            for (const auto& barrier : barriers) {
+                saw_compute_barrier = true;
+                EXPECT_EQ(barrier.src_stage & ~supported_stages, vk::PipelineStageFlags2{})
+                    << "unsupported src stage in compute pass '" << pass.pass_name << "'";
+                EXPECT_EQ(barrier.dst_stage & ~supported_stages, vk::PipelineStageFlags2{})
+                    << "unsupported dst stage in compute pass '" << pass.pass_name << "'";
+                EXPECT_EQ(barrier.src_access & unsupported_access, vk::AccessFlags2{})
+                    << "unsupported src access in compute pass '" << pass.pass_name << "'";
+                EXPECT_EQ(barrier.dst_access & unsupported_access, vk::AccessFlags2{})
+                    << "unsupported dst access in compute pass '" << pass.pass_name << "'";
+            }
+        };
+        check(pass.pre_image);
+        check(pass.pre_buffer);
+        check(pass.post_image);
+        check(pass.post_buffer);
+    }
+    EXPECT_TRUE(saw_compute_barrier);
+}

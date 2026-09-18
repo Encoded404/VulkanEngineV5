@@ -353,6 +353,9 @@ struct PlannedBufferBarrier {
 struct PlannedPassBarriers {
     std::uint32_t pass_index = std::numeric_limits<std::uint32_t>::max();
     std::string pass_name{};
+    // Queue this pass (and therefore its barriers) runs on. Planned scopes are
+    // clamped to it, so a compute/transfer run never names a graphics scope.
+    QueueType queue = QueueType::Graphics;
     std::vector<PlannedImageBarrier> pre_image{};
     std::vector<PlannedBufferBarrier> pre_buffer{};
     std::vector<PlannedImageBarrier> post_image{};
@@ -453,6 +456,118 @@ inline vk::AccessFlags2 IntentToAccessFlags(PipelineStageIntent stage, AccessInt
     };
 
     return stage_access(stage, access == AccessIntent::Write || access == AccessIntent::ReadWrite);
+}
+
+// ── Queue synchronization scope support ──
+//
+// A barrier recorded into a command buffer may only name pipeline stages and
+// access types supported by that command buffer's queue family. The barrier
+// planner clamps each pass's planned scopes to the pass's queue so a compute or
+// transfer run never emits a graphics-only scope. Cross-queue ordering is not
+// lost by this clamp: the queue-run boundary semaphore carries the producer /
+// consumer dependency, so a scope that refers to the other queue is vacuous in
+// this command buffer and is replaced with eNone.
+//
+// Graphics queues support every stage this engine emits, so they are identity.
+
+[[nodiscard]] inline bool QueueSupportsAllStages(QueueType queue) {
+    return queue == QueueType::Graphics;
+}
+
+// Stage mask supported by a non-graphics queue. Callers must not use this as a
+// support mask for a graphics queue (see QueueSupportsAllStages).
+[[nodiscard]] inline vk::PipelineStageFlags2 QueueSupportedStages(QueueType queue) {
+    switch (queue) {
+        case QueueType::Compute:
+            // Indirect dispatch consumes its parameters at the draw-indirect
+            // stage; transfer and compute stages cover the rest of compute work.
+            return vk::PipelineStageFlagBits2::eComputeShader |
+                   vk::PipelineStageFlagBits2::eTransfer |
+                   vk::PipelineStageFlagBits2::eDrawIndirect;
+        case QueueType::Transfer:
+            return vk::PipelineStageFlagBits2::eTransfer;
+        case QueueType::Graphics:
+        default:
+            return vk::PipelineStageFlagBits2::eNone;
+    }
+}
+
+// Access types that only a graphics command buffer may name. Indirect-command
+// reads stay: dispatch-indirect is compute-valid.
+[[nodiscard]] inline vk::AccessFlags2 QueueUnsupportedAccess() {
+    return vk::AccessFlagBits2::eColorAttachmentRead |
+           vk::AccessFlagBits2::eColorAttachmentWrite |
+           vk::AccessFlagBits2::eDepthStencilAttachmentRead |
+           vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
+           vk::AccessFlagBits2::eInputAttachmentRead |
+           vk::AccessFlagBits2::eIndexRead |
+           vk::AccessFlagBits2::eVertexAttributeRead;
+}
+
+// Drops stages a `queue` cannot name. An emptied mask becomes eNone, which sync2
+// permits (the barrier still performs its layout transition).
+[[nodiscard]] inline vk::PipelineStageFlags2 ClampStagesToQueue(vk::PipelineStageFlags2 stages,
+                                                               QueueType queue) {
+    if (QueueSupportsAllStages(queue)) {
+        return stages;
+    }
+    const vk::PipelineStageFlags2 clamped = stages & QueueSupportedStages(queue);
+    return clamped == vk::PipelineStageFlags2{} ? vk::PipelineStageFlagBits2::eNone : clamped;
+}
+
+// Drops access types a `queue` cannot name.
+[[nodiscard]] inline vk::AccessFlags2 ClampAccessToQueue(vk::AccessFlags2 access, QueueType queue) {
+    if (QueueSupportsAllStages(queue)) {
+        return access;
+    }
+    return access & ~QueueUnsupportedAccess();
+}
+
+// Pipeline stages that produce shader access. An access mask is only meaningful
+// alongside a stage that can generate it (VUID-VkBufferMemoryBarrier2-srcAccessMask-07454
+// and friends), so stage and access must be clamped as a pair.
+[[nodiscard]] inline vk::PipelineStageFlags2 ShaderStages() {
+    return vk::PipelineStageFlagBits2::eVertexShader |
+           vk::PipelineStageFlagBits2::eTessellationControlShader |
+           vk::PipelineStageFlagBits2::eTessellationEvaluationShader |
+           vk::PipelineStageFlagBits2::eGeometryShader |
+           vk::PipelineStageFlagBits2::eFragmentShader |
+           vk::PipelineStageFlagBits2::eComputeShader;
+}
+
+// A queue-clamped barrier scope. Stage and access travel together so an access
+// bit can never survive without a stage that supports it.
+struct ClampedScopes {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    vk::PipelineStageFlags2 stage = vk::PipelineStageFlagBits2::eNone;
+    vk::AccessFlags2 access{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+// Clamps a barrier's (stage, access) pair to what a command buffer on `queue`
+// may name. Graphics is identity. On a non-graphics queue the stage mask is
+// reduced to the queue's supported stages and the access mask is reduced to
+// accesses those remaining stages can produce; an emptied stage mask clears the
+// access mask entirely.
+[[nodiscard]] inline ClampedScopes ClampScopesToQueue(vk::PipelineStageFlags2 stage,
+                                                      vk::AccessFlags2 access,
+                                                      QueueType queue) {
+    if (QueueSupportsAllStages(queue)) {
+        return ClampedScopes{stage, access};
+    }
+
+    const vk::PipelineStageFlags2 clamped_stage = ClampStagesToQueue(stage, queue);
+    vk::AccessFlags2 clamped_access = ClampAccessToQueue(access, queue);
+    if ((clamped_stage & ShaderStages()) == vk::PipelineStageFlags2{}) {
+        clamped_access &= ~(vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+    }
+    if ((clamped_stage & vk::PipelineStageFlagBits2::eTransfer) == vk::PipelineStageFlags2{}) {
+        clamped_access &= ~(vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite);
+    }
+    if ((clamped_stage & vk::PipelineStageFlagBits2::eDrawIndirect) == vk::PipelineStageFlags2{}) {
+        clamped_access &= ~vk::AccessFlagBits2::eIndirectCommandRead;
+    }
+    return ClampedScopes{clamped_stage, clamped_access};
 }
 
 inline vk::ImageLayout IntentToImageLayout(ImageLayoutIntent intent) {
@@ -610,6 +725,7 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
         PlannedPassBarriers planned{};
         planned.pass_index = static_cast<std::uint32_t>(pass_index);
         planned.pass_name = pass.name;
+        planned.queue = pass.queue;
 
         const auto emit = [&](const std::vector<ResourceTransition>& transitions,
                               std::vector<PlannedImageBarrier>& image_out,
@@ -644,16 +760,20 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                     continue;
                 }
 
+                const ClampedScopes src_scopes = ClampScopesToQueue(src_stage, src_access, pass.queue);
+                const ClampedScopes dst_scopes =
+                    ClampScopesToQueue(transition.dst_stage, transition.dst_access, pass.queue);
+
                 if (graph.resource_info[index].kind == ResourceKind::Image) {
                     PlannedImageBarrier barrier{};
                     barrier.resource_index = index;
                     if (index < resolved.images.size()) {
                         barrier.image = resolved.images[index];
                     }
-                    barrier.src_stage = src_stage;
-                    barrier.dst_stage = transition.dst_stage;
-                    barrier.src_access = src_access;
-                    barrier.dst_access = transition.dst_access;
+                    barrier.src_stage = src_scopes.stage;
+                    barrier.dst_stage = dst_scopes.stage;
+                    barrier.src_access = src_scopes.access;
+                    barrier.dst_access = dst_scopes.access;
                     barrier.old_layout = IntentToImageLayout(from.layout);
                     barrier.new_layout = IntentToImageLayout(transition.target_state.layout);
                     barrier.range = image_range(index);
@@ -664,10 +784,10 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                     if (index < resolved.buffers.size()) {
                         barrier.buffer = resolved.buffers[index];
                     }
-                    barrier.src_stage = src_stage;
-                    barrier.dst_stage = transition.dst_stage;
-                    barrier.src_access = src_access;
-                    barrier.dst_access = transition.dst_access;
+                    barrier.src_stage = src_scopes.stage;
+                    barrier.dst_stage = dst_scopes.stage;
+                    barrier.src_access = src_scopes.access;
+                    barrier.dst_access = dst_scopes.access;
                     if (index < resolved.buffer_offsets.size()) {
                         barrier.offset = resolved.buffer_offsets[index];
                     }
@@ -753,20 +873,25 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                 }
             }
             if (existing != nullptr) {
-                existing->src_stage |= after_stage;
-                existing->src_access |= after_access;
+                const ClampedScopes alias_scopes = ClampScopesToQueue(
+                    existing->src_stage | after_stage, existing->src_access | after_access, planned.queue);
+                existing->src_stage = alias_scopes.stage;
+                existing->src_access = alias_scopes.access;
                 existing->old_layout = vk::ImageLayout::eUndefined;
             } else {
+                const ClampedScopes alias_src = ClampScopesToQueue(after_stage, after_access, planned.queue);
+                const ClampedScopes alias_dst = ClampScopesToQueue(
+                    aliased_seen ? aliased_stage : vk::PipelineStageFlagBits2::eNone, aliased_access,
+                    planned.queue);
                 PlannedImageBarrier barrier{};
                 barrier.resource_index = aliased;
                 if (aliased < resolved.images.size()) {
                     barrier.image = resolved.images[aliased];
                 }
-                barrier.src_stage = after_stage;
-                barrier.src_access = after_access;
-                barrier.dst_stage = aliased_seen ? aliased_stage
-                                                 : vk::PipelineStageFlagBits2::eNone;
-                barrier.dst_access = aliased_access;
+                barrier.src_stage = alias_src.stage;
+                barrier.src_access = alias_src.access;
+                barrier.dst_stage = alias_dst.stage;
+                barrier.dst_access = alias_dst.access;
                 barrier.old_layout = vk::ImageLayout::eUndefined;
                 barrier.new_layout = IntentToImageLayout(aliased_layout);
                 barrier.range = image_range(aliased);
@@ -781,19 +906,24 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                 }
             }
             if (existing != nullptr) {
-                existing->src_stage |= after_stage;
-                existing->src_access |= after_access;
+                const ClampedScopes alias_scopes = ClampScopesToQueue(
+                    existing->src_stage | after_stage, existing->src_access | after_access, planned.queue);
+                existing->src_stage = alias_scopes.stage;
+                existing->src_access = alias_scopes.access;
             } else {
+                const ClampedScopes alias_src = ClampScopesToQueue(after_stage, after_access, planned.queue);
+                const ClampedScopes alias_dst = ClampScopesToQueue(
+                    aliased_seen ? aliased_stage : vk::PipelineStageFlagBits2::eNone, aliased_access,
+                    planned.queue);
                 PlannedBufferBarrier barrier{};
                 barrier.resource_index = aliased;
                 if (aliased < resolved.buffers.size()) {
                     barrier.buffer = resolved.buffers[aliased];
                 }
-                barrier.src_stage = after_stage;
-                barrier.src_access = after_access;
-                barrier.dst_stage = aliased_seen ? aliased_stage
-                                                 : vk::PipelineStageFlagBits2::eNone;
-                barrier.dst_access = aliased_access;
+                barrier.src_stage = alias_src.stage;
+                barrier.src_access = alias_src.access;
+                barrier.dst_stage = alias_dst.stage;
+                barrier.dst_access = alias_dst.access;
                 planned.pre_buffer.push_back(barrier);
             }
         }

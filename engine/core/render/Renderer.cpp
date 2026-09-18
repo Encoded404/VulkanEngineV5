@@ -411,7 +411,7 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                 // Run 0 is graphics: fold prep into it.
                 record_prep(run_cmd);
             }
-            pipeline_->RecordRun(i, run_cmd, compute);
+            pipeline_->RecordRun(i, run_cmd);
             // Keep the query's begin and end in the same command buffer.
             if (i == 0 && slot_base == 0) {
                 end_stats(run_cmd);

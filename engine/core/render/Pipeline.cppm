@@ -135,8 +135,7 @@ public:
     // recorded run-by-run so per-queue command buffers and barrier scopes stay
     // correct; there is deliberately no single-command-buffer convenience path.
     void BeginFrame(const void* user_data, std::uint32_t image_index, std::uint32_t fif_slot);
-    void RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,
-                   bool compute_queue = false);
+    void RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer);
     void EndFrame();
     [[nodiscard]] const VulkanEngine::RenderGraph::QueueRunPlan& GetQueueRuns() const { return queue_runs_; }
 

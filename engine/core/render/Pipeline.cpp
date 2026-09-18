@@ -1255,15 +1255,14 @@ void RenderPipeline::BeginFrame(const void* user_data, std::uint32_t image_index
     barrier_plan_ = plan;
 }
 
-void RenderPipeline::RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,
-                               bool compute_queue) {
+void RenderPipeline::RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer) {
     if (run_index >= queue_runs_.runs.size()) {
         return;
     }
     const auto& run = queue_runs_.runs[run_index];
     VulkanBackend::Vulkan::ExecuteRenderGraphRange(barrier_plan_, compiled_graph_,
                                                    run.first_pass, run.last_pass,
-                                                   &frame_data_, command_buffer, compute_queue);
+                                                   &frame_data_, command_buffer);
 }
 
 void RenderPipeline::EndFrame() {

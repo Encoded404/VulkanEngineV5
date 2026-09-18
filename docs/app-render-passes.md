@@ -182,11 +182,9 @@ Requirements and behaviour:
   one queue family exists, so no queue-family ownership transfers are needed.
 - Each run is a fresh command buffer, so a graphics pass must set its own
   dynamic viewport/scissor rather than relying on a previous pass.
-- `PlanBarriers` is not yet queue-aware: barriers recorded into a compute-family
-  command buffer are widened to all-commands and their attachment access bits are
-  dropped, with the cross-queue semaphore carrying the dependency. This is
-  conservatively correct but over-synchronizing; a queue-aware barrier planner is
-  the follow-up.
+- Barrier scopes are clamped to each pass's queue at plan time, so a compute run
+  never names a graphics-only stage or access. Cross-queue ordering is carried by
+  the run-boundary semaphore; layout transitions are preserved.
 
 ## Runtime add/remove/enable
 

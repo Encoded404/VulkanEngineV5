@@ -22,10 +22,10 @@ using RenderGraph::ResourceState;
 
 namespace {
 
-// Single place the compiler's queue assignment lives. VulkanEngine currently
-// records everything on the graphics queue; per-pass routing (and exposing
-// QueueType to applications) is Phase 10, so this is deliberately not a
-// compiler input yet.
+// Default queue tag the compiler uses for resource states it synthesizes itself
+// (undefined/imported initial states). Per-pass queue assignment is carried by
+// each pass and copied into CompiledPass::queue, which drives queue-run
+// partitioning; this constant is not a routing decision.
 constexpr QueueType kCompilerQueue = QueueType::Graphics;
 
 [[nodiscard]] ResourceState UndefinedStateFor(ResourceKind kind) {

@@ -160,16 +160,33 @@ Requirements and behaviour:
   compute-queue pass fails with `ValidationFailed` when it does not, so the pass
   must fall back to graphics (the example passes `IsAsyncComputeAvailable()` into
   its compute pass and only then calls `SetQueueType`).
+- A compute-queue pass is recorded into a command buffer on the compute queue,
+  so registration additionally rejects (`ValidationFailed` or
+  `InvalidDeclaration`):
+  - declaring render attachments (dynamic rendering is graphics-only),
+  - requesting a graphics pipeline, and
+  - reading, writing, or binding an imported (engine-owned) resource — those are
+    exclusive to the graphics family. Use transients.
 - The engine partitions the ordered passes into **queue runs** (maximal
   contiguous same-queue spans), records each run into its own command buffer, and
   submits them in order. A run on a different queue than the previous one is
-  separated by a binary semaphore; same-queue runs are ordered by submission.
+  separated by a binary semaphore; same-queue runs are ordered by submission. A
+  graph may produce at most `RenderGraph::kMaxQueueRuns` runs; more is a
+  compile-time error, not a truncated plan.
+- The engine's per-frame scene prep (uploads, descriptor writes, Hi-Z
+  initialization, optional physical-camera compositing) is graphics work. It is
+  folded into the first graphics run when the graph starts on graphics, and
+  otherwise recorded into a dedicated graphics preamble run submitted ahead of
+  the graph, so a graph may start with a compute pass.
 - Graph-declared transients are created with concurrent sharing when more than
   one queue family exists, so no queue-family ownership transfers are needed.
-- A pass must not touch an imported (engine-owned) resource from the compute
-  queue: those resources are exclusive to the graphics family. Use transients.
 - Each run is a fresh command buffer, so a graphics pass must set its own
   dynamic viewport/scissor rather than relying on a previous pass.
+- `PlanBarriers` is not yet queue-aware: barriers recorded into a compute-family
+  command buffer are widened to all-commands and their attachment access bits are
+  dropped, with the cross-queue semaphore carrying the dependency. This is
+  conservatively correct but over-synchronizing; a queue-aware barrier planner is
+  the follow-up.
 
 ## Runtime add/remove/enable
 

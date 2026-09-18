@@ -15,19 +15,22 @@ rather than relying on descriptor indexing / bindless indirection.
   `PassSetupContext::DeclareBindings` (`VulkanEngine::Render::DescriptorDecl`).
   The engine composes the layout; the pass never creates `VkDescriptorSetLayout`
   or writes descriptors by hand.
-- **Update-after-bind sets.** Sets that a running frame may still reference while
-  being rewritten must be allocated from an update-after-bind pool
-  (`VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT`) with
-  `VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT`. The layout and the pool
-  flags must match (VUID-VkDescriptorSetAllocateInfo-descriptorPool-00308).
+- **Per-FIF descriptor sets.** App-pass sets are allocated once per declared set
+  per frames-in-flight slot, so a rewrite only ever targets the slot being
+  recorded and never a set an in-flight frame still reads. The transient rewrite
+  path therefore does not require update-after-bind pools (the bindless arrays
+  keep their own update-after-bind pool where required). If a set ever must be
+  rewritten while in flight, allocate it from an update-after-bind pool with
+  matching layout/pool flags (VUID-VkDescriptorSetAllocateInfo-descriptorPool-00308).
 - **Partial binding.** Descriptor arrays that grow over time (per-material
   blocks) use `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` so unwritten entries
   are legal.
-- **Rewire point.** Rewrites happen once, at a frame boundary, after the alias
-  plan and transient heap have been reconciled and before the frame's command
-  buffers are recorded. A rewrite must never target a set that the in-flight
-  frames are still reading: either use update-after-bind, or defer the rewrite
-  until the previous owner of the set is GPU-complete (`IsFrameComplete`).
+- **Rewire point.** A frame's descriptor sets are rewritten from the resources
+  resolved that frame while its command buffers are recorded, after the alias
+  plan and transient heap have been reconciled. A rewrite must never target a
+  set that an in-flight frame may still read: per-FIF ownership guarantees that
+  for the transient path, otherwise use update-after-bind or defer until the
+  previous owner is GPU-complete (`IsFrameComplete`).
 - **Bounds.** Rewriting must keep every written range inside the declared
   `count`; the engine validates this at declaration time via
   `PipelineLayoutComposer` (reserved sets, duplicates, set gaps, push ranges).

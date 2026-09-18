@@ -290,6 +290,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/ShaderManager.cppm
             render/CompilerEngine.cppm
             render/GplPolicy.cppm
+            render/GpuStats.cppm
             render/PipelineFactory.cppm
             render/ShaderWatcher.cppm
             render/ShaderRegistration.cppm

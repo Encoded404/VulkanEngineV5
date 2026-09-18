@@ -11,6 +11,7 @@ add_executable(engine_tests
   render_pipeline_registration_tests.cpp
   builtin_pass_declarations_tests.cpp
   render_resize_tests.cpp
+  gpu_stats_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 setup_test_target(engine_tests)

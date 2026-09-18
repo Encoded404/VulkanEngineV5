@@ -74,6 +74,10 @@ bool TransientAllocator::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& bac
     return true;
 }
 
+void TransientAllocator::SetQueueFamilies(std::span<const std::uint32_t> families) {
+    queue_families_.assign(families.begin(), families.end());
+}
+
 void TransientAllocator::Shutdown() {
     if (current_ != nullptr) {
         ReleaseGeneration(*current_);
@@ -167,7 +171,13 @@ bool TransientAllocator::BuildGeneration(const std::vector<Desc>& descs,
         image_info.samples = desc.image.samples;
         image_info.tiling = vk::ImageTiling::eOptimal;
         image_info.usage = desc.image.usage;
-        image_info.sharingMode = vk::SharingMode::eExclusive;
+        if (queue_families_.size() > 1) {
+            image_info.sharingMode = vk::SharingMode::eConcurrent;
+            image_info.queueFamilyIndexCount = static_cast<std::uint32_t>(queue_families_.size());
+            image_info.pQueueFamilyIndices = queue_families_.data();
+        } else {
+            image_info.sharingMode = vk::SharingMode::eExclusive;
+        }
         image_info.initialLayout = vk::ImageLayout::eUndefined;
         if (desc.requirements.aliasable) {
             image_info.flags |= vk::ImageCreateFlagBits::eAlias;
@@ -266,7 +276,13 @@ bool TransientAllocator::BuildGeneration(const std::vector<Desc>& descs,
             buffer_info.usage = heap_info.buffer_usage |
                                 vk::BufferUsageFlagBits::eTransferSrc |
                                 vk::BufferUsageFlagBits::eTransferDst;
-            buffer_info.sharingMode = vk::SharingMode::eExclusive;
+            if (queue_families_.size() > 1) {
+                buffer_info.sharingMode = vk::SharingMode::eConcurrent;
+                buffer_info.queueFamilyIndexCount = static_cast<std::uint32_t>(queue_families_.size());
+                buffer_info.pQueueFamilyIndices = queue_families_.data();
+            } else {
+                buffer_info.sharingMode = vk::SharingMode::eExclusive;
+            }
             heap.buffer = std::make_unique<vk::raii::Buffer>(device, buffer_info);
             heap.buffer->bindMemory(*heap.memory, 0);
         }

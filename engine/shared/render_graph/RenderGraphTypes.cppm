@@ -802,4 +802,45 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
     return plan;
 }
 
+// ── Queue runs (multi-queue submission) ──
+// A run is a maximal contiguous span of ordered passes that execute on the same
+// queue. Runs are submitted in order; a run on a different queue than the
+// previous one is separated by a semaphore. Pure and device-free so the
+// partitioning is unit-testable.
+struct QueueRun {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    QueueType queue = QueueType::Graphics;
+    std::uint32_t first_pass = 0; // inclusive index into CompiledRenderGraph::passes
+    std::uint32_t last_pass = 0;  // exclusive
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+    [[nodiscard]] std::uint32_t PassCount() const { return last_pass - first_pass; }
+};
+
+struct QueueRunPlan {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::vector<QueueRun> runs{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+    [[nodiscard]] bool IsSingleRun() const { return runs.size() <= 1; }
+    [[nodiscard]] bool HasComputeRun() const {
+        return std::ranges::any_of(runs, [](const QueueRun& run) {
+            return run.queue != QueueType::Graphics;
+        });
+    }
+};
+
+[[nodiscard]] inline QueueRunPlan BuildQueueRuns(const CompiledRenderGraph& graph) {
+    QueueRunPlan plan{};
+    for (std::uint32_t i = 0; i < graph.passes.size(); ++i) {
+        const QueueType queue = graph.passes[i].queue;
+        if (!plan.runs.empty() && plan.runs.back().queue == queue) {
+            plan.runs.back().last_pass = i + 1;
+            continue;
+        }
+        plan.runs.push_back(QueueRun{.queue = queue, .first_pass = i, .last_pass = i + 1});
+    }
+    return plan;
+}
+
 }  // namespace VulkanEngine::RenderGraph

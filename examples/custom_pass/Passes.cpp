@@ -37,6 +37,13 @@ void BindFullscreenTriangle(const FrameContext& ctx, vk::CommandBuffer cmd,
     cmd.bindPipeline(bind_point, ctx.pass_pipeline);
     cmd.bindDescriptorSets(bind_point, ctx.pipeline_layout, ctx.first_app_descriptor_set,
                            ctx.app_descriptor_sets, {});
+    if (bind_point == vk::PipelineBindPoint::eGraphics) {
+        // Each queue run gets its own command buffer, so dynamic viewport/scissor
+        // state must be set per pass rather than relying on an earlier pass.
+        cmd.setViewport(0, vk::Viewport{0.0f, 0.0f, static_cast<float>(ctx.render_width),
+                                        static_cast<float>(ctx.render_height), 0.0f, 1.0f});
+        cmd.setScissor(0, vk::Rect2D{{0, 0}, ctx.render_extent});
+    }
 }
 
 } // namespace
@@ -79,7 +86,8 @@ void CapturePass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
 
 // ── ExposurePass ──
 
-ExposurePass::ExposurePass(std::uint64_t compute_shader) : compute_shader_(compute_shader) {}
+ExposurePass::ExposurePass(std::uint64_t compute_shader, bool use_async_queue)
+    : compute_shader_(compute_shader), use_async_queue_(use_async_queue) {}
 ExposurePass::~ExposurePass() = default;
 
 void ExposurePass::Setup(PassSetupContext& ctx) {
@@ -96,6 +104,12 @@ void ExposurePass::Setup(PassSetupContext& ctx) {
     ctx.BindResource(kAppSet, 0, scene_color);
     ctx.BindResource(kAppSet, 1, exposure);
     ctx.RequestComputePipeline(compute_shader_);
+
+    // Run truly async when the device exposes a dedicated compute queue. The
+    // transients it touches are created with concurrent sharing by the engine.
+    if (use_async_queue_) {
+        ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+    }
 }
 
 void ExposurePass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {

@@ -87,6 +87,12 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
     pipeline_->SetRenderExtent(init_width, init_height);
     pipeline_->SetFramesInFlight(bootstrap.GetSnapshot().frames_in_flight);
+    pipeline_->SetQueueFamilies(bootstrap.GetBackend().GetQueueFamilies());
+    pipeline_->SetAsyncComputeAvailable(bootstrap.GetBackend().HasAsyncCompute());
+    LOGIFACE_LOG(info, "Renderer: async compute " +
+                           std::string(bootstrap.GetBackend().HasAsyncCompute() ? "available" : "unavailable") +
+                           ", queue families=" +
+                           std::to_string(bootstrap.GetBackend().GetQueueFamilies().size()));
 
     // Register every built-in through the same engine-managed path as app
     // passes: the pipeline constructs the PassSetupContext and calls Setup().
@@ -265,104 +271,146 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     // by every per-FIF resource is its remainder. The device indexes command
     // buffers the same way, so this must match.
     const std::uint32_t ring_index = frame_idx % frames_in_flight;
-    auto& cmd = backend.GetCommandBuffer(frame_idx);
-    cmd.reset({});
-    cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const glm::mat4 view = camera.GetViewMatrix();
+    const glm::mat4 proj = camera.GetProjectionMatrix(aspect);
+    const glm::mat4 view_proj = proj * view;
+    const auto& depth_view = backend.GetDepthImageView(image_index);
 
-    if (gpu_stats_pool_) {
-        auto& device = backend.GetDevice();
-        auto* dev_dispatcher = device.getDispatcher();
-        std::array<uint64_t, 8> stats{};
-        const vk::Result qr = static_cast<vk::Result>(dev_dispatcher->vkGetQueryPoolResults(
-            static_cast<vk::Device::CType>(*device),
-            static_cast<vk::QueryPool::CType>(**gpu_stats_pool_),
-            0, 1,
-            sizeof(stats), stats.data(),
-            sizeof(uint64_t),
-            static_cast<vk::QueryResultFlags::MaskType>(vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability)));
-        if (qr == vk::Result::eSuccess && stats[7] != 0) {
-            LOGIFACE_LOG(trace,
-                "GPU frame=" + std::to_string(frame_counter_) +
-                " IA_verts=" + std::to_string(stats[0]) +
-                " IA_prims=" + std::to_string(stats[1]) +
-                " VS_invoc=" + std::to_string(stats[2]) +
-                " clip_invoc=" + std::to_string(stats[3]) +
-                " clip_prims=" + std::to_string(stats[4]) +
-                " FS_invoc=" + std::to_string(stats[5]) +
-                " CS_invoc=" + std::to_string(stats[6]));
+    // Fully populated per-frame context shared by built-in and app passes.
+    VulkanEngine::PipelinePass::FrameContext frame{};
+    frame.render_extent = vk::Extent2D{width, height};
+    frame.frame_index = frame_counter_;
+    frame.ring_index = ring_index;
+    frame.swapchain_image_index = image_index;
+    frame.view = view;
+    frame.proj = proj;
+    frame.view_proj = view_proj;
+    frame.bindless_textures = { bindless_mgr.GetDescriptorSet() };
+    frame.submesh_vertices = { scene_renderer.GetFrameSubmeshVertexSet(frame_counter_) };
+    frame.raw_vertex_buffers = { scene_renderer.GetFrameRawVertexSet(frame_counter_) };
+    frame.indirection_data = { scene_renderer.GetFrameIndirectionSet(frame_counter_) };
+    frame.scene_uniforms = { scene_renderer.GetSceneUniformSet() };
+    frame.depth_pyramid = { scene_renderer.GetHizImage(frame_counter_),
+                            scene_renderer.GetHizFullView(frame_counter_) };
+    frame.depth_buffer = { *depth_view };
+    frame.techniques = &technique_mgr;
+    frame.bindless = &bindless_mgr;
+    frame.registry = &registry;
+    frame.imgui = imgui;
+    frame.default_sampler = default_sampler_ ? static_cast<vk::Sampler>(**default_sampler_) : nullptr;
+    frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
+    frame.entity_count = scene_renderer.GetCurrentEntityCount();
+    frame.render_width = width;
+    frame.render_height = height;
+
+    VulkanEngine::PipelinePass::RenderFrameData frame_data{};
+    frame_data.frame = frame;
+
+    // Resolve resources and build this frame's barrier/queue-run plan.
+    pipeline_->BeginFrame(&frame_data, image_index, ring_index);
+    const auto& runs = pipeline_->GetQueueRuns();
+    const bool single_graphics_run =
+        runs.runs.size() <= 1 &&
+        (runs.runs.empty() || runs.runs[0].queue == VulkanEngine::RenderGraph::QueueType::Graphics);
+
+    // GPU gather/upload/descriptor work is recorded once, ahead of the graph.
+    const auto record_prep = [&](vk::CommandBuffer target) {
+        if (gpu_stats_pool_) {
+            auto& device = backend.GetDevice();
+            auto* dev_dispatcher = device.getDispatcher();
+            std::array<uint64_t, 8> stats{};
+            const vk::Result qr = static_cast<vk::Result>(dev_dispatcher->vkGetQueryPoolResults(
+                static_cast<vk::Device::CType>(*device),
+                static_cast<vk::QueryPool::CType>(**gpu_stats_pool_),
+                0, 1,
+                sizeof(stats), stats.data(),
+                sizeof(uint64_t),
+                static_cast<vk::QueryResultFlags::MaskType>(vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability)));
+            if (qr == vk::Result::eSuccess && stats[7] != 0) {
+                LOGIFACE_LOG(trace,
+                    "GPU frame=" + std::to_string(frame_counter_) +
+                    " IA_verts=" + std::to_string(stats[0]) +
+                    " IA_prims=" + std::to_string(stats[1]) +
+                    " VS_invoc=" + std::to_string(stats[2]) +
+                    " clip_invoc=" + std::to_string(stats[3]) +
+                    " clip_prims=" + std::to_string(stats[4]) +
+                    " FS_invoc=" + std::to_string(stats[5]) +
+                    " CS_invoc=" + std::to_string(stats[6]));
+            }
+            target.resetQueryPool(**gpu_stats_pool_, 0, 1);
+            target.beginQuery(**gpu_stats_pool_, 0, {});
         }
-        cmd.resetQueryPool(**gpu_stats_pool_, 0, 1);
-        cmd.beginQuery(**gpu_stats_pool_, 0, {});
-    }
-
-    // Phase 1: CPU gather + upload + descriptor writes (before render graph)
-    {
-        const float aspect = static_cast<float>(width) / static_cast<float>(height);
-        const glm::mat4 view = camera.GetViewMatrix();
-        const glm::mat4 proj = camera.GetProjectionMatrix(aspect);
-        const glm::mat4 view_proj = proj * view;
 
         // Bind actual depth to Hi-Z descriptor before hiz-gen pass executes
-        const auto& depth_view = backend.GetDepthImageView(image_index);
         scene_renderer.UpdateHizDepthBinding(frame_counter_, *depth_view);
 
         // Initialize Hi-Z on first frame
-        scene_renderer.InitializeHizFirstFrame(cmd);
+        scene_renderer.InitializeHizFirstFrame(target);
 
         // Upload technique PipelineFlags and enable/disable the depth filter
         // pass before PrepareCompute retargets the depth indirection set.
         scene_renderer.UpdateTechniqueFlags(technique_mgr);
 
         // CPU gather + upload + descriptor writes for all passes
-        scene_renderer.PrepareCompute(cmd, registry, view, proj, width, height, frame_counter_);
+        scene_renderer.PrepareCompute(target, registry, view, proj, width, height, frame_counter_);
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
         // PhysicalCamera uploads + compositing run before the scene graph so
         // scene passes sampling a camera target see this frame's content.
         if (physical_cameras != nullptr) {
-            physical_cameras->Execute(*cmd, frame_counter_);
+            physical_cameras->Execute(target, frame_counter_);
         }
 #endif
+    };
 
-        // Fully populated per-frame context shared by built-in and app passes.
-        VulkanEngine::PipelinePass::FrameContext frame{};
-        frame.render_extent = vk::Extent2D{width, height};
-        frame.frame_index = frame_counter_;
-        frame.ring_index = ring_index;
-        frame.swapchain_image_index = image_index;
-        frame.view = view;
-        frame.proj = proj;
-        frame.view_proj = view_proj;
-        frame.bindless_textures = { bindless_mgr.GetDescriptorSet() };
-        frame.submesh_vertices = { scene_renderer.GetFrameSubmeshVertexSet(frame_counter_) };
-        frame.raw_vertex_buffers = { scene_renderer.GetFrameRawVertexSet(frame_counter_) };
-        frame.indirection_data = { scene_renderer.GetFrameIndirectionSet(frame_counter_) };
-        frame.scene_uniforms = { scene_renderer.GetSceneUniformSet() };
-        frame.depth_pyramid = { scene_renderer.GetHizImage(frame_counter_),
-                                scene_renderer.GetHizFullView(frame_counter_) };
-        frame.depth_buffer = { *depth_view };
-        frame.techniques = &technique_mgr;
-        frame.bindless = &bindless_mgr;
-        frame.registry = &registry;
-        frame.imgui = imgui;
-        frame.default_sampler = default_sampler_ ? static_cast<vk::Sampler>(**default_sampler_) : nullptr;
-        frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
-        frame.entity_count = scene_renderer.GetCurrentEntityCount();
-        frame.render_width = width;
-        frame.render_height = height;
+    const auto end_stats = [&](vk::CommandBuffer target) {
+        if (gpu_stats_pool_) {
+            target.endQuery(**gpu_stats_pool_, 0);
+        }
+    };
 
-        VulkanEngine::PipelinePass::RenderFrameData frame_data{};
-        frame_data.frame = frame;
-
-        // Phase 2: Render graph executes all GPU passes in dependency order
-        pipeline_->Execute(&frame_data, cmd, image_index, ring_index);
+    if (single_graphics_run) {
+        // Existing single-queue fast path: one command buffer, no run list.
+        auto& cmd = backend.GetCommandBuffer(frame_idx);
+        cmd.reset({});
+        cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        record_prep(cmd);
+        pipeline_->RecordRun(0, cmd);
+        end_stats(cmd);
+        cmd.end();
+    } else {
+        // Multi-queue path: one command buffer per queue run, submitted in order.
+        LOGIFACE_LOG(debug, "Renderer: multi-queue frame with " +
+                                std::to_string(runs.runs.size()) + " runs");
+        std::uint32_t prep_run = 0;
+        for (std::uint32_t i = 0; i < runs.runs.size(); ++i) {
+            if (runs.runs[i].queue == VulkanEngine::RenderGraph::QueueType::Graphics) {
+                prep_run = i;
+                break;
+            }
+        }
+        std::vector<VulkanBackend::Vulkan::IVulkanBootstrap::QueueRunSubmit> submits;
+        submits.reserve(runs.runs.size());
+        for (std::uint32_t i = 0; i < runs.runs.size(); ++i) {
+            const bool compute = runs.runs[i].queue != VulkanEngine::RenderGraph::QueueType::Graphics;
+            auto& run_cmd = backend.GetRunCommandBuffer(compute, frame_idx, i);
+            run_cmd.reset({});
+            run_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+            if (i == prep_run) {
+                record_prep(run_cmd);
+            }
+            pipeline_->RecordRun(i, run_cmd, compute);
+            // Keep the query's begin and end in the same command buffer.
+            if (i == prep_run) {
+                end_stats(run_cmd);
+            }
+            run_cmd.end();
+            submits.push_back({.compute = compute, .command_buffer = *run_cmd});
+        }
+        backend.SetFrameRuns(submits);
     }
-
-    if (gpu_stats_pool_) {
-        cmd.endQuery(**gpu_stats_pool_, 0);
-    }
-
-    cmd.end();
+    pipeline_->EndFrame();
 
     frame_counter_++;
 }

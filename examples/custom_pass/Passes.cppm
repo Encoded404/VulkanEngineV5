@@ -64,7 +64,7 @@ private:
 // Estimates exposure into a transient storage buffer.
 class ExposurePass final : public IPipelinePass {
 public:
-    explicit ExposurePass(std::uint64_t compute_shader);
+    explicit ExposurePass(std::uint64_t compute_shader, bool use_async_queue);
     ~ExposurePass() override;
 
     ExposurePass(const ExposurePass&) = delete;
@@ -77,6 +77,7 @@ public:
 
 private:
     std::uint64_t compute_shader_;
+    bool use_async_queue_ = false;
 };
 
 // Tonemaps scene colour with the computed exposure into the backbuffer.

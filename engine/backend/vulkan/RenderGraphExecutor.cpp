@@ -32,20 +32,42 @@ namespace {
 // resolver having been registered.
 void EmitPlannedBarriers(vk::CommandBuffer command_buffer,
                          const std::vector<PlannedImageBarrier>& planned_images,
-                         const std::vector<PlannedBufferBarrier>& planned_buffers) {
+                         const std::vector<PlannedBufferBarrier>& planned_buffers,
+                         bool compute_queue) {
     std::vector<vk::ImageMemoryBarrier2> image_barriers;
     std::vector<vk::BufferMemoryBarrier2> buffer_barriers;
     std::vector<vk::MemoryBarrier2> global_barriers;
+
+    // A barrier recorded into a compute-family command buffer may not name
+    // graphics-only pipeline stages or access types. The cross-queue semaphore
+    // already orders execution (and carries the cross-queue memory dependency),
+    // so widening the stages to all commands and dropping attachment access bits
+    // keeps compute-valid scopes (shader/transfer) intact.
+    const auto src_stage = [compute_queue](vk::PipelineStageFlags2 stage) -> vk::PipelineStageFlags2 {
+        return compute_queue ? vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eAllCommands} : stage;
+    };
+    const auto dst_stage = [compute_queue](vk::PipelineStageFlags2 stage) -> vk::PipelineStageFlags2 {
+        return compute_queue ? vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eAllCommands} : stage;
+    };
+    const vk::AccessFlags2 kGraphicsOnlyAccess =
+        vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite |
+        vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    const auto src_access = [compute_queue, kGraphicsOnlyAccess](vk::AccessFlags2 access) -> vk::AccessFlags2 {
+        return compute_queue ? (access & ~kGraphicsOnlyAccess) : access;
+    };
+    const auto dst_access = [compute_queue, kGraphicsOnlyAccess](vk::AccessFlags2 access) -> vk::AccessFlags2 {
+        return compute_queue ? (access & ~kGraphicsOnlyAccess) : access;
+    };
 
     image_barriers.reserve(planned_images.size());
     const auto add_image = [&](const PlannedImageBarrier& barrier) {
         if (!barrier.image) {
             return;
         }
-        image_barriers.emplace_back(barrier.src_stage,
-                                    barrier.src_access,
-                                    barrier.dst_stage,
-                                    barrier.dst_access,
+        image_barriers.emplace_back(src_stage(barrier.src_stage),
+                                    src_access(barrier.src_access),
+                                    dst_stage(barrier.dst_stage),
+                                    dst_access(barrier.dst_access),
                                     barrier.old_layout,
                                     barrier.new_layout,
                                     vk::QueueFamilyIgnored,
@@ -56,16 +78,16 @@ void EmitPlannedBarriers(vk::CommandBuffer command_buffer,
 
     const auto add_buffer = [&](const PlannedBufferBarrier& barrier) {
         if (!barrier.buffer) {
-            global_barriers.emplace_back(barrier.src_stage,
-                                         barrier.src_access,
-                                         barrier.dst_stage,
-                                         barrier.dst_access);
+            global_barriers.emplace_back(src_stage(barrier.src_stage),
+                                         src_access(barrier.src_access),
+                                         dst_stage(barrier.dst_stage),
+                                         dst_access(barrier.dst_access));
             return;
         }
-        buffer_barriers.emplace_back(barrier.src_stage,
-                                     barrier.src_access,
-                                     barrier.dst_stage,
-                                     barrier.dst_access,
+        buffer_barriers.emplace_back(src_stage(barrier.src_stage),
+                                     src_access(barrier.src_access),
+                                     dst_stage(barrier.dst_stage),
+                                     dst_access(barrier.dst_access),
                                      vk::QueueFamilyIgnored,
                                      vk::QueueFamilyIgnored,
                                      barrier.buffer,
@@ -94,15 +116,19 @@ void EmitPlannedBarriers(vk::CommandBuffer command_buffer,
 
 }  // namespace
 
-void ExecuteRenderGraph(const BarrierPlan& plan,
-                        const CompiledRenderGraph& graph,
-                        const void* user_data,
-                        vk::CommandBuffer command_buffer) {
+void ExecuteRenderGraphRange(const BarrierPlan& plan,
+                             const CompiledRenderGraph& graph,
+                             std::uint32_t first_pass,
+                             std::uint32_t last_pass,
+                             const void* user_data,
+                             vk::CommandBuffer command_buffer,
+                             bool compute_queue) {
     if (!graph.success || !plan.valid) {
         return;
     }
 
-    for (std::size_t pass_index = 0; pass_index < graph.passes.size(); ++pass_index) {
+    last_pass = std::min<std::uint32_t>(last_pass, static_cast<std::uint32_t>(graph.passes.size()));
+    for (std::uint32_t pass_index = first_pass; pass_index < last_pass; ++pass_index) {
         const auto& pass = graph.passes[pass_index];
         const PlannedPassBarriers* planned =
             pass_index < plan.passes.size() ? &plan.passes[pass_index] : nullptr;
@@ -110,7 +136,7 @@ void ExecuteRenderGraph(const BarrierPlan& plan,
         BeginDebugUtilsLabel(command_buffer, pass.name);
 
         if (planned != nullptr) {
-            EmitPlannedBarriers(command_buffer, planned->pre_image, planned->pre_buffer);
+            EmitPlannedBarriers(command_buffer, planned->pre_image, planned->pre_buffer, compute_queue);
         }
 
         if (pass.attachment_setup.has_value() && pass.attachment_setup->auto_begin_rendering) {
@@ -164,11 +190,19 @@ void ExecuteRenderGraph(const BarrierPlan& plan,
         }
 
         if (planned != nullptr) {
-            EmitPlannedBarriers(command_buffer, planned->post_image, planned->post_buffer);
+            EmitPlannedBarriers(command_buffer, planned->post_image, planned->post_buffer, compute_queue);
         }
 
         EndDebugUtilsLabel(command_buffer);
     }
+}
+
+void ExecuteRenderGraph(const BarrierPlan& plan,
+                        const CompiledRenderGraph& graph,
+                        const void* user_data,
+                        vk::CommandBuffer command_buffer) {
+    ExecuteRenderGraphRange(plan, graph, 0, static_cast<std::uint32_t>(graph.passes.size()),
+                            user_data, command_buffer, false);
 }
 
 } // namespace VulkanBackend::Vulkan

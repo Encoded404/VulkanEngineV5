@@ -108,7 +108,7 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     }
     if (want_compute) {
         auto exposure = pipeline_->RegisterPass(
-            std::make_unique<ExposurePass>(exposure_comp));
+            std::make_unique<ExposurePass>(exposure_comp, pipeline_->IsAsyncComputeAvailable()));
         if (!exposure.has_value()) {
             LOGIFACE_LOG(error, "CustomPassGame: failed to register exposure pass");
             return false;

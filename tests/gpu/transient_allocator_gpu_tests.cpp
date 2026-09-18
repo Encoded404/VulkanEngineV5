@@ -33,6 +33,18 @@ public:
     [[nodiscard]] const vk::raii::Queue& GetGraphicsQueue() const override { throw std::runtime_error("n/a"); }
     [[nodiscard]] std::uint32_t GetGraphicsQueueFamily() const override { return 0; }
     [[nodiscard]] const vk::raii::CommandPool& GetCommandPool() const override { throw std::runtime_error("n/a"); }
+    [[nodiscard]] bool HasAsyncCompute() const override { return false; }
+    [[nodiscard]] const vk::raii::Queue& GetComputeQueue() const override { throw std::runtime_error("n/a"); }
+    [[nodiscard]] std::uint32_t GetComputeQueueFamily() const override { return 0; }
+    [[nodiscard]] const vk::raii::CommandPool& GetComputeCommandPool() const override { throw std::runtime_error("n/a"); }
+    [[nodiscard]] vk::raii::CommandBuffer& GetComputeCommandBuffer(std::uint32_t) override { throw std::runtime_error("n/a"); }
+    [[nodiscard]] std::span<const std::uint32_t> GetQueueFamilies() const override {
+        static const std::array<std::uint32_t, 1> families{0u};
+        return families;
+    }
+    [[nodiscard]] vk::raii::CommandBuffer& GetRunCommandBuffer(bool, std::uint32_t, std::uint32_t) override { throw std::runtime_error("n/a"); }
+    [[nodiscard]] const vk::raii::Semaphore& GetRunSemaphore(std::uint32_t, std::uint32_t) const override { throw std::runtime_error("n/a"); }
+    void SetFrameRuns(std::span<const QueueRunSubmit>) override {}
     [[nodiscard]] const vk::raii::Fence& GetInFlightFence(std::uint32_t) const override { throw std::runtime_error("n/a"); }
     [[nodiscard]] const vk::raii::Semaphore& GetImageAvailableSemaphore(std::uint32_t) const override { throw std::runtime_error("n/a"); }
     [[nodiscard]] const vk::raii::Semaphore& GetRenderFinishedSemaphore(std::uint32_t) const override { throw std::runtime_error("n/a"); }

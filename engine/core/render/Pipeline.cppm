@@ -102,6 +102,13 @@ public:
     // Number of frames-in-flight slots app-pass descriptor sets are allocated
     // for. Must be set before the first ApplyChanges/Compile.
     void SetFramesInFlight(std::uint32_t frames_in_flight);
+    // Queue families transient resources are shared with; more than one enables
+    // concurrent sharing so passes on multiple queues can access them.
+    void SetQueueFamilies(std::span<const std::uint32_t> families);
+    // Whether a dedicated async compute queue exists. Compute passes are
+    // rejected when it does not.
+    void SetAsyncComputeAvailable(bool available) { async_compute_available_ = available; }
+    [[nodiscard]] bool IsAsyncComputeAvailable() const { return async_compute_available_; }
     // Swapchain images were destroyed/recreated (and possibly the image count
     // changed). Clears per-image imported-state tracking and forces the next
     // frame to start every imported image from Undefined.
@@ -123,6 +130,16 @@ public:
     void Compile();
     void Execute(const void* user_data, vk::CommandBuffer command_buffer,
                  std::uint32_t image_index, std::uint32_t fif_slot);
+
+    // Multi-queue recording: BeginFrame resolves resources and builds the
+    // barrier/run plan; RecordRun records one queue run into its own command
+    // buffer; EndFrame releases execution-time mutation blocking. Execute() is
+    // the single-command convenience wrapper.
+    void BeginFrame(const void* user_data, std::uint32_t image_index, std::uint32_t fif_slot);
+    void RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,
+                   bool compute_queue = false);
+    void EndFrame();
+    [[nodiscard]] const VulkanEngine::RenderGraph::QueueRunPlan& GetQueueRuns() const { return queue_runs_; }
 
     [[nodiscard]] bool IsCompiled() const { return compiled_; }
     [[nodiscard]] const VulkanEngine::RenderGraph::CompiledRenderGraph& GetCompiledGraph() const { return compiled_graph_; }
@@ -184,6 +201,10 @@ private:
     std::array<vk::DescriptorSetLayout, 5> engine_set_layouts_{};
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
+    // Set by BeginFrame(); consumed by RecordRun() while the frame is executing.
+    VulkanEngine::RenderGraph::BarrierPlan barrier_plan_{};
+    VulkanEngine::RenderGraph::QueueRunPlan queue_runs_{};
+    VulkanEngine::PipelinePass::RenderFrameData frame_data_{};
 
     std::vector<ModelPass> model_passes_{};
     std::vector<std::pair<std::uint32_t, std::uint32_t>> model_dependencies_{}; // slots
@@ -198,6 +219,7 @@ private:
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;
     std::uint32_t frames_in_flight_ = 3;
+    bool async_compute_available_ = false;
     std::uint32_t last_fif_slot_ = 0;
     // A render-extent change queues a one-shot OnRenderResize notification for
     // registered passes, drained at the next ApplyChanges().

@@ -97,6 +97,23 @@ public:
     [[nodiscard]] const vk::raii::Queue& GetGraphicsQueue() const override { return device_->GetGraphicsQueue(); }
     [[nodiscard]] std::uint32_t GetGraphicsQueueFamily() const override { return device_->GetGraphicsQueueFamily(); }
     [[nodiscard]] const vk::raii::CommandPool& GetCommandPool() const override { return device_->GetCommandPool(); }
+    [[nodiscard]] bool HasAsyncCompute() const override { return device_->HasAsyncCompute(); }
+    [[nodiscard]] const vk::raii::Queue& GetComputeQueue() const override { return device_->GetComputeQueue(); }
+    [[nodiscard]] std::uint32_t GetComputeQueueFamily() const override { return device_->GetComputeQueueFamily(); }
+    [[nodiscard]] const vk::raii::CommandPool& GetComputeCommandPool() const override { return device_->GetComputeCommandPool(); }
+    [[nodiscard]] vk::raii::CommandBuffer& GetComputeCommandBuffer(std::uint32_t frame_idx) override { return device_->GetComputeCommandBuffer(frame_idx); }
+    [[nodiscard]] std::span<const std::uint32_t> GetQueueFamilies() const override { return device_->GetQueueFamilies(); }
+    [[nodiscard]] vk::raii::CommandBuffer& GetRunCommandBuffer(bool compute, std::uint32_t frame_idx,
+                                                               std::uint32_t run_slot) override {
+        return device_->GetRunCommandBuffer(compute, frame_idx, run_slot);
+    }
+    [[nodiscard]] const vk::raii::Semaphore& GetRunSemaphore(std::uint32_t frame_idx,
+                                                             std::uint32_t run_slot) const override {
+        return device_->GetRunSemaphore(frame_idx, run_slot);
+    }
+    void SetFrameRuns(std::span<const QueueRunSubmit> runs) override {
+        frame_runs_.assign(runs.begin(), runs.end());
+    }
 
     [[nodiscard]] const VulkanCapabilities& GetCapabilities() const override { return device_->GetCapabilities(); }
     [[nodiscard]] const std::string& GetErrorMessage() const override { return error_message_; }
@@ -174,6 +191,51 @@ public:
 
         // Reset the fence ONLY when we are about to submit work.
         vk_device.resetFences({*vk_in_flight_fence});
+
+        // Multi-queue path: one submission per recorded run, ordered by binary
+        // semaphores at cross-queue boundaries (same-queue runs are ordered by
+        // queue submission order).
+        std::vector<IVulkanBootstrap::QueueRunSubmit> runs = std::move(frame_runs_);
+        frame_runs_.clear();
+        if (!runs.empty()) {
+            const std::uint32_t run_count = static_cast<std::uint32_t>(runs.size());
+            const vk::raii::Queue& vk_compute_queue = device_->GetComputeQueue();
+
+            std::vector<vk::Semaphore> wait_semaphores(run_count, nullptr);
+            std::vector<vk::Semaphore> signal_semaphores(run_count, nullptr);
+            std::vector<vk::PipelineStageFlags> wait_stages(run_count, AcquireWaitStageMask());
+            for (std::uint32_t i = 0; i < run_count; ++i) {
+                if (i == 0) {
+                    wait_semaphores[i] = *vk_image_available_semaphore;
+                } else if (runs[i].compute != runs[i - 1].compute) {
+                    wait_semaphores[i] = *device_->GetRunSemaphore(frame_idx, i);
+                }
+                if (i + 1 == run_count) {
+                    signal_semaphores[i] = *vk_render_finished_semaphore;
+                } else if (runs[i + 1].compute != runs[i].compute) {
+                    signal_semaphores[i] = *device_->GetRunSemaphore(frame_idx, i + 1);
+                }
+            }
+
+            for (std::uint32_t i = 0; i < run_count; ++i) {
+                vk::SubmitInfo submit_info{};
+                if (wait_semaphores[i] != nullptr) {
+                    submit_info.waitSemaphoreCount = 1;
+                    submit_info.pWaitSemaphores = &wait_semaphores[i];
+                    submit_info.pWaitDstStageMask = &wait_stages[i];
+                }
+                submit_info.commandBufferCount = 1;
+                submit_info.pCommandBuffers = &runs[i].command_buffer;
+                if (signal_semaphores[i] != nullptr) {
+                    submit_info.signalSemaphoreCount = 1;
+                    submit_info.pSignalSemaphores = &signal_semaphores[i];
+                }
+                const bool is_last = (i + 1 == run_count);
+                const vk::raii::Queue& queue = runs[i].compute ? vk_compute_queue : vk_graphics_queue;
+                queue.submit({submit_info}, is_last ? *vk_in_flight_fence : nullptr);
+            }
+            return true;
+        }
 
         const vk::PipelineStageFlags wait_stage = AcquireWaitStageMask();
         vk::SubmitInfo submit_info{};
@@ -272,6 +334,7 @@ private:
     std::unique_ptr<VulkanDevice> device_{};
     std::unique_ptr<VulkanSwapchain> swapchain_{};
     std::vector<std::unique_ptr<vk::raii::Semaphore>> render_finished_semaphores_{};
+    std::vector<IVulkanBootstrap::QueueRunSubmit> frame_runs_{};
     std::uint32_t current_image_index_ = 0;
     VulkanBootstrapConfig config_{};
     std::string error_message_{};

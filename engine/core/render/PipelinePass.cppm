@@ -440,6 +440,11 @@ public:
     void RequestComputePipeline(std::uint64_t compute_shader);
     [[nodiscard]] const PassPipelineRequest& GetPipelineRequest() const { return pipeline_request_; }
 
+    // Queue the pass runs on. Compute requires a dedicated async compute queue;
+    // registration fails otherwise. Defaults to Graphics.
+    void SetQueueType(VulkanEngine::RenderGraph::QueueType queue) { queue_type_ = queue; }
+    [[nodiscard]] VulkanEngine::RenderGraph::QueueType GetQueueType() const { return queue_type_; }
+
     // ── Descriptor declaration (app sets >= 5) ──
     void DeclareBindings(std::vector<VulkanEngine::Render::DescriptorDecl> bindings);
     [[nodiscard]] const std::vector<VulkanEngine::Render::DescriptorDecl>& GetDeclaredBindings() const { return declared_bindings_; }
@@ -493,6 +498,7 @@ private:
 
     // Engine-owned pipeline + app descriptor declaration
     PassPipelineRequest pipeline_request_{};
+    VulkanEngine::RenderGraph::QueueType queue_type_ = VulkanEngine::RenderGraph::QueueType::Graphics;
     std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings_{};
     std::vector<BindingAssignment> binding_assignments_{};
 

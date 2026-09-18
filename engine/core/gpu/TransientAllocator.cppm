@@ -342,6 +342,11 @@ public:
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend, const std::string& debug_name = "transients");
     void Shutdown();
 
+    // Queue families transients are shared with. More than one family switches
+    // transient images/buffers to concurrent sharing so a pass on another queue
+    // (e.g. async compute) can access them without ownership transfers.
+    void SetQueueFamilies(std::span<const std::uint32_t> families);
+
     // Rebuilds the plan/allocations if the descriptors changed. `current_frame`
     // is the frame currently being submitted, used to gate deferred frees.
     void Sync(const std::vector<Desc>& descs, std::uint32_t frames_in_flight, std::uint32_t current_frame);
@@ -388,6 +393,7 @@ private:
 
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     std::string debug_name_ = "transients";
+    std::vector<std::uint32_t> queue_families_{};
     TransientPlacementPlan plan_{};
     std::unique_ptr<Generation> current_{};
     std::vector<std::unique_ptr<Generation>> retired_{};

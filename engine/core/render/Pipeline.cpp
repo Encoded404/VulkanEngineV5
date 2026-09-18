@@ -254,6 +254,13 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
 
     ModelPass model{};
     model.name = name;
+    model.queue = ctx.GetQueueType();
+    if (model.queue != VulkanEngine::RenderGraph::QueueType::Graphics && !async_compute_available_) {
+        return std::unexpected(PassError{
+            PassErrorCode::ValidationFailed,
+            "pass requests a non-graphics queue but no async compute queue is available",
+            name});
+    }
     const std::uint32_t push_constant_size = ctx.GetPushConstantSize();
     const vk::ShaderStageFlags push_constant_stages = ctx.GetPushConstantStages();
     model.execute = [this, raw = pass.get(), captured_name = name,
@@ -403,6 +410,10 @@ void RenderPipeline::RequestRebuild() {
 
 void RenderPipeline::SetFramesInFlight(std::uint32_t frames_in_flight) {
     frames_in_flight_ = std::max(1u, frames_in_flight);
+}
+
+void RenderPipeline::SetQueueFamilies(std::span<const std::uint32_t> families) {
+    transient_allocator_.SetQueueFamilies(families);
 }
 
 void RenderPipeline::SetRenderExtent(std::uint32_t width, std::uint32_t height) {
@@ -1024,8 +1035,8 @@ bool RenderPipeline::SetFinalState(VulkanEngine::RenderGraph::ResourceHandle res
     return graph_builder_.SetFinalState(resource, state).has_value();
 }
 
-void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer,
-                             std::uint32_t image_index, std::uint32_t fif_slot) {
+void RenderPipeline::BeginFrame(const void* user_data, std::uint32_t image_index,
+                                std::uint32_t fif_slot) {
     if (!compiled_ || !initialized_ || !bootstrap_) {
         return;
     }
@@ -1133,15 +1144,40 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     }
 
     // Copy the incoming frame data so this frame's lookup can be attached
-    // without mutating the caller's object.
-    VulkanEngine::PipelinePass::RenderFrameData pass_data{};
+    // without mutating the caller's object. Runs are recorded by the caller
+    // (one command buffer per queue run) via RecordRun().
+    frame_data_ = VulkanEngine::PipelinePass::RenderFrameData{};
     if (user_data != nullptr) {
-        pass_data = *static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+        frame_data_ = *static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
     }
-    pass_data.frame.resource_lookup = &frame_lookup_;
+    frame_data_.frame.resource_lookup = &frame_lookup_;
 
-    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, compiled_graph_, &pass_data, command_buffer);
+    barrier_plan_ = plan;
+    queue_runs_ = VulkanEngine::RenderGraph::BuildQueueRuns(compiled_graph_);
+}
+
+void RenderPipeline::RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,
+                               bool compute_queue) {
+    if (run_index >= queue_runs_.runs.size()) {
+        return;
+    }
+    const auto& run = queue_runs_.runs[run_index];
+    VulkanBackend::Vulkan::ExecuteRenderGraphRange(barrier_plan_, compiled_graph_,
+                                                   run.first_pass, run.last_pass,
+                                                   &frame_data_, command_buffer, compute_queue);
+}
+
+void RenderPipeline::EndFrame() {
     executing_ = false;
+}
+
+void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer,
+                             std::uint32_t image_index, std::uint32_t fif_slot) {
+    BeginFrame(user_data, image_index, fif_slot);
+    for (std::uint32_t run = 0; run < queue_runs_.runs.size(); ++run) {
+        RecordRun(run, command_buffer);
+    }
+    EndFrame();
 }
 
 void RenderPipeline::SyncTransients() {

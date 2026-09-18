@@ -46,7 +46,7 @@ TEST(CustomPassPlanTest, PassesAndTransientsCompileInOrder) {
         vk::Format::eR8G8B8A8Unorm);
 
     const auto capture = pipeline.RegisterPass(std::make_unique<CapturePass>(1, 2));
-    const auto exposure = pipeline.RegisterPass(std::make_unique<ExposurePass>(3));
+    const auto exposure = pipeline.RegisterPass(std::make_unique<ExposurePass>(3, false));
     const auto tonemap = pipeline.RegisterPass(std::make_unique<ToneMapPass>(1, 4));
     ASSERT_TRUE(capture && exposure && tonemap);
 
@@ -162,7 +162,7 @@ TEST(CustomPassPlanTest, FullBuiltinAndCustomGraphCompiles) {
     pipeline.SetBuiltinHandles(anchors);
 
     const auto capture = reg(std::make_unique<CapturePass>(1, 2));
-    const auto exposure = reg(std::make_unique<ExposurePass>(3));
+    const auto exposure = reg(std::make_unique<ExposurePass>(3, false));
     const auto tonemap = reg(std::make_unique<ToneMapPass>(1, 4));
     pipeline.AddDependency(capture, exposure);
     pipeline.AddDependency(exposure, tonemap);
@@ -174,6 +174,52 @@ TEST(CustomPassPlanTest, FullBuiltinAndCustomGraphCompiles) {
         }
     }
     EXPECT_TRUE(pipeline.IsCompiled());
+}
+
+// Contiguous same-queue passes form one run; a queue switch starts a new run.
+TEST(CustomPassPlanTest, BuildQueueRunsPartitionsByQueue) {
+    using VulkanEngine::RenderGraph::BuildQueueRuns;
+    using VulkanEngine::RenderGraph::CompiledRenderGraph;
+    using VulkanEngine::RenderGraph::QueueType;
+
+    CompiledRenderGraph graph{};
+    graph.passes.resize(5);
+    graph.passes[0].queue = QueueType::Graphics;
+    graph.passes[1].queue = QueueType::Graphics;
+    graph.passes[2].queue = QueueType::Compute;
+    graph.passes[3].queue = QueueType::Graphics;
+    graph.passes[4].queue = QueueType::Graphics;
+
+    const auto plan = BuildQueueRuns(graph);
+    ASSERT_EQ(plan.runs.size(), 3u);
+    EXPECT_EQ(plan.runs[0].queue, QueueType::Graphics);
+    EXPECT_EQ(plan.runs[0].first_pass, 0u);
+    EXPECT_EQ(plan.runs[0].last_pass, 2u);
+    EXPECT_EQ(plan.runs[1].queue, QueueType::Compute);
+    EXPECT_EQ(plan.runs[1].first_pass, 2u);
+    EXPECT_EQ(plan.runs[1].last_pass, 3u);
+    EXPECT_EQ(plan.runs[2].queue, QueueType::Graphics);
+    EXPECT_EQ(plan.runs[2].first_pass, 3u);
+    EXPECT_EQ(plan.runs[2].last_pass, 5u);
+    EXPECT_TRUE(plan.HasComputeRun());
+}
+
+// A compute-queue pass is rejected when no async compute queue is available.
+TEST(CustomPassPlanTest, RejectsComputeQueueWithoutAsyncComputeQueue) {
+    class ComputeQueuePass final : public VulkanEngine::PipelinePass::IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "compute-queue-pass"; }
+        void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override {
+            ctx.RequestComputePipeline(1);
+            ctx.SetQueueType(VulkanEngine::RenderGraph::QueueType::Compute);
+        }
+        void Execute(const VulkanEngine::PipelinePass::FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    RenderPipeline pipeline;
+    const auto handle = pipeline.RegisterPass(std::make_unique<ComputeQueuePass>());
+    ASSERT_FALSE(handle.has_value());
+    EXPECT_EQ(handle.error().code, VulkanEngine::RenderPipeline::PassErrorCode::ValidationFailed);
 }
 
 } // namespace

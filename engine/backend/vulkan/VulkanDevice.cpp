@@ -61,6 +61,23 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
                 continue;
             }
 
+            // Prefer a compute-capable family without graphics so compute passes
+            // can run truly async; otherwise the graphics family is used and
+            // async compute is unavailable. Present support is irrelevant here:
+            // a compute-only family may still report present support on some
+            // drivers, and we never present from it.
+            std::optional<std::uint32_t> async_compute_family;
+            for (std::uint32_t i = 0; i < queue_families.size(); ++i) {
+                const bool has_compute =
+                    (queue_families[i].queueFlags & vk::QueueFlagBits::eCompute) != vk::QueueFlags{};
+                const bool has_graphics =
+                    (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) != vk::QueueFlags{};
+                if (has_compute && !has_graphics) {
+                    async_compute_family = i;
+                    break;
+                }
+            }
+
             std::string failures;
 
             // apiVersion floor (engine requires 1.3).
@@ -104,6 +121,8 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
 
             physical_device_ = std::make_unique<vk::raii::PhysicalDevice>(vk_instance, *device);
             graphics_queue_family_ = *gfx_family;
+            async_compute_available_ = async_compute_family.has_value();
+            compute_queue_family_ = async_compute_family.value_or(*gfx_family);
             break;
         }
 
@@ -318,15 +337,28 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         }
 
         constexpr float queue_priority = 1.0f;
-        vk::DeviceQueueCreateInfo queue_info{};
-        queue_info.queueFamilyIndex = graphics_queue_family_;
-        queue_info.queueCount = 1;
-        queue_info.pQueuePriorities = &queue_priority;
+        std::vector<std::uint32_t> families{graphics_queue_family_};
+        if (compute_queue_family_ != graphics_queue_family_) {
+            families.push_back(compute_queue_family_);
+        }
+        std::ranges::sort(families);
+        families.erase(std::ranges::unique(families).begin(), families.end());
+        queue_families_ = families;
+
+        std::vector<vk::DeviceQueueCreateInfo> queue_infos;
+        queue_infos.reserve(families.size());
+        for (const std::uint32_t family : families) {
+            vk::DeviceQueueCreateInfo queue_info{};
+            queue_info.queueFamilyIndex = family;
+            queue_info.queueCount = 1;
+            queue_info.pQueuePriorities = &queue_priority;
+            queue_infos.push_back(queue_info);
+        }
 
         vk::DeviceCreateInfo device_info{};
         device_info.pNext = &builder.GetFeatureChain();
-        device_info.queueCreateInfoCount = 1;
-        device_info.pQueueCreateInfos = &queue_info;
+        device_info.queueCreateInfoCount = static_cast<std::uint32_t>(queue_infos.size());
+        device_info.pQueueCreateInfos = queue_infos.data();
         device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_extension_names.size());
         device_info.ppEnabledExtensionNames = device_extension_names.data();
 
@@ -335,6 +367,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         VULKAN_HPP_DEFAULT_DISPATCHER.init(**device_);
 
         graphics_queue_ = device_->getQueue(graphics_queue_family_, 0);
+        compute_queue_ = device_->getQueue(compute_queue_family_, 0);
 
         vk::CommandPoolCreateInfo pool_info{};
         pool_info.queueFamilyIndex = graphics_queue_family_;
@@ -347,6 +380,41 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
         cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
         cmd_alloc.commandBufferCount = frames_in_flight_;
         command_buffers_ = device_->allocateCommandBuffers(cmd_alloc);
+
+        if (async_compute_available_) {
+            vk::CommandPoolCreateInfo compute_pool_info{};
+            compute_pool_info.queueFamilyIndex = compute_queue_family_;
+            compute_pool_info.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+            compute_command_pool_ =
+                std::make_unique<vk::raii::CommandPool>(*device_, compute_pool_info);
+            VulkanBackend::Vulkan::SetVulkanObjectName(*device_, *compute_command_pool_,
+                                                       "compute-command-pool");
+
+            vk::CommandBufferAllocateInfo compute_alloc{};
+            compute_alloc.commandPool = **compute_command_pool_;
+            compute_alloc.level = vk::CommandBufferLevel::ePrimary;
+            compute_alloc.commandBufferCount = frames_in_flight_;
+            compute_command_buffers_ = device_->allocateCommandBuffers(compute_alloc);
+        }
+
+        // Per-run command buffers and cross-queue boundary semaphores.
+        const std::uint32_t run_slots = frames_in_flight_ * kMaxQueueRuns;
+        vk::CommandBufferAllocateInfo run_alloc{};
+        run_alloc.commandPool = **command_pool_;
+        run_alloc.level = vk::CommandBufferLevel::ePrimary;
+        run_alloc.commandBufferCount = run_slots;
+        graphics_run_buffers_ = device_->allocateCommandBuffers(run_alloc);
+        if (async_compute_available_) {
+            vk::CommandBufferAllocateInfo compute_run_alloc{};
+            compute_run_alloc.commandPool = **compute_command_pool_;
+            compute_run_alloc.level = vk::CommandBufferLevel::ePrimary;
+            compute_run_alloc.commandBufferCount = run_slots;
+            compute_run_buffers_ = device_->allocateCommandBuffers(compute_run_alloc);
+        }
+        run_semaphores_.resize(run_slots);
+        for (std::uint32_t i = 0; i < run_slots; ++i) {
+            run_semaphores_[i] = std::make_unique<vk::raii::Semaphore>(*device_, vk::SemaphoreCreateInfo{});
+        }
 
         constexpr vk::SemaphoreCreateInfo sem_info{};
         vk::FenceCreateInfo fence_info{};
@@ -371,6 +439,20 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     return true;
 }
 
+vk::raii::CommandBuffer& VulkanDevice::GetRunCommandBuffer(bool compute, std::uint32_t frame_idx,
+                                                           std::uint32_t run_slot) {
+    const std::uint32_t index = (frame_idx % frames_in_flight_) * kMaxQueueRuns + run_slot;
+    if (compute && async_compute_available_) {
+        return compute_run_buffers_[index];
+    }
+    return graphics_run_buffers_[index];
+}
+
+const vk::raii::Semaphore& VulkanDevice::GetRunSemaphore(std::uint32_t frame_idx,
+                                                         std::uint32_t run_slot) const {
+    return *run_semaphores_[(frame_idx % frames_in_flight_) * kMaxQueueRuns + run_slot];
+}
+
 void VulkanDevice::Shutdown() {
     if (device_) {
         device_->waitIdle();
@@ -386,12 +468,23 @@ void VulkanDevice::Shutdown() {
     image_available_semaphores_.clear();
     in_flight_fences_.clear();
 
+    // Every command buffer, pool, and semaphore must be released before the
+    // device; run resources included.
+    run_semaphores_.clear();
+    graphics_run_buffers_.clear();
+    compute_run_buffers_.clear();
+    compute_command_buffers_.clear();
+    compute_command_pool_.reset();
     command_buffers_.clear(); // MUST clear buffers before the pool
     command_pool_.reset();
     device_.reset();
     physical_device_.reset();
     graphics_queue_ = nullptr;
     graphics_queue_family_ = 0;
+    compute_queue_ = nullptr;
+    compute_queue_family_ = 0;
+    async_compute_available_ = false;
+    queue_families_.clear();
     frames_in_flight_ = 0;
     instance_ = nullptr;
     capabilities_ = VulkanCapabilities{};

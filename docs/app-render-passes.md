@@ -142,6 +142,35 @@ const auto vert = Shaders::MyApp::Vert::Register(shader_mgr, config.shader_data_
 engine_game_.AddShaderDirectory(config.shader_data_dir);
 ```
 
+## Multi-queue (async compute)
+
+A pass can request the dedicated compute queue:
+
+```cpp
+void ExposurePass::Setup(PassSetupContext& ctx) {
+    ctx.RequestComputePipeline(compute_shader_);
+    ctx.SetQueueType(RenderGraph::QueueType::Compute);
+}
+```
+
+Requirements and behaviour:
+
+- `RenderPipeline::IsAsyncComputeAvailable()` reports whether the device exposes
+  a compute-capable queue family distinct from graphics. Registration of a
+  compute-queue pass fails with `ValidationFailed` when it does not, so the pass
+  must fall back to graphics (the example passes `IsAsyncComputeAvailable()` into
+  its compute pass and only then calls `SetQueueType`).
+- The engine partitions the ordered passes into **queue runs** (maximal
+  contiguous same-queue spans), records each run into its own command buffer, and
+  submits them in order. A run on a different queue than the previous one is
+  separated by a binary semaphore; same-queue runs are ordered by submission.
+- Graph-declared transients are created with concurrent sharing when more than
+  one queue family exists, so no queue-family ownership transfers are needed.
+- A pass must not touch an imported (engine-owned) resource from the compute
+  queue: those resources are exclusive to the graphics family. Use transients.
+- Each run is a fresh command buffer, so a graphics pass must set its own
+  dynamic viewport/scissor rather than relying on a previous pass.
+
 ## Runtime add/remove/enable
 
 ```cpp

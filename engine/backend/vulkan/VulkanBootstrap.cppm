@@ -38,6 +38,31 @@ public:
     [[nodiscard]] virtual std::uint32_t GetGraphicsQueueFamily() const = 0;
     [[nodiscard]] virtual const vk::raii::CommandPool& GetCommandPool() const = 0;
 
+    // Async compute queue (aliases graphics when HasAsyncCompute() is false).
+    [[nodiscard]] virtual bool HasAsyncCompute() const = 0;
+    [[nodiscard]] virtual const vk::raii::Queue& GetComputeQueue() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetComputeQueueFamily() const = 0;
+    [[nodiscard]] virtual const vk::raii::CommandPool& GetComputeCommandPool() const = 0;
+    [[nodiscard]] virtual vk::raii::CommandBuffer& GetComputeCommandBuffer(std::uint32_t frame_idx) = 0;
+    [[nodiscard]] virtual std::span<const std::uint32_t> GetQueueFamilies() const = 0;
+
+    // A recorded queue run: one command buffer that executes contiguously on
+    // either the graphics or the async compute queue.
+    struct QueueRunSubmit {
+        // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+        bool compute = false;
+        vk::CommandBuffer command_buffer = nullptr;
+        // NOLINTEND(misc-non-private-member-variables-in-classes)
+    };
+
+    [[nodiscard]] virtual vk::raii::CommandBuffer& GetRunCommandBuffer(bool compute,
+                                                                       std::uint32_t frame_idx,
+                                                                       std::uint32_t run_slot) = 0;
+    [[nodiscard]] virtual const vk::raii::Semaphore& GetRunSemaphore(std::uint32_t frame_idx,
+                                                                     std::uint32_t run_slot) const = 0;
+    // Run list for the frame about to be submitted; SubmitFrame consumes it.
+    virtual void SetFrameRuns(std::span<const QueueRunSubmit> runs) = 0;
+
     // Capabilities snapshot (device domain) + bootstrap error state
     [[nodiscard]] virtual const VulkanCapabilities& GetCapabilities() const = 0;
     [[nodiscard]] virtual const std::string& GetErrorMessage() const = 0;

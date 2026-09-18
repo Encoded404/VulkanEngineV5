@@ -178,6 +178,11 @@ public:
         LOGIFACE_LOG(trace, "entering SubmitFrame with frame index " + std::to_string(frame_idx) +
                      " and image index " + std::to_string(image_index) + " and rendering succeeded " +
                      std::to_string(rendering_succeeded) + ".");
+
+        // Take ownership immediately so a frame that bails out before submitting
+        // cannot leave stale queue runs to be submitted by a later frame.
+        std::vector<IVulkanBootstrap::QueueRunSubmit> runs = std::move(frame_runs_);
+        frame_runs_.clear();
         if (!device_ || !swapchain_) return false;
 
         const vk::raii::Device& vk_device = device_->GetDevice();
@@ -194,10 +199,9 @@ public:
 
         // Multi-queue path: one submission per recorded run, ordered by binary
         // semaphores at cross-queue boundaries (same-queue runs are ordered by
-        // queue submission order).
-        std::vector<IVulkanBootstrap::QueueRunSubmit> runs = std::move(frame_runs_);
-        frame_runs_.clear();
-        if (!runs.empty()) {
+        // queue submission order). An unsuccessful frame submits no runs, just
+        // like the single-queue path below consumes the acquire semaphore.
+        if (!runs.empty() && rendering_succeeded) {
             const std::uint32_t run_count = static_cast<std::uint32_t>(runs.size());
             const vk::raii::Queue& vk_compute_queue = device_->GetComputeQueue();
 
@@ -235,6 +239,10 @@ public:
                 queue.submit({submit_info}, is_last ? *vk_in_flight_fence : nullptr);
             }
             return true;
+        }
+        if (!runs.empty()) {
+            LOGIFACE_LOG(debug, "SubmitFrame: dropping " + std::to_string(runs.size()) +
+                                    " recorded queue runs for an unsuccessful frame");
         }
 
         const vk::PipelineStageFlags wait_stage = AcquireWaitStageMask();

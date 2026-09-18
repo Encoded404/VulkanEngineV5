@@ -3,7 +3,7 @@
 ## Build & test preflight
 
 The `default` configure preset reads `VCPKG_ROOT`; CMake silently falls back to a
-different preset if it is unset, so export it first:
+different preset if it is unset, first check if it exists, if not export it first:
 
 ```bash
 export VCPKG_ROOT="$HOME/vcpkg"      # or wherever vcpkg lives

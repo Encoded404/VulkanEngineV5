@@ -153,10 +153,12 @@ void RenderPipeline::RegisterResourceResolver(const std::string& name,
         .resolve_image_view = std::move(resolve_image_view),
         .format = format
     };
+    image_resolver_names_.insert(name);
 }
 
 void RenderPipeline::RegisterBufferResolver(const std::string& name, BufferResolver resolve_buffer) {
     buffer_resolvers_[name] = std::move(resolve_buffer);
+    buffer_resolver_names_.insert(name);
 }
 
 VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipelinePassDesc& desc) {
@@ -273,6 +275,14 @@ void RenderPipeline::Compile() {
     if (compiled_) {
         SyncTransients();
 
+        // Reset per-image tracked layouts: a recompile is a new graph identity,
+        // so any state recorded for the old graph must not seed the new one.
+        const std::uint32_t image_count =
+            bootstrap_ ? std::max<std::uint32_t>(bootstrap_->GetSnapshot().swapchain_image_count, 1) : 1;
+        tracked_resource_count_ = static_cast<std::uint32_t>(compiled_graph_.resource_info.size());
+        tracked_states_.assign(image_count, std::vector<VulkanEngine::RenderGraph::ResourceState>(tracked_resource_count_));
+        tracked_valid_.assign(image_count, std::vector<bool>(tracked_resource_count_, false));
+
         for (std::size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
             const auto& resource = compiled_graph_.resource_lifetimes[i];
             if (resource.name == "swapchain-backbuffer") {
@@ -286,38 +296,39 @@ void RenderPipeline::Compile() {
 
 void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer,
                              std::uint32_t image_index, std::uint32_t fif_slot) {
-    if (!compiled_ || !initialized_) {
+    if (!compiled_ || !initialized_ || !bootstrap_) {
         return;
     }
 
-    auto resolved_graph = compiled_graph_;
-
-    if (!bootstrap_) return;
+    auto& backend = bootstrap_->GetBackend();
 
     transient_allocator_.CollectGarbage(fif_slot);
 
-    resolved_graph.SetImportedResourceState(backbuffer_resource_index_,
-        VulkanEngine::RenderGraph::ResourceState::ImageState(
-            VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
-            VulkanEngine::RenderGraph::AccessIntent::None,
-            VulkanEngine::RenderGraph::QueueType::Graphics,
-            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
+    // The swapchain's per-image initialized flag is set when a present succeeds
+    // and cleared on swapchain recreation, so it is the submission proof for
+    // cross-frame layout tracking: an image that was never presented (or was
+    // recreated) must start from Undefined.
+    std::vector<bool>& initialized_flags = backend.GetSwapchainImageInitializedFlags();
+    const bool image_initialized =
+        image_index < initialized_flags.size() && initialized_flags[image_index];
+    if (!image_initialized && image_index < tracked_valid_.size()) {
+        std::ranges::fill(tracked_valid_[image_index], false);
+    }
 
-    resolved_graph.SetImportedResourceState(depth_buffer_resource_index_,
-        VulkanEngine::RenderGraph::ResourceState::ImageState(
-            VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
-            VulkanEngine::RenderGraph::AccessIntent::None,
-            VulkanEngine::RenderGraph::QueueType::Graphics,
-            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
+    VulkanEngine::RenderGraph::RuntimeResourceStates runtime_initial{};
+    if (image_initialized && image_index < tracked_states_.size()) {
+        runtime_initial.states = tracked_states_[image_index];
+        runtime_initial.has_state = tracked_valid_[image_index];
+    }
 
-    ResolveResources(resolved_graph, image_index, fif_slot);
+    ResolveResources(compiled_graph_, image_index, fif_slot);
 
     VulkanEngine::RenderGraph::ResolvedResourceHandles resolved{};
-    resolved.images = resolved_graph.resource_images;
-    resolved.buffers = resolved_graph.resource_buffers;
-    resolved.buffer_offsets = resolved_graph.resource_buffer_offsets;
-    resolved.buffer_sizes = resolved_graph.resource_buffer_sizes;
-    resolved.formats = resolved_graph.resource_formats;
+    resolved.images = compiled_graph_.resource_images;
+    resolved.buffers = compiled_graph_.resource_buffers;
+    resolved.buffer_offsets = compiled_graph_.resource_buffer_offsets;
+    resolved.buffer_sizes = compiled_graph_.resource_buffer_sizes;
+    resolved.formats = compiled_graph_.resource_formats;
 
     // Alias reuse decided by the transient planner becomes explicit ordering
     // dependencies in the barrier plan.
@@ -331,9 +342,17 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     }
 
     const auto plan = VulkanEngine::RenderGraph::PlanBarriers(
-        resolved_graph, resolved, alias_intervals);
+        compiled_graph_, resolved, alias_intervals, &runtime_initial);
 
-    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, resolved_graph, user_data, command_buffer);
+    // Record the actual end-of-frame state for this swapchain image. Use is
+    // gated on the presented flag, so a failed submit cannot seed the next frame.
+    if (image_index < tracked_states_.size() &&
+        plan.end_states.size() == tracked_states_[image_index].size()) {
+        tracked_states_[image_index] = plan.end_states;
+        tracked_valid_[image_index] = plan.has_end_state;
+    }
+
+    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, compiled_graph_, user_data, command_buffer);
 }
 
 void RenderPipeline::SyncTransients() {
@@ -415,82 +434,115 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
 
     auto& backend = bootstrap_->GetBackend();
 
-    for (std::size_t i = 0; i < graph.resource_lifetimes.size(); ++i) {
-        const auto& resource = graph.resource_lifetimes[i];
-        const bool is_buffer = i < graph.resource_info.size() &&
-                               graph.resource_info[i].kind == VulkanEngine::RenderGraph::ResourceKind::Buffer;
+    // Identity table: keyed by ResourceHandle.index, never by container size.
+    const auto table = VulkanEngine::RenderGraph::BuildResourceResolutionTable(
+        graph, image_resolver_names_, buffer_resolver_names_);
 
-        if (resource.imported) {
-            if (is_buffer) {
-                auto buffer_it = buffer_resolvers_.find(resource.name);
-                if (buffer_it != buffer_resolvers_.end()) {
-                    graph.SetResourceBuffer(static_cast<std::uint32_t>(i), buffer_it->second(image_index));
-                }
-            } else {
-                auto it = resource_resolvers_.find(resource.name);
+    using VulkanEngine::RenderGraph::ResourceResolutionKind;
+    for (const auto& entry : table) {
+        const std::uint32_t index = entry.resource_index;
+        if (index >= graph.resource_info.size()) {
+            continue;
+        }
+
+        switch (entry.resolution) {
+            case ResourceResolutionKind::ImportedImage: {
+                const auto it = resource_resolvers_.find(entry.name);
                 if (it != resource_resolvers_.end()) {
-                    graph.SetResourceImage(static_cast<std::uint32_t>(i), it->second.resolve_image(image_index));
-                    graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+                    graph.SetResourceImage(index, it->second.resolve_image(image_index));
+                    graph.SetResourceFormat(index, it->second.format);
                 }
+                break;
             }
-        } else if (is_buffer) {
-            vk::Buffer buffer{};
-            vk::DeviceSize offset = 0;
-            vk::DeviceSize size = vk::WholeSize;
-            if (transient_allocator_.GetBuffer(static_cast<std::uint32_t>(i), fif_slot, buffer, offset, size)) {
-                graph.SetResourceBuffer(static_cast<std::uint32_t>(i), buffer, offset, size);
+            case ResourceResolutionKind::ImportedBuffer: {
+                const auto it = buffer_resolvers_.find(entry.name);
+                if (it != buffer_resolvers_.end()) {
+                    graph.SetResourceBuffer(index, it->second(image_index));
+                }
+                break;
             }
-        } else {
-            const vk::Image image = transient_allocator_.GetImage(static_cast<std::uint32_t>(i), fif_slot);
-            if (image) {
-                graph.SetResourceImage(static_cast<std::uint32_t>(i), image);
+            case ResourceResolutionKind::TransientImage: {
+                const vk::Image image = transient_allocator_.GetImage(index, fif_slot);
+                if (image) {
+                    graph.SetResourceImage(index, image);
+                }
+                const auto it = transient_image_descs_.find(index);
+                if (it != transient_image_descs_.end()) {
+                    graph.SetResourceFormat(index, it->second.format);
+                }
+                break;
             }
-            auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
-            if (it != transient_image_descs_.end()) {
-                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
+            case ResourceResolutionKind::TransientBuffer: {
+                vk::Buffer buffer{};
+                vk::DeviceSize offset = 0;
+                vk::DeviceSize size = vk::WholeSize;
+                if (transient_allocator_.GetBuffer(index, fif_slot, buffer, offset, size)) {
+                    graph.SetResourceBuffer(index, buffer, offset, size);
+                }
+                break;
             }
+            case ResourceResolutionKind::ImportedImageMissingResolver:
+            case ResourceResolutionKind::ImportedBufferMissingResolver:
+            case ResourceResolutionKind::Unused:
+            case ResourceResolutionKind::InvalidIndex:
+                break;
         }
     }
 
+    // Resolve attachment views from the table and compute the render area from
+    // the actual color/depth resources (imported or transient), so a depth-only
+    // or imported setup sizes correctly.
     for (auto& pass : graph.passes) {
-        if (pass.attachment_setup && pass.attachment_setup->auto_begin_rendering) {
-            auto resolve_attachment_view = [&](VulkanEngine::RenderGraph::AttachmentInfo& attach) {
-                const auto& resource = graph.resource_lifetimes[attach.resource.index];
-                if (resource.imported) {
-                    auto it = resource_resolvers_.find(resource.name);
-                    if (it != resource_resolvers_.end()) {
-                        attach.image_view = it->second.resolve_image_view(image_index);
-                    }
-                } else {
-                    const vk::ImageView view = transient_allocator_.GetImageView(attach.resource.index, fif_slot);
-                    if (view) {
-                        attach.image_view = view;
-                    }
-                }
-            };
-
-            auto& setup = *pass.attachment_setup;
-            for (auto& attach : setup.color_attachments) {
-                resolve_attachment_view(attach);
-            }
-            if (setup.depth_attachment.has_value()) {
-                resolve_attachment_view(*setup.depth_attachment); //NOLINT(bugprone-unchecked-optional-access)
-            }
-
-            std::uint32_t max_width = 0, max_height = 0;
-            for (const auto& attach : setup.color_attachments) {
-                auto desc_it = transient_image_descs_.find(attach.resource.index);
-                if (desc_it != transient_image_descs_.end()) {
-                    const auto& desc = desc_it->second;
-                    max_width = std::max(max_width, desc.width);
-                    max_height = std::max(max_height, desc.height);
-                }
-            }
-            if (max_width == 0) {
-                (void)backend.GetSwapchainExtent(max_width, max_height);
-            }
-            setup.render_area = vk::Rect2D{{0, 0}, {max_width, max_height}};
+        if (!pass.attachment_setup || !pass.attachment_setup->auto_begin_rendering) {
+            continue;
         }
+        auto& setup = *pass.attachment_setup;
+
+        const auto resolve_attachment_view = [&](VulkanEngine::RenderGraph::AttachmentInfo& attach) {
+            const std::uint32_t resource = attach.resource.index;
+            if (resource >= table.size() || table[resource].resource_index != resource) {
+                return;
+            }
+            const auto& entry = table[resource];
+            if (entry.resolution == ResourceResolutionKind::ImportedImage) {
+                const auto it = resource_resolvers_.find(entry.name);
+                if (it != resource_resolvers_.end()) {
+                    attach.image_view = it->second.resolve_image_view(image_index);
+                }
+            } else if (entry.resolution == ResourceResolutionKind::TransientImage) {
+                const vk::ImageView view = transient_allocator_.GetImageView(resource, fif_slot);
+                if (view) {
+                    attach.image_view = view;
+                }
+            }
+        };
+
+        for (auto& attach : setup.color_attachments) {
+            resolve_attachment_view(attach);
+        }
+        if (setup.depth_attachment.has_value()) {
+            resolve_attachment_view(*setup.depth_attachment); //NOLINT(bugprone-unchecked-optional-access)
+        }
+
+        std::uint32_t max_width = 0;
+        std::uint32_t max_height = 0;
+        const auto consider = [&](const VulkanEngine::RenderGraph::AttachmentInfo& attach) {
+            const auto it = transient_image_descs_.find(attach.resource.index);
+            if (it != transient_image_descs_.end()) {
+                max_width = std::max(max_width, it->second.width);
+                max_height = std::max(max_height, it->second.height);
+            }
+        };
+        for (const auto& attach : setup.color_attachments) {
+            consider(attach);
+        }
+        if (setup.depth_attachment.has_value()) {
+            consider(*setup.depth_attachment); //NOLINT(bugprone-unchecked-optional-access)
+        }
+        if (max_width == 0) {
+            (void)backend.GetSwapchainExtent(max_width, max_height);
+        }
+        setup.render_area = vk::Rect2D{{0, 0}, {max_width, max_height}};
     }
 }
 

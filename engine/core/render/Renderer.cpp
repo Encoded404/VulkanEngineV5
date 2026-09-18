@@ -439,6 +439,11 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     // Enable GPU stats
     const std::uint32_t frame_idx = bootstrap.GetSnapshot().frame_index;
+    const std::uint32_t frames_in_flight = std::max<std::uint32_t>(backend.GetFramesInFlight(), 1);
+    // Bootstrap's frame_index is the authoritative counter; the ring index used
+    // by every per-FIF resource is its remainder. The device indexes command
+    // buffers the same way, so this must match.
+    const std::uint32_t ring_index = frame_idx % frames_in_flight;
     auto& cmd = backend.GetCommandBuffer(frame_idx);
     cmd.reset({});
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
@@ -515,7 +520,7 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 #endif
 
         // Phase 2: Render graph executes all GPU passes in dependency order
-        pipeline_->Execute(&ctx, cmd, image_index, frame_idx);
+        pipeline_->Execute(&ctx, cmd, image_index, ring_index);
     }
 
     if (gpu_stats_pool_) {

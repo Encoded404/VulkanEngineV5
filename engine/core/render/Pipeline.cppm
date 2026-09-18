@@ -110,14 +110,21 @@ private:
     };
     std::unordered_map<std::string, ExternalResourceResolver> resource_resolvers_{};
     std::unordered_map<std::string, BufferResolver> buffer_resolvers_{};
+    std::unordered_set<std::string> image_resolver_names_{};
+    std::unordered_set<std::string> buffer_resolver_names_{};
 
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
 
     std::uint32_t backbuffer_resource_index_ = 0;
     std::uint32_t depth_buffer_resource_index_ = 0;
-    std::vector<bool> swapchain_image_presented_{};
-    std::vector<bool> swapchain_depth_initialized_{};
+
+    // Per swapchain image (outer index) and per resource index (inner), the
+    // actual end-of-frame layout recorded last time that image was used. Seeded
+    // back into the barrier plan so imported layouts are not reset to Undefined.
+    std::vector<std::vector<VulkanEngine::RenderGraph::ResourceState>> tracked_states_{};
+    std::vector<std::vector<bool>> tracked_valid_{};
+    std::uint32_t tracked_resource_count_ = 0;
 
     // Custom pass storage and built-in handles
     std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};

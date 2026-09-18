@@ -362,6 +362,11 @@ struct PlannedPassBarriers {
 struct BarrierPlan {
     bool valid = false;
     std::vector<PlannedPassBarriers> passes{};
+    // Actual end-of-frame state produced by walking every planned transition.
+    // The render pipeline records this and feeds it back as the next frame's
+    // runtime old-state, so imported layouts survive across frames.
+    std::vector<ResourceState> end_states{};
+    std::vector<bool> has_end_state{};
 
     [[nodiscard]] bool HasBarriers() const {
         for (const auto& pass : passes) {
@@ -491,17 +496,107 @@ inline vk::ImageSubresourceRange DefaultImageSubresourceRange(vk::Format format)
     return {FormatToAspectFlags(format), 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers};
 }
 
+// How a resource will be resolved this frame. Building this table is pure:
+// it keys everything by ResourceHandle.index and never indexes by position or
+// with a non-const operator[], so a high-index transient can never be mistaken
+// for a low-index one.
+enum class ResourceResolutionKind : std::uint8_t {
+    Unused,
+    ImportedImage,
+    ImportedBuffer,
+    TransientImage,
+    TransientBuffer,
+    ImportedImageMissingResolver,
+    ImportedBufferMissingResolver,
+    InvalidIndex,
+};
+
+struct ResourceResolution {
+    std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
+    std::string name{};
+    ResourceKind kind = ResourceKind::Image;
+    ResourceResolutionKind resolution = ResourceResolutionKind::Unused;
+};
+
+[[nodiscard]] inline std::vector<ResourceResolution> BuildResourceResolutionTable(
+    const CompiledRenderGraph& graph,
+    const std::unordered_set<std::string>& image_resolvers,
+    const std::unordered_set<std::string>& buffer_resolvers) {
+    std::vector<ResourceResolution> table;
+    table.reserve(graph.resource_lifetimes.size());
+
+    for (const auto& lifetime : graph.resource_lifetimes) {
+        ResourceResolution entry{};
+        entry.resource_index = lifetime.handle.index;
+        entry.name = lifetime.name;
+
+        if (entry.resource_index >= graph.resource_info.size()) {
+            entry.resolution = ResourceResolutionKind::InvalidIndex;
+            table.push_back(std::move(entry));
+            continue;
+        }
+
+        const auto& info = graph.resource_info[entry.resource_index];
+        entry.kind = info.kind;
+
+        if (lifetime.imported) {
+            if (info.kind == ResourceKind::Image) {
+                entry.resolution = image_resolvers.contains(info.name)
+                                       ? ResourceResolutionKind::ImportedImage
+                                       : ResourceResolutionKind::ImportedImageMissingResolver;
+            } else {
+                entry.resolution = buffer_resolvers.contains(info.name)
+                                       ? ResourceResolutionKind::ImportedBuffer
+                                       : ResourceResolutionKind::ImportedBufferMissingResolver;
+            }
+        } else if (lifetime.transient) {
+            entry.resolution = info.kind == ResourceKind::Image
+                                   ? ResourceResolutionKind::TransientImage
+                                   : ResourceResolutionKind::TransientBuffer;
+        } else {
+            entry.resolution = ResourceResolutionKind::Unused;
+        }
+
+        table.push_back(std::move(entry));
+    }
+
+    return table;
+}
+
+// Per-resource actual old state supplied by the runtime (recorded end-of-frame
+// state from a previous frame, keyed per swapchain image by the caller).
+struct RuntimeResourceStates {
+    std::vector<ResourceState> states{};
+    std::vector<bool> has_state{};
+};
+
 // Pure barrier planning: translates the compiler-resolved transitions into
 // concrete barriers with no device access. `resolved` supplies the handles;
 // unresolved handles yield no image barrier / a conservative global memory
-// barrier for buffers. `aliases` is reserved for Phase 2.
+// barrier for buffers. `runtime_initial` overrides the first touch of a
+// resource with its actual layout (cross-frame tracking); when that already
+// equals the target, the barrier is dropped.
 inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                                 const ResolvedResourceHandles& resolved,
-                                const AliasIntervals& aliases) {
-    (void)aliases;
+                                const AliasIntervals& aliases,
+                                const RuntimeResourceStates* runtime_initial = nullptr) {
     BarrierPlan plan{};
     plan.valid = graph.success;
     plan.passes.reserve(graph.passes.size());
+
+    const std::size_t resource_count = graph.resource_info.size();
+    std::vector<bool> seen(resource_count, false);
+    std::vector<ResourceState> current(resource_count);
+    std::vector<bool> current_known(resource_count, false);
+    if (runtime_initial != nullptr) {
+        const std::size_t count = std::min(resource_count, runtime_initial->states.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            if (i < runtime_initial->has_state.size() && runtime_initial->has_state[i]) {
+                current[i] = runtime_initial->states[i];
+                current_known[i] = true;
+            }
+        }
+    }
 
     const auto image_range = [&](std::uint32_t index) {
         if (index < resolved.formats.size()) {
@@ -521,7 +616,31 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                               std::vector<PlannedBufferBarrier>& buffer_out) {
             for (const auto& transition : transitions) {
                 const std::uint32_t index = transition.resource_index;
-                if (index >= graph.resource_info.size()) {
+                if (index >= resource_count) {
+                    continue;
+                }
+
+                ResourceState from = transition.from_state;
+                bool from_known = transition.from_known;
+                vk::PipelineStageFlags2 src_stage = transition.src_stage;
+                vk::AccessFlags2 src_access = transition.src_access;
+
+                // The resource's actual old state wins over the compiler's
+                // assumption on the first touch of the frame.
+                if (!seen[index] && runtime_initial != nullptr &&
+                    index < runtime_initial->has_state.size() && runtime_initial->has_state[index]) {
+                    from = runtime_initial->states[index];
+                    from_known = true;
+                    src_stage = IntentToPipelineStage(from.stage, from.access);
+                    src_access = IntentToAccessFlags(from.stage, from.access);
+                }
+                seen[index] = true;
+                current[index] = transition.target_state;
+                current_known[index] = true;
+
+                // Already in the target state (e.g. a swapchain image left in
+                // Present across frames): no barrier is required.
+                if (from_known && StatesEqual(from, transition.target_state)) {
                     continue;
                 }
 
@@ -531,11 +650,11 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                     if (index < resolved.images.size()) {
                         barrier.image = resolved.images[index];
                     }
-                    barrier.src_stage = transition.src_stage;
+                    barrier.src_stage = src_stage;
                     barrier.dst_stage = transition.dst_stage;
-                    barrier.src_access = transition.src_access;
+                    barrier.src_access = src_access;
                     barrier.dst_access = transition.dst_access;
-                    barrier.old_layout = IntentToImageLayout(transition.from_state.layout);
+                    barrier.old_layout = IntentToImageLayout(from.layout);
                     barrier.new_layout = IntentToImageLayout(transition.target_state.layout);
                     barrier.range = image_range(index);
                     image_out.push_back(barrier);
@@ -545,9 +664,9 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                     if (index < resolved.buffers.size()) {
                         barrier.buffer = resolved.buffers[index];
                     }
-                    barrier.src_stage = transition.src_stage;
+                    barrier.src_stage = src_stage;
                     barrier.dst_stage = transition.dst_stage;
-                    barrier.src_access = transition.src_access;
+                    barrier.src_access = src_access;
                     barrier.dst_access = transition.dst_access;
                     if (index < resolved.buffer_offsets.size()) {
                         barrier.offset = resolved.buffer_offsets[index];
@@ -564,6 +683,9 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
         emit(pass.post_pass_transitions, planned.post_image, planned.post_buffer);
         plan.passes.push_back(std::move(planned));
     }
+
+    plan.end_states = std::move(current);
+    plan.has_end_state = std::move(current_known);
 
     // Alias ordering: when B reuses A's memory, B's first barrier must also wait
     // on A's last use. A discard barrier alone (srcStage=eNone) is not enough,

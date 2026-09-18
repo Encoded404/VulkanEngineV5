@@ -4,6 +4,7 @@ add_executable(engine_tests
   gpl_resolution_tests.cpp
   tlsf_allocator_tests.cpp
   transient_allocator_tests.cpp
+  render_pipeline_resolution_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 setup_test_target(engine_tests)

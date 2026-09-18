@@ -27,6 +27,28 @@ void PassSetupContext::RunAfter(BuiltinPass pass) {
     after_builtin_passes_.push_back(pass);
 }
 
+void PassSetupContext::RequestGraphicsPipeline(std::uint64_t vertex_shader,
+                                               std::uint64_t fragment_shader,
+                                               std::vector<vk::Format> color_formats,
+                                               vk::Format depth_format) {
+    pipeline_request_.kind = PassPipelineKind::Graphics;
+    pipeline_request_.vertex_shader = vertex_shader;
+    pipeline_request_.fragment_shader = fragment_shader;
+    pipeline_request_.color_formats = std::move(color_formats);
+    pipeline_request_.depth_format = depth_format;
+}
+
+void PassSetupContext::RequestComputePipeline(std::uint64_t compute_shader) {
+    pipeline_request_.kind = PassPipelineKind::Compute;
+    pipeline_request_.compute_shader = compute_shader;
+}
+
+void PassSetupContext::DeclareBindings(std::vector<VulkanEngine::Render::DescriptorDecl> bindings) {
+    for (auto& binding : bindings) {
+        declared_bindings_.push_back(std::move(binding));
+    }
+}
+
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadDepthBuffer() {
     return registry_->ImportDepthBuffer();
 }

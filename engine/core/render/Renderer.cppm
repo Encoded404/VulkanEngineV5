@@ -19,6 +19,8 @@ export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.ImGui;
+import VulkanEngine.ShaderManager;
+import VulkanEngine.PipelineFactory;
 import VulkanEngine.Render.Passes.ExpandPass;
 import VulkanEngine.Render.Passes.OccluderSelectPass;
 import VulkanEngine.Render.Passes.OccluderPrePass;
@@ -50,7 +52,12 @@ public:
 
     bool Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                     const RendererConfig& config,
-                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer);
+                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
+                    ShaderSystem::ShaderManager* shader_manager = nullptr,
+                    ShaderSystem::PipelineFactory* pipeline_factory = nullptr);
+
+    // Engine-standard set layouts (0-4) used to build custom-pass pipelines.
+    void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
 
     void Shutdown();
 

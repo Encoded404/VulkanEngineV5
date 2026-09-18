@@ -103,6 +103,13 @@ public:
     void MarkSceneValid() { scene_valid_ = true; }
     std::uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
 
+    // ── App shader hot-reload registration ──
+    // The watcher is started during Setup() with the engine shader directories.
+    // After registering application shaders, call one of these so their
+    // directories are watched too (register-before-Start is also supported).
+    void RefreshShaderWatcher();
+    bool AddShaderDirectory(const std::string& directory);
+
     EngineContext& GetContext() { return ctx_; }
     const EngineContext& GetContext() const { return ctx_; }
 

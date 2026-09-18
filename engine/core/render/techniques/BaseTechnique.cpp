@@ -108,33 +108,6 @@ void BaseTechnique::DeclareBindingImpl(BindingDecl decl) {
     bindings_.push_back(std::move(decl));
 }
 
-std::vector<BaseTechnique::BindingGroup> BaseTechnique::GroupBindingsBySet() const {
-    // Group custom bindings (set >= 5) by set number
-    std::unordered_map<std::uint32_t, BindingGroup> group_map;
-    for (const auto& decl : bindings_) {
-        if (decl.set >= 5) {
-            auto it = group_map.find(decl.set);
-            if (it == group_map.end()) {
-                BindingGroup bg{decl.set, {}};
-                bg.bindings.push_back(&decl);
-                group_map[decl.set] = std::move(bg);
-            } else {
-                it->second.bindings.push_back(&decl);
-            }
-        }
-    }
-
-    // Sort by set number for deterministic layout
-    std::vector<BindingGroup> groups;
-    groups.reserve(group_map.size());
-    for (auto &group: group_map | std::views::values) {
-        groups.push_back(std::move(group));
-    }
-    std::ranges::sort(groups,
-                      [](const BindingGroup& a, const BindingGroup& b) { return a.set < b.set; });
-    return groups;
-}
-
 bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                             ShaderSystem::ShaderManager& shader_mgr,
                             ShaderSystem::PipelineFactory& pipeline_factory,
@@ -164,8 +137,16 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         scene_uniform_layout,      // set 4: scene uniforms (lighting, camera)
     };
 
-    // ── 2. Group custom bindings by set number and create descriptor set layouts ──
-    auto custom_groups = GroupBindingsBySet();
+    // ── 2. Validate and group custom bindings (sets >= 5) ──
+    // The shared composer enforces the reserved engine sets and rejects
+    // duplicates; the shared grouping helper gives a deterministic layout.
+    VulkanEngine::Render::PipelineLayoutComposer composer;
+    if (auto added = composer.AddAppBindings(bindings_); !added.has_value()) {
+        LOGIFACE_LOG(error, "BaseTechnique: invalid descriptor declaration (error " +
+                                std::to_string(static_cast<int>(added.error())) + ")");
+        return false;
+    }
+    const auto custom_groups = VulkanEngine::Render::GroupBindingsBySet(bindings_);
     std::vector<vk::raii::DescriptorSetLayout> custom_set_layouts;
     custom_set_layouts.reserve(custom_groups.size());
 
@@ -175,8 +156,8 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         std::vector<vk::DescriptorBindingFlags> vk_binding_flags;
         vk_binding_flags.reserve(group.bindings.size());
 
-        for (const auto* decl : group.bindings) {
-            const bool per_material = decl->kind == BindingKind::PerMaterial;
+        for (const auto& decl : group.bindings) {
+            const bool per_material = decl.kind == BindingKind::PerMaterial;
 
             // Both kinds are StorageBuffer (StructuredBuffer in HLSL). A
             // PerMaterial binding is a BlockArray the shader indexes by
@@ -184,7 +165,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             // descriptor array the material packing can name. Shared bindings
             // are a single buffer.
             vk::DescriptorSetLayoutBinding binding{};
-            binding.binding = decl->binding;
+            binding.binding = decl.binding;
             binding.descriptorType = vk::DescriptorType::eStorageBuffer;
             binding.descriptorCount = per_material
                 ? TechniquePacking::MATERIAL_BLOCK_COUNT
@@ -343,8 +324,8 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     // materialBuffer[materialId / MATERIAL_BLOCK_SIZE]); a Shared binding needs one.
     std::uint32_t total_descriptors = 0;
     for (const auto& group : custom_groups) {
-        for (const auto* decl : group.bindings) {
-            total_descriptors += (decl->kind == BindingKind::PerMaterial)
+        for (const auto& decl : group.bindings) {
+            total_descriptors += (decl.kind == BindingKind::PerMaterial)
                 ? TechniquePacking::MATERIAL_BLOCK_COUNT
                 : 1u;
         }
@@ -375,11 +356,20 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             vk::raii::DescriptorSet ds = std::move(ds_vector[0]);
             const vk::DescriptorSet raw_ds = *ds;
 
-            for (const auto* decl : custom_groups[gi].bindings) {
-                // Find the index in bindings_ matching this decl
-                const std::size_t binding_idx = static_cast<std::size_t>(decl - bindings_.data());
+            for (const auto& decl : custom_groups[gi].bindings) {
+                // Find the matching declaration in bindings_ by identity (the
+                // grouping helper copies declarations, so pointers no longer
+                // alias the stored vector).
+                const auto binding_it = std::ranges::find_if(bindings_, [&](const BindingDecl& candidate) {
+                    return candidate.set == decl.set && candidate.binding == decl.binding;
+                });
+                if (binding_it == bindings_.end()) {
+                    continue;
+                }
+                const std::size_t binding_idx =
+                    static_cast<std::size_t>(std::distance(bindings_.begin(), binding_it));
 
-                if (decl->kind == BindingKind::PerMaterial) {
+                if (decl.kind == BindingKind::PerMaterial) {
                     // Per-material arrays are populated lazily as materials are
                     // registered (MaterialManager::Register -> EnsureMaterialBlockBound);
                     // only the bookkeeping is created here. Bind block 0 now so the
@@ -389,7 +379,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                         if (bindings_[i].kind == BindingKind::PerMaterial) ++pm_count;
                     }
                     material_array_bindings_.push_back(MaterialArrayBinding{
-                        binding_idx, pm_count, raw_ds, decl->binding,
+                        binding_idx, pm_count, raw_ds, decl.binding,
                         std::vector<std::uint8_t>(TechniquePacking::MATERIAL_BLOCK_COUNT, 0)});
                     if (!EnsureMaterialBlockBound(binding_idx, 0)) {
                         LOGIFACE_LOG(error, "BaseTechnique: failed to bind initial material block 0 "
@@ -403,7 +393,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                     }
                     const vk::DescriptorBufferInfo buf_info(
                         *shared_buffers_[sh_count].GetBuffer(), 0, vk::WholeSize);
-                    const vk::WriteDescriptorSet write(raw_ds, decl->binding, 0, 1,
+                    const vk::WriteDescriptorSet write(raw_ds, decl.binding, 0, 1,
                         vk::DescriptorType::eStorageBuffer, nullptr, &buf_info);
                     device.updateDescriptorSets(write, nullptr);
                 }

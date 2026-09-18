@@ -15,6 +15,7 @@ export import VulkanEngine.TechniqueManager.TechniqueId;
 export import VulkanEngine.GpuResources.BlockArray;
 export import VulkanEngine.GpuBuffer;
 export import VulkanEngine.GpuResources.StagingManager;
+export import VulkanEngine.DescriptorDecl;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 
@@ -68,18 +69,10 @@ struct PipelineFlags {
 // ── BaseTechnique — abstract base for all rendering techniques ──
 class BaseTechnique {
 public:
-    enum class BindingKind : std::uint8_t {
-        PerMaterial,  // bindless array indexed by material_id
-        Shared,       // single buffer for all materials using this technique
-    };
-
-    struct BindingDecl {
-        std::uint32_t set;
-        std::uint32_t binding;
-        BindingKind kind;
-        std::uint32_t stride = 0;  // byte size per entry (PerMaterial only)
-        std::type_index type_index = typeid(void);
-    };
+    // Shared descriptor declaration model (sets 0-4 reserved by the engine,
+    // technique/application bindings start at set 5).
+    using BindingKind = VulkanEngine::Render::DescriptorKind;
+    using BindingDecl = VulkanEngine::Render::DescriptorDecl;
 
     virtual ~BaseTechnique() = default;
 
@@ -206,8 +199,9 @@ public:
 public:
     BaseTechnique() = default;
 
-    // ── Engine set usage (sets 0-3 are always bound at layout slots 0-3) ──
-    // Custom bindings start at set 4. No opt-in needed for engine sets.
+    // ── Engine set usage (sets 0-4 are always bound at layout slots 0-4) ──
+    // Technique/application bindings start at set 5 (kFirstAppDescriptorSet).
+    // No opt-in is needed for engine sets.
 
     // ── Declare a PerMaterial binding ──
     // T is the C++ data type; set/binding are user-specified (per-technique scope).
@@ -215,23 +209,39 @@ public:
     template<typename T>
     void DeclarePerMaterial(const std::uint32_t set, const std::uint32_t binding) {
         ValidateNoBindingCollision(set, binding);
-        const BindingDecl decl{set, binding, BindingKind::PerMaterial, sizeof(T), std::type_index(typeid(T))};
-        DeclareBindingImpl(decl);
+        BindingDecl decl{};
+        decl.set = set;
+        decl.binding = binding;
+        decl.kind = BindingKind::PerMaterial;
+        decl.descriptor_type = vk::DescriptorType::eStorageBuffer;
+        decl.stage_flags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+        decl.count = 1;
+        decl.stride = sizeof(T);
+        decl.type_index = std::type_index(typeid(T));
+        DeclareBindingImpl(std::move(decl));
     }
 
     // ── Declare a Shared binding ──
     template<typename T>
     void DeclareShared(const std::uint32_t set, const std::uint32_t binding) {
         ValidateNoBindingCollision(set, binding);
-        const BindingDecl decl{set, binding, BindingKind::Shared, 0, std::type_index(typeid(T))};
-        DeclareBindingImpl(decl);
+        BindingDecl decl{};
+        decl.set = set;
+        decl.binding = binding;
+        decl.kind = BindingKind::Shared;
+        decl.descriptor_type = vk::DescriptorType::eStorageBuffer;
+        decl.stage_flags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+        decl.count = 1;
+        decl.stride = 0;
+        decl.type_index = std::type_index(typeid(T));
+        DeclareBindingImpl(std::move(decl));
     }
 
     // ── Set technique ID (called by TechniqueManager during registration) ──
     void SetId(const TechniqueId id) { id_ = id; }
 
     // ── Compilation (separate from constructor) ──
-    // Creates pipeline layout with engine sets 0-3 + custom sets 4+.
+    // Creates pipeline layout with engine sets 0-4 + custom sets 5+.
     // Builds one BlockArray per PerMaterial binding, one GpuBuffer per Shared binding.
     // Returns false if pipeline creation failed; the technique is then unusable
     // (GetPipeline() returns VK_NULL_HANDLE) and resource setup is skipped.
@@ -292,13 +302,6 @@ private:
 
     void DeclareBindingImpl(BindingDecl decl);
     void ValidateNoBindingCollision(std::uint32_t set, std::uint32_t binding) const;
-
-    // Group bindings by set number for descriptor set layout creation
-    struct BindingGroup {
-        std::uint32_t set;
-        std::vector<const BindingDecl*> bindings;
-    };
-    [[nodiscard]] std::vector<BindingGroup> GroupBindingsBySet() const;
 };
 
 } // namespace VulkanEngine::TechniqueManager

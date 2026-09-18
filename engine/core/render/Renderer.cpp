@@ -31,14 +31,22 @@ Renderer::~Renderer() {
     Shutdown();
 }
 
+void Renderer::SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts) {
+    if (pipeline_) {
+        pipeline_->SetEngineDescriptorSetLayouts(layouts);
+    }
+}
+
 bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   const RendererConfig& config,
-                                  VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer) {
+                                  VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
+                                  ShaderSystem::ShaderManager* shader_manager,
+                                  ShaderSystem::PipelineFactory* pipeline_factory) {
     bootstrap_ = &bootstrap;
     scene_renderer_ = &scene_renderer;
 
     pipeline_ = std::make_unique<VulkanEngine::RenderPipeline::RenderPipeline>();
-    pipeline_->Initialize(bootstrap);
+    pipeline_->Initialize(bootstrap, shader_manager, pipeline_factory);
 
     // Create pass class instances
     expand_pass_ = std::make_unique<VulkanEngine::SceneRenderer::ExpandPass>(scene_renderer);

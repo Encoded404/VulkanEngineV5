@@ -180,7 +180,18 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         });
 
     ctx_.renderer = std::make_unique<Renderer::Renderer>();
-    ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer);
+    ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer,
+                              &ctx_.GetShaderManager(), &ctx_.GetPipelineFactory());
+
+    // Engine-standard descriptor set layouts let the renderer build custom-pass
+    // pipelines and layouts.
+    ctx_.renderer->SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5>{
+        *ctx_.bindless_mgr->GetLayout(),
+        *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
+        *ctx_.scene_renderer->GetRawVertexLayout(),
+        *ctx_.scene_renderer->GetIndirectionLayout(),
+        ctx_.scene_renderer->GetSceneUniformLayout(),
+    });
 
     if (config_.enable_imgui) {
         ctx_.imgui_backend = VulkanBackend::ImGui::CreateImGuiBackend();
@@ -216,10 +227,22 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     ctx_.shader_manager->FlushCache();
 
     // ── Start shader file watching (watches all registered slang directories) ──
+    // Directories registered after this (e.g. application shaders) are picked up
+    // by RefreshShaderWatcher()/AddShaderDirectory().
     ctx_.shader_watcher = std::make_unique<ShaderSystem::ShaderWatcher>(*ctx_.shader_manager);
     ctx_.shader_watcher->Start();
 
     return true;
+}
+
+void GameEngine::RefreshShaderWatcher() {
+    if (ctx_.shader_watcher) {
+        ctx_.shader_watcher->Refresh();
+    }
+}
+
+bool GameEngine::AddShaderDirectory(const std::string& directory) {
+    return ctx_.shader_watcher ? ctx_.shader_watcher->AddDirectory(directory) : false;
 }
 
 std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(

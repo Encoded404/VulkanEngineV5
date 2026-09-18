@@ -12,6 +12,8 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.PipelinePass;
 
 import VulkanEngine.GpuResources.TransientAllocator;
+import VulkanEngine.PipelineFactory;
+import VulkanEngine.ShaderManager;
 
 export namespace VulkanEngine::RenderPipeline {
 
@@ -27,6 +29,8 @@ struct RenderPipelinePassDesc {
     std::vector<ReadResourceDesc> reads{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::vector<VulkanEngine::RenderGraph::ResourceHandle> writes{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    VulkanEngine::PipelinePass::PassPipelineRequest pipeline_request{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> execute{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
@@ -39,8 +43,14 @@ public:
     RenderPipeline();
     ~RenderPipeline() override;
 
-    void Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap);
+    void Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
+                    ShaderSystem::ShaderManager* shader_manager = nullptr,
+                    ShaderSystem::PipelineFactory* pipeline_factory = nullptr);
     void Shutdown();
+
+    // Engine-standard descriptor set layouts (sets 0-4) used to build pass
+    // pipeline layouts. Must be set before the first Compile().
+    void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
 
     // ── IResourceRegistry overrides ──
     VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer() override;
@@ -90,12 +100,23 @@ public:
     [[nodiscard]] bool IsCompiled() const { return compiled_; }
     [[nodiscard]] const VulkanEngine::RenderGraph::CompiledRenderGraph& GetCompiledGraph() const { return compiled_graph_; }
 
+    // Engine-owned pipeline declaration for a pass (nullptr when none declared).
+    [[nodiscard]] const VulkanEngine::PipelinePass::PassPipelineRequest* GetPassPipelineRequest(
+        VulkanEngine::RenderGraph::PassHandle handle) const;
+    [[nodiscard]] vk::PipelineLayout GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle handle) const;
+    [[nodiscard]] vk::PipelineLayout GetPassPipelineLayoutByName(std::string_view name) const;
+
 private:
     void SyncTransients();
+    void BuildPassPipelines();
+    void PollPassPipelines(std::uint32_t fif_slot);
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
                           std::uint32_t image_index, std::uint32_t fif_slot);
 
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
+    ShaderSystem::ShaderManager* shader_manager_ = nullptr;
+    ShaderSystem::PipelineFactory* pipeline_factory_ = nullptr;
+    std::array<vk::DescriptorSetLayout, 5> engine_set_layouts_{};
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
 
@@ -129,6 +150,27 @@ private:
     // Custom pass storage and built-in handles
     std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};
     std::array<VulkanEngine::RenderGraph::PassHandle, 6> builtin_handles_{};
+
+    // Engine-owned pass pipelines: one retire ring per pass that declared a
+    // pipeline request. The engine builds the VkPipeline from the request (and
+    // hot-reloads it); the pass never owns a pipeline.
+    struct PassPipelineState {
+        std::string name{};
+        VulkanEngine::PipelinePass::PassPipelineRequest request{};
+        std::vector<VulkanEngine::Render::DescriptorDecl> bindings{};
+        ShaderSystem::PipelineSlot slot{};
+        bool built = false;
+        // Descriptor set layouts must outlive the pipeline layout that references
+        // them, so the state owns both.
+        std::vector<vk::raii::DescriptorSetLayout> app_set_layouts{};
+        std::unique_ptr<vk::raii::PipelineLayout> layout{};
+        // Stable storage for pointer-bearing desc fields (hot reload reuses it).
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        ShaderSystem::GraphicsPipelineDesc graphics_desc{};
+        ShaderSystem::ComputePipelineDesc compute_desc{};
+    };
+    std::unordered_map<std::uint32_t, PassPipelineState> pass_pipelines_{};
+    std::unordered_map<std::string, std::uint32_t> pass_pipeline_by_name_{};
 
     // Per-frame name -> resolved-handle table handed to passes via FrameContext.
     VulkanEngine::PipelinePass::ResourceLookupTable frame_lookup_{};

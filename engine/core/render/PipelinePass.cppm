@@ -14,6 +14,7 @@ export import VulkanEngine.RenderGraph;
 export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
+export import VulkanEngine.DescriptorDecl;
 
 export namespace VulkanEngine::PipelinePass {
 
@@ -109,6 +110,94 @@ enum class PushConstantError : std::uint8_t {
     NotDeclared,
     SizeMismatch,
     NoPipelineLayout,
+};
+
+// ── Binding helpers for PassResource ──
+enum class BindingError : std::uint8_t {
+    NotResolved,
+    NotABuffer,
+    NotAnImage,
+    OffsetMisaligned,
+    NoImageView,
+};
+
+// Alignment limits the caller reads from the device (pure inputs here so the
+// rules stay unit-testable without a device).
+struct DescriptorAlignment {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint64_t min_storage_buffer_offset_alignment = 1;
+    std::uint64_t min_uniform_buffer_offset_alignment = 1;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+[[nodiscard]] inline std::expected<vk::DescriptorBufferInfo, BindingError> MakeBufferBinding(
+    const PassResource& resource, std::uint64_t min_offset_alignment) {
+    if (!resource.IsValid()) {
+        return std::unexpected(BindingError::NotResolved);
+    }
+    if (!resource.IsBuffer()) {
+        return std::unexpected(BindingError::NotABuffer);
+    }
+    if (min_offset_alignment > 1 && (resource.GetOffset() % min_offset_alignment) != 0) {
+        return std::unexpected(BindingError::OffsetMisaligned);
+    }
+    vk::DescriptorBufferInfo info{};
+    info.buffer = resource.AsBuffer();
+    info.offset = resource.GetOffset();
+    info.range = resource.GetSize();
+    return info;
+}
+
+[[nodiscard]] inline std::expected<vk::DescriptorBufferInfo, BindingError> MakeStorageBufferBinding(
+    const PassResource& resource, const DescriptorAlignment& alignment) {
+    return MakeBufferBinding(resource, alignment.min_storage_buffer_offset_alignment);
+}
+
+[[nodiscard]] inline std::expected<vk::DescriptorBufferInfo, BindingError> MakeUniformBufferBinding(
+    const PassResource& resource, const DescriptorAlignment& alignment) {
+    return MakeBufferBinding(resource, alignment.min_uniform_buffer_offset_alignment);
+}
+
+// Sampled/combined image bindings require a view; a resource resolved to an
+// image without a view is an error rather than a null descriptor.
+[[nodiscard]] inline std::expected<vk::DescriptorImageInfo, BindingError> MakeSampledImageBinding(
+    const PassResource& resource, vk::Sampler sampler = nullptr) {
+    if (!resource.IsValid()) {
+        return std::unexpected(BindingError::NotResolved);
+    }
+    if (!resource.IsImage()) {
+        return std::unexpected(BindingError::NotAnImage);
+    }
+    if (resource.AsImageView() == nullptr) {
+        return std::unexpected(BindingError::NoImageView);
+    }
+    vk::DescriptorImageInfo info{};
+    info.sampler = sampler;
+    info.imageView = resource.AsImageView();
+    info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    return info;
+}
+
+// ── Pass pipeline request — declarative, engine-owned pipeline creation ──
+enum class PassPipelineKind : std::uint8_t {
+    None,
+    Graphics,
+    Compute,
+};
+
+struct PassPipelineRequest {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    PassPipelineKind kind = PassPipelineKind::None;
+    std::uint64_t vertex_shader = 0;
+    std::uint64_t fragment_shader = 0;
+    std::uint64_t compute_shader = 0;
+    std::vector<vk::Format> color_formats{};
+    vk::Format depth_format = vk::Format::eUndefined;
+    std::uint32_t push_constant_size = 0;
+    vk::ShaderStageFlags push_constant_stages{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+    [[nodiscard]] bool IsDeclared() const { return kind != PassPipelineKind::None; }
 };
 
 
@@ -287,6 +376,19 @@ public:
         push_constant_stages_ = stages;
     }
 
+    // ── Engine-owned pipeline declaration ──
+    // The engine creates/owns the pipeline layout and pipeline, and hot-reloads
+    // it; the pass never touches VkPipeline directly.
+    void RequestGraphicsPipeline(std::uint64_t vertex_shader, std::uint64_t fragment_shader,
+                                 std::vector<vk::Format> color_formats = {},
+                                 vk::Format depth_format = vk::Format::eUndefined);
+    void RequestComputePipeline(std::uint64_t compute_shader);
+    [[nodiscard]] const PassPipelineRequest& GetPipelineRequest() const { return pipeline_request_; }
+
+    // ── Descriptor declaration (app sets >= 5) ──
+    void DeclareBindings(std::vector<VulkanEngine::Render::DescriptorDecl> bindings);
+    [[nodiscard]] const std::vector<VulkanEngine::Render::DescriptorDecl>& GetDeclaredBindings() const { return declared_bindings_; }
+
     // ── Render extent query ──
     [[nodiscard]] std::uint32_t GetRenderWidth() const;
     [[nodiscard]] std::uint32_t GetRenderHeight() const;
@@ -333,6 +435,10 @@ private:
     // Push constant declaration
     std::uint32_t push_constant_size_ = 0;
     vk::ShaderStageFlags push_constant_stages_{};
+
+    // Engine-owned pipeline + app descriptor declaration
+    PassPipelineRequest pipeline_request_{};
+    std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings_{};
 
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;

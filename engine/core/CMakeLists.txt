@@ -252,6 +252,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             ui/ImGuiSystem.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
+            render/DescriptorDecl.cppm
             gpu/GpuResources.cppm
             gpu/Buffer.cppm
             gpu/BlockArray.cppm

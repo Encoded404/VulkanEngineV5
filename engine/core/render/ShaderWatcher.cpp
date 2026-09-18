@@ -62,18 +62,59 @@ void ShaderWatcher::Start() {
     impl_->listener = std::make_unique<WatcherListener>(*this);
     impl_->watcher = std::make_unique<efsw::FileWatcher>(); // native backend (inotify on Linux)
 
-    for (const auto& dir : shaders_.GetSlangDirectories()) {
-        const auto watch_id = impl_->watcher->addWatch(dir, impl_->listener.get(), /*recursive=*/false);
-        if (watch_id < 0) {
-            LOGIFACE_LOG(warn, "ShaderWatcher: failed to watch " + dir);
-        } else {
-            LOGIFACE_LOG(info, "ShaderWatcher: watching " + dir);
-        }
+    // Re-watch every directory remembered from before Start()/a previous run,
+    // then pick up everything the shader manager currently knows about.
+    std::vector<std::string> known;
+    {
+        std::scoped_lock lock(mutex_);
+        known.assign(registered_dirs_.begin(), registered_dirs_.end());
+        registered_dirs_.clear();
     }
+    for (const auto& dir : known) {
+        (void)AddDirectory(dir);
+    }
+    Refresh();
+
     impl_->watcher->watch();
 
     stop_.store(false, std::memory_order_release);
     debounce_thread_ = std::thread([this] { DebounceLoop(); });
+}
+
+bool ShaderWatcher::AddDirectory(const std::string& directory) {
+    if (directory.empty()) {
+        return false;
+    }
+
+    std::scoped_lock lock(mutex_);
+    if (registered_dirs_.contains(directory)) {
+        return true;
+    }
+    if (!impl_ || !impl_->watcher) {
+        // Not started yet: remember it so Start() watches it.
+        registered_dirs_.insert(directory);
+        return true;
+    }
+
+    const auto watch_id = impl_->watcher->addWatch(directory, impl_->listener.get(), /*recursive=*/false);
+    if (watch_id < 0) {
+        LOGIFACE_LOG(warn, "ShaderWatcher: failed to watch " + directory);
+        return false;
+    }
+    registered_dirs_.insert(directory);
+    LOGIFACE_LOG(info, "ShaderWatcher: watching " + directory);
+    return true;
+}
+
+void ShaderWatcher::Refresh() {
+    for (const auto& dir : shaders_.GetSlangDirectories()) {
+        (void)AddDirectory(dir);
+    }
+}
+
+std::size_t ShaderWatcher::GetRegisteredDirectoryCount() const {
+    std::scoped_lock lock(mutex_);
+    return registered_dirs_.size();
 }
 
 void ShaderWatcher::Stop() {

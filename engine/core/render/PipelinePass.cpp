@@ -46,6 +46,11 @@ VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::CreateTransientImage
     return registry_->CreateTransientImage(desc);
 }
 
+VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::CreateTransientBuffer(
+    const TransientBufferDesc& desc) {
+    return registry_->CreateTransientBuffer(desc);
+}
+
 void PassSetupContext::AddRead(VulkanEngine::RenderGraph::ResourceHandle res,
                                 VulkanEngine::RenderGraph::PipelineStageIntent stage,
                                 VulkanEngine::RenderGraph::AccessIntent access) {

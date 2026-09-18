@@ -402,6 +402,8 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
     result.has_initial_state.resize(resources_.size(), false);
     result.resource_images.resize(resources_.size());
     result.resource_buffers.resize(resources_.size());
+    result.resource_buffer_offsets.resize(resources_.size(), 0);
+    result.resource_buffer_sizes.resize(resources_.size(), vk::WholeSize);
     result.resource_formats.resize(resources_.size(), vk::Format::eUndefined);
 
     for (std::uint32_t resource_index = 0; resource_index < resources_.size(); ++resource_index) {

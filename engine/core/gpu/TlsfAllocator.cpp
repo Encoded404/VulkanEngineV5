@@ -23,6 +23,10 @@ bool TlsfAllocator::Initialize(uint64_t total_size) {
 
     phys_head_ = UINT32_MAX;
 
+    live_extents_.clear();
+    debug_overlap_ = false;
+    debug_double_free_ = false;
+
     const std::uint32_t node_idx = AllocNode();
     if (node_idx == UINT32_MAX) return false;
 
@@ -197,26 +201,59 @@ void TlsfAllocator::FreeNode(std::uint32_t index) {
 uint64_t TlsfAllocator::Allocate(uint64_t size, std::uint64_t alignment) {
     if (size == 0 || total_size_ == 0 || alignment == 0) return UINT64_MAX;
 
-    const std::uint64_t search_size = size + (alignment > 1 ? alignment - 1 : 0);
+    // Does the free node at `index` have room for `size` once aligned, and if so
+    // at what absolute offset?
+    const auto fits = [&](std::uint32_t index, std::uint64_t& aligned_out) {
+        const TlsfFreeNode& candidate = nodes_[index];
+        std::uint64_t candidate_aligned = candidate.offset;
+        const std::uint64_t mod = candidate_aligned % alignment;
+        if (mod != 0) candidate_aligned += alignment - mod;
+        if (candidate_aligned + size > candidate.offset + candidate.size) {
+            return false;
+        }
+        aligned_out = candidate_aligned;
+        return true;
+    };
 
     std::uint32_t fl = 0;
     std::uint32_t sl = 0;
-    Mapping(search_size, fl, sl);
+    Mapping(size + (alignment > 1 ? alignment - 1 : 0), fl, sl);
 
-    const std::uint32_t node_idx = FindSuitableBlock(fl, sl);
+    std::uint32_t node_idx = FindSuitableBlock(fl, sl);
+    std::uint64_t aligned = 0;
+
+    // The bitmap search uses the worst-case alignment slack, so it can land on a
+    // block that turns out not to fit once alignment is applied. Scan every free
+    // block (best fit) instead of failing the allocation.
+    if (node_idx == UINT32_MAX || !fits(node_idx, aligned)) {
+        node_idx = UINT32_MAX;
+        std::uint64_t best_size = UINT64_MAX;
+        for (std::uint32_t index = phys_head_; index != UINT32_MAX; index = nodes_[index].next_phys) {
+            std::uint64_t candidate_aligned = 0;
+            if (!fits(index, candidate_aligned)) {
+                continue;
+            }
+            if (nodes_[index].size < best_size) {
+                best_size = nodes_[index].size;
+                aligned = candidate_aligned;
+                node_idx = index;
+            }
+        }
+    }
+
     if (node_idx == UINT32_MAX) return UINT64_MAX;
 
-    const TlsfFreeNode& node = nodes_[node_idx];
+    // Defensive: never hand out a range that overlaps a live allocation.
+    for (const auto& [live_offset, live_size] : live_extents_) {
+        if (aligned < live_offset + live_size && live_offset < aligned + size) {
+            debug_overlap_ = true;
+            return UINT64_MAX;
+        }
+    }
+
+    const TlsfFreeNode node = nodes_[node_idx];
     const std::uint64_t block_start = node.offset;
     const std::uint64_t block_end = node.offset + node.size;
-
-    std::uint64_t aligned = block_start;
-    const std::uint64_t mod = block_start % alignment;
-    if (mod != 0) aligned += alignment - mod;
-
-    if (aligned + size > block_end) {
-        return UINT64_MAX;
-    }
 
     const std::uint64_t padding_before = aligned - block_start;
     const std::uint64_t remainder = block_end - aligned - size;
@@ -243,6 +280,7 @@ uint64_t TlsfAllocator::Allocate(uint64_t size, std::uint64_t alignment) {
         }
     }
 
+    live_extents_[aligned] = size;
     return aligned;
 }
 
@@ -254,6 +292,9 @@ void TlsfAllocator::Reset() {
     sl_bitmaps_.fill(0);
     phys_head_ = UINT32_MAX;
     free_size_ = total_size_;
+    live_extents_.clear();
+    debug_overlap_ = false;
+    debug_double_free_ = false;
 
     const std::uint32_t node_idx = AllocNode();
     if (node_idx != UINT32_MAX) {
@@ -271,35 +312,46 @@ void TlsfAllocator::Reset() {
 bool TlsfAllocator::Free(uint64_t offset, std::uint64_t size) {
     if (offset + size > total_size_ || size == 0) return false;
 
+    const auto live_it = live_extents_.find(offset);
+    if (live_it == live_extents_.end() || live_it->second != size) {
+        // Not a live extent: double free, or a free of something never allocated.
+        debug_double_free_ = true;
+        return false;
+    }
+    live_extents_.erase(live_it);
+
+    // Locate both physical neighbours before unlinking anything; RemoveFromFreeLists
+    // clears next_phys, so reading the walk pointer afterwards would lose the rest.
+    std::uint32_t prev_node = UINT32_MAX;
+    std::uint32_t next_node = UINT32_MAX;
+    for (std::uint32_t current = phys_head_; current != UINT32_MAX; current = nodes_[current].next_phys) {
+        if (nodes_[current].offset + nodes_[current].size == offset) {
+            prev_node = current;
+        }
+        if (offset + size == nodes_[current].offset) {
+            next_node = current;
+        }
+    }
+
     std::uint64_t coalesced_offset = offset;
     std::uint64_t coalesced_size = size;
+    if (prev_node != UINT32_MAX) {
+        coalesced_offset = nodes_[prev_node].offset;
+        coalesced_size += nodes_[prev_node].size;
+    }
+    if (next_node != UINT32_MAX) {
+        coalesced_size += nodes_[next_node].size;
+    }
 
-    std::uint32_t current = phys_head_;
-    while (current != UINT32_MAX) {
-        const TlsfFreeNode& n = nodes_[current];
-
-        if (n.offset + n.size == coalesced_offset) {
-            coalesced_offset = n.offset;
-            coalesced_size += n.size;
-            free_size_ -= n.size;
-            RemoveFromFreeLists(current);
-            const std::uint32_t to_free = current;
-            current = nodes_[current].next_phys;
-            FreeNode(to_free);
-            continue;
-        }
-
-        if (coalesced_offset + coalesced_size == n.offset) {
-            coalesced_size += n.size;
-            free_size_ -= n.size;
-            RemoveFromFreeLists(current);
-            const std::uint32_t to_free = current;
-            current = nodes_[current].next_phys;
-            FreeNode(to_free);
-            continue;
-        }
-
-        current = n.next_phys;
+    if (prev_node != UINT32_MAX) {
+        free_size_ -= nodes_[prev_node].size;
+        RemoveFromFreeLists(prev_node);
+        FreeNode(prev_node);
+    }
+    if (next_node != UINT32_MAX) {
+        free_size_ -= nodes_[next_node].size;
+        RemoveFromFreeLists(next_node);
+        FreeNode(next_node);
     }
 
     const std::uint32_t node_idx = AllocNode();

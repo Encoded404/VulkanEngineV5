@@ -36,6 +36,15 @@ public:
     [[nodiscard]] std::uint64_t GetFreeSize() const { return free_size_; }
     [[nodiscard]] std::uint64_t GetUsedSize() const { return total_size_ - free_size_; }
 
+    // ── Extent tracking / diagnostics ──
+    // Every successful Allocate records its [offset, offset+size) extent and
+    // every Free must match one exactly. This turns double frees and overlapping
+    // allocations into detectable failures instead of silent heap corruption.
+    [[nodiscard]] std::size_t GetLiveAllocationCount() const { return live_extents_.size(); }
+    [[nodiscard]] bool HasDebugOverlap() const { return debug_overlap_; }
+    [[nodiscard]] bool HasDebugDoubleFree() const { return debug_double_free_; }
+    void ClearDebugFlags() { debug_overlap_ = false; debug_double_free_ = false; }
+
 private:
     static constexpr std::uint64_t FL_INDEX_SHIFT = 4ULL;
     static constexpr std::uint64_t SL_INDEX_COUNT = 4ULL;
@@ -74,6 +83,10 @@ private:
     std::array<std::uint32_t, FL_INDEX_COUNT> sl_bitmaps_{};
 
     std::uint32_t phys_head_ = UINT32_MAX;
+
+    std::map<std::uint64_t, std::uint64_t> live_extents_{};
+    bool debug_overlap_ = false;
+    bool debug_double_free_ = false;
 };
 
 } // namespace VulkanEngine::GpuResources

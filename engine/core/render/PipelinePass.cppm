@@ -44,6 +44,18 @@ struct TransientImageDesc {
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout initial_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout final_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Aliasable images are created with VK_IMAGE_CREATE_ALIAS_BIT and must use
+    // an Undefined initial layout (ContentsUndefined contract).
+    bool aliasable = false; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+// ── TransientBufferDesc — description of a transient (pass-owned) buffer ──
+struct TransientBufferDesc {
+    std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::DeviceSize size = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::MemoryPropertyFlags memory_properties = vk::MemoryPropertyFlagBits::eDeviceLocal; // NOLINT(misc-non-private-member-variables-in-classes)
+    bool aliasable = false; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 // ── IResourceRegistry — abstract interface for resource registration ──
@@ -58,6 +70,7 @@ public:
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) = 0;
+    virtual VulkanEngine::RenderGraph::ResourceHandle CreateTransientBuffer(const TransientBufferDesc& desc) = 0;
 };
 
 // ── Forward declarations ──
@@ -137,6 +150,7 @@ public:
     VulkanEngine::RenderGraph::ResourceHandle ImportImage(std::string_view name);
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(std::string_view name);
     VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc);
+    VulkanEngine::RenderGraph::ResourceHandle CreateTransientBuffer(const TransientBufferDesc& desc);
 
     // ── Render graph resource usage declarations ──
     void AddRead(VulkanEngine::RenderGraph::ResourceHandle res,

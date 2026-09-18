@@ -15,17 +15,6 @@ namespace VulkanEngine::RenderPipeline {
 
 namespace {
 
-uint32_t FindMemoryType(vk::raii::PhysicalDevice const& physical_device, std::uint32_t type_filter, vk::MemoryPropertyFlags properties) {
-    const auto mem_properties = physical_device.getMemoryProperties();
-    for (std::uint32_t i = 0; i < mem_properties.memoryTypeCount; ++i) {
-        auto const& raw = static_cast<vk::MemoryType const&>(mem_properties.memoryTypes[i]);
-        if ((type_filter & (1u << i)) && ((raw.propertyFlags & properties) == properties)) {
-            return i;
-        }
-    }
-    throw std::runtime_error("failed to find suitable memory type");
-}
-
 vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
     switch (format) {
         case vk::Format::eD16Unorm:
@@ -63,7 +52,9 @@ void RenderPipeline::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstra
 }
 
 void RenderPipeline::Shutdown() {
-    DeallocateTransients();
+    transient_image_descs_.clear();
+    transient_buffer_descs_.clear();
+    transient_allocator_.Shutdown();
     bootstrap_ = nullptr;
     initialized_ = false;
     compiled_ = false;
@@ -99,10 +90,13 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
     info.sample_count = vk::SampleCountFlagBits::e1;
     info.usage = desc.usage;
     info.tiling = vk::ImageTiling::eOptimal;
+    info.aliasable = desc.aliasable;
 
     graph_builder_.SetTransientImageInfo(handle, info);
 
-    if (desc.initial_layout != vk::ImageLayout::eUndefined) {
+    // ContentsUndefined contract: an aliasable image must start Undefined, so a
+    // requested non-Undefined initial layout is dropped rather than aliased.
+    if (!desc.aliasable && desc.initial_layout != vk::ImageLayout::eUndefined) {
         auto initial_state = VulkanEngine::RenderGraph::ResourceState::ImageState(
             VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
@@ -128,6 +122,24 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
 
     const std::uint32_t res_index = handle.index;
     transient_image_descs_[res_index] = desc;
+
+    return handle;
+}
+
+VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientBuffer(const TransientBufferDesc& desc) {
+    auto handle = graph_builder_.CreateTransientResource(desc.name, VulkanEngine::RenderGraph::ResourceKind::Buffer);
+
+    VulkanEngine::RenderGraph::TransientBufferInfo info{};
+    info.name = desc.name;
+    info.size = desc.size;
+    info.usage = desc.usage;
+    info.memory_properties = desc.memory_properties;
+    info.aliasable = desc.aliasable;
+
+    graph_builder_.SetTransientBufferInfo(handle, info);
+
+    const std::uint32_t res_index = handle.index;
+    transient_buffer_descs_[res_index] = desc;
 
     return handle;
 }
@@ -259,7 +271,7 @@ void RenderPipeline::Compile() {
     compiled_ = compiled_graph_.success;
 
     if (compiled_) {
-        AllocateTransients();
+        SyncTransients();
 
         for (std::size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
             const auto& resource = compiled_graph_.resource_lifetimes[i];
@@ -272,7 +284,8 @@ void RenderPipeline::Compile() {
     }
 }
 
-void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer, std::uint32_t image_index) {
+void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_buffer,
+                             std::uint32_t image_index, std::uint32_t fif_slot) {
     if (!compiled_ || !initialized_) {
         return;
     }
@@ -280,6 +293,8 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
     auto resolved_graph = compiled_graph_;
 
     if (!bootstrap_) return;
+
+    transient_allocator_.CollectGarbage(fif_slot);
 
     resolved_graph.SetImportedResourceState(backbuffer_resource_index_,
         VulkanEngine::RenderGraph::ResourceState::ImageState(
@@ -295,75 +310,105 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
             VulkanEngine::RenderGraph::QueueType::Graphics,
             VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined));
 
-    ResolveResources(resolved_graph, image_index);
+    ResolveResources(resolved_graph, image_index, fif_slot);
 
     VulkanEngine::RenderGraph::ResolvedResourceHandles resolved{};
     resolved.images = resolved_graph.resource_images;
     resolved.buffers = resolved_graph.resource_buffers;
+    resolved.buffer_offsets = resolved_graph.resource_buffer_offsets;
+    resolved.buffer_sizes = resolved_graph.resource_buffer_sizes;
     resolved.formats = resolved_graph.resource_formats;
 
+    // Alias reuse decided by the transient planner becomes explicit ordering
+    // dependencies in the barrier plan.
+    VulkanEngine::RenderGraph::AliasIntervals alias_intervals{};
+    for (const auto& alias : transient_allocator_.GetPlan().aliases) {
+        alias_intervals.dependencies.push_back(VulkanEngine::RenderGraph::PlannedAliasDependency{
+            .aliased_resource = alias.aliased_resource,
+            .after_resource = alias.after_resource,
+            .pass_index = alias.pass_index,
+        });
+    }
+
     const auto plan = VulkanEngine::RenderGraph::PlanBarriers(
-        resolved_graph, resolved, VulkanEngine::RenderGraph::AliasIntervals{});
+        resolved_graph, resolved, alias_intervals);
 
     VulkanBackend::Vulkan::ExecuteRenderGraph(plan, resolved_graph, user_data, command_buffer);
 }
 
-void RenderPipeline::AllocateTransients() {
+void RenderPipeline::SyncTransients() {
     if (!bootstrap_) {
         return;
     }
 
     auto& backend = bootstrap_->GetBackend();
-    const auto& device = backend.GetDevice();
-    const auto& physical_device = backend.GetPhysicalDevice();
+    if (!transient_allocator_.IsInitialized()) {
+        transient_allocator_.Initialize(backend, "render-pipeline-transients");
+    }
 
-    for (const auto& [index, desc] : transient_image_descs_) {
-        if (desc.width == 0 || desc.height == 0 || desc.format == vk::Format::eUndefined) {
+    const std::uint32_t frames_in_flight = std::max<std::uint32_t>(backend.GetFramesInFlight(), 1);
+
+    std::vector<VulkanEngine::GpuResources::TransientAllocator::Desc> descs;
+    descs.reserve(transient_image_descs_.size() + transient_buffer_descs_.size());
+
+    for (const auto& lifetime : compiled_graph_.resource_lifetimes) {
+        if (!lifetime.transient) {
             continue;
         }
+        const std::uint32_t index = lifetime.handle.index;
+        const bool is_buffer =
+            index < compiled_graph_.resource_info.size() &&
+            compiled_graph_.resource_info[index].kind == VulkanEngine::RenderGraph::ResourceKind::Buffer;
 
-        vk::ImageCreateInfo image_info{};
-        image_info.imageType = vk::ImageType::e2D;
-        image_info.format = desc.format;
-        image_info.extent = vk::Extent3D{desc.width, desc.height, 1};
-        image_info.mipLevels = 1;
-        image_info.arrayLayers = 1;
-        image_info.samples = vk::SampleCountFlagBits::e1;
-        image_info.tiling = vk::ImageTiling::eOptimal;
-        image_info.usage = desc.usage;
-        image_info.initialLayout = vk::ImageLayout::eUndefined;
+        VulkanEngine::GpuResources::TransientAllocator::Desc desc{};
+        desc.requirements.name = lifetime.name;
+        desc.requirements.first_pass = lifetime.first_pass;
+        desc.requirements.last_pass = lifetime.last_pass;
 
-        transient_images_.emplace_back(device, image_info);
-        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_images_.back(), "transient-image");
+        if (is_buffer) {
+            const auto it = transient_buffer_descs_.find(index);
+            if (it == transient_buffer_descs_.end() || it->second.size == 0) {
+                continue;
+            }
+            desc.is_image = false;
+            desc.requirements.kind = VulkanEngine::GpuResources::TransientKind::Buffer;
+            desc.requirements.heap_key = 1;
+            desc.requirements.size = it->second.size;
+            desc.requirements.alignment = 256;
+            desc.requirements.aliasable = it->second.aliasable;
+            desc.buffer.usage = it->second.usage;
+            desc.buffer.memory = it->second.memory_properties;
+        } else {
+            const auto it = transient_image_descs_.find(index);
+            if (it == transient_image_descs_.end() || it->second.width == 0 || it->second.height == 0 ||
+                it->second.format == vk::Format::eUndefined) {
+                continue;
+            }
+            desc.is_image = true;
+            desc.requirements.kind = VulkanEngine::GpuResources::TransientKind::Image;
+            desc.requirements.heap_key = 0;
+            // Sized from the real image memory requirements by the allocator.
+            desc.requirements.size = 0;
+            desc.requirements.alignment = 1;
+            desc.requirements.aliasable = it->second.aliasable;
+            desc.image.format = it->second.format;
+            desc.image.width = it->second.width;
+            desc.image.height = it->second.height;
+            desc.image.usage = it->second.usage;
+            desc.image.samples = vk::SampleCountFlagBits::e1;
+            desc.image.aspect = FormatToAspectFlags(it->second.format);
+        }
 
-        const auto mem_requirements = transient_images_.back().getMemoryRequirements();
-        vk::MemoryAllocateInfo alloc_info{};
-        alloc_info.allocationSize = mem_requirements.size;
-        alloc_info.memoryTypeIndex = FindMemoryType(physical_device, mem_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-        transient_memories_.emplace_back(device, alloc_info);
-        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_memories_.back(), "transient-memory");
-        transient_images_.back().bindMemory(transient_memories_.back(), 0);
-
-        vk::ImageViewCreateInfo view_info{};
-        view_info.image = *transient_images_.back();
-        view_info.viewType = vk::ImageViewType::e2D;
-        view_info.format = desc.format;
-        view_info.subresourceRange = {FormatToAspectFlags(desc.format), 0, 1, 0, 1};
-
-        transient_image_views_.emplace_back(device, view_info);
-        VulkanBackend::Vulkan::SetVulkanObjectName(device, transient_image_views_.back(), "transient-image-view");
+        descs.push_back(std::move(desc));
     }
+
+    // A recompile happens at a frame boundary; frame 0 retires against the next
+    // submitted frame, so nothing in flight is freed early.
+    transient_allocator_.Sync(descs, frames_in_flight, 0);
 }
 
-void RenderPipeline::DeallocateTransients() {
-    transient_image_views_.clear();
-    transient_memories_.clear();
-    transient_images_.clear();
-    transient_image_descs_.clear();
-}
-
-void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index) {
+void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
+                                      std::uint32_t image_index, std::uint32_t fif_slot) {
     if (!bootstrap_) {
         return;
     }
@@ -388,15 +433,21 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
                     graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
                 }
             }
-        } else {
-            if (!is_buffer && i < transient_images_.size()) {
-                graph.SetResourceImage(static_cast<std::uint32_t>(i), *transient_images_[i]);
+        } else if (is_buffer) {
+            vk::Buffer buffer{};
+            vk::DeviceSize offset = 0;
+            vk::DeviceSize size = vk::WholeSize;
+            if (transient_allocator_.GetBuffer(static_cast<std::uint32_t>(i), fif_slot, buffer, offset, size)) {
+                graph.SetResourceBuffer(static_cast<std::uint32_t>(i), buffer, offset, size);
             }
-            if (!is_buffer) {
-                auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
-                if (it != transient_image_descs_.end()) {
-                    graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
-                }
+        } else {
+            const vk::Image image = transient_allocator_.GetImage(static_cast<std::uint32_t>(i), fif_slot);
+            if (image) {
+                graph.SetResourceImage(static_cast<std::uint32_t>(i), image);
+            }
+            auto it = transient_image_descs_.find(static_cast<std::uint32_t>(i));
+            if (it != transient_image_descs_.end()) {
+                graph.SetResourceFormat(static_cast<std::uint32_t>(i), it->second.format);
             }
         }
     }
@@ -411,8 +462,9 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
                         attach.image_view = it->second.resolve_image_view(image_index);
                     }
                 } else {
-                    if (attach.resource.index < transient_image_views_.size()) {
-                        attach.image_view = *transient_image_views_[attach.resource.index];
+                    const vk::ImageView view = transient_allocator_.GetImageView(attach.resource.index, fif_slot);
+                    if (view) {
+                        attach.image_view = view;
                     }
                 }
             };
@@ -427,8 +479,9 @@ void RenderPipeline::ResolveResources(VulkanEngine::RenderGraph::CompiledRenderG
 
             std::uint32_t max_width = 0, max_height = 0;
             for (const auto& attach : setup.color_attachments) {
-                if (attach.resource.index < transient_image_descs_.size()) {
-                    const auto& desc = transient_image_descs_[attach.resource.index];
+                auto desc_it = transient_image_descs_.find(attach.resource.index);
+                if (desc_it != transient_image_descs_.end()) {
+                    const auto& desc = desc_it->second;
                     max_width = std::max(max_width, desc.width);
                     max_height = std::max(max_height, desc.height);
                 }

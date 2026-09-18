@@ -161,6 +161,7 @@ struct TransientImageInfo {
 };
 
 struct TransientBufferInfo {
+    std::string name{};
     vk::DeviceSize size = 0;
     vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer;
     vk::MemoryPropertyFlags memory_properties = vk::MemoryPropertyFlagBits::eDeviceLocal;
@@ -256,6 +257,8 @@ struct CompiledRenderGraph {
     mutable std::vector<bool> has_initial_state{};
     std::vector<vk::Image> resource_images{};
     std::vector<vk::Buffer> resource_buffers{};
+    std::vector<vk::DeviceSize> resource_buffer_offsets{};
+    std::vector<vk::DeviceSize> resource_buffer_sizes{};
     std::vector<vk::Format> resource_formats{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
@@ -272,9 +275,16 @@ struct CompiledRenderGraph {
         }
     }
 
-    void SetResourceBuffer(std::uint32_t resource_index, vk::Buffer buffer) {
+    void SetResourceBuffer(std::uint32_t resource_index, vk::Buffer buffer,
+                           vk::DeviceSize offset = 0, vk::DeviceSize size = vk::WholeSize) {
         if (resource_index < resource_buffers.size()) {
             resource_buffers[resource_index] = buffer;
+        }
+        if (resource_index < resource_buffer_offsets.size()) {
+            resource_buffer_offsets[resource_index] = offset;
+        }
+        if (resource_index < resource_buffer_sizes.size()) {
+            resource_buffer_sizes[resource_index] = size;
         }
     }
 
@@ -293,6 +303,10 @@ struct CompiledRenderGraph {
 struct ResolvedResourceHandles {
     std::vector<vk::Image> images{};
     std::vector<vk::Buffer> buffers{};
+    // Sub-allocation window for buffers living inside a heap block; a whole
+    // dedicated buffer leaves these empty (barrier defaults to offset 0/whole).
+    std::vector<vk::DeviceSize> buffer_offsets{};
+    std::vector<vk::DeviceSize> buffer_sizes{};
     std::vector<vk::Format> formats{};
 };
 
@@ -535,6 +549,12 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
                     barrier.dst_stage = transition.dst_stage;
                     barrier.src_access = transition.src_access;
                     barrier.dst_access = transition.dst_access;
+                    if (index < resolved.buffer_offsets.size()) {
+                        barrier.offset = resolved.buffer_offsets[index];
+                    }
+                    if (index < resolved.buffer_sizes.size()) {
+                        barrier.size = resolved.buffer_sizes[index];
+                    }
                     buffer_out.push_back(barrier);
                 }
             }
@@ -543,6 +563,118 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
         emit(pass.pre_pass_transitions, planned.pre_image, planned.pre_buffer);
         emit(pass.post_pass_transitions, planned.post_image, planned.post_buffer);
         plan.passes.push_back(std::move(planned));
+    }
+
+    // Alias ordering: when B reuses A's memory, B's first barrier must also wait
+    // on A's last use. A discard barrier alone (srcStage=eNone) is not enough,
+    // because A's writes may still be in flight.
+    for (const auto& dependency : aliases.dependencies) {
+        if (dependency.pass_index < 0 ||
+            static_cast<std::size_t>(dependency.pass_index) >= plan.passes.size()) {
+            continue;
+        }
+        const std::uint32_t after = dependency.after_resource;
+        const std::uint32_t aliased = dependency.aliased_resource;
+
+        // Only aliasable resources may overlap; ignore a dependency that names
+        // a resource that was not declared aliasable.
+        const auto is_aliasable = [&](std::uint32_t index) {
+            if (index >= graph.resource_info.size()) {
+                return false;
+            }
+            const auto& info = graph.resource_info[index];
+            if (info.kind == ResourceKind::Image) {
+                return info.image_info.has_value() && info.image_info->aliasable;
+            }
+            return info.buffer_info.has_value() && info.buffer_info->aliasable;
+        };
+        if (!is_aliasable(after) || !is_aliasable(aliased)) {
+            continue;
+        }
+
+        vk::PipelineStageFlags2 after_stage{};
+        vk::AccessFlags2 after_access{};
+        vk::PipelineStageFlags2 aliased_stage{};
+        vk::AccessFlags2 aliased_access{};
+        ImageLayoutIntent aliased_layout = ImageLayoutIntent::Undefined;
+        bool aliased_seen = false;
+
+        for (const auto& pass : graph.passes) {
+            for (const auto& transition : pass.pre_pass_transitions) {
+                if (transition.resource_index == after) {
+                    after_stage = transition.dst_stage;
+                    after_access = transition.dst_access;
+                }
+                if (transition.resource_index == aliased && !aliased_seen) {
+                    aliased_stage = transition.dst_stage;
+                    aliased_access = transition.dst_access;
+                    aliased_layout = transition.target_state.layout;
+                    aliased_seen = true;
+                }
+            }
+            for (const auto& transition : pass.post_pass_transitions) {
+                if (transition.resource_index == after) {
+                    after_stage = transition.dst_stage;
+                    after_access = transition.dst_access;
+                }
+            }
+        }
+
+        auto& planned = plan.passes[static_cast<std::size_t>(dependency.pass_index)];
+        if (aliased < graph.resource_info.size() &&
+            graph.resource_info[aliased].kind == ResourceKind::Image) {
+            PlannedImageBarrier* existing = nullptr;
+            for (auto& barrier : planned.pre_image) {
+                if (barrier.resource_index == aliased) {
+                    existing = &barrier;
+                    break;
+                }
+            }
+            if (existing != nullptr) {
+                existing->src_stage |= after_stage;
+                existing->src_access |= after_access;
+                existing->old_layout = vk::ImageLayout::eUndefined;
+            } else {
+                PlannedImageBarrier barrier{};
+                barrier.resource_index = aliased;
+                if (aliased < resolved.images.size()) {
+                    barrier.image = resolved.images[aliased];
+                }
+                barrier.src_stage = after_stage;
+                barrier.src_access = after_access;
+                barrier.dst_stage = aliased_seen ? aliased_stage
+                                                 : vk::PipelineStageFlagBits2::eNone;
+                barrier.dst_access = aliased_access;
+                barrier.old_layout = vk::ImageLayout::eUndefined;
+                barrier.new_layout = IntentToImageLayout(aliased_layout);
+                barrier.range = image_range(aliased);
+                planned.pre_image.push_back(barrier);
+            }
+        } else if (aliased < graph.resource_info.size()) {
+            PlannedBufferBarrier* existing = nullptr;
+            for (auto& barrier : planned.pre_buffer) {
+                if (barrier.resource_index == aliased) {
+                    existing = &barrier;
+                    break;
+                }
+            }
+            if (existing != nullptr) {
+                existing->src_stage |= after_stage;
+                existing->src_access |= after_access;
+            } else {
+                PlannedBufferBarrier barrier{};
+                barrier.resource_index = aliased;
+                if (aliased < resolved.buffers.size()) {
+                    barrier.buffer = resolved.buffers[aliased];
+                }
+                barrier.src_stage = after_stage;
+                barrier.src_access = after_access;
+                barrier.dst_stage = aliased_seen ? aliased_stage
+                                                 : vk::PipelineStageFlagBits2::eNone;
+                barrier.dst_access = aliased_access;
+                planned.pre_buffer.push_back(barrier);
+            }
+        }
     }
 
     return plan;

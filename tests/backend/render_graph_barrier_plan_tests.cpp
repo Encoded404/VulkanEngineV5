@@ -105,6 +105,55 @@ BarrierPlan BuildRepresentativePlan() {
     return PlanBarriers(graph, ResolvedResourceHandles{}, AliasIntervals{});
 }
 
+TEST(RenderGraphBarrierPlanTest, AliasDependencyOrdersNewOwnerAfterPreviousUse) {
+    RenderGraphBuilder builder;
+
+    const auto a = builder.CreateTransientResource("a", ResourceKind::Image);
+    const auto b = builder.CreateTransientResource("b", ResourceKind::Image);
+    const TransientImageInfo aliasable_image{
+        .format = vk::Format::eR8G8B8A8Unorm,
+        .width = 64,
+        .height = 64,
+        .aliasable = true,
+    };
+    builder.SetTransientImageInfo(a, aliasable_image);
+    builder.SetTransientImageInfo(b, aliasable_image);
+
+    const auto pass_a = builder.AddPass("a-write", QueueType::Graphics, true, {});
+    const auto pass_b = builder.AddPass("b-write", QueueType::Graphics, true, {});
+    ASSERT_TRUE(builder.AddWrite(pass_a, a));
+    ASSERT_TRUE(builder.AddWrite(pass_b, b));
+    ASSERT_TRUE(builder.AddDependency(pass_a, pass_b));
+
+    const auto graph = builder.Compile();
+    ASSERT_TRUE(graph.success);
+
+    AliasIntervals aliases{};
+    aliases.dependencies.push_back(PlannedAliasDependency{
+        .aliased_resource = b.index,
+        .after_resource = a.index,
+        .pass_index = 1,
+    });
+
+    const auto plan = PlanBarriers(graph, ResolvedResourceHandles{}, aliases);
+    ASSERT_EQ(plan.passes.size(), 2u);
+
+    bool found = false;
+    for (const auto& barrier : plan.passes[1].pre_image) {
+        if (barrier.resource_index != b.index) {
+            continue;
+        }
+        found = true;
+        // B's first barrier discards the aliased contents and waits on A's last use.
+        EXPECT_EQ(barrier.old_layout, vk::ImageLayout::eUndefined);
+        EXPECT_TRUE((barrier.src_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                    vk::PipelineStageFlags2{});
+        EXPECT_TRUE((barrier.dst_stage & vk::PipelineStageFlagBits2::eComputeShader) !=
+                    vk::PipelineStageFlags2{});
+    }
+    EXPECT_TRUE(found);
+}
+
 }  // namespace
 
 TEST(RenderGraphBarrierPlanTest, DeterministicOrderUsesAscendingSlotTieBreak) {

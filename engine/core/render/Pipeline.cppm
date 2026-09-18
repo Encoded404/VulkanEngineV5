@@ -11,6 +11,8 @@ export import VulkanEngine.RenderGraph;
 export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.PipelinePass;
 
+import VulkanEngine.GpuResources.TransientAllocator;
+
 export namespace VulkanEngine::RenderPipeline {
 
 struct ReadResourceDesc {
@@ -30,6 +32,7 @@ struct RenderPipelinePassDesc {
 
 // TransientImageDesc is now provided by the VulkanEngine.PipelinePass module.
 using VulkanEngine::PipelinePass::TransientImageDesc;
+using VulkanEngine::PipelinePass::TransientBufferDesc;
 
 class RenderPipeline : public VulkanEngine::PipelinePass::IResourceRegistry {
 public:
@@ -45,6 +48,7 @@ public:
     VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) override;
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) override;
     VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) override;
+    VulkanEngine::RenderGraph::ResourceHandle CreateTransientBuffer(const TransientBufferDesc& desc) override;
 
     using ImageResolver = std::function<vk::Image(std::uint32_t image_index)>;
     using ImageViewResolver = std::function<vk::ImageView(std::uint32_t image_index)>;
@@ -80,24 +84,24 @@ public:
     bool SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state);
 
     void Compile();
-    void Execute(const void* user_data, vk::CommandBuffer command_buffer, std::uint32_t image_index);
+    void Execute(const void* user_data, vk::CommandBuffer command_buffer,
+                 std::uint32_t image_index, std::uint32_t fif_slot);
 
     [[nodiscard]] bool IsCompiled() const { return compiled_; }
     [[nodiscard]] const VulkanEngine::RenderGraph::CompiledRenderGraph& GetCompiledGraph() const { return compiled_graph_; }
 
 private:
-    void AllocateTransients();
-    void DeallocateTransients();
-    void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph, std::uint32_t image_index);
+    void SyncTransients();
+    void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
+                          std::uint32_t image_index, std::uint32_t fif_slot);
 
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     VulkanEngine::RenderGraph::RenderGraphBuilder graph_builder_{};
     VulkanEngine::RenderGraph::CompiledRenderGraph compiled_graph_{};
 
     std::unordered_map<std::uint32_t, TransientImageDesc> transient_image_descs_{};
-    std::vector<vk::raii::Image> transient_images_{};
-    std::vector<vk::raii::DeviceMemory> transient_memories_{};
-    std::vector<vk::raii::ImageView> transient_image_views_{};
+    std::unordered_map<std::uint32_t, TransientBufferDesc> transient_buffer_descs_{};
+    VulkanEngine::GpuResources::TransientAllocator transient_allocator_{};
 
     struct ExternalResourceResolver {
         ImageResolver resolve_image;

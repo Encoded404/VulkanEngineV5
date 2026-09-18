@@ -515,7 +515,7 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 #endif
 
         // Phase 2: Render graph executes all GPU passes in dependency order
-        pipeline_->Execute(&ctx, cmd, image_index);
+        pipeline_->Execute(&ctx, cmd, image_index, frame_idx);
     }
 
     if (gpu_stats_pool_) {

@@ -1,5 +1,6 @@
 add_executable(gpu_tests
   offscreen_hash_tests.cpp
+  transient_allocator_gpu_tests.cpp
 )
 target_link_libraries(gpu_tests PRIVATE
   ${ENGINE_TARGET}

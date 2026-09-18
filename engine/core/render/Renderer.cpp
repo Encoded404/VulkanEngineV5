@@ -86,6 +86,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     std::uint32_t init_height = 0;
     (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
     pipeline_->SetRenderExtent(init_width, init_height);
+    pipeline_->SetFramesInFlight(bootstrap.GetSnapshot().frames_in_flight);
 
     // Register every built-in through the same engine-managed path as app
     // passes: the pipeline constructs the PassSetupContext and calls Setup().
@@ -176,12 +177,27 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         raw_device.resetQueryPool(*gpu_stats_pool_, 0, 1);
     }
 
+    // Engine-owned sampler for app-pass sampled/combined-image bindings.
+    {
+        auto& device = bootstrap.GetBackend().GetDevice();
+        vk::SamplerCreateInfo sampler_info{};
+        sampler_info.magFilter = vk::Filter::eLinear;
+        sampler_info.minFilter = vk::Filter::eLinear;
+        sampler_info.mipmapMode = vk::SamplerMipmapMode::eLinear;
+        sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.maxLod = vk::LodClampNone;
+        default_sampler_ = std::make_unique<vk::raii::Sampler>(device, sampler_info);
+    }
+
     LOGIFACE_LOG(info, "Renderer initialized with full render-graph pipeline");
     return true;
 }
 
 void Renderer::Shutdown() {
     gpu_stats_pool_.reset();
+    default_sampler_.reset();
     if (pipeline_) {
         pipeline_->Shutdown();
         pipeline_.reset();
@@ -329,6 +345,7 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         frame.bindless = &bindless_mgr;
         frame.registry = &registry;
         frame.imgui = imgui;
+        frame.default_sampler = default_sampler_ ? static_cast<vk::Sampler>(**default_sampler_) : nullptr;
         frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
         frame.entity_count = scene_renderer.GetCurrentEntityCount();
         frame.render_width = width;

@@ -88,6 +88,7 @@ private:
 
     std::uint32_t frame_counter_ = 0;
     std::uint32_t last_swapchain_image_count_ = 0;
+    std::unique_ptr<vk::raii::Sampler> default_sampler_{};
 
 
     static constexpr vk::QueryPipelineStatisticFlags GPU_STATS_FLAGS =

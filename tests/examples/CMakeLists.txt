@@ -4,8 +4,10 @@ add_executable(examples_tests
   account_tests.cpp
   profile_store_tests.cpp
   leaderboard_tests.cpp
+  custom_pass_tests.cpp
 )
 target_link_libraries(examples_tests PRIVATE
+  custom_pass_core
   infinite_runner_core
   infinite_runner_secrets
   infinite_runner_leaderboard

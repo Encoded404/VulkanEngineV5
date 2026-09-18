@@ -197,6 +197,8 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddModelPass(ModelPass mod
         state.name = model.name;
         state.request = model.pipeline_request;
         state.bindings = model.declared_bindings;
+        state.assignments = model.binding_assignments;
+        state.attachments = model.attachments;
         pass_pipeline_by_name_[state.name] = slot;
         pass_pipelines_[slot] = std::move(state);
     }
@@ -267,6 +269,10 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
         if (frame.pipeline_layout == nullptr) {
             frame.pipeline_layout = GetPassPipelineLayoutByName(captured_name);
         }
+        const auto pipeline_it = pass_pipeline_by_name_.find(captured_name);
+        if (pipeline_it != pass_pipeline_by_name_.end()) {
+            RewirePassDescriptors(pipeline_it->second, frame);
+        }
         raw->Execute(frame, cmd);
     };
     model.writes = ctx.GetWriteResources();
@@ -275,6 +281,7 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
     model.pipeline_request.push_constant_size = ctx.GetPushConstantSize();
     model.pipeline_request.push_constant_stages = ctx.GetPushConstantStages();
     model.declared_bindings = ctx.GetDeclaredBindings();
+    model.binding_assignments = ctx.GetBindingAssignments();
     const auto& register_reads = ctx.GetReadResources();
     const auto& register_stages = ctx.GetReadStages();
     const auto& register_accesses = ctx.GetReadAccesses();
@@ -315,6 +322,27 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
     }
     for (const auto write : model.writes) {
         if (auto error = validate_resource(write); error.has_value()) {
+            return std::unexpected(*error);
+        }
+    }
+    // Every descriptor assignment must target a declared app binding and a
+    // valid resource.
+    for (const auto& assignment : model.binding_assignments) {
+        if (assignment.set < VulkanEngine::Render::kFirstAppDescriptorSet) {
+            return std::unexpected(PassError{
+                PassErrorCode::InvalidDeclaration,
+                "descriptor binding targets a reserved engine set", name});
+        }
+        const bool declared = std::ranges::any_of(
+            model.declared_bindings, [&](const VulkanEngine::Render::DescriptorDecl& decl) {
+                return decl.set == assignment.set && decl.binding == assignment.binding;
+            });
+        if (!declared) {
+            return std::unexpected(PassError{
+                PassErrorCode::InvalidDeclaration,
+                "BindResource references an undeclared descriptor binding", name});
+        }
+        if (auto error = validate_resource(assignment.resource); error.has_value()) {
             return std::unexpected(*error);
         }
     }
@@ -371,6 +399,10 @@ bool RenderPipeline::SetPassEnabled(VulkanEngine::RenderGraph::PassHandle handle
 
 void RenderPipeline::RequestRebuild() {
     dirty_ = true;
+}
+
+void RenderPipeline::SetFramesInFlight(std::uint32_t frames_in_flight) {
+    frames_in_flight_ = std::max(1u, frames_in_flight);
 }
 
 void RenderPipeline::SetRenderExtent(std::uint32_t width, std::uint32_t height) {
@@ -484,6 +516,11 @@ void RenderPipeline::RebuildFromModel() {
 
     compiled_graph_ = graph_builder_.Compile();
     compiled_ = compiled_graph_.success;
+    if (!compiled_) {
+        for (const auto& diagnostic : compiled_graph_.diagnostics) {
+            LOGIFACE_LOG(error, "RenderPipeline: graph compile: " + diagnostic.message);
+        }
+    }
 
     if (compiled_) {
         SyncTransients();
@@ -616,6 +653,7 @@ void RenderPipeline::BuildPassPipelines() {
             layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
             layout_info.pBindings = bindings.data();
             state.app_set_layouts.emplace_back(device, layout_info);
+            state.app_set_numbers.push_back(group.set);
         }
 
         std::vector<vk::DescriptorSetLayout> set_layouts(engine_set_layouts_.begin(),
@@ -640,6 +678,73 @@ void RenderPipeline::BuildPassPipelines() {
         if (static_cast<vk::PipelineLayout>(**state.layout) == nullptr) {
             LOGIFACE_LOG(error, "RenderPipeline: failed to create layout for pass '" + state.name + "'");
             continue;
+        }
+
+        // One descriptor set per declared app set per frames-in-flight slot. A
+        // frame rewrites only its own slot's sets before recording, so a set is
+        // never updated while an in-flight frame references it.
+        if (!state.app_set_layouts.empty()) {
+            const std::uint32_t fif = frames_in_flight_;
+            const std::uint32_t group_count = static_cast<std::uint32_t>(state.app_set_layouts.size());
+
+            std::map<std::uint32_t, std::uint32_t> size_by_type;
+            for (const auto& decl : state.bindings) {
+                size_by_type[static_cast<std::uint32_t>(decl.descriptor_type)] += decl.count * fif;
+            }
+            std::vector<vk::DescriptorPoolSize> pool_sizes;
+            pool_sizes.reserve(size_by_type.size());
+            for (const auto& [type, count] : size_by_type) {
+                pool_sizes.push_back(vk::DescriptorPoolSize{
+                    static_cast<vk::DescriptorType>(type), count});
+            }
+            vk::DescriptorPoolCreateInfo pool_info{};
+            // raii descriptor sets free themselves, which requires the pool flag.
+            pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+            pool_info.maxSets = fif * group_count;
+            pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+            pool_info.pPoolSizes = pool_sizes.data();
+            state.app_pool = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
+
+            state.app_sets.resize(fif);
+            state.app_set_handles.resize(fif);
+            state.last_written.resize(fif);
+            for (std::uint32_t slot = 0; slot < fif; ++slot) {
+                std::vector<vk::DescriptorSetLayout> app_layouts;
+                app_layouts.reserve(state.app_set_layouts.size());
+                for (const auto& app_layout : state.app_set_layouts) {
+                    app_layouts.push_back(*app_layout);
+                }
+                vk::DescriptorSetAllocateInfo allocate_info{};
+                allocate_info.descriptorPool = *state.app_pool;
+                allocate_info.descriptorSetCount = static_cast<std::uint32_t>(app_layouts.size());
+                allocate_info.pSetLayouts = app_layouts.data();
+                state.app_sets[slot] = device.allocateDescriptorSets(allocate_info);
+                state.app_set_handles[slot].clear();
+                state.app_set_handles[slot].reserve(state.app_sets[slot].size());
+                for (const auto& set : state.app_sets[slot]) {
+                    state.app_set_handles[slot].push_back(*set);
+                }
+                state.last_written[slot].assign(state.assignments.size(),
+                                                PassPipelineState::DescriptorBindingState{});
+            }
+        }
+
+        // Infer attachment formats the pass did not specify (a graphics pass
+        // rarely knows the swapchain/transient formats at Setup time).
+        if (state.attachments.has_value()) {
+            if (state.request.color_formats.empty()) {
+                for (const auto& color : state.attachments->color_attachments) {
+                    const vk::Format format = ResolveResourceFormat(color.resource);
+                    if (format != vk::Format::eUndefined) {
+                        state.request.color_formats.push_back(format);
+                    }
+                }
+            }
+            if (state.request.depth_format == vk::Format::eUndefined &&
+                state.attachments->depth_attachment.has_value()) {
+                state.request.depth_format =
+                    ResolveResourceFormat(state.attachments->depth_attachment->resource);
+            }
         }
 
         if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
@@ -688,6 +793,136 @@ void RenderPipeline::BuildPassPipelines() {
                                         state.name + "': " + product.error().message);
             }
         }
+    }
+}
+
+vk::Format RenderPipeline::ResolveResourceFormat(
+    VulkanEngine::RenderGraph::ResourceHandle resource) const {
+    const std::uint32_t index = resource.index;
+    if (const auto transient = transient_image_descs_.find(index);
+        transient != transient_image_descs_.end()) {
+        return transient->second.format;
+    }
+    const auto name_it = resource_names_.find(index);
+    if (name_it != resource_names_.end()) {
+        const auto resolver = resource_resolvers_.find(name_it->second);
+        if (resolver != resource_resolvers_.end()) {
+            return resolver->second.format;
+        }
+    }
+    return vk::Format::eUndefined;
+}
+
+void RenderPipeline::RewirePassDescriptors(std::uint32_t slot,
+                                           VulkanEngine::PipelinePass::FrameContext& frame) {
+    const auto pipeline_it = pass_pipelines_.find(slot);
+    if (pipeline_it == pass_pipelines_.end()) {
+        return;
+    }
+    auto& state = pipeline_it->second;
+    frame.pass_pipeline = state.slot.Get();
+    frame.first_app_descriptor_set = VulkanEngine::Render::kFirstAppDescriptorSet;
+    if (state.app_sets.empty() || bootstrap_ == nullptr || frame.resource_lookup == nullptr) {
+        return;
+    }
+
+    const std::uint32_t fif = frames_in_flight_ == 0 ? 0 : frame.ring_index % frames_in_flight_;
+    if (fif >= state.app_set_handles.size()) {
+        return;
+    }
+    frame.app_descriptor_sets = state.app_set_handles[fif];
+
+    auto& device = bootstrap_->GetBackend().GetDevice();
+    std::vector<vk::WriteDescriptorSet> writes;
+    std::vector<vk::DescriptorImageInfo> image_infos(state.assignments.size());
+    std::vector<vk::DescriptorBufferInfo> buffer_infos(state.assignments.size());
+    auto& last_written = state.last_written[fif];
+
+    for (std::size_t i = 0; i < state.assignments.size(); ++i) {
+        const auto& assignment = state.assignments[i];
+        const VulkanEngine::Render::DescriptorDecl* decl = nullptr;
+        for (const auto& candidate : state.bindings) {
+            if (candidate.set == assignment.set && candidate.binding == assignment.binding) {
+                decl = &candidate;
+                break;
+            }
+        }
+        if (decl == nullptr) {
+            continue;
+        }
+        const auto set_it = std::ranges::find(state.app_set_numbers, assignment.set);
+        if (set_it == state.app_set_numbers.end()) {
+            continue;
+        }
+        const auto set_index = static_cast<std::size_t>(
+            std::distance(state.app_set_numbers.begin(), set_it));
+        if (set_index >= state.app_set_handles[fif].size()) {
+            continue;
+        }
+        const auto name_it = resource_names_.find(assignment.resource.index);
+        if (name_it == resource_names_.end()) {
+            continue;
+        }
+        const auto resolved = frame.resource_lookup->Find(name_it->second);
+        if (!resolved.has_value()) {
+            continue;
+        }
+        const auto& resource = *resolved;
+
+        PassPipelineState::DescriptorBindingState key{};
+        vk::WriteDescriptorSet write{};
+        write.dstSet = state.app_set_handles[fif][set_index];
+        write.dstBinding = assignment.binding;
+        write.descriptorCount = 1;
+        write.descriptorType = decl->descriptor_type;
+
+        using vk::DescriptorType;
+        switch (decl->descriptor_type) {
+            case DescriptorType::eCombinedImageSampler:
+            case DescriptorType::eSampledImage: {
+                key.view = resource.AsImageView();
+                key.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                key.sampler = decl->descriptor_type == DescriptorType::eCombinedImageSampler
+                                  ? frame.default_sampler
+                                  : nullptr;
+                image_infos[i] = vk::DescriptorImageInfo{key.sampler, key.view, key.layout};
+                write.pImageInfo = &image_infos[i];
+                break;
+            }
+            case DescriptorType::eStorageImage: {
+                key.view = resource.AsImageView();
+                key.layout = vk::ImageLayout::eGeneral;
+                image_infos[i] = vk::DescriptorImageInfo{nullptr, key.view, key.layout};
+                write.pImageInfo = &image_infos[i];
+                break;
+            }
+            case DescriptorType::eStorageBuffer:
+            case DescriptorType::eUniformBuffer: {
+                key.buffer = resource.AsBuffer();
+                key.offset = resource.GetOffset();
+                key.size = resource.GetSize();
+                buffer_infos[i] = vk::DescriptorBufferInfo{key.buffer, key.offset, key.size};
+                write.pBufferInfo = &buffer_infos[i];
+                break;
+            }
+            default:
+                continue;
+        }
+
+        key.valid = true;
+        auto& last = last_written[i];
+        const bool changed =
+            !last.valid || last.view != key.view || last.buffer != key.buffer ||
+            last.sampler != key.sampler || last.offset != key.offset ||
+            last.size != key.size || last.layout != key.layout;
+        if (changed) {
+            writes.push_back(write);
+            last = key;
+        }
+    }
+
+    if (!writes.empty()) {
+        device.updateDescriptorSets(writes, {});
     }
 }
 
@@ -921,14 +1156,23 @@ void RenderPipeline::SyncTransients() {
 
     const std::uint32_t frames_in_flight = std::max<std::uint32_t>(backend.GetFramesInFlight(), 1);
 
-    std::vector<VulkanEngine::GpuResources::TransientAllocator::Desc> descs;
-    descs.reserve(transient_image_descs_.size() + transient_buffer_descs_.size());
+    // One desc per graph resource index: the allocator keys lookups by
+    // resource_index, so the vector must be dense (inactive placeholders for
+    // imported/non-transient resources) rather than a filtered list.
+    const std::size_t resource_count = compiled_graph_.resource_info.size();
+    std::vector<VulkanEngine::GpuResources::TransientAllocator::Desc> descs(resource_count);
+    for (auto& slot : descs) {
+        slot.requirements.active = false;
+    }
 
     for (const auto& lifetime : compiled_graph_.resource_lifetimes) {
         if (!lifetime.transient) {
             continue;
         }
         const std::uint32_t index = lifetime.handle.index;
+        if (index >= descs.size()) {
+            continue;
+        }
         const bool is_buffer =
             index < compiled_graph_.resource_info.size() &&
             compiled_graph_.resource_info[index].kind == VulkanEngine::RenderGraph::ResourceKind::Buffer;
@@ -977,7 +1221,8 @@ void RenderPipeline::SyncTransients() {
             desc.image.aspect = FormatToAspectFlags(it->second.format);
         }
 
-        descs.push_back(std::move(desc));
+        desc.requirements.active = true;
+        descs[index] = std::move(desc);
     }
 
     // A recompile happens at a frame boundary; frame 0 retires against the next

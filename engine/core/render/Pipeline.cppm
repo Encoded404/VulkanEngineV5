@@ -99,6 +99,9 @@ public:
     // a frame boundary (top of Renderer::RenderFrame).
     void ApplyChanges();
     void SetRenderExtent(std::uint32_t width, std::uint32_t height);
+    // Number of frames-in-flight slots app-pass descriptor sets are allocated
+    // for. Must be set before the first ApplyChanges/Compile.
+    void SetFramesInFlight(std::uint32_t frames_in_flight);
     // Swapchain images were destroyed/recreated (and possibly the image count
     // changed). Clears per-image imported-state tracking and forces the next
     // frame to start every imported image from Undefined.
@@ -154,6 +157,7 @@ private:
         std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{};
         VulkanEngine::PipelinePass::PassPipelineRequest pipeline_request{};
         std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings{};
+        std::vector<VulkanEngine::PipelinePass::BindingAssignment> binding_assignments{};
         std::function<void(const void*, vk::CommandBuffer)> execute{};
         std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass{};
     };
@@ -161,6 +165,8 @@ private:
     void SyncTransients();
     void BuildPassPipelines();
     void PollPassPipelines(std::uint32_t fif_slot);
+    void RewirePassDescriptors(std::uint32_t slot, VulkanEngine::PipelinePass::FrameContext& frame);
+    [[nodiscard]] vk::Format ResolveResourceFormat(VulkanEngine::RenderGraph::ResourceHandle resource) const;
     void RebuildFromModel();
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
                           std::uint32_t image_index, std::uint32_t fif_slot);
@@ -191,6 +197,7 @@ private:
     std::uint32_t revision_ = 0;
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;
+    std::uint32_t frames_in_flight_ = 3;
     std::uint32_t last_fif_slot_ = 0;
     // A render-extent change queues a one-shot OnRenderResize notification for
     // registered passes, drained at the next ApplyChanges().
@@ -245,12 +252,32 @@ private:
         std::string name{};
         VulkanEngine::PipelinePass::PassPipelineRequest request{};
         std::vector<VulkanEngine::Render::DescriptorDecl> bindings{};
+        std::vector<VulkanEngine::PipelinePass::BindingAssignment> assignments{};
+        std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{};
         ShaderSystem::PipelineSlot slot{};
         bool built = false;
         // Descriptor set layouts must outlive the pipeline layout that references
         // them, so the state owns both.
         std::vector<vk::raii::DescriptorSetLayout> app_set_layouts{};
         std::unique_ptr<vk::raii::PipelineLayout> layout{};
+        // One descriptor set per declared app set per frame-in-flight slot. The
+        // engine rewrites the slot's set from the resolved resources before that
+        // frame is recorded, so no update-after-bind binding (and its device
+        // descriptor limits) is required.
+        std::unique_ptr<vk::raii::DescriptorPool> app_pool{};
+        std::vector<std::vector<vk::raii::DescriptorSet>> app_sets{};
+        std::vector<std::vector<vk::DescriptorSet>> app_set_handles{};
+        std::vector<std::uint32_t> app_set_numbers{};
+        struct DescriptorBindingState {
+            vk::ImageView view = nullptr;
+            vk::Buffer buffer = nullptr;
+            vk::Sampler sampler = nullptr;
+            vk::DeviceSize offset = 0;
+            vk::DeviceSize size = 0;
+            vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+            bool valid = false;
+        };
+        std::vector<std::vector<DescriptorBindingState>> last_written{};
         // Stable storage for pointer-bearing desc fields (hot reload reuses it).
         vk::PipelineColorBlendAttachmentState color_blend_attachment{};
         ShaderSystem::GraphicsPipelineDesc graphics_desc{};

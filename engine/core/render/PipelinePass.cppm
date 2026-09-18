@@ -315,6 +315,19 @@ struct FrameContext {
     // Per-frame resource resolution, set by the pipeline before execution.
     const IResourceLookup* resource_lookup = nullptr;
 
+    // App-pass descriptor sets (set index >= first_app_descriptor_set), written
+    // by the engine from the pass's BindResource declarations this frame. Bind
+    // them with `cmd.bindDescriptorSets(..., *pipeline_layout, first_app_descriptor_set,
+    // app_descriptor_sets, {})`.
+    std::span<const vk::DescriptorSet> app_descriptor_sets{};
+    std::uint32_t first_app_descriptor_set =
+        VulkanEngine::Render::kFirstAppDescriptorSet;
+    // Engine-owned sampler for sampled/combined-image bindings.
+    vk::Sampler default_sampler = nullptr;
+    // Engine-owned pipeline for this pass (null when the pass declared none).
+    // Bind it with cmd.bindPipeline().
+    vk::Pipeline pass_pipeline = nullptr;
+
     // Pipeline layout for push constants (set per-pass by PassSetupContext)
     vk::PipelineLayout pipeline_layout = nullptr;
 
@@ -368,6 +381,16 @@ struct RenderFrameData {
 };
 
 // ── PassSetupContext — resource and ordering declarations in Setup() ──
+// A declared descriptor binding is associated with a graph resource so the
+// engine can write the descriptor set from the resource resolved this frame.
+struct BindingAssignment {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t set = 0;
+    std::uint32_t binding = 0;
+    VulkanEngine::RenderGraph::ResourceHandle resource{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
 class PassSetupContext {
 public:
     explicit PassSetupContext(IResourceRegistry& registry,
@@ -421,6 +444,16 @@ public:
     void DeclareBindings(std::vector<VulkanEngine::Render::DescriptorDecl> bindings);
     [[nodiscard]] const std::vector<VulkanEngine::Render::DescriptorDecl>& GetDeclaredBindings() const { return declared_bindings_; }
 
+    // Associate a declared (set, binding) with a graph resource. The engine
+    // allocates the set and rewrites the descriptor from the resource resolved
+    // each frame; the pass only binds the set. The (set, binding) must have been
+    // declared via DeclareBindings().
+    void BindResource(std::uint32_t set, std::uint32_t binding,
+                      VulkanEngine::RenderGraph::ResourceHandle resource);
+    [[nodiscard]] const std::vector<BindingAssignment>& GetBindingAssignments() const {
+        return binding_assignments_;
+    }
+
     // ── Render extent query ──
     [[nodiscard]] std::uint32_t GetRenderWidth() const;
     [[nodiscard]] std::uint32_t GetRenderHeight() const;
@@ -461,6 +494,7 @@ private:
     // Engine-owned pipeline + app descriptor declaration
     PassPipelineRequest pipeline_request_{};
     std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings_{};
+    std::vector<BindingAssignment> binding_assignments_{};
 
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;

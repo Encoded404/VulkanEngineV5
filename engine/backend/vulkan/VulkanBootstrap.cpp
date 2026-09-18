@@ -26,6 +26,7 @@ bool VulkanBootstrap::Initialize(const VulkanBootstrapConfig& config) {
     config_.preferred_swapchain_image_count = std::max(config_.preferred_swapchain_image_count, 2u);
 
     snapshot_ = VulkanBootstrapState{};
+    snapshot_.frames_in_flight = config_.frames_in_flight;
 
     if (!backend_->CreateInstance(config_)) {
         snapshot_.status = backend_->HasUnmetRequirements()

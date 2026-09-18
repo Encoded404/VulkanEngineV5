@@ -56,6 +56,7 @@ struct VulkanBootstrapState {
     bool device_ready = false;
     bool swapchain_ready = false;
     std::uint32_t frame_index = 0;
+    std::uint32_t frames_in_flight = 3;
     std::uint32_t swapchain_image_count = 0;
     std::uint32_t swapchain_width = 0;
     std::uint32_t swapchain_height = 0;

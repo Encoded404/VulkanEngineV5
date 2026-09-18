@@ -101,3 +101,11 @@ link the Slang compiler; shaders are compiled ahead of time in every case.
 See **[docs/cross-compiling-windows.md](docs/cross-compiling-windows.md)** for
 the full guide, details of what differs from the native build, and
 troubleshooting.
+
+## Further documentation
+
+- **[docs/app-render-passes.md](docs/app-render-passes.md)** — registering
+  application render passes (pipelines, descriptors, ordering, resize), with
+  the `examples/custom_pass` walkthrough.
+- [docs/render-graph-parity-checklist.md](docs/render-graph-parity-checklist.md)
+- [docs/descriptor-rewiring-contract.md](docs/descriptor-rewiring-contract.md)

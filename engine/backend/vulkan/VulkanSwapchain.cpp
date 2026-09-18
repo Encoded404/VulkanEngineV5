@@ -71,7 +71,8 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         swap_info.imageColorSpace = surface_format_.colorSpace;
         swap_info.imageExtent = swapchain_extent_;
         swap_info.imageArrayLayers = 1;
-        swap_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+        swap_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment |
+                               vk::ImageUsageFlagBits::eSampled;
         swap_info.imageSharingMode = vk::SharingMode::eExclusive;
         swap_info.preTransform = capabilities.currentTransform;
         swap_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;

@@ -147,6 +147,12 @@ bool TransientAllocator::BuildGeneration(const std::vector<Desc>& descs,
     // its memory requirements; buffers use their declared size directly.
     for (std::uint32_t d = 0; d < descs.size(); ++d) {
         const auto& desc = descs[d];
+        if (!desc.requirements.active) {
+            // Index placeholder: keep positions aligned with graph resource
+            // indices, but allocate nothing.
+            requirements.push_back(desc.requirements);
+            continue;
+        }
         if (!desc.is_image) {
             requirements.push_back(desc.requirements);
             continue;
@@ -212,7 +218,7 @@ bool TransientAllocator::BuildGeneration(const std::vector<Desc>& descs,
     std::vector<std::uint32_t> heap_order;
     std::unordered_map<std::uint32_t, HeapInfo> heap_infos;
     for (std::uint32_t d = 0; d < descs.size(); ++d) {
-        if (dedicated[d]) {
+        if (dedicated[d] || !requirements[d].active) {
             continue;
         }
         const std::uint32_t key = requirements[d].heap_key;

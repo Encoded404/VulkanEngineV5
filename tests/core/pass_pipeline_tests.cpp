@@ -112,4 +112,51 @@ TEST(PassPipelineTest, UndeclaredPassHasNoPipelineRequest) {
     EXPECT_EQ(pipeline.GetPassPipelineRequest(*handle), nullptr);
 }
 
+// A declared binding may be associated with a graph resource; binding an
+// undeclared (set, binding) or a reserved engine set is a structured error.
+TEST(PassPipelineTest, BindResourceValidatesAgainstDeclarations) {
+    class BoundPass final : public IPipelinePass {
+    public:
+        BoundPass(std::string name, std::uint32_t set, std::uint32_t binding, bool declare)
+            : name_(std::move(name)), set_(set), binding_(binding), declare_(declare) {}
+
+        [[nodiscard]] std::string_view GetName() const override { return name_; }
+
+        void Setup(PassSetupContext& ctx) override {
+            const auto target = ctx.CreateTransientBuffer(TransientBufferDesc{
+                .name = "bound-buffer", .size = 256});
+            VulkanEngine::Render::DescriptorDecl binding{};
+            binding.set = set_;
+            binding.binding = binding_;
+            binding.kind = VulkanEngine::Render::DescriptorKind::Shared;
+            binding.descriptor_type = vk::DescriptorType::eStorageBuffer;
+            binding.stage_flags = vk::ShaderStageFlagBits::eCompute;
+            if (declare_) {
+                ctx.DeclareBindings({binding});
+            }
+            ctx.BindResource(set_, binding_, target);
+            ctx.RequestComputePipeline(11);
+        }
+
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+
+    private:
+        std::string name_;
+        std::uint32_t set_;
+        std::uint32_t binding_;
+        bool declare_;
+    };
+
+    VulkanEngine::RenderPipeline::RenderPipeline pipeline;
+    EXPECT_TRUE(pipeline.RegisterPass(std::make_unique<BoundPass>("bound-ok", 5, 0, true)).has_value());
+
+    const auto undeclared = pipeline.RegisterPass(std::make_unique<BoundPass>("bound-undeclared", 5, 3, false));
+    ASSERT_FALSE(undeclared.has_value());
+    EXPECT_EQ(undeclared.error().code, VulkanEngine::RenderPipeline::PassErrorCode::InvalidDeclaration);
+
+    const auto reserved = pipeline.RegisterPass(std::make_unique<BoundPass>("bound-reserved", 0, 0, true));
+    ASSERT_FALSE(reserved.has_value());
+    EXPECT_EQ(reserved.error().code, VulkanEngine::RenderPipeline::PassErrorCode::InvalidDeclaration);
+}
+
 }  // namespace

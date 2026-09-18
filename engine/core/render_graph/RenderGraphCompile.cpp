@@ -98,6 +98,40 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
         }
     };
 
+    // True when `from` can already reach `to` through the edges added so far.
+    const auto reachable = [&](std::uint32_t from, std::uint32_t to) {
+        std::vector<std::uint32_t> stack{from};
+        std::vector<bool> visited(pass_count, false);
+        while (!stack.empty()) {
+            const std::uint32_t current = stack.back();
+            stack.pop_back();
+            if (current == to) {
+                return true;
+            }
+            if (visited[current]) {
+                continue;
+            }
+            visited[current] = true;
+            for (const std::uint32_t next : edges[current]) {
+                stack.push_back(next);
+            }
+        }
+        return false;
+    };
+
+    // Inferred write-after-read / write-after-write edges only fix an order; if
+    // an explicit dependency already establishes the opposite order, adding the
+    // inferred edge would create a spurious cycle. The explicit order wins.
+    const auto add_hazard_order_edge = [&](std::uint32_t from, std::uint32_t to) {
+        if (from == to) {
+            return;
+        }
+        if (reachable(to, from)) {
+            return;
+        }
+        add_edge(from, to);
+    };
+
     for (const auto& [before, after] : explicit_dependencies_) {
         if (!IsValidPassHandle(before) || !IsValidPassHandle(after)) {
             emit_diagnostic(
@@ -138,7 +172,7 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
             auto& tracker = resource_trackers[read.resource.index];
             if (tracker.last_writer >= 0) {
-                add_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
+                add_hazard_order_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
             }
             tracker.readers.insert(pass_index);
         }
@@ -154,10 +188,10 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
 
             auto& tracker = resource_trackers[write.index];
             if (tracker.last_writer >= 0) {
-                add_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
+                add_hazard_order_edge(static_cast<std::uint32_t>(tracker.last_writer), pass_index);
             }
             for (const std::uint32_t reader_index : tracker.readers) {
-                add_edge(reader_index, pass_index);
+                add_hazard_order_edge(reader_index, pass_index);
             }
             tracker.readers.clear();
             tracker.last_writer = static_cast<std::int32_t>(pass_index);
@@ -360,24 +394,23 @@ CompiledRenderGraph RenderGraphBuilder::Compile() const {
             current.has_state = true;
         }
 
-        // End-of-frame final state belongs to the last pass that writes the
-        // resource, evaluated against that pass's state, not the frame-end one.
-        for (const auto& write : pass.writes) {
-            if (!IsValidResourceHandle(write)) {
-                continue;
-            }
-            const auto& resource = resources_[write.index];
+        // End-of-frame final state belongs to the last pass that touches the
+        // resource (read or write), evaluated against that pass's state. A pass
+        // whose last touch is a read (e.g. a capture pass sampling the
+        // backbuffer) must still transition the resource to its final layout.
+        for (std::uint32_t index = 0; index < resources_.size(); ++index) {
+            const auto& resource = resources_[index];
             if (resource.kind != ResourceKind::Image || !resource.has_final_state) {
                 continue;
             }
-            if (last_use[write.index] != static_cast<std::int32_t>(ordered)) {
+            if (last_use[index] != static_cast<std::int32_t>(ordered)) {
                 continue;
             }
 
-            auto& current = resource_states[write.index];
+            auto& current = resource_states[index];
             if (!current.has_state || !StatesEqual(current.state, resource.final_state)) {
                 ResourceTransition transition{};
-                transition.resource_index = write.index;
+                transition.resource_index = index;
                 transition.from_state = current.has_state ? current.state : UndefinedStateFor(resource.kind);
                 transition.from_known = current.has_state;
                 transition.target_state = resource.final_state;

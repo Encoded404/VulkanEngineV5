@@ -32,6 +32,9 @@ struct TransientRequirements {
     // an Undefined initial layout. Only a pair of aliasable resources may share
     // one address range.
     bool aliasable = false;
+    // Inactive entries are index placeholders so that a desc's position matches
+    // its graph resource index; they are never allocated or placed.
+    bool active = true;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
@@ -117,6 +120,9 @@ struct ReusableRange {
 
     std::vector<std::uint32_t> heap_keys{};
     for (const auto& requirement : requirements) {
+        if (!requirement.active) {
+            continue;
+        }
         if (std::ranges::find(heap_keys, requirement.heap_key) == heap_keys.end()) {
             heap_keys.push_back(requirement.heap_key);
         }
@@ -125,7 +131,7 @@ struct ReusableRange {
     for (const std::uint32_t heap_key : heap_keys) {
         std::vector<std::uint32_t> group{};
         for (std::uint32_t index = 0; index < requirements.size(); ++index) {
-            if (requirements[index].heap_key == heap_key) {
+            if (requirements[index].active && requirements[index].heap_key == heap_key) {
                 group.push_back(index);
             }
         }
@@ -227,7 +233,17 @@ struct ReusableRange {
             offsets.emplace_back(index, offset);
         }
 
-        plan.heap_copy_sizes.emplace_back(heap_key, copy_end);
+        // The per-frame stride must itself be aligned to the largest alignment
+        // in the heap: each slot's offset is `slot * stride + base_offset`, and
+        // base_offset is only aligned for its own resource. If the stride were
+        // the unaligned copy_end, slot >= 1 could land an image on an offset
+        // that violates vkBindImageMemory's alignment requirement.
+        std::uint64_t max_alignment = 1;
+        for (const std::uint32_t index : group) {
+            max_alignment = std::max<std::uint64_t>(max_alignment, requirements[index].alignment);
+        }
+        const std::uint64_t stride = AlignUp(copy_end, max_alignment);
+        plan.heap_copy_sizes.emplace_back(heap_key, stride);
 
         for (const auto& [resource_index, base_offset] : offsets) {
             const auto& requirement = requirements[resource_index];
@@ -236,7 +252,7 @@ struct ReusableRange {
                     .resource_index = resource_index,
                     .fif_slot = slot,
                     .heap_key = heap_key,
-                    .offset = static_cast<std::uint64_t>(slot) * copy_end + base_offset,
+                    .offset = static_cast<std::uint64_t>(slot) * stride + base_offset,
                     .size = std::max<std::uint64_t>(requirement.size, 1),
                 });
             }

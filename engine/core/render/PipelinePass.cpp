@@ -49,6 +49,15 @@ void PassSetupContext::DeclareBindings(std::vector<VulkanEngine::Render::Descrip
     }
 }
 
+void PassSetupContext::BindResource(std::uint32_t set, std::uint32_t binding,
+                                    VulkanEngine::RenderGraph::ResourceHandle resource) {
+    binding_assignments_.push_back(BindingAssignment{
+        .set = set,
+        .binding = binding,
+        .resource = resource,
+    });
+}
+
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadDepthBuffer() {
     return registry_->ImportDepthBuffer();
 }

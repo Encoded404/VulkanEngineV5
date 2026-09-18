@@ -31,11 +31,19 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
 
     LOGIFACE_LOG(debug, "maxDescriptorSetUpdateAfterBindSamplers=" + std::to_string(max_samplers));
 
+    // The bindless array lives in a pipeline layout together with app sets, and
+    // the device limits count sampled images across every set in the layout.
+    // Reserve a little headroom so app passes can declare their own
+    // combined-image-sampler bindings without pushing the layout over.
+    constexpr std::uint32_t kAppSampledReserve = 64;
+    const std::uint32_t layout_count =
+        max_samplers > kAppSampledReserve ? max_samplers - kAppSampledReserve : max_samplers;
+
     // Create descriptor set layout with maximum allowed sampler array size
     vk::DescriptorSetLayoutBinding binding{};
     binding.binding = 0;
     binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    binding.descriptorCount = max_samplers;
+    binding.descriptorCount = layout_count;
     binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
     binding.pImmutableSamplers = nullptr;
 
@@ -58,7 +66,7 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     VulkanBackend::Vulkan::SetVulkanObjectName(device, *layout_, "bindless-layout");
 
     // Create descriptor pool — reasonably large, can grow if needed
-    constexpr std::uint32_t MAX_POOL_TEXTURES = 65536;
+    const std::uint32_t MAX_POOL_TEXTURES = std::min<std::uint32_t>(65536u, layout_count);
     vk::DescriptorPoolSize pool_size{};
     pool_size.type = vk::DescriptorType::eCombinedImageSampler;
     pool_size.descriptorCount = MAX_POOL_TEXTURES;
@@ -74,7 +82,7 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     VulkanBackend::Vulkan::SetVulkanObjectName(device, *pool_, "bindless-pool");
 
     // Allocate with variable descriptor count — start with capacity for 1024
-    const std::uint32_t variable_count = 1024;
+    const std::uint32_t variable_count = std::min<std::uint32_t>(1024u, layout_count);
     vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_count_info{};
     variable_count_info.descriptorSetCount = 1;
     variable_count_info.pDescriptorCounts = &variable_count;

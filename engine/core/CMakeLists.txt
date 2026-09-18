@@ -168,6 +168,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/OccluderPrePass.cpp
     render/passes/PreCullPass.cpp
     render/passes/DepthPrePass.cpp
+    render/passes/MainPass.cpp
+    render/passes/ImGuiPass.cpp
     render/passes/ExpandPass.cppm
     render/passes/HiZPass.cppm
     render/passes/OcclusionPass.cppm
@@ -176,6 +178,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/OccluderPrePass.cppm
     render/passes/PreCullPass.cppm
     render/passes/DepthPrePass.cppm
+    render/passes/MainPass.cppm
+    render/passes/ImGuiPass.cppm
     render_graph/RenderGraph.cpp
     render_graph/RenderGraphCompile.cpp
 )
@@ -301,6 +305,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/passes/OcclusionPass.cppm
             render/passes/CollectPass.cppm
             render/passes/DepthPrePass.cppm
+            render/passes/MainPass.cppm
+            render/passes/ImGuiPass.cppm
     )
     if(VKENGINE_PHYSICAL_CAMERA)
         target_sources(${ENGINE_TARGET} PUBLIC

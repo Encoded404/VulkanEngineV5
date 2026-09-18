@@ -17,6 +17,8 @@ public:
     ExpandPass(const ExpandPass&) = delete;
     ExpandPass& operator=(const ExpandPass&) = delete;
 
+    [[nodiscard]] std::string_view GetName() const override { return "expand"; }
+
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;

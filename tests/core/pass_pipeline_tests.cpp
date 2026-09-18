@@ -15,6 +15,8 @@ using namespace VulkanEngine::PipelinePass;
 // app descriptor binding, so the declaration plumbing can be inspected.
 class DeclaringComputePass final : public IPipelinePass {
 public:
+    [[nodiscard]] std::string_view GetName() const override { return "declaring-compute"; }
+
     void Setup(PassSetupContext& ctx) override {
         ctx.RequestComputePipeline(/*compute_shader=*/42);
 
@@ -43,6 +45,8 @@ public:
 
 class DeclaringGraphicsPass final : public IPipelinePass {
 public:
+    [[nodiscard]] std::string_view GetName() const override { return "declaring-graphics"; }
+
     void Setup(PassSetupContext& ctx) override {
         ctx.RequestGraphicsPipeline(/*vertex=*/7, /*fragment=*/9,
                                     {vk::Format::eR8G8B8A8Unorm}, vk::Format::eD32Sfloat);
@@ -61,12 +65,10 @@ public:
 TEST(PassPipelineTest, ComputeRequestReachesPipelineDeclaration) {
     VulkanEngine::RenderPipeline::RenderPipeline pipeline;
 
-    auto pass = std::make_unique<DeclaringComputePass>();
-    PassSetupContext setup(pipeline, 320, 240);
-    pass->Setup(setup);
-    const auto handle = pipeline.AddCustomPass(std::move(pass), setup);
+    const auto handle = pipeline.RegisterPass(std::make_unique<DeclaringComputePass>());
+    ASSERT_TRUE(handle.has_value());
 
-    const auto* request = pipeline.GetPassPipelineRequest(handle);
+    const auto* request = pipeline.GetPassPipelineRequest(*handle);
     ASSERT_NE(request, nullptr);
     EXPECT_EQ(request->kind, PassPipelineKind::Compute);
     EXPECT_EQ(request->compute_shader, 42u);
@@ -76,19 +78,17 @@ TEST(PassPipelineTest, ComputeRequestReachesPipelineDeclaration) {
 
     // No device/shader manager was supplied, so nothing is built (and nothing
     // crashes trying).
-    EXPECT_EQ(pipeline.GetPassPipelineLayout(handle), nullptr);
-    EXPECT_EQ(pipeline.GetPassPipelineLayoutByName("CustomPass-1"), nullptr);
+    EXPECT_EQ(pipeline.GetPassPipelineLayout(*handle), nullptr);
+    EXPECT_EQ(pipeline.GetPassPipelineLayoutByName("declaring-compute"), nullptr);
 }
 
 TEST(PassPipelineTest, GraphicsRequestReachesPipelineDeclaration) {
     VulkanEngine::RenderPipeline::RenderPipeline pipeline;
 
-    auto pass = std::make_unique<DeclaringGraphicsPass>();
-    PassSetupContext setup(pipeline, 128, 128);
-    pass->Setup(setup);
-    const auto handle = pipeline.AddCustomPass(std::move(pass), setup);
+    const auto handle = pipeline.RegisterPass(std::make_unique<DeclaringGraphicsPass>());
+    ASSERT_TRUE(handle.has_value());
 
-    const auto* request = pipeline.GetPassPipelineRequest(handle);
+    const auto* request = pipeline.GetPassPipelineRequest(*handle);
     ASSERT_NE(request, nullptr);
     EXPECT_EQ(request->kind, PassPipelineKind::Graphics);
     EXPECT_EQ(request->vertex_shader, 7u);
@@ -99,9 +99,17 @@ TEST(PassPipelineTest, GraphicsRequestReachesPipelineDeclaration) {
 }
 
 TEST(PassPipelineTest, UndeclaredPassHasNoPipelineRequest) {
+    class PlainPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "plain"; }
+        void Setup(PassSetupContext&) override {}
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
     VulkanEngine::RenderPipeline::RenderPipeline pipeline;
-    const auto handle = pipeline.AddPass({.name = "plain", .execute = [](const void*, vk::CommandBuffer) {}});
-    EXPECT_EQ(pipeline.GetPassPipelineRequest(handle), nullptr);
+    const auto handle = pipeline.RegisterPass(std::make_unique<PlainPass>());
+    ASSERT_TRUE(handle.has_value());
+    EXPECT_EQ(pipeline.GetPassPipelineRequest(*handle), nullptr);
 }
 
 }  // namespace

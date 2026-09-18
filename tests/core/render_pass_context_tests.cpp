@@ -109,6 +109,8 @@ TEST(RenderPassContextTest, SetupContextUsesInjectedExtent) {
 // A custom pass that records what the populated context looked like.
 class CapturingPass final : public IPipelinePass {
 public:
+    [[nodiscard]] std::string_view GetName() const override { return "capturing"; }
+
     void Setup(PassSetupContext& ctx) override {
         transient_ = ctx.CreateTransientImage(TransientImageDesc{
             .name = "captured-transient",
@@ -147,15 +149,12 @@ private:
     VulkanEngine::RenderGraph::ResourceHandle transient_{};
 };
 
-TEST(RenderPassContextTest, CustomPassReceivesPopulatedFrameContext) {
+TEST(RenderPassContextTest, RegisteredPassReceivesPopulatedFrameContext) {
     VulkanEngine::RenderPipeline::RenderPipeline pipeline;
 
     auto pass = std::make_unique<CapturingPass>();
     auto* raw_pass = pass.get();
-
-    PassSetupContext setup(pipeline, 800, 600);
-    pass->Setup(setup);
-    (void)pipeline.AddCustomPass(std::move(pass), setup);
+    ASSERT_TRUE(pipeline.RegisterPass(std::move(pass)).has_value());
     pipeline.Compile();
     ASSERT_TRUE(pipeline.IsCompiled());
 
@@ -174,7 +173,7 @@ TEST(RenderPassContextTest, CustomPassReceivesPopulatedFrameContext) {
 
     bool invoked = false;
     for (const auto& compiled_pass : pipeline.GetCompiledGraph().passes) {
-        if (compiled_pass.name == "CustomPass-1") {
+        if (compiled_pass.name == "capturing") {
             ASSERT_TRUE(compiled_pass.execute.callback);
             compiled_pass.execute.callback(&data, {});
             invoked = true;

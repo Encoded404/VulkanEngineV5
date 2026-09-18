@@ -56,27 +56,21 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_ = std::make_unique<VulkanEngine::RenderPipeline::RenderPipeline>();
     pipeline_->Initialize(bootstrap, shader_manager, pipeline_factory);
 
-    // Create pass class instances
-    expand_pass_ = std::make_unique<VulkanEngine::SceneRenderer::ExpandPass>(scene_renderer);
-    occluder_select_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OccluderSelectPass>(scene_renderer);
-    occluder_prepass_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OccluderPrePass>(scene_renderer);
-    depth_pass_ = std::make_unique<VulkanEngine::SceneRenderer::DepthPrePass>(scene_renderer);
-    hiz_pass_ = std::make_unique<VulkanEngine::SceneRenderer::HiZPass>(scene_renderer);
-    pre_cull_pass_ = std::make_unique<VulkanEngine::SceneRenderer::PreCullPass>(scene_renderer);
-    occlusion_pass_ = std::make_unique<VulkanEngine::SceneRenderer::OcclusionPass>(scene_renderer);
-    collect_pass_ = std::make_unique<VulkanEngine::SceneRenderer::CollectPass>(scene_renderer);
-
+    // Import the engine-owned resources the built-in passes declare against.
+    // Logical buffers ("scene-buffers", etc.) are hazard-only: they carry no
+    // Vulkan handle, so the graph uses them purely for ordering.
+    (void)pipeline_->ImportBuffer("scene-buffers");
+    (void)pipeline_->ImportBuffer("draw-indirect");
+    (void)pipeline_->ImportBuffer("depth-indirect");
+    (void)pipeline_->ImportBuffer("occluder-indirect");
     auto backbuffer = pipeline_->ImportBackbuffer();
-    auto depth_buffer = pipeline_->ImportDepthBuffer();
-    auto hiz_image = pipeline_->ImportImage("hiz-image");
-    auto scene_buffers = pipeline_->ImportBuffer("scene-buffers");
-    auto draw_indirect = pipeline_->ImportBuffer("draw-indirect");
-    auto depth_indirect = pipeline_->ImportBuffer("depth-indirect");
-    auto occluder_indirect = pipeline_->ImportBuffer("occluder-indirect");
+    (void)pipeline_->ImportDepthBuffer();
 
+    // "hiz-image" is the resolution-dependent Hi-Z ring owned by the scene
+    // renderer; its slot follows the frame counter.
     pipeline_->RegisterResourceResolver("hiz-image",
-        [this](std::uint32_t) { return current_ctx_ ? current_ctx_->scene_renderer.GetHizImage(current_ctx_->frame_counter) : nullptr; },
-        [this](std::uint32_t) { return current_ctx_ ? current_ctx_->scene_renderer.GetHizFullView(current_ctx_->frame_counter) : nullptr; },
+        [this](std::uint32_t) { return scene_renderer_ ? scene_renderer_->GetHizImage(frame_counter_) : nullptr; },
+        [this](std::uint32_t) { return scene_renderer_ ? scene_renderer_->GetHizFullView(frame_counter_) : nullptr; },
         vk::Format::eR32Sfloat);
 
     pipeline_->SetFinalState(
@@ -87,301 +81,56 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::QueueType::Graphics,
             VulkanEngine::RenderGraph::ImageLayoutIntent::Present));
 
-    // ── Pass 1: Expand (compute) ──
-    auto expand_handle = pipeline_->AddPass({
-        .name = "expand",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .writes = {scene_buffers, draw_indirect},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            pctx.view_proj = fctx.view_proj;
-            pctx.entity_count = scene_renderer_->GetCurrentEntityCount();
-            pctx.render_width = fctx.width;
-            pctx.render_height = fctx.height;
-            expand_pass_->Execute(pctx, cmd);
+    // Capture the render extent for RegisterPass()'s PassSetupContext.
+    std::uint32_t init_width = 0;
+    std::uint32_t init_height = 0;
+    (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
+    pipeline_->SetRenderExtent(init_width, init_height);
+
+    // Register every built-in through the same engine-managed path as app
+    // passes: the pipeline constructs the PassSetupContext and calls Setup().
+    bool builtins_ok = true;
+    const auto register_builtin = [this, &builtins_ok](
+        std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass)
+        -> VulkanEngine::RenderGraph::PassHandle {
+        auto result = pipeline_->RegisterPass(std::move(pass));
+        if (!result.has_value()) {
+            LOGIFACE_LOG(error, "Renderer: built-in pass registration failed: " +
+                                    result.error().message);
+            builtins_ok = false;
+            return {};
         }
-    });
+        return *result;
+    };
 
-    // ── Pass 1b: Occluder selection (compute, §5.1-A) — OBB screen-coverage
-    // threshold, budgeted via atomic counters; copies selected ranges into the
-    // occluder-only indirection and flags them in CullEntry.pad. ──
-    auto occluder_select_handle = pipeline_->AddPass({
-        .name = "occluder-select",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {scene_buffers, occluder_indirect},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            occluder_select_pass_->Execute(pctx, cmd);
-        }
-    });
+    const auto expand_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::ExpandPass>(scene_renderer));
+    const auto occluder_select_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::OccluderSelectPass>(scene_renderer));
+    const auto occluder_prepass_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::OccluderPrePass>(
+            scene_renderer, config.clear_depth_stencil));
+    const auto hiz_pre_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::HiZPass>(scene_renderer, "hiz-gen-pre"));
+    const auto pre_cull_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::PreCullPass>(scene_renderer));
+    const auto depth_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::DepthPrePass>(scene_renderer));
+    const auto hiz_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::HiZPass>(scene_renderer, "hiz-gen"));
+    const auto occlusion_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::OcclusionPass>(scene_renderer));
+    const auto collect_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::CollectPass>(scene_renderer));
+    const auto main_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::MainPass>(scene_renderer, config.clear_color));
 
-    // ── Pass 1c: Occluder pre-pass — rasterizes the selected real meshes into
-    // the depth prepass buffer (§5.3: full-res seed, clear + store). ──
-    VulkanEngine::RenderGraph::PassAttachmentSetup occluder_setup{};
-    occluder_setup.auto_begin_rendering = true;
-
-    VulkanEngine::RenderGraph::AttachmentInfo occluder_depth_attach{};
-    occluder_depth_attach.resource = depth_buffer;
-    occluder_depth_attach.load_op = vk::AttachmentLoadOp::eClear;
-    occluder_depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-    occluder_depth_attach.clear_depth = config.clear_depth_stencil;
-    occluder_setup.depth_attachment = occluder_depth_attach;
-
-    auto occluder_prepass_handle = pipeline_->AddPass({
-        .name = "occluder-prepass",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {occluder_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {occluder_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {depth_buffer},
-        .attachments = occluder_setup,
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            pctx.render_width = fctx.width;
-            pctx.render_height = fctx.height;
-            occluder_prepass_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 1c: Hi-Z generation from the partial (occluder-only) depth ──
-    auto hiz_pre_handle = pipeline_->AddPass({
-        .name = "hiz-gen-pre",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{depth_buffer,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {hiz_image},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            pctx.swapchain_image_index = fctx.image_index;
-            pctx.render_width = fctx.width;
-            pctx.render_height = fctx.height;
-            hiz_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 1d: Pre-cull compute (§5.1-D) — frustum reject + Hi-Z occlusion
-    // test against the occluder pyramid, then survivor compaction. ──
-    auto pre_cull_handle = pipeline_->AddPass({
-        .name = "pre-cull",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{hiz_image,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {scene_buffers, depth_indirect},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.frame_index = fctx.frame_counter;
-            pre_cull_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 2: Depth pre-pass — draws survivors only, keeping the occluder
-    // depth (load_op = LOAD, §5.3 depth-buffer reuse). ──
-    VulkanEngine::RenderGraph::PassAttachmentSetup depth_setup{};
-    depth_setup.auto_begin_rendering = true;
-
-    VulkanEngine::RenderGraph::AttachmentInfo depth_attach{};
-    depth_attach.resource = depth_buffer;
-    depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
-    depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-    depth_setup.depth_attachment = depth_attach;
-
-    auto depth_handle = pipeline_->AddPass({
-        .name = "depth-prepass",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {draw_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {depth_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {depth_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {depth_buffer},
-        .attachments = depth_setup,
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            pctx.render_width = fctx.width;
-            pctx.render_height = fctx.height;
-            depth_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 3: Hi-Z generation compute ──
-    auto hiz_handle = pipeline_->AddPass({
-        .name = "hiz-gen",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{depth_buffer,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {hiz_image},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
-            pctx.frame_index = fctx.frame_counter;
-            pctx.swapchain_image_index = fctx.image_index;
-            pctx.render_width = fctx.width;
-            pctx.render_height = fctx.height;
-            hiz_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 4: Occlusion cull compute ──
-    auto occlusion_handle = pipeline_->AddPass({
-        .name = "occlusion",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{hiz_image,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {scene_buffers},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.frame_index = fctx.frame_counter;
-            occlusion_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 5: Collect compute (count + compact + draw commands) ──
-    auto collect_handle = pipeline_->AddPass({
-        .name = "collect",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {scene_buffers, draw_indirect},
-        .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            VulkanEngine::PipelinePass::FrameContext pctx{};
-            pctx.frame_index = fctx.frame_counter;
-            collect_pass_->Execute(pctx, cmd);
-        }
-    });
-
-    // ── Pass 6: Main pass (opaque) ──
-    VulkanEngine::RenderGraph::PassAttachmentSetup main_setup{};
-    main_setup.auto_begin_rendering = true;
-
-    VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-    color_attach.resource = backbuffer;
-    color_attach.load_op = vk::AttachmentLoadOp::eClear;
-    color_attach.store_op = vk::AttachmentStoreOp::eStore;
-    color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{
-        config.clear_color.r, config.clear_color.g, config.clear_color.b, config.clear_color.a});
-    main_setup.color_attachments.push_back(color_attach);
-
-    VulkanEngine::RenderGraph::AttachmentInfo main_depth_attach{};
-    main_depth_attach.resource = depth_buffer;
-    main_depth_attach.load_op = vk::AttachmentLoadOp::eLoad;
-    main_depth_attach.store_op = vk::AttachmentStoreOp::eStore;
-    main_setup.depth_attachment = main_depth_attach;
-
-    auto main_handle = pipeline_->AddPass({
-        .name = "main-pass",
-        .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-        .reads = {{scene_buffers,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {draw_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndirectDraw,
-            VulkanEngine::RenderGraph::AccessIntent::Read},
-            {draw_indirect,
-            VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
-            VulkanEngine::RenderGraph::AccessIntent::Read}},
-        .writes = {backbuffer, depth_buffer},
-        .attachments = main_setup,
-        .execute = [](const void* user_data, vk::CommandBuffer cmd) {
-            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-            const float aspect = static_cast<float>(fctx.width) / static_cast<float>(fctx.height);
-            const glm::mat4 view = fctx.camera.GetViewMatrix();
-            const glm::mat4 proj = fctx.camera.GetProjectionMatrix(aspect);
-
-            fctx.scene_renderer.Render(cmd, fctx.registry,
-                                       fctx.technique_mgr, fctx.bindless_mgr,
-                                       proj, view,
-                                       fctx.width, fctx.height,
-                                       fctx.frame_counter);
-        }
-    });
-
-    // ── Pass 7: ImGui overlay ──
     VulkanEngine::RenderGraph::PassHandle imgui_handle{};
     if (config.enable_imgui) {
-        VulkanEngine::RenderGraph::PassAttachmentSetup imgui_setup{};
-        imgui_setup.auto_begin_rendering = false;
-
-        VulkanEngine::RenderGraph::AttachmentInfo imgui_color_attach{};
-        imgui_color_attach.resource = backbuffer;
-        imgui_color_attach.load_op = vk::AttachmentLoadOp::eLoad;
-        imgui_color_attach.store_op = vk::AttachmentStoreOp::eStore;
-        imgui_setup.color_attachments.push_back(imgui_color_attach);
-
-        imgui_handle = pipeline_->AddPass({
-            .name = "imgui-overlay",
-            .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
-            .writes = {backbuffer},
-            .attachments = imgui_setup,
-            .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-                const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-                auto& ctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
-                if (ctx.imgui && ctx.imgui->IsInitialized()) {
-                    auto& backend = bootstrap_->GetBackend();
-                    ctx.imgui->RenderDrawData(cmd,
-                        *backend.GetSwapchainImageViews()[ctx.image_index],
-                        ctx.width, ctx.height);
-                }
-            }
-        });
+        imgui_handle = register_builtin(
+            std::make_unique<VulkanEngine::SceneRenderer::ImGuiPass>(&bootstrap));
     }
 
-    // Explicit ordering ensures correct pipeline
     // Explicit ordering ensures correct pipeline:
     // expand → occluder-select → occluder-prepass → hiz-gen-pre → pre-cull →
     // depth-prepass → hiz-gen (full) → occlusion → collect → main.
@@ -395,12 +144,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_->AddDependency(occlusion_handle, collect_handle);
     pipeline_->AddDependency(collect_handle, main_handle);
 
-    // Capture the render extent for RegisterPass()'s PassSetupContext and expose
-    // every built-in as an ordering anchor before app passes apply.
-    std::uint32_t init_width = 0;
-    std::uint32_t init_height = 0;
-    (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
-    pipeline_->SetRenderExtent(init_width, init_height);
+    // Expose every built-in as an ordering anchor before app passes apply.
     pipeline_->SetBuiltinHandles(std::array<
         VulkanEngine::RenderGraph::PassHandle,
         VulkanEngine::PipelinePass::kBuiltinPassCount>{
@@ -418,9 +162,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     });
 
     pipeline_->Compile();
-    if (!pipeline_->IsCompiled()) return false;
-
-    clear_depth_stencil_ = config.clear_depth_stencil;
+    if (!builtins_ok || !pipeline_->IsCompiled()) return false;
 
     {
         auto& device = bootstrap.GetBackend().GetDevice();
@@ -550,22 +292,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // CPU gather + upload + descriptor writes for all passes
         scene_renderer.PrepareCompute(cmd, registry, view, proj, width, height, frame_counter_);
 
-        // Create per-frame context and set it for the resource resolver
-        FrameRenderContext ctx{
-            .registry = registry,
-            .camera = camera,
-            .technique_mgr = technique_mgr,
-            .bindless_mgr = bindless_mgr,
-            .scene_renderer = scene_renderer,
-            .imgui = imgui,
-            .width = width,
-            .height = height,
-            .image_index = image_index,
-            .frame_counter = frame_counter_,
-            .view_proj = view_proj,
-        };
-        current_ctx_ = &ctx;
-
 #ifdef VKENGINE_PHYSICAL_CAMERA
         // PhysicalCamera uploads + compositing run before the scene graph so
         // scene passes sampling a camera target see this frame's content.
@@ -574,7 +300,7 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
 #endif
 
-        // Fully populated per-frame context shared by built-in and custom passes.
+        // Fully populated per-frame context shared by built-in and app passes.
         VulkanEngine::PipelinePass::FrameContext frame{};
         frame.render_extent = vk::Extent2D{width, height};
         frame.frame_index = frame_counter_;
@@ -593,6 +319,8 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         frame.depth_buffer = { *depth_view };
         frame.techniques = &technique_mgr;
         frame.bindless = &bindless_mgr;
+        frame.registry = &registry;
+        frame.imgui = imgui;
         frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
         frame.entity_count = scene_renderer.GetCurrentEntityCount();
         frame.render_width = width;
@@ -600,7 +328,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
         VulkanEngine::PipelinePass::RenderFrameData frame_data{};
         frame_data.frame = frame;
-        frame_data.engine_user_data = &ctx;
 
         // Phase 2: Render graph executes all GPU passes in dependency order
         pipeline_->Execute(&frame_data, cmd, image_index, ring_index);
@@ -613,8 +340,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     cmd.end();
 
     frame_counter_++;
-
-    current_ctx_ = nullptr;
 }
 
 } // namespace VulkanEngine::Renderer

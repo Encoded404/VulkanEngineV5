@@ -155,10 +155,10 @@ TEST(RenderPipelineRegistrationTest, OrdersAroundBuiltinAnchors) {
 
     // Simulate the renderer registering a built-in "main" pass and exposing it
     // as the MainPass anchor.
-    const auto main_handle = pipeline.AddPass(
-        {.name = "main", .execute = [](const void*, vk::CommandBuffer) {}});
+    const auto main_result = pipeline.RegisterPass(std::make_unique<NamedPass>("main"));
+    ASSERT_TRUE(main_result.has_value());
     std::array<VulkanEngine::RenderGraph::PassHandle, kBuiltinPassCount> anchors{};
-    anchors[static_cast<std::size_t>(BuiltinPass::MainPass)] = main_handle;
+    anchors[static_cast<std::size_t>(BuiltinPass::MainPass)] = *main_result;
     pipeline.SetBuiltinHandles(anchors);
 
     class BeforeMainPass final : public IPipelinePass {

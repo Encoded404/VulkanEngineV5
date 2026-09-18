@@ -15,6 +15,8 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
 export import VulkanEngine.DescriptorDecl;
+export import VulkanEngine.ECS.ComponentRegistry;
+export import VulkanEngine.ImGui;
 
 export namespace VulkanEngine::PipelinePass {
 
@@ -282,6 +284,8 @@ struct FrameContext {
     // Scene-level data
     VulkanEngine::TechniqueManager::TechniqueManager* techniques = nullptr;
     VulkanEngine::BindlessManager::BindlessManager* bindless = nullptr;
+    VulkanEngine::ComponentRegistry* registry = nullptr;
+    VulkanEngine::ImGui::ImGuiSystem* imgui = nullptr;
     vk::Buffer technique_draw_commands_buffer = nullptr;
     std::uint32_t entity_count = 0;
     std::uint32_t render_width = 0;
@@ -336,13 +340,10 @@ struct FrameContext {
     }
 };
 
-// The executor's single opaque user_data. Built-in pass lambdas read
-// `engine_user_data` (the renderer's frame context); custom passes read the
-// populated `frame`. Phase 7 migrates built-ins to `frame` without another
-// plumbing change.
+// The executor's single opaque user_data. Every pass (built-in and app) reads
+// the populated `frame`.
 struct RenderFrameData {
     FrameContext frame{};
-    const void* engine_user_data = nullptr;
 };
 
 // ── PassSetupContext — resource and ordering declarations in Setup() ──
@@ -404,8 +405,6 @@ public:
     [[nodiscard]] std::uint32_t GetRenderHeight() const;
 
     // ── Internal: accessors for RenderPipeline integration ──
-    [[nodiscard]] const std::vector<VulkanEngine::RenderGraph::PassHandle>& GetDeferredBefore() const { return deferred_before_; }
-    [[nodiscard]] const std::vector<VulkanEngine::RenderGraph::PassHandle>& GetDeferredAfter() const { return deferred_after_; }
     [[nodiscard]] std::uint32_t GetPushConstantSize() const { return push_constant_size_; }
     [[nodiscard]] vk::ShaderStageFlags GetPushConstantStages() const { return push_constant_stages_; }
 
@@ -419,17 +418,9 @@ public:
     [[nodiscard]] const std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup>& GetAttachmentSetup() const { return attachment_setup_; }
 
 private:
-    friend class IPipelinePass;
-
     IResourceRegistry* registry_ = nullptr;
-    VulkanEngine::RenderGraph::PassHandle pass_handle_{};
-    bool pass_handle_assigned_ = false;
 
-    // Deferred dependencies (resolved when pass handle is assigned)
-    std::vector<VulkanEngine::RenderGraph::PassHandle> deferred_before_;
-    std::vector<VulkanEngine::RenderGraph::PassHandle> deferred_after_;
-
-    // Builtin pass ordering (stored as enums, resolved in AddCustomPass)
+    // Builtin pass ordering (stored as enums, resolved in RegisterPass)
     std::vector<BuiltinPass> before_builtin_passes_;
     std::vector<BuiltinPass> after_builtin_passes_;
 
@@ -455,16 +446,9 @@ private:
 };
 
 // ── IPipelinePass — abstract base for all pipeline passes ──
-//
-// NOTE: Pass classes currently expose two Execute() overloads:
-//   1. A legacy execute(cmd, params...) taking explicit Vulkan handles,
-//      called directly by SceneRenderer::Dispatch*() methods.
-//   2. Execute(const FrameContext&, vk::CommandBuffer) — the IPipelinePass
-//      override, which delegates to SceneRenderer::Dispatch*().
-//
-// TODO(cleanup): Once the render graph fully takes over pass dispatch,
-// the legacy execute() methods should be made private (friend SceneRenderer)
-// or removed entirely in favor of FrameContext-driven execution.
+// Built-in and application passes share this one interface: the engine
+// constructs the PassSetupContext and calls Setup() during RegisterPass, then
+// invokes Execute() through the render graph each frame.
 class IPipelinePass {
 public:
     virtual ~IPipelinePass() = default;

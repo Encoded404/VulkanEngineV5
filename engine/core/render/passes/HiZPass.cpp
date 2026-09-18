@@ -12,7 +12,8 @@ import VulkanEngine.SceneRenderer;
 
 namespace VulkanEngine::SceneRenderer {
 
-HiZPass::HiZPass(SceneRenderer& sr) : scene_renderer_(sr) {}
+HiZPass::HiZPass(SceneRenderer& sr, std::string name)
+    : scene_renderer_(sr), name_(std::move(name)) {}
 HiZPass::~HiZPass() = default;
 
 void HiZPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {

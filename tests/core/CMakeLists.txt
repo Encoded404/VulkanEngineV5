@@ -9,6 +9,7 @@ add_executable(engine_tests
   descriptor_layout_tests.cpp
   pass_pipeline_tests.cpp
   render_pipeline_registration_tests.cpp
+  builtin_pass_declarations_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 setup_test_target(engine_tests)

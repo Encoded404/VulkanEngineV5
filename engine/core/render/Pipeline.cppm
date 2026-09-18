@@ -17,23 +17,6 @@ import VulkanEngine.ShaderManager;
 
 export namespace VulkanEngine::RenderPipeline {
 
-struct ReadResourceDesc {
-    VulkanEngine::RenderGraph::ResourceHandle resource{};
-    VulkanEngine::RenderGraph::PipelineStageIntent stage = VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader;
-    VulkanEngine::RenderGraph::AccessIntent access = VulkanEngine::RenderGraph::AccessIntent::Read;
-};
-
-struct RenderPipelinePassDesc {
-    std::string name{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::RenderGraph::QueueType queue = VulkanEngine::RenderGraph::QueueType::Graphics; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<ReadResourceDesc> reads{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<VulkanEngine::RenderGraph::ResourceHandle> writes{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    VulkanEngine::PipelinePass::PassPipelineRequest pipeline_request{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<VulkanEngine::Render::DescriptorDecl> declared_bindings{}; // NOLINT(misc-non-private-member-variables-in-classes)
-    std::function<void(const void* user_data, vk::CommandBuffer command_buffer)> execute{}; // NOLINT(misc-non-private-member-variables-in-classes)
-};
-
 // TransientImageDesc is now provided by the VulkanEngine.PipelinePass module.
 using VulkanEngine::PipelinePass::TransientImageDesc;
 using VulkanEngine::PipelinePass::TransientBufferDesc;
@@ -94,16 +77,7 @@ public:
     // conservative global memory barrier instead of being skipped.
     void RegisterBufferResolver(const std::string& name, BufferResolver resolve_buffer);
 
-    VulkanEngine::RenderGraph::PassHandle AddPass(const RenderPipelinePassDesc& desc);
-
-    // ── Custom pass registration ──
-    // Creates a pass from an IPipelinePass, calling Setup() to collect resources.
-    // Returns the pass handle for custom-to-custom ordering via AddDependency().
-    VulkanEngine::RenderGraph::PassHandle AddCustomPass(
-        std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass,
-        VulkanEngine::PipelinePass::PassSetupContext& ctx);
-
-    // ── Engine-managed registration (Phase 6) ──
+    // ── Engine-managed registration ──
     // The pipeline constructs the PassSetupContext (with the current render
     // extent) and calls Setup() itself, validates the result, and tracks the
     // pass in the stable model. Changes apply at the next ApplyChanges().
@@ -191,7 +165,8 @@ private:
     [[nodiscard]] ModelPass* FindModelPass(VulkanEngine::RenderGraph::PassHandle handle);
     [[nodiscard]] bool IsValidModelHandle(VulkanEngine::RenderGraph::PassHandle handle) const;
     [[nodiscard]] VulkanEngine::RenderGraph::PassHandle AddModelPass(ModelPass model);
-    void TrackImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle, const std::string& name);
+    void TrackImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle, const std::string& name,
+                               VulkanEngine::RenderGraph::ResourceKind kind);
 
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     ShaderSystem::ShaderManager* shader_manager_ = nullptr;
@@ -231,6 +206,10 @@ private:
     // Resource identity: index -> registered name, for resolver validation.
     std::unordered_map<std::uint32_t, std::string> resource_names_{};
     std::unordered_set<std::uint32_t> imported_resource_indices_{};
+    // Imported resource kind. Imported images require a resolver (they need a
+    // real image/view); imported buffers may be hazard-only engine resources
+    // with no Vulkan handle.
+    std::unordered_map<std::uint32_t, VulkanEngine::RenderGraph::ResourceKind> imported_resource_kinds_{};
     std::vector<PassError> validation_errors_{};
 
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
@@ -246,8 +225,7 @@ private:
     std::vector<std::vector<bool>> tracked_valid_{};
     std::uint32_t tracked_resource_count_ = 0;
 
-    // Custom pass storage and built-in handles
-    std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};
+    // Built-in ordering anchors populated by the renderer.
     std::array<VulkanEngine::RenderGraph::PassHandle,
                VulkanEngine::PipelinePass::kBuiltinPassCount> builtin_handles_{};
 

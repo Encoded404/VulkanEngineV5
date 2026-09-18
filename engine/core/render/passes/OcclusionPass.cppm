@@ -17,6 +17,8 @@ public:
     OcclusionPass(const OcclusionPass&) = delete;
     OcclusionPass& operator=(const OcclusionPass&) = delete;
 
+    [[nodiscard]] std::string_view GetName() const override { return "occlusion"; }
+
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;

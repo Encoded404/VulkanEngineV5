@@ -17,6 +17,8 @@ public:
     DepthPrePass(const DepthPrePass&) = delete;
     DepthPrePass& operator=(const DepthPrePass&) = delete;
 
+    [[nodiscard]] std::string_view GetName() const override { return "depth-prepass"; }
+
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;

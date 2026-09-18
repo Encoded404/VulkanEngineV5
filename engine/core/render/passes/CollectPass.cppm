@@ -22,6 +22,8 @@ public:
     CollectPass(const CollectPass&) = delete;
     CollectPass& operator=(const CollectPass&) = delete;
 
+    [[nodiscard]] std::string_view GetName() const override { return "collect"; }
+
     // IPipelinePass overrides
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,

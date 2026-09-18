@@ -17,6 +17,8 @@ public:
     OccluderSelectPass(const OccluderSelectPass&) = delete;
     OccluderSelectPass& operator=(const OccluderSelectPass&) = delete;
 
+    [[nodiscard]] std::string_view GetName() const override { return "occluder-select"; }
+
     void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override;
     void Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                  vk::CommandBuffer cmd) override;

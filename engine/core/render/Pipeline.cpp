@@ -78,25 +78,25 @@ void RenderPipeline::Shutdown() {
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportBackbuffer() {
     backbuffer_handle_ = graph_builder_.ImportResource("swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    TrackImportedResource(backbuffer_handle_, "swapchain-backbuffer");
+    TrackImportedResource(backbuffer_handle_, "swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
     return backbuffer_handle_;
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportDepthBuffer() {
     depth_buffer_handle_ = graph_builder_.ImportResource("depth-buffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    TrackImportedResource(depth_buffer_handle_, "depth-buffer");
+    TrackImportedResource(depth_buffer_handle_, "depth-buffer", VulkanEngine::RenderGraph::ResourceKind::Image);
     return depth_buffer_handle_;
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportImage(const std::string& name) {
     const auto handle = graph_builder_.ImportResource(name, VulkanEngine::RenderGraph::ResourceKind::Image);
-    TrackImportedResource(handle, name);
+    TrackImportedResource(handle, name, VulkanEngine::RenderGraph::ResourceKind::Image);
     return handle;
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportBuffer(const std::string& name) {
     const auto handle = graph_builder_.ImportResource(name, VulkanEngine::RenderGraph::ResourceKind::Buffer);
-    TrackImportedResource(handle, name);
+    TrackImportedResource(handle, name, VulkanEngine::RenderGraph::ResourceKind::Buffer);
     return handle;
 }
 
@@ -185,22 +185,6 @@ void RenderPipeline::RegisterBufferResolver(const std::string& name, BufferResol
     buffer_resolver_names_.insert(name);
 }
 
-VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddPass(const RenderPipelinePassDesc& desc) {
-    ModelPass model{};
-    model.name = desc.name;
-    model.queue = desc.queue;
-    model.enabled = true;
-    model.execute = desc.execute;
-    model.writes = desc.writes;
-    model.attachments = desc.attachments;
-    model.pipeline_request = desc.pipeline_request;
-    model.declared_bindings = desc.declared_bindings;
-    for (const auto& read : desc.reads) {
-        model.reads.push_back(ModelRead{read.resource, read.stage, read.access});
-    }
-    return AddModelPass(std::move(model));
-}
-
 VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddModelPass(ModelPass model) {
     const std::uint32_t slot = static_cast<std::uint32_t>(model_passes_.size());
     model.slot = slot;
@@ -266,17 +250,18 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
 
     ModelPass model{};
     model.name = name;
-    model.execute = [this, raw = pass.get(), captured_name = name](const void* user_data, vk::CommandBuffer cmd) {
+    const std::uint32_t push_constant_size = ctx.GetPushConstantSize();
+    const vk::ShaderStageFlags push_constant_stages = ctx.GetPushConstantStages();
+    model.execute = [this, raw = pass.get(), captured_name = name,
+                     push_constant_size, push_constant_stages](const void* user_data,
+                                                               vk::CommandBuffer cmd) {
         const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
         if (frame_data == nullptr) {
             return;
         }
         VulkanEngine::PipelinePass::FrameContext frame = frame_data->frame;
-        const auto* request = GetPassPipelineRequestByName(captured_name);
-        if (request != nullptr) {
-            frame.declared_push_constant_size = request->push_constant_size;
-            frame.declared_push_constant_stages = request->push_constant_stages;
-        }
+        frame.declared_push_constant_size = push_constant_size;
+        frame.declared_push_constant_stages = push_constant_stages;
         if (frame.pipeline_layout == nullptr) {
             frame.pipeline_layout = GetPassPipelineLayoutByName(captured_name);
         }
@@ -300,19 +285,23 @@ std::expected<VulkanEngine::RenderGraph::PassHandle, PassError> RenderPipeline::
                                          : VulkanEngine::RenderGraph::AccessIntent::Read,
         });
     }
-    // Declared resources must be known, and imported ones must be resolvable.
+    // Declared resources must be known, and imported images must be resolvable.
+    // Imported buffers without a resolver are allowed: engine logical buffers
+    // (e.g. "scene-buffers") are hazard-only and carry no Vulkan handle.
     const auto validate_resource = [&](VulkanEngine::RenderGraph::ResourceHandle resource)
         -> std::optional<PassError> {
         if (!resource.IsValid() || !resource_names_.contains(resource.index)) {
             return PassError{PassErrorCode::InvalidDeclaration, "invalid resource handle", name};
         }
         if (imported_resource_indices_.contains(resource.index)) {
-            const auto& resource_name = resource_names_[resource.index];
-            const bool resolved = image_resolver_names_.contains(resource_name) ||
-                                  buffer_resolver_names_.contains(resource_name);
-            if (!resolved) {
+            const auto kind_it = imported_resource_kinds_.find(resource.index);
+            const bool is_image = kind_it != imported_resource_kinds_.end() &&
+                                  kind_it->second == VulkanEngine::RenderGraph::ResourceKind::Image;
+            if (is_image && !image_resolver_names_.contains(resource_names_[resource.index])) {
                 return PassError{PassErrorCode::MissingResolver,
-                                 "imported resource '" + resource_name + "' has no resolver", name};
+                                 "imported image '" + resource_names_[resource.index] +
+                                     "' has no resolver",
+                                 name};
             }
         }
         return std::nullopt;
@@ -396,9 +385,11 @@ const std::vector<PassError>& RenderPipeline::GetValidationErrors() const {
 }
 
 void RenderPipeline::TrackImportedResource(VulkanEngine::RenderGraph::ResourceHandle handle,
-                                           const std::string& name) {
+                                           const std::string& name,
+                                           VulkanEngine::RenderGraph::ResourceKind kind) {
     resource_names_[handle.index] = name;
     imported_resource_indices_.insert(handle.index);
+    imported_resource_kinds_[handle.index] = kind;
 }
 
 void RenderPipeline::ApplyChanges() {
@@ -492,21 +483,19 @@ bool RenderPipeline::ValidateModel(std::vector<PassError>& errors) const {
         if (!names.insert(model.name).second) {
             errors.push_back(PassError{PassErrorCode::DuplicateName, "duplicate pass name", model.name});
         }
-        // Every imported resource a pass touches must have a resolver.
+        // Every imported image a pass touches must have a resolver; imported
+        // buffers may be hazard-only and carry no Vulkan handle.
         const auto check_import = [&](VulkanEngine::RenderGraph::ResourceHandle resource) {
             if (!resource.IsValid() || resource.index >= compiled_graph_.resource_info.size()) {
                 return;
             }
             const auto& info = compiled_graph_.resource_info[resource.index];
-            if (!info.imported) {
+            if (!info.imported || info.kind != VulkanEngine::RenderGraph::ResourceKind::Image) {
                 return;
             }
-            const bool resolved = info.kind == VulkanEngine::RenderGraph::ResourceKind::Image
-                                      ? image_resolver_names_.contains(info.name)
-                                      : buffer_resolver_names_.contains(info.name);
-            if (!resolved) {
+            if (!image_resolver_names_.contains(info.name)) {
                 errors.push_back(PassError{PassErrorCode::MissingResolver,
-                                           "imported resource '" + info.name + "' has no resolver",
+                                           "imported image '" + info.name + "' has no resolver",
                                            model.name});
             }
         };
@@ -729,88 +718,6 @@ vk::PipelineLayout RenderPipeline::GetPassPipelineLayoutByName(std::string_view 
     }
     return GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle{
         .index = name_it->second, .generation = 1});
-}
-
-VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddCustomPass(
-    std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass> pass,
-    VulkanEngine::PipelinePass::PassSetupContext& ctx) {
-    // Store the pass for lifetime
-    custom_passes_.push_back(std::move(pass));
-    auto* pass_ptr = custom_passes_.back().get();
-
-    // Build a RenderPipelinePassDesc from the context's declarations
-    RenderPipelinePassDesc desc;
-    desc.name = "CustomPass-" + std::to_string(custom_passes_.size());
-
-    // ── Wire up declared resource reads ──
-    const auto& read_resources = ctx.GetReadResources();
-    const auto& read_stages = ctx.GetReadStages();
-    const auto& read_accesses = ctx.GetReadAccesses();
-    for (std::size_t i = 0; i < read_resources.size(); ++i) {
-        desc.reads.push_back({
-            .resource = read_resources[i],
-            .stage = i < read_stages.size() ? read_stages[i]
-                     : VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader,
-            .access = i < read_accesses.size() ? read_accesses[i]
-                      : VulkanEngine::RenderGraph::AccessIntent::Read,
-        });
-    }
-
-    // ── Wire up declared writes ──
-    desc.writes = ctx.GetWriteResources();
-
-    // ── Set attachment info ──
-    if (ctx.GetAttachmentSetup()) {
-        desc.attachments = *ctx.GetAttachmentSetup();
-    }
-
-    // ── Engine-owned pipeline + descriptor declarations ──
-    desc.pipeline_request = ctx.GetPipelineRequest();
-    desc.pipeline_request.push_constant_size = ctx.GetPushConstantSize();
-    desc.pipeline_request.push_constant_stages = ctx.GetPushConstantStages();
-    desc.declared_bindings = ctx.GetDeclaredBindings();
-
-    // ── Create execute callback ──
-    // The pass gets the fully populated FrameContext from RenderFrameData, with
-    // this pass's declared push-constant metadata applied.
-    const std::uint32_t push_constant_size = ctx.GetPushConstantSize();
-    const vk::ShaderStageFlags push_constant_stages = ctx.GetPushConstantStages();
-    const std::string pass_name = desc.name;
-    desc.execute = [this, pass_ptr, push_constant_size, push_constant_stages,
-                    pass_name](const void* user_data, vk::CommandBuffer cmd) {
-        const auto* frame_data =
-            static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
-        if (frame_data == nullptr) {
-            return;
-        }
-        VulkanEngine::PipelinePass::FrameContext frame = frame_data->frame;
-        frame.declared_push_constant_size = push_constant_size;
-        frame.declared_push_constant_stages = push_constant_stages;
-        // The engine owns the pass pipeline/layout; expose it for push constants.
-        if (frame.pipeline_layout == nullptr) {
-            frame.pipeline_layout = GetPassPipelineLayoutByName(pass_name);
-        }
-        pass_ptr->Execute(frame, cmd);
-    };
-
-    // Register with the graph builder via the existing AddPass path
-    auto handle = AddPass(desc);
-
-    // ── Resolve RunBefore/RunAfter ordering with builtin passes ──
-    for (auto bp : ctx.GetBeforeBuiltinPasses()) {
-        auto idx = static_cast<std::size_t>(bp);
-        if (idx < builtin_handles_.size() && builtin_handles_[idx].IsValid()) {
-            AddDependency(handle, builtin_handles_[idx]);
-        }
-    }
-    for (auto bp : ctx.GetAfterBuiltinPasses()) {
-        auto idx = static_cast<std::size_t>(bp);
-        if (idx < builtin_handles_.size() && builtin_handles_[idx].IsValid()) {
-            AddDependency(builtin_handles_[idx], handle);
-        }
-    }
-
-    return handle;
 }
 
 void RenderPipeline::SetBuiltinHandles(

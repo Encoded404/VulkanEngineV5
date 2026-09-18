@@ -29,6 +29,8 @@ import VulkanEngine.Render.Passes.HiZPass;
 import VulkanEngine.Render.Passes.PreCullPass;
 import VulkanEngine.Render.Passes.OcclusionPass;
 import VulkanEngine.Render.Passes.CollectPass;
+import VulkanEngine.Render.Passes.MainPass;
+import VulkanEngine.Render.Passes.ImGuiPass;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import VulkanEngine.PhysicalCameraSystem;
@@ -77,38 +79,13 @@ public:
 #endif
                      );
 
-    struct FrameRenderContext {
-        VulkanEngine::ComponentRegistry& registry;
-        const VulkanEngine::Components::Camera& camera;
-        VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr;
-        VulkanEngine::BindlessManager::BindlessManager& bindless_mgr;
-        VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer;
-        VulkanEngine::ImGui::ImGuiSystem* imgui = nullptr;
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
-        std::uint32_t image_index = 0;
-        std::uint32_t frame_counter = 0;
-        glm::mat4 view_proj{1.0f};
-    };
-
 private:
     VulkanBackend::Vulkan::VulkanBootstrap* bootstrap_ = nullptr;
     std::unique_ptr<VulkanEngine::RenderPipeline::RenderPipeline> pipeline_{};
 
     // Pass classes
     VulkanEngine::SceneRenderer::SceneRenderer* scene_renderer_ = nullptr;
-    std::unique_ptr<VulkanEngine::SceneRenderer::ExpandPass> expand_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::OccluderSelectPass> occluder_select_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::OccluderPrePass> occluder_prepass_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::DepthPrePass> depth_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::HiZPass> hiz_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::PreCullPass> pre_cull_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::OcclusionPass> occlusion_pass_{};
-    std::unique_ptr<VulkanEngine::SceneRenderer::CollectPass> collect_pass_{};
 
-
-    FrameRenderContext* current_ctx_ = nullptr;
-    vk::ClearDepthStencilValue clear_depth_stencil_{1.0f, 0};
     std::uint32_t frame_counter_ = 0;
     std::uint32_t last_swapchain_image_count_ = 0;
 

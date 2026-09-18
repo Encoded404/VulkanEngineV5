@@ -77,7 +77,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .queue = VulkanEngine::RenderGraph::QueueType::Graphics,
         .writes = {scene_buffers, draw_indirect},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -100,7 +101,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {scene_buffers, occluder_indirect},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -135,7 +137,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .writes = {depth_buffer},
         .attachments = occluder_setup,
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -154,7 +157,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {hiz_image},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -178,7 +182,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {scene_buffers, depth_indirect},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.frame_index = fctx.frame_counter;
             pre_cull_pass_->Execute(pctx, cmd);
@@ -214,7 +219,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .writes = {depth_buffer},
         .attachments = depth_setup,
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -233,7 +239,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {hiz_image},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.render_extent = vk::Extent2D{fctx.width, fctx.height};
             pctx.frame_index = fctx.frame_counter;
@@ -256,7 +263,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {scene_buffers},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.frame_index = fctx.frame_counter;
             occlusion_pass_->Execute(pctx, cmd);
@@ -272,7 +280,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             VulkanEngine::RenderGraph::AccessIntent::Read}},
         .writes = {scene_buffers, draw_indirect},
         .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             VulkanEngine::PipelinePass::FrameContext pctx{};
             pctx.frame_index = fctx.frame_counter;
             collect_pass_->Execute(pctx, cmd);
@@ -312,7 +321,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         .writes = {backbuffer, depth_buffer},
         .attachments = main_setup,
         .execute = [](const void* user_data, vk::CommandBuffer cmd) {
-            auto& fctx = *static_cast<const FrameRenderContext*>(user_data);
+            const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+            auto& fctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
             const float aspect = static_cast<float>(fctx.width) / static_cast<float>(fctx.height);
             const glm::mat4 view = fctx.camera.GetViewMatrix();
             const glm::mat4 proj = fctx.camera.GetProjectionMatrix(aspect);
@@ -342,7 +352,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             .writes = {backbuffer},
             .attachments = imgui_setup,
             .execute = [this](const void* user_data, vk::CommandBuffer cmd) {
-                auto& ctx = *static_cast<const FrameRenderContext*>(user_data);
+                const auto* frame_data = static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+                auto& ctx = *static_cast<const FrameRenderContext*>(frame_data->engine_user_data);
                 if (ctx.imgui && ctx.imgui->IsInitialized()) {
                     auto& backend = bootstrap_->GetBackend();
                     ctx.imgui->RenderDrawData(cmd,
@@ -519,8 +530,36 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
 #endif
 
+        // Fully populated per-frame context shared by built-in and custom passes.
+        VulkanEngine::PipelinePass::FrameContext frame{};
+        frame.render_extent = vk::Extent2D{width, height};
+        frame.frame_index = frame_counter_;
+        frame.ring_index = ring_index;
+        frame.swapchain_image_index = image_index;
+        frame.view = view;
+        frame.proj = proj;
+        frame.view_proj = view_proj;
+        frame.bindless_textures = { bindless_mgr.GetDescriptorSet() };
+        frame.submesh_vertices = { scene_renderer.GetFrameSubmeshVertexSet(frame_counter_) };
+        frame.raw_vertex_buffers = { scene_renderer.GetFrameRawVertexSet(frame_counter_) };
+        frame.indirection_data = { scene_renderer.GetFrameIndirectionSet(frame_counter_) };
+        frame.scene_uniforms = { scene_renderer.GetSceneUniformSet() };
+        frame.depth_pyramid = { scene_renderer.GetHizImage(frame_counter_),
+                                scene_renderer.GetHizFullView(frame_counter_) };
+        frame.depth_buffer = { *depth_view };
+        frame.techniques = &technique_mgr;
+        frame.bindless = &bindless_mgr;
+        frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
+        frame.entity_count = scene_renderer.GetCurrentEntityCount();
+        frame.render_width = width;
+        frame.render_height = height;
+
+        VulkanEngine::PipelinePass::RenderFrameData frame_data{};
+        frame_data.frame = frame;
+        frame_data.engine_user_data = &ctx;
+
         // Phase 2: Render graph executes all GPU passes in dependency order
-        pipeline_->Execute(&ctx, cmd, image_index, ring_index);
+        pipeline_->Execute(&frame_data, cmd, image_index, ring_index);
     }
 
     if (gpu_stats_pool_) {

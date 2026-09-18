@@ -59,9 +59,10 @@ function(setup_test_target TARGET)
   else()
     set(TEST_LABELS "")
   endif()
+  set(TEST_ENV "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs")
   gtest_discover_tests(${TARGET}
     PROPERTIES
-      ENVIRONMENT "TEST_LOG_DIR=${CMAKE_BINARY_DIR}/Testing/logs"
+      ENVIRONMENT "${TEST_ENV}"
       LABELS "${TEST_LABELS}"
   )
 endfunction()

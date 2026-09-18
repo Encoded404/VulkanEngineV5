@@ -215,16 +215,20 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddCustomPass(
     }
 
     // ── Create execute callback ──
-    desc.execute = [pass_ptr](const void* /*user_data*/, vk::CommandBuffer cmd) {
-        // TODO: Populate FrameContext with per-frame data from user_data.
-        // The user_data is passed through from RenderPipeline::Execute()
-        // and will contain frame-specific resources (descriptor sets, etc.).
-        // Required fields to populate:
-        //   - view_proj: camera view-projection matrix (consumed by ExpandPass)
-        //   - render_extent: current swapchain extent
-        //   - frame_index, swapchain_image_index: from Renderer::RenderFrame()
-        const VulkanEngine::PipelinePass::FrameContext frame_ctx{};
-        pass_ptr->Execute(frame_ctx, cmd);
+    // The pass gets the fully populated FrameContext from RenderFrameData, with
+    // this pass's declared push-constant metadata applied.
+    const std::uint32_t push_constant_size = ctx.GetPushConstantSize();
+    const vk::ShaderStageFlags push_constant_stages = ctx.GetPushConstantStages();
+    desc.execute = [pass_ptr, push_constant_size, push_constant_stages](const void* user_data, vk::CommandBuffer cmd) {
+        const auto* frame_data =
+            static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+        if (frame_data == nullptr) {
+            return;
+        }
+        VulkanEngine::PipelinePass::FrameContext frame = frame_data->frame;
+        frame.declared_push_constant_size = push_constant_size;
+        frame.declared_push_constant_stages = push_constant_stages;
+        pass_ptr->Execute(frame, cmd);
     };
 
     // Register with the graph builder via the existing AddPass path
@@ -352,7 +356,58 @@ void RenderPipeline::Execute(const void* user_data, vk::CommandBuffer command_bu
         tracked_valid_[image_index] = plan.has_end_state;
     }
 
-    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, compiled_graph_, user_data, command_buffer);
+    // Per-frame name -> resolved-handle table for FrameContext::GetResource.
+    frame_lookup_.Clear();
+    for (const auto& lifetime : compiled_graph_.resource_lifetimes) {
+        const std::uint32_t index = lifetime.handle.index;
+        if (index >= compiled_graph_.resource_info.size()) {
+            continue;
+        }
+        const auto& info = compiled_graph_.resource_info[index];
+
+        VulkanEngine::PipelinePass::ResolvedResource entry{};
+        entry.handle = lifetime.handle;
+        entry.kind = info.kind;
+        if (info.kind == VulkanEngine::RenderGraph::ResourceKind::Image) {
+            if (index < compiled_graph_.resource_images.size()) {
+                entry.image = compiled_graph_.resource_images[index];
+            }
+            if (index < compiled_graph_.resource_formats.size()) {
+                entry.format = compiled_graph_.resource_formats[index];
+            }
+            if (info.imported) {
+                const auto it = resource_resolvers_.find(info.name);
+                if (it != resource_resolvers_.end()) {
+                    entry.view = it->second.resolve_image_view(image_index);
+                }
+            } else {
+                entry.view = transient_allocator_.GetImageView(index, fif_slot);
+            }
+            entry.resolved = entry.image != nullptr;
+        } else {
+            if (index < compiled_graph_.resource_buffers.size()) {
+                entry.buffer = compiled_graph_.resource_buffers[index];
+            }
+            if (index < compiled_graph_.resource_buffer_offsets.size()) {
+                entry.offset = compiled_graph_.resource_buffer_offsets[index];
+            }
+            if (index < compiled_graph_.resource_buffer_sizes.size()) {
+                entry.size = compiled_graph_.resource_buffer_sizes[index];
+            }
+            entry.resolved = entry.buffer != nullptr;
+        }
+        frame_lookup_.Set(info.name, std::move(entry));
+    }
+
+    // Copy the incoming frame data so this frame's lookup can be attached
+    // without mutating the caller's object.
+    VulkanEngine::PipelinePass::RenderFrameData pass_data{};
+    if (user_data != nullptr) {
+        pass_data = *static_cast<const VulkanEngine::PipelinePass::RenderFrameData*>(user_data);
+    }
+    pass_data.frame.resource_lookup = &frame_lookup_;
+
+    VulkanBackend::Vulkan::ExecuteRenderGraph(plan, compiled_graph_, &pass_data, command_buffer);
 }
 
 void RenderPipeline::SyncTransients() {

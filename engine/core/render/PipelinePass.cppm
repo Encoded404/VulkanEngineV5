@@ -32,8 +32,85 @@ struct BindlessTextureSet  { vk::DescriptorSet handle = nullptr; }; // NOLINT(mi
 struct SubmeshVertexSet    { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
 struct RawVertexArray      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
 struct IndirectionSet      { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+struct SceneUniformSet     { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
 struct DepthPyramid        { vk::Image image = nullptr; vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
 struct DepthBufferView     { vk::ImageView view = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
+
+// ── PassResource — a resolved resource handle for a pass ──
+// Carries the Vulkan handles resolved for the current frame, keyed by resource
+// identity. Typed accessors read the field matching the resource kind; raw()
+// exposes everything for advanced use.
+struct ResolvedResource {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    VulkanEngine::RenderGraph::ResourceHandle handle{};
+    VulkanEngine::RenderGraph::ResourceKind kind = VulkanEngine::RenderGraph::ResourceKind::Image;
+    vk::Image image = nullptr;
+    vk::ImageView view = nullptr;
+    vk::Buffer buffer = nullptr;
+    vk::DeviceSize offset = 0;
+    vk::DeviceSize size = vk::WholeSize;
+    vk::Format format = vk::Format::eUndefined;
+    bool resolved = false;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+class PassResource {
+public:
+    PassResource() = default;
+    explicit PassResource(ResolvedResource resource) : resource_(std::move(resource)) {}
+
+    [[nodiscard]] bool IsValid() const { return resource_.resolved; }
+    [[nodiscard]] bool IsImage() const { return IsValid() && resource_.kind == VulkanEngine::RenderGraph::ResourceKind::Image; }
+    [[nodiscard]] bool IsBuffer() const { return IsValid() && resource_.kind == VulkanEngine::RenderGraph::ResourceKind::Buffer; }
+    [[nodiscard]] vk::Image AsImage() const { return IsImage() ? resource_.image : nullptr; }
+    [[nodiscard]] vk::ImageView AsImageView() const { return IsImage() ? resource_.view : nullptr; }
+    [[nodiscard]] vk::Buffer AsBuffer() const { return IsBuffer() ? resource_.buffer : nullptr; }
+    [[nodiscard]] vk::DeviceSize GetOffset() const { return resource_.offset; }
+    [[nodiscard]] vk::DeviceSize GetSize() const { return resource_.size; }
+    [[nodiscard]] vk::Format GetFormat() const { return resource_.format; }
+    [[nodiscard]] VulkanEngine::RenderGraph::ResourceHandle GetHandle() const { return resource_.handle; }
+    [[nodiscard]] const ResolvedResource& raw() const { return resource_; }
+
+private:
+    ResolvedResource resource_{};
+};
+
+enum class ResourceLookupError : std::uint8_t {
+    NoLookupBound,
+    NotFound,
+};
+
+// Maps a resource name to the handles resolved for this frame.
+class IResourceLookup {
+public:
+    virtual ~IResourceLookup() = default;
+    [[nodiscard]] virtual std::optional<PassResource> Find(std::string_view name) const = 0;
+};
+
+// Concrete lookup the pipeline fills each frame.
+class ResourceLookupTable final : public IResourceLookup {
+public:
+    void Clear() { entries_.clear(); }
+    void Set(std::string name, ResolvedResource resource) { entries_[std::move(name)] = std::move(resource); }
+    [[nodiscard]] std::optional<PassResource> Find(std::string_view name) const override {
+        const auto it = entries_.find(std::string(name));
+        if (it == entries_.end()) {
+            return std::nullopt;
+        }
+        return PassResource{it->second};
+    }
+    [[nodiscard]] std::size_t Size() const { return entries_.size(); }
+
+private:
+    std::unordered_map<std::string, ResolvedResource> entries_{};
+};
+
+enum class PushConstantError : std::uint8_t {
+    NotDeclared,
+    SizeMismatch,
+    NoPipelineLayout,
+};
+
 
 // ── TransientImageDesc — description of a transient (pass-owned) image ──
 struct TransientImageDesc {
@@ -82,16 +159,22 @@ struct FrameContext {
     //NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     vk::Extent2D render_extent{};
     std::uint32_t frame_index = 0;
+    // Frame-in-flight ring slot (frame_index % frames_in_flight): the index
+    // every per-slot resource must use.
+    std::uint32_t ring_index = 0;
     std::uint32_t swapchain_image_index = 0;
 
     // Camera data (populated by the renderer before dispatching passes)
+    glm::mat4 view{1.0f};
+    glm::mat4 proj{1.0f};
     glm::mat4 view_proj{1.0f};
 
-    // Engine-standard descriptor sets (sets 0-3)
+    // Engine-standard descriptor sets (sets 0-4)
     BindlessTextureSet bindless_textures{};
     SubmeshVertexSet   submesh_vertices{};
     RawVertexArray      raw_vertex_buffers{};
     IndirectionSet      indirection_data{};
+    SceneUniformSet     scene_uniforms{};
 
     // Common GPU resources
     DepthPyramid    depth_pyramid{};
@@ -105,6 +188,9 @@ struct FrameContext {
     std::uint32_t render_width = 0;
     std::uint32_t render_height = 0;
 
+    // Per-frame resource resolution, set by the pipeline before execution.
+    const IResourceLookup* resource_lookup = nullptr;
+
     // Pipeline layout for push constants (set per-pass by PassSetupContext)
     vk::PipelineLayout pipeline_layout = nullptr;
 
@@ -114,25 +200,58 @@ struct FrameContext {
     //NOLINTEND(misc-non-private-member-variables-in-classes)
 
     // ── Push constant upload with runtime validation ──
+    [[nodiscard]] std::expected<void, PushConstantError> ValidatePushConstants(std::size_t type_size) const {
+        if (declared_push_constant_stages == vk::ShaderStageFlags{}) {
+            return std::unexpected(PushConstantError::NotDeclared);
+        }
+        if (declared_push_constant_size != type_size) {
+            return std::unexpected(PushConstantError::SizeMismatch);
+        }
+        if (pipeline_layout == nullptr) {
+            return std::unexpected(PushConstantError::NoPipelineLayout);
+        }
+        return {};
+    }
+
     template<typename T>
-    void SetPushConstants(vk::CommandBuffer cmd, const T& src) const {
-        assert(declared_push_constant_size == sizeof(T) &&
-               "Push constant type size doesn't match declaration");
-        assert(declared_push_constant_stages != vk::ShaderStageFlags{} &&
-               "Push constants were never declared for this pass");
+    [[nodiscard]] std::expected<void, PushConstantError> SetPushConstants(vk::CommandBuffer cmd, const T& src) const {
+        auto valid = ValidatePushConstants(sizeof(T));
+        if (!valid.has_value()) {
+            return valid;
+        }
         cmd.pushConstants(pipeline_layout, declared_push_constant_stages, 0, sizeof(T), &src);
+        return {};
     }
 
     // ── Resolve a resource declared in Setup() ──
-    // Returns the Vulkan handle for a resource by its name.
-    // Implemented in PipelinePass.cpp via the resource map populated during compilation.
-    [[nodiscard]] VulkanEngine::RenderGraph::ResourceHandle GetResource(std::string_view name) const;
+    // Looks the name up in the per-frame identity table.
+    [[nodiscard]] std::expected<PassResource, ResourceLookupError> GetResource(std::string_view name) const {
+        if (resource_lookup == nullptr) {
+            return std::unexpected(ResourceLookupError::NoLookupBound);
+        }
+        auto found = resource_lookup->Find(name);
+        if (!found.has_value()) {
+            return std::unexpected(ResourceLookupError::NotFound);
+        }
+        return *found;
+    }
+};
+
+// The executor's single opaque user_data. Built-in pass lambdas read
+// `engine_user_data` (the renderer's frame context); custom passes read the
+// populated `frame`. Phase 7 migrates built-ins to `frame` without another
+// plumbing change.
+struct RenderFrameData {
+    FrameContext frame{};
+    const void* engine_user_data = nullptr;
 };
 
 // ── PassSetupContext — resource and ordering declarations in Setup() ──
 class PassSetupContext {
 public:
-    explicit PassSetupContext(IResourceRegistry& registry);
+    explicit PassSetupContext(IResourceRegistry& registry,
+                              std::uint32_t render_width = 0,
+                              std::uint32_t render_height = 0);
     ~PassSetupContext() = default;
 
     PassSetupContext(const PassSetupContext&) = delete;

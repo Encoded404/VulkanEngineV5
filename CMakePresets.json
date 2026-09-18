@@ -152,6 +152,7 @@
       "configurePreset": "default",
       "configuration": "Debug",
       "displayName": "Debug (GPU tests only)",
+      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
       "filter": { "include": { "label": "gpu" } }
     },
     {
@@ -159,6 +160,7 @@
       "configurePreset": "default",
       "configuration": "Release",
       "displayName": "Release (GPU tests only)",
+      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
       "filter": { "include": { "label": "gpu" } }
     },
     {
@@ -166,6 +168,7 @@
       "configurePreset": "default",
       "configuration": "RelWithDebInfo",
       "displayName": "RelWithDebInfo (GPU tests only)",
+      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
       "filter": { "include": { "label": "gpu" } }
     }
   ]

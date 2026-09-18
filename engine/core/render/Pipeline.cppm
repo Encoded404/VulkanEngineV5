@@ -130,6 +130,9 @@ private:
     std::vector<std::unique_ptr<VulkanEngine::PipelinePass::IPipelinePass>> custom_passes_{};
     std::array<VulkanEngine::RenderGraph::PassHandle, 6> builtin_handles_{};
 
+    // Per-frame name -> resolved-handle table handed to passes via FrameContext.
+    VulkanEngine::PipelinePass::ResourceLookupTable frame_lookup_{};
+
     bool compiled_ = false;
     bool initialized_ = false;
 };

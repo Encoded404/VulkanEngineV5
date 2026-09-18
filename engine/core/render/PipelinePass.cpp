@@ -14,8 +14,10 @@ namespace VulkanEngine::PipelinePass {
 
 // ── PassSetupContext implementation ──
 
-PassSetupContext::PassSetupContext(IResourceRegistry& registry)
-    : registry_(&registry) {}
+PassSetupContext::PassSetupContext(IResourceRegistry& registry,
+                                   std::uint32_t render_width,
+                                   std::uint32_t render_height)
+    : registry_(&registry), render_width_(render_width), render_height_(render_height) {}
 
 void PassSetupContext::RunBefore(BuiltinPass pass) {
     before_builtin_passes_.push_back(pass);
@@ -75,12 +77,6 @@ std::uint32_t PassSetupContext::GetRenderHeight() const {
     return render_height_;
 }
 
-// ── FrameContext implementation ──
-
-VulkanEngine::RenderGraph::ResourceHandle FrameContext::GetResource(std::string_view /*name*/) const {
-    // Resources are resolved through the compiled render graph's resource lifetime table.
-    // This is used by custom passes to get handles for resources declared in Setup().
-    return VulkanEngine::RenderGraph::ResourceHandle{};
-}
+// ── PassResource/FrameContext are header-inline ──
 
 } // namespace VulkanEngine::PipelinePass

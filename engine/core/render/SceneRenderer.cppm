@@ -252,6 +252,18 @@ public:
         return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
     }
 
+    // Engine-standard descriptor sets 1-3 for a frame (set 0 is the bindless
+    // manager's, set 4 is GetSceneUniformSet()).
+    [[nodiscard]] vk::DescriptorSet GetFrameSubmeshVertexSet(std::uint32_t frame_index) const {
+        return frames_[frame_index % frames_in_flight_].submesh_vertex_set.GetHandle();
+    }
+    [[nodiscard]] vk::DescriptorSet GetFrameRawVertexSet(std::uint32_t frame_index) const {
+        return static_cast<vk::DescriptorSet>(*frames_[frame_index % frames_in_flight_].bindless_vertex_set);
+    }
+    [[nodiscard]] vk::DescriptorSet GetFrameIndirectionSet(std::uint32_t frame_index) const {
+        return *frames_[frame_index % frames_in_flight_].indirection_raw_set;
+    }
+
     // ── Lighting system (descriptor set 4) — binding 0 = SceneHeader, binding 1 = Light[] BlockArray ──
     [[nodiscard]] vk::DescriptorSetLayout GetSceneUniformLayout() const {
         return *scene_uniform_layout_;

@@ -175,7 +175,7 @@ public:
         // Reset the fence ONLY when we are about to submit work.
         vk_device.resetFences({*vk_in_flight_fence});
 
-        const vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        const vk::PipelineStageFlags wait_stage = AcquireWaitStageMask();
         vk::SubmitInfo submit_info{};
         submit_info.waitSemaphoreCount = 1;
         submit_info.pWaitSemaphores = &*vk_image_available_semaphore;

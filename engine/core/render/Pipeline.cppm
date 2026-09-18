@@ -99,6 +99,10 @@ public:
     // a frame boundary (top of Renderer::RenderFrame).
     void ApplyChanges();
     void SetRenderExtent(std::uint32_t width, std::uint32_t height);
+    // Swapchain images were destroyed/recreated (and possibly the image count
+    // changed). Clears per-image imported-state tracking and forces the next
+    // frame to start every imported image from Undefined.
+    void OnSwapchainRecreated(std::uint32_t image_count);
 
     // ── Built-in pass handle access ──
     // The caller (Renderer) populates these after registering all built-in passes.
@@ -188,6 +192,11 @@ private:
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;
     std::uint32_t last_fif_slot_ = 0;
+    // A render-extent change queues a one-shot OnRenderResize notification for
+    // registered passes, drained at the next ApplyChanges().
+    bool resize_pending_ = false;
+    std::uint32_t resize_width_ = 0;
+    std::uint32_t resize_height_ = 0;
 
     std::unordered_map<std::uint32_t, TransientImageDesc> transient_image_descs_{};
     std::unordered_map<std::uint32_t, TransientBufferDesc> transient_buffer_descs_{};

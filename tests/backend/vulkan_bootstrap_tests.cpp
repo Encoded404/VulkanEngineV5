@@ -57,4 +57,15 @@ TEST(VulkanBootstrapTest, DeviceLostStatusPersistsUntilShutdown) {
     EXPECT_FALSE(bootstrap.IsInitialized());
 }
 
+// The acquire semaphore must not be waited on only at colour-attachment output:
+// a pass that samples the acquired backbuffer reads it in the fragment (or
+// compute) stage, which is earlier. `eAllCommands` is a distinct stage bit (not
+// a bitmask union), so this guards against a regression to the colour-only
+// wait that would race a shader read of the backbuffer.
+TEST(VulkanBootstrapTest, AcquireWaitStageCoversShaderReadsOfBackbuffer) {
+    const vk::PipelineStageFlags mask = AcquireWaitStageMask();
+    EXPECT_EQ(mask, vk::PipelineStageFlagBits::eAllCommands);
+    EXPECT_NE(mask, vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput});
+}
+
 }  // namespace

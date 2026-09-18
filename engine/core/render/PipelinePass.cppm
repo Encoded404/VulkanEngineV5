@@ -219,6 +219,11 @@ struct TransientImageDesc {
     vk::Format format = vk::Format::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t width = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t height = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Relative size: when > 0 the dimension is derived from the render extent at
+    // (re)allocation time and the absolute width/height is ignored. A scale of
+    // 0 keeps the absolute dimension.
+    float width_scale = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
+    float height_scale = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eColorAttachment; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout initial_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::ImageLayout final_layout = vk::ImageLayout::eUndefined; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -226,6 +231,22 @@ struct TransientImageDesc {
     // an Undefined initial layout (ContentsUndefined contract).
     bool aliasable = false; // NOLINT(misc-non-private-member-variables-in-classes)
 };
+
+// Resolves a transient image's real dimensions against the current render
+// extent. Pure and device-free so relative sizing is unit-testable.
+[[nodiscard]] inline std::pair<std::uint32_t, std::uint32_t> ResolveTransientExtent(
+    const TransientImageDesc& desc, std::uint32_t render_width, std::uint32_t render_height) {
+    const auto scaled = [](std::uint32_t base, float scale) -> std::uint32_t {
+        if (scale <= 0.0f) {
+            return base;
+        }
+        const auto value = std::lround(static_cast<double>(scale) * static_cast<double>(base));
+        return value < 1 ? 1u : static_cast<std::uint32_t>(value);
+    };
+    const std::uint32_t width = desc.width_scale > 0.0f ? scaled(render_width, desc.width_scale) : desc.width;
+    const std::uint32_t height = desc.height_scale > 0.0f ? scaled(render_height, desc.height_scale) : desc.height;
+    return {width, height};
+}
 
 // ── TransientBufferDesc — description of a transient (pass-owned) buffer ──
 struct TransientBufferDesc {
@@ -461,6 +482,15 @@ public:
 
     // Optional: validate configuration before compilation
     [[nodiscard]] virtual bool Validate() const { return true; }
+
+    // Optional: react to a render-extent change. Called once per change at a
+    // frame boundary (drained by RenderPipeline::ApplyChanges), never while the
+    // frame is executing. Use it to resize app-owned resources; graph-declared
+    // relative transients are reallocated by the engine itself.
+    virtual void OnRenderResize(std::uint32_t width, std::uint32_t height) {
+        (void)width;
+        (void)height;
+    }
 
     // Stable, human-readable name used for graph diagnostics, ordering, and
     // duplicate-name validation. Override for application passes.

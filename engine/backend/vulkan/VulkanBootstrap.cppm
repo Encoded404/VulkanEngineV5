@@ -11,6 +11,15 @@ export import VulkanBackend.Vulkan.VulkanCapabilities;
 
 export namespace VulkanBackend::Vulkan {
 
+// Pipeline stages the swapchain acquire semaphore must wait at for the frame.
+// The acquired image can be written as a colour attachment and/or sampled by a
+// shader, so waiting only at colour-attachment output races a fragment/compute
+// read of the backbuffer. Wait at all commands until the render graph reports
+// the real first-use stage.
+[[nodiscard]] inline vk::PipelineStageFlags AcquireWaitStageMask() {
+    return vk::PipelineStageFlagBits::eAllCommands;
+}
+
 class IVulkanBootstrap {
 public:
     virtual ~IVulkanBootstrap() = default;

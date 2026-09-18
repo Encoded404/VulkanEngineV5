@@ -106,8 +106,10 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
 
     VulkanEngine::RenderGraph::TransientImageInfo info{};
     info.format = desc.format;
-    info.width = desc.width;
-    info.height = desc.height;
+    const auto [image_width, image_height] =
+        VulkanEngine::PipelinePass::ResolveTransientExtent(desc, render_width_, render_height_);
+    info.width = image_width;
+    info.height = image_height;
     info.mip_levels = 1;
     info.array_layers = 1;
     info.sample_count = vk::SampleCountFlagBits::e1;
@@ -372,8 +374,35 @@ void RenderPipeline::RequestRebuild() {
 }
 
 void RenderPipeline::SetRenderExtent(std::uint32_t width, std::uint32_t height) {
+    if (width == render_width_ && height == render_height_) {
+        return;
+    }
     render_width_ = width;
     render_height_ = height;
+
+    // Reallocate size-dependent (relative) transients against the new extent.
+    // The compiled plan's resource identities do not change, so no rebuild is
+    // needed; ResolveResources() picks up the new handles on the next frame.
+    if (compiled_) {
+        SyncTransients();
+    }
+
+    // Queue the app-owned-resource callback; drained once by ApplyChanges().
+    resize_pending_ = true;
+    resize_width_ = width;
+    resize_height_ = height;
+}
+
+void RenderPipeline::OnSwapchainRecreated(std::uint32_t image_count) {
+    if (image_count == 0) {
+        image_count = 1;
+    }
+    // Every swapchain image (and its depth image/view) is new, so any recorded
+    // end-of-frame layout is meaningless: force the next use to start from
+    // Undefined. Sizes are re-established from the newly compiled graph.
+    tracked_states_.assign(image_count,
+                           std::vector<VulkanEngine::RenderGraph::ResourceState>(tracked_resource_count_));
+    tracked_valid_.assign(image_count, std::vector<bool>(tracked_resource_count_, false));
 }
 
 const std::vector<VulkanEngine::RenderGraph::CompileDiagnostic>& RenderPipeline::GetDiagnostics() const {
@@ -393,6 +422,16 @@ void RenderPipeline::TrackImportedResource(VulkanEngine::RenderGraph::ResourceHa
 }
 
 void RenderPipeline::ApplyChanges() {
+    // Drain a queued resize at a frame boundary, before the frame is recorded.
+    // This is not a graph mutation, so it does not dirty the model.
+    if (resize_pending_) {
+        resize_pending_ = false;
+        for (auto& model : model_passes_) {
+            if (model.alive && model.pass) {
+                model.pass->OnRenderResize(resize_width_, resize_height_);
+            }
+        }
+    }
     if (!dirty_ || applying_) {
         return;
     }
@@ -914,8 +953,13 @@ void RenderPipeline::SyncTransients() {
             desc.buffer.memory = it->second.memory_properties;
         } else {
             const auto it = transient_image_descs_.find(index);
-            if (it == transient_image_descs_.end() || it->second.width == 0 || it->second.height == 0 ||
-                it->second.format == vk::Format::eUndefined) {
+            if (it == transient_image_descs_.end() || it->second.format == vk::Format::eUndefined) {
+                continue;
+            }
+            const auto [image_width, image_height] =
+                VulkanEngine::PipelinePass::ResolveTransientExtent(it->second,
+                                                                   render_width_, render_height_);
+            if (image_width == 0 || image_height == 0) {
                 continue;
             }
             desc.is_image = true;
@@ -926,8 +970,8 @@ void RenderPipeline::SyncTransients() {
             desc.requirements.alignment = 1;
             desc.requirements.aliasable = it->second.aliasable;
             desc.image.format = it->second.format;
-            desc.image.width = it->second.width;
-            desc.image.height = it->second.height;
+            desc.image.width = image_width;
+            desc.image.height = image_height;
             desc.image.usage = it->second.usage;
             desc.image.samples = vk::SampleCountFlagBits::e1;
             desc.image.aspect = FormatToAspectFlags(it->second.format);

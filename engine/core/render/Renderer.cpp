@@ -202,14 +202,18 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 #endif
                                    ) {
     if (!pipeline_) return;
+
+    // Read the extent first so a resize is queued before ApplyChanges drains it
+    // (and so relative transients are sized against the current extent on the
+    // very first compile).
+    std::uint32_t width = 0, height = 0;
+    (void)bootstrap.GetBackend().GetSwapchainExtent(width, height);
+    pipeline_->SetRenderExtent(width, height);
+
     // Rebuild the graph at a frame boundary if passes were added/removed/enabled
     // since the last frame. Removals are freed once their last frame completes.
     pipeline_->ApplyChanges();
     if (!pipeline_->IsCompiled()) return;
-
-    std::uint32_t width = 0, height = 0;
-    (void)bootstrap.GetBackend().GetSwapchainExtent(width, height);
-    pipeline_->SetRenderExtent(width, height);
 
     LOGIFACE_LOG(trace, "RenderFrame frame=" + std::to_string(frame_counter_) +
                  " img=" + std::to_string(image_index) + " w=" + std::to_string(width) +
@@ -228,6 +232,10 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     const std::uint32_t sc_count = bootstrap.GetSnapshot().swapchain_image_count;
     if (sc_count != last_swapchain_image_count_) {
         last_swapchain_image_count_ = sc_count;
+        // Swapchain images (and depth views) were recreated: drop recorded
+        // imported layouts so the next use starts from Undefined, and re-resolve
+        // every view. Idempotent when only the count is first observed.
+        pipeline_->OnSwapchainRecreated(sc_count);
         if (imgui && imgui->IsInitialized()) {
             imgui->OnSwapchainRecreated(sc_count,
                 static_cast<vk::Format>(bootstrap.GetBackend().GetSurfaceFormat().format));

@@ -6,6 +6,7 @@ import std;
 
 import vulkan_hpp;
 import VulkanBackend.Vulkan.VulkanBootstrap;
+import VulkanShared.RenderGraphTypes;
 
 export namespace TestSupport {
 
@@ -73,6 +74,9 @@ public:
     [[nodiscard]] vk::raii::CommandBuffer& GetCommandBuffer(std::uint32_t) override { throw std::runtime_error("Fake"); }
 
     [[nodiscard]] std::uint32_t GetFramesInFlight() const override { return current_frames_in_flight; }
+    [[nodiscard]] std::uint32_t GetRunSlotsPerFrame() const override {
+        return VulkanEngine::RenderGraph::kMaxQueueRuns + 1;
+    }
 
     [[nodiscard]] const VulkanBackend::Vulkan::VulkanCapabilities& GetCapabilities() const override { throw std::runtime_error("Fake"); }
     [[nodiscard]] const std::string& GetErrorMessage() const override { static const std::string dummy; return dummy; }

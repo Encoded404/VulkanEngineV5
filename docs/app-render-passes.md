@@ -185,6 +185,13 @@ Requirements and behaviour:
 - Barrier scopes are clamped to each pass's queue at plan time, so a compute run
   never names a graphics-only stage or access. Cross-queue ordering is carried by
   the run-boundary semaphore; layout transitions are preserved.
+- GPU statistics are collected per queue run (one query per run, in that run's
+  own command buffer) and summed for the frame log, so an async frame reports its
+  compute passes. Compute runs use a compute-only statistics pool, because a
+  pipeline-statistics pool that enables graphics counters may only be used from
+  a graphics command pool.
+- `--max-frames N` runs an example for a deterministic number of frames and then
+  exits cleanly (0 = interactive), which is what the validation smoke runs use.
 
 ## Runtime add/remove/enable
 

@@ -262,6 +262,7 @@ export namespace VulkanEngine::Application {
         setup_completed = true;
 
         auto previous_time = std::chrono::steady_clock::now();
+        std::uint32_t rendered_frames = 0;
 
         VulkanEngine::Crash::Stage("frame loop");
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
@@ -383,6 +384,11 @@ export namespace VulkanEngine::Application {
             } else if (context.frame.render_success &&
                        !bootstrap->Present(context.frame.image_index)) {
                 bootstrap->NotifySwapchainOutOfDate();
+            }
+
+            ++rendered_frames;
+            if (config.max_frames != 0 && rendered_frames >= config.max_frames) {
+                runtime->RequestShutdown();
             }
 
             runtime->EndFrame();

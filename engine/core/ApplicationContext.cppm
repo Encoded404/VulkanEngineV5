@@ -98,6 +98,9 @@ struct ApplicationConfig {
     VulkanBackend::Vulkan::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Exit cleanly after this many submitted frames. 0 = run until the user
+    // quits. Used by automated smoke runs (`--max-frames`).
+    std::uint32_t max_frames = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 

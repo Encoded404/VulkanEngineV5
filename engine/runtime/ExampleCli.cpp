@@ -30,6 +30,11 @@ Cli::Cli(std::string_view app_name, std::string_view org_id, std::string_view ap
     app_.add_flag("--validation", force_validation_, "Enable the Vulkan validation layer");
     app_.add_flag("--no-validation", force_no_validation_, "Disable the Vulkan validation layer");
 
+    // Deterministic exit for automated smoke runs; 0 keeps the interactive loop.
+    app_.add_option("--max-frames", max_frames_,
+                    "Exit cleanly after this many rendered frames (0 = run until quit)")
+       ->type_name("N");
+
     // Storage options. Everything the application writes (settings, saves,
     // pipeline caches, logs) lives under the resolved root; these only decide
     // where that root is. --user-dir wins over --portable.
@@ -98,6 +103,7 @@ VulkanEngine::Application::ApplicationConfig Cli::MakeConfig() const {
     config.force_portable = force_portable_;
     config.disable_portable = DisablePortable();
     config.log_level = log_level_;
+    config.max_frames = max_frames_;
     // The config's default is build-type aware (debug: on, optimized: off);
     // explicit CLI flags override it in either direction. Both given: --validation wins.
     config.bootstrap_config.enable_validation =

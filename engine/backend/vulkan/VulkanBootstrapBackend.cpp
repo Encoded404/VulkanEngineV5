@@ -125,6 +125,9 @@ public:
     [[nodiscard]] vk::raii::CommandBuffer& GetCommandBuffer(std::uint32_t frame_idx) override { return device_->GetCommandBuffer(frame_idx); }
 
     [[nodiscard]] std::uint32_t GetFramesInFlight() const override { return device_->GetFramesInFlight(); }
+    [[nodiscard]] std::uint32_t GetRunSlotsPerFrame() const override {
+        return VulkanBackend::Vulkan::VulkanDevice::kRunSlotsPerFrame;
+    }
 
     [[nodiscard]] const vk::raii::SwapchainKHR& GetSwapchain() const override { return swapchain_->GetSwapchain(); }
     [[nodiscard]] const std::vector<vk::Image>& GetSwapchainImages() const override { return swapchain_->GetImages(); }

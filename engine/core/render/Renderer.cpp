@@ -23,6 +23,7 @@ import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.Components.Camera;
 import VulkanEngine.GpuResources;
+import VulkanEngine.GpuStats;
 import VulkanEngine.ImGui;
 
 namespace VulkanEngine::Renderer {
@@ -173,14 +174,34 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     {
         auto& device = bootstrap.GetBackend().GetDevice();
+        stats_frames_in_flight_ =
+            std::max<std::uint32_t>(bootstrap.GetBackend().GetFramesInFlight(), 1);
+        stats_run_slots_per_frame_ =
+            std::max<std::uint32_t>(bootstrap.GetBackend().GetRunSlotsPerFrame(), 1);
+        const std::uint32_t query_count =
+            VulkanEngine::GpuStats::QueryPoolSize(stats_frames_in_flight_, stats_run_slots_per_frame_);
         vk::QueryPoolCreateInfo qp_info{};
         qp_info.queryType = vk::QueryType::ePipelineStatistics;
         qp_info.pipelineStatistics = GPU_STATS_FLAGS;
-        qp_info.queryCount = 1;
+        qp_info.queryCount = query_count;
         gpu_stats_pool_ = std::make_unique<vk::raii::QueryPool>(device, qp_info);
         VulkanBackend::Vulkan::SetVulkanObjectName(device, *gpu_stats_pool_, "gpu-stats-pool");
+
+        vk::QueryPoolCreateInfo compute_qp_info{};
+        compute_qp_info.queryType = vk::QueryType::ePipelineStatistics;
+        compute_qp_info.pipelineStatistics = GPU_STATS_COMPUTE_FLAGS;
+        compute_qp_info.queryCount = query_count;
+        gpu_stats_compute_pool_ = std::make_unique<vk::raii::QueryPool>(device, compute_qp_info);
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, *gpu_stats_compute_pool_,
+                                                   "gpu-stats-compute-pool");
+
         const vk::Device raw_device = *device;
-        raw_device.resetQueryPool(*gpu_stats_pool_, 0, 1);
+        raw_device.resetQueryPool(*gpu_stats_pool_, 0, query_count);
+        raw_device.resetQueryPool(*gpu_stats_compute_pool_, 0, query_count);
+        stats_ring_run_counts_.assign(stats_frames_in_flight_, 0);
+        stats_ring_frame_ids_.assign(stats_frames_in_flight_, 0);
+        stats_ring_run_kinds_.assign(
+            static_cast<std::size_t>(stats_frames_in_flight_) * stats_run_slots_per_frame_, 0);
     }
 
     // Engine-owned sampler for app-pass sampled/combined-image bindings.
@@ -203,6 +224,10 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
 void Renderer::Shutdown() {
     gpu_stats_pool_.reset();
+    gpu_stats_compute_pool_.reset();
+    stats_ring_run_counts_.clear();
+    stats_ring_frame_ids_.clear();
+    stats_ring_run_kinds_.clear();
     default_sampler_.reset();
     if (pipeline_) {
         pipeline_->Shutdown();
@@ -264,7 +289,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
     }
 
-    // Enable GPU stats
     const std::uint32_t frame_idx = bootstrap.GetSnapshot().frame_index;
     const std::uint32_t frames_in_flight = std::max<std::uint32_t>(backend.GetFramesInFlight(), 1);
     // Bootstrap's frame_index is the authoritative counter; the ring index used
@@ -316,32 +340,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     // GPU gather/upload/descriptor work is recorded once, ahead of the graph.
     const auto record_prep = [&](vk::CommandBuffer target) {
-        if (gpu_stats_pool_) {
-            auto& device = backend.GetDevice();
-            auto* dev_dispatcher = device.getDispatcher();
-            std::array<uint64_t, 8> stats{};
-            const vk::Result qr = static_cast<vk::Result>(dev_dispatcher->vkGetQueryPoolResults(
-                static_cast<vk::Device::CType>(*device),
-                static_cast<vk::QueryPool::CType>(**gpu_stats_pool_),
-                0, 1,
-                sizeof(stats), stats.data(),
-                sizeof(uint64_t),
-                static_cast<vk::QueryResultFlags::MaskType>(vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability)));
-            if (qr == vk::Result::eSuccess && stats[7] != 0) {
-                LOGIFACE_LOG(trace,
-                    "GPU frame=" + std::to_string(frame_counter_) +
-                    " IA_verts=" + std::to_string(stats[0]) +
-                    " IA_prims=" + std::to_string(stats[1]) +
-                    " VS_invoc=" + std::to_string(stats[2]) +
-                    " clip_invoc=" + std::to_string(stats[3]) +
-                    " clip_prims=" + std::to_string(stats[4]) +
-                    " FS_invoc=" + std::to_string(stats[5]) +
-                    " CS_invoc=" + std::to_string(stats[6]));
-            }
-            target.resetQueryPool(**gpu_stats_pool_, 0, 1);
-            target.beginQuery(**gpu_stats_pool_, 0, {});
-        }
-
         // Bind actual depth to Hi-Z descriptor before hiz-gen pass executes
         scene_renderer.UpdateHizDepthBinding(frame_counter_, *depth_view);
 
@@ -364,20 +362,126 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 #endif
     };
 
-    const auto end_stats = [&](vk::CommandBuffer target) {
-        if (gpu_stats_pool_) {
-            target.endQuery(**gpu_stats_pool_, 0);
+    // ── Per-run GPU statistics ──
+    //
+    // One pipeline-statistics query per queue run, in the ring slot for this
+    // frames-in-flight. A query cannot span queues, so measuring the whole frame
+    // requires one query per run; the previous use of this ring is read once its
+    // fence-complete work is replaced.
+    const auto run_query_slot = [&](std::uint32_t run_slot) {
+        return VulkanEngine::GpuStats::QuerySlot(ring_index, run_slot, stats_frames_in_flight_,
+                                                 stats_run_slots_per_frame_);
+    };
+    const auto read_previous_run_stats = [&]() {
+        if (!gpu_stats_pool_ || ring_index >= stats_ring_run_counts_.size() ||
+            stats_ring_run_counts_[ring_index] == 0) {
+            return;
+        }
+        const std::uint32_t first_slot = ring_index * stats_run_slots_per_frame_;
+        const std::uint32_t run_count = stats_ring_run_counts_[ring_index];
+        const std::uint64_t recorded_frame = stats_ring_frame_ids_[ring_index];
+
+        std::vector<VulkanEngine::GpuStats::Counters> per_run;
+        per_run.reserve(run_count);
+
+        // Read each used run individually from its queue's pool. Reading a whole
+        // range at once would return VK_NOT_READY as soon as it covered a query
+        // that was never begun in that pool (a run of the other queue).
+        const auto& device = backend.GetDevice();
+        auto* dev_dispatcher = device.getDispatcher();
+        for (std::uint32_t run = 0; run < run_count; ++run) {
+            const bool compute = stats_ring_run_kinds_[first_slot + run] != 0;
+            const vk::raii::QueryPool* pool =
+                compute ? gpu_stats_compute_pool_.get() : gpu_stats_pool_.get();
+            if (pool == nullptr) {
+                continue;
+            }
+            const std::uint32_t words_per_query =
+                compute ? VulkanEngine::GpuStats::kComputeQueryWords
+                        : VulkanEngine::GpuStats::kQueryWords;
+            std::array<std::uint64_t, VulkanEngine::GpuStats::kQueryWords> words{};
+            const vk::Result qr = static_cast<vk::Result>(dev_dispatcher->vkGetQueryPoolResults(
+                static_cast<vk::Device::CType>(*device),
+                static_cast<vk::QueryPool::CType>(**pool),
+                first_slot + run, 1,
+                static_cast<vk::DeviceSize>(words_per_query * sizeof(std::uint64_t)), words.data(),
+                static_cast<vk::DeviceSize>(words_per_query * sizeof(std::uint64_t)),
+                static_cast<vk::QueryResultFlags::MaskType>(vk::QueryResultFlagBits::e64 |
+                                                            vk::QueryResultFlagBits::eWithAvailability)));
+            if (qr != vk::Result::eSuccess) {
+                continue;
+            }
+            VulkanEngine::GpuStats::Counters counters{};
+            const bool parsed =
+                compute ? VulkanEngine::GpuStats::TryParseComputeQueryResult(words.data(), counters)
+                        : VulkanEngine::GpuStats::TryParseQueryResult(words.data(), counters);
+            if (parsed) {
+                per_run.push_back(counters);
+            }
+        }
+
+        if (!per_run.empty()) {
+            const auto total = VulkanEngine::GpuStats::Accumulate(per_run);
+            LOGIFACE_LOG(trace,
+                "GPU frame=" + std::to_string(recorded_frame) +
+                " runs=" + std::to_string(per_run.size()) + "/" + std::to_string(run_count) +
+                " IA_verts=" + std::to_string(total.input_assembly_vertices) +
+                " IA_prims=" + std::to_string(total.input_assembly_primitives) +
+                " VS_invoc=" + std::to_string(total.vertex_shader_invocations) +
+                " clip_invoc=" + std::to_string(total.clipping_invocations) +
+                " clip_prims=" + std::to_string(total.clipping_primitives) +
+                " FS_invoc=" + std::to_string(total.fragment_shader_invocations) +
+                " CS_invoc=" + std::to_string(total.compute_shader_invocations));
+        }
+
+        // This ring's prior submission is fence-complete before RenderFrame runs,
+        // so its queries can be reset host-side for reuse.
+        const vk::Device raw_device = *backend.GetDevice();
+        raw_device.resetQueryPool(**gpu_stats_pool_, first_slot, stats_run_slots_per_frame_);
+        if (gpu_stats_compute_pool_) {
+            raw_device.resetQueryPool(**gpu_stats_compute_pool_, first_slot,
+                                      stats_run_slots_per_frame_);
+        }
+        stats_ring_run_counts_[ring_index] = 0;
+    };
+
+    const auto begin_run_stats = [&](vk::CommandBuffer target, std::uint32_t run_slot, bool compute) {
+        const vk::raii::QueryPool* pool =
+            compute ? gpu_stats_compute_pool_.get() : gpu_stats_pool_.get();
+        if (pool != nullptr) {
+            target.beginQuery(**pool, run_query_slot(run_slot), {});
+        }
+        if (gpu_stats_pool_ && ring_index < stats_ring_run_counts_.size()) {
+            stats_ring_run_kinds_[run_query_slot(run_slot)] = compute ? 1 : 0;
         }
     };
+    const auto end_run_stats = [&](vk::CommandBuffer target, std::uint32_t run_slot, bool compute) {
+        const vk::raii::QueryPool* pool =
+            compute ? gpu_stats_compute_pool_.get() : gpu_stats_pool_.get();
+        if (pool != nullptr) {
+            target.endQuery(**pool, run_query_slot(run_slot));
+        }
+    };
+    const auto note_run_slot = [&](std::uint32_t run_slot) {
+        if (gpu_stats_pool_ && ring_index < stats_ring_run_counts_.size() &&
+            run_slot + 1 > stats_ring_run_counts_[ring_index]) {
+            stats_ring_run_counts_[ring_index] = run_slot + 1;
+            stats_ring_frame_ids_[ring_index] = frame_counter_;
+        }
+    };
+
+    read_previous_run_stats();
 
     if (single_graphics_run) {
         // Existing single-queue fast path: one command buffer, no run list.
         auto& cmd = backend.GetCommandBuffer(frame_idx);
         cmd.reset({});
         cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        begin_run_stats(cmd, 0, /*compute=*/false);
         record_prep(cmd);
         pipeline_->RecordRun(0, cmd);
-        end_stats(cmd);
+        end_run_stats(cmd, 0, /*compute=*/false);
+        note_run_slot(0);
         cmd.end();
     } else {
         // Multi-queue path: one command buffer per queue run, submitted in order.
@@ -396,26 +500,28 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             auto& preamble_cmd = backend.GetRunCommandBuffer(false, frame_idx, 0);
             preamble_cmd.reset({});
             preamble_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+            begin_run_stats(preamble_cmd, 0, /*compute=*/false);
             record_prep(preamble_cmd);
-            end_stats(preamble_cmd);
+            end_run_stats(preamble_cmd, 0, /*compute=*/false);
+            note_run_slot(0);
             preamble_cmd.end();
             submits.push_back({.compute = false, .command_buffer = *preamble_cmd});
         }
 
         for (std::uint32_t i = 0; i < runs.runs.size(); ++i) {
             const bool compute = runs.runs[i].queue != VulkanEngine::RenderGraph::QueueType::Graphics;
-            auto& run_cmd = backend.GetRunCommandBuffer(compute, frame_idx, i + slot_base);
+            const std::uint32_t run_slot = i + slot_base;
+            auto& run_cmd = backend.GetRunCommandBuffer(compute, frame_idx, run_slot);
             run_cmd.reset({});
             run_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+            begin_run_stats(run_cmd, run_slot, compute);
             if (i == 0 && slot_base == 0) {
                 // Run 0 is graphics: fold prep into it.
                 record_prep(run_cmd);
             }
             pipeline_->RecordRun(i, run_cmd);
-            // Keep the query's begin and end in the same command buffer.
-            if (i == 0 && slot_base == 0) {
-                end_stats(run_cmd);
-            }
+            end_run_stats(run_cmd, run_slot, compute);
+            note_run_slot(run_slot);
             run_cmd.end();
             submits.push_back({.compute = compute, .command_buffer = *run_cmd});
         }

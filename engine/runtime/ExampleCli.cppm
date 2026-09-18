@@ -54,6 +54,9 @@ public:
         return force_no_portable_ && !force_portable_;
     }
 
+    // Frames to render before exiting cleanly; 0 means run until the user quits.
+    [[nodiscard]] std::uint32_t MaxFrames() const { return max_frames_; }
+
     // Application config assembled from the standard options and the overrides.
     [[nodiscard]] VulkanEngine::Application::ApplicationConfig MakeConfig() const;
 
@@ -95,6 +98,7 @@ private:
     std::vector<std::string> force_disabled_extensions_{};
     std::string log_level_ = "info";
     std::string user_dir_{};
+    std::uint32_t max_frames_ = 0;
     bool force_validation_ = false;
     bool force_no_validation_ = false;
     bool force_portable_ = false;

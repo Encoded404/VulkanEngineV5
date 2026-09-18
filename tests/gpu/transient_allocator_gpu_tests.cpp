@@ -22,6 +22,7 @@ public:
     [[nodiscard]] const vk::raii::PhysicalDevice& GetPhysicalDevice() const override { return *physical_device_; }
     [[nodiscard]] const vk::raii::Device& GetDevice() const override { return *device_; }
     [[nodiscard]] std::uint32_t GetFramesInFlight() const override { return 2; }
+    [[nodiscard]] std::uint32_t GetRunSlotsPerFrame() const override { return 1; }
     [[nodiscard]] bool IsFrameComplete(std::uint32_t) override { return true; }
 
     bool CreateInstance(const VulkanBackend::Vulkan::VulkanBootstrapConfig&) override { throw std::runtime_error("n/a"); }

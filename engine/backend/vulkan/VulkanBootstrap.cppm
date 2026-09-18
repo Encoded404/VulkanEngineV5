@@ -75,6 +75,10 @@ public:
     [[nodiscard]] virtual vk::raii::CommandBuffer& GetCommandBuffer(std::uint32_t frame_idx) = 0; // Modified
 
     [[nodiscard]] virtual std::uint32_t GetFramesInFlight() const = 0; // New method
+    // Number of per-run command buffers (and cross-queue semaphores) the device
+    // budgets per frames-in-flight slot. Slot 0 is reserved for the graphics
+    // preamble; the rest hold the frame's queue runs.
+    [[nodiscard]] virtual std::uint32_t GetRunSlotsPerFrame() const = 0;
 
     // Swapchain access
     [[nodiscard]] virtual const vk::raii::SwapchainKHR& GetSwapchain() const = 0;

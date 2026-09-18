@@ -99,7 +99,25 @@ private:
         vk::QueryPipelineStatisticFlagBits::eClippingPrimitives |
         vk::QueryPipelineStatisticFlagBits::eFragmentShaderInvocations |
         vk::QueryPipelineStatisticFlagBits::eComputeShaderInvocations;
+
+    // Compute-queue runs may only use a pool whose enabled statistics are not
+    // graphics operations, so they get their own compute-only pool.
+    static constexpr vk::QueryPipelineStatisticFlags GPU_STATS_COMPUTE_FLAGS =
+        vk::QueryPipelineStatisticFlagBits::eComputeShaderInvocations;
+    // Graphics runs use the full-statistics pool; compute runs use a pool that
+    // enables only the compute counter (a pool with graphics counters cannot be
+    // used from a compute command pool).
     std::unique_ptr<vk::raii::QueryPool> gpu_stats_pool_{};
+    std::unique_ptr<vk::raii::QueryPool> gpu_stats_compute_pool_{};
+
+    // One query per queue run per frames-in-flight slot. The slot for a run is
+    // (ring_index * stats_run_slots_per_frame_) + run_slot, so a frame's results
+    // are read only when that ring is reused (its prior work is fence-complete).
+    std::uint32_t stats_frames_in_flight_ = 0;
+    std::uint32_t stats_run_slots_per_frame_ = 0;
+    std::vector<std::uint32_t> stats_ring_run_counts_{};   // runs recorded last use
+    std::vector<std::uint64_t> stats_ring_frame_ids_{};    // frame id those runs belong to
+    std::vector<std::uint8_t> stats_ring_run_kinds_{};     // 1 = compute, 0 = graphics
 };
 
 } // namespace VulkanEngine::Renderer

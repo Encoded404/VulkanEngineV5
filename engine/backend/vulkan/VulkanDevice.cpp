@@ -397,8 +397,10 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
             compute_command_buffers_ = device_->allocateCommandBuffers(compute_alloc);
         }
 
-        // Per-run command buffers and cross-queue boundary semaphores.
-        const std::uint32_t run_slots = frames_in_flight_ * kMaxQueueRuns;
+        // Per-run command buffers and cross-queue boundary semaphores. One slot
+        // per FIF is reserved for the graphics preamble and the rest for graph
+        // queue runs (see kRunSlotsPerFrame).
+        const std::uint32_t run_slots = frames_in_flight_ * kRunSlotsPerFrame;
         vk::CommandBufferAllocateInfo run_alloc{};
         run_alloc.commandPool = **command_pool_;
         run_alloc.level = vk::CommandBufferLevel::ePrimary;
@@ -441,7 +443,7 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
 
 vk::raii::CommandBuffer& VulkanDevice::GetRunCommandBuffer(bool compute, std::uint32_t frame_idx,
                                                            std::uint32_t run_slot) {
-    const std::uint32_t index = (frame_idx % frames_in_flight_) * kMaxQueueRuns + run_slot;
+    const std::uint32_t index = (frame_idx % frames_in_flight_) * kRunSlotsPerFrame + run_slot;
     if (compute && async_compute_available_) {
         return compute_run_buffers_[index];
     }
@@ -450,7 +452,7 @@ vk::raii::CommandBuffer& VulkanDevice::GetRunCommandBuffer(bool compute, std::ui
 
 const vk::raii::Semaphore& VulkanDevice::GetRunSemaphore(std::uint32_t frame_idx,
                                                          std::uint32_t run_slot) const {
-    return *run_semaphores_[(frame_idx % frames_in_flight_) * kMaxQueueRuns + run_slot];
+    return *run_semaphores_[(frame_idx % frames_in_flight_) * kRunSlotsPerFrame + run_slot];
 }
 
 void VulkanDevice::Shutdown() {

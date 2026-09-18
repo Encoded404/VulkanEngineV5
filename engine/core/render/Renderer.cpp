@@ -383,26 +383,37 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // Multi-queue path: one command buffer per queue run, submitted in order.
         LOGIFACE_LOG(debug, "Renderer: multi-queue frame with " +
                                 std::to_string(runs.runs.size()) + " runs");
-        std::uint32_t prep_run = 0;
-        for (std::uint32_t i = 0; i < runs.runs.size(); ++i) {
-            if (runs.runs[i].queue == VulkanEngine::RenderGraph::QueueType::Graphics) {
-                prep_run = i;
-                break;
-            }
-        }
         std::vector<VulkanBackend::Vulkan::IVulkanBootstrap::QueueRunSubmit> submits;
-        submits.reserve(runs.runs.size());
+        submits.reserve(runs.runs.size() + 1);
+
+        // The engine's scene prep (uploads, descriptor writes, Hi-Z init,
+        // physical-camera compositing) is graphics work. When the graph's first
+        // run is on the graphics queue it is folded into that run; otherwise it
+        // is submitted as a dedicated graphics preamble run before the graph.
+        std::uint32_t slot_base = 0;
+        if (!runs.StartsWithGraphics()) {
+            slot_base = 1;
+            auto& preamble_cmd = backend.GetRunCommandBuffer(false, frame_idx, 0);
+            preamble_cmd.reset({});
+            preamble_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+            record_prep(preamble_cmd);
+            end_stats(preamble_cmd);
+            preamble_cmd.end();
+            submits.push_back({.compute = false, .command_buffer = *preamble_cmd});
+        }
+
         for (std::uint32_t i = 0; i < runs.runs.size(); ++i) {
             const bool compute = runs.runs[i].queue != VulkanEngine::RenderGraph::QueueType::Graphics;
-            auto& run_cmd = backend.GetRunCommandBuffer(compute, frame_idx, i);
+            auto& run_cmd = backend.GetRunCommandBuffer(compute, frame_idx, i + slot_base);
             run_cmd.reset({});
             run_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-            if (i == prep_run) {
+            if (i == 0 && slot_base == 0) {
+                // Run 0 is graphics: fold prep into it.
                 record_prep(run_cmd);
             }
             pipeline_->RecordRun(i, run_cmd, compute);
             // Keep the query's begin and end in the same command buffer.
-            if (i == prep_run) {
+            if (i == 0 && slot_base == 0) {
                 end_stats(run_cmd);
             }
             run_cmd.end();

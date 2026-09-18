@@ -50,6 +50,10 @@ public:
     // cross-queue boundaries are ordered with per-run binary semaphores. The cap
     // is shared with the planner so the two cannot drift.
     static constexpr std::uint32_t kMaxQueueRuns = VulkanEngine::RenderGraph::kMaxQueueRuns;
+    // One extra slot per frame is reserved for the engine's graphics preamble
+    // (scene uploads/descriptors), which is submitted ahead of the graph when
+    // the graph's first run is not on the graphics queue.
+    static constexpr std::uint32_t kRunSlotsPerFrame = kMaxQueueRuns + 1;
     [[nodiscard]] vk::raii::CommandBuffer& GetRunCommandBuffer(bool compute, std::uint32_t frame_idx,
                                                                std::uint32_t run_slot);
     [[nodiscard]] const vk::raii::Semaphore& GetRunSemaphore(std::uint32_t frame_idx,

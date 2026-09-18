@@ -204,6 +204,78 @@ TEST(CustomPassPlanTest, BuildQueueRunsPartitionsByQueue) {
     EXPECT_TRUE(plan.HasComputeRun());
 }
 
+// A device-free pass that only selects a queue, so run partitioning can be
+// driven purely by registration order.
+class QueueOnlyPass final : public VulkanEngine::PipelinePass::IPipelinePass {
+public:
+    QueueOnlyPass(std::string name, VulkanEngine::RenderGraph::QueueType queue)
+        : name_(std::move(name)), queue_(queue) {}
+
+    [[nodiscard]] std::string_view GetName() const override { return name_; }
+
+    void Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) override {
+        ctx.SetQueueType(queue_);
+    }
+
+    void Execute(const VulkanEngine::PipelinePass::FrameContext&, vk::CommandBuffer) override {}
+
+private:
+    std::string name_;
+    VulkanEngine::RenderGraph::QueueType queue_;
+};
+
+// The plan reports the limit and whether a graphics preamble is required.
+TEST(CustomPassPlanTest, QueueRunLimitAndGraphicsStart) {
+    using VulkanEngine::RenderGraph::BuildQueueRuns;
+    using VulkanEngine::RenderGraph::CompiledRenderGraph;
+    using VulkanEngine::RenderGraph::QueueType;
+
+    CompiledRenderGraph alternating{};
+    alternating.passes.resize(9);
+    for (std::size_t i = 0; i < alternating.passes.size(); ++i) {
+        alternating.passes[i].queue = (i % 2 == 0) ? QueueType::Graphics : QueueType::Compute;
+    }
+    const auto over = BuildQueueRuns(alternating);
+    EXPECT_EQ(over.runs.size(), 9u);
+    EXPECT_TRUE(over.ExceedsLimit());
+    EXPECT_TRUE(over.StartsWithGraphics());
+
+    CompiledRenderGraph compute_first{};
+    compute_first.passes.resize(2);
+    compute_first.passes[0].queue = QueueType::Compute;
+    compute_first.passes[1].queue = QueueType::Graphics;
+    const auto preamble = BuildQueueRuns(compute_first);
+    EXPECT_FALSE(preamble.StartsWithGraphics());
+    EXPECT_FALSE(preamble.ExceedsLimit());
+}
+
+// A graph with more queue runs than the device budgets is rejected at compile
+// time rather than indexing past the per-run command buffers/semaphores.
+TEST(CustomPassPlanTest, RejectsGraphExceedingQueueRunLimit) {
+    RenderPipeline pipeline;
+    pipeline.SetRenderExtent(1280, 720);
+    pipeline.SetAsyncComputeAvailable(true); // allow compute-queue passes
+
+    for (int i = 0; i < 9; ++i) {
+        const auto queue = (i % 2 == 0) ? VulkanEngine::RenderGraph::QueueType::Graphics
+                                        : VulkanEngine::RenderGraph::QueueType::Compute;
+        auto handle = pipeline.RegisterPass(
+            std::make_unique<QueueOnlyPass>("queue-only-" + std::to_string(i), queue));
+        ASSERT_TRUE(handle.has_value()) << (handle ? std::string{} : handle.error().message);
+    }
+
+    pipeline.Compile();
+    EXPECT_FALSE(pipeline.IsCompiled());
+
+    bool explained = false;
+    for (const auto& error : pipeline.GetValidationErrors()) {
+        if (error.message.find("queue runs") != std::string::npos) {
+            explained = true;
+        }
+    }
+    EXPECT_TRUE(explained);
+}
+
 // A compute-queue pass is rejected when no async compute queue is available.
 TEST(CustomPassPlanTest, RejectsComputeQueueWithoutAsyncComputeQueue) {
     class ComputeQueuePass final : public VulkanEngine::PipelinePass::IPipelinePass {

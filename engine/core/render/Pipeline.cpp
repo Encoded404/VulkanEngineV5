@@ -520,13 +520,31 @@ void RenderPipeline::RebuildFromModel() {
 
     std::vector<PassError> errors;
     (void)ValidateModel(errors);
+
+    compiled_graph_ = graph_builder_.Compile();
+    compiled_ = compiled_graph_.success;
+
+    // Partition the ordered passes into queue runs once, at compile time: the
+    // plan is a pure function of the compiled graph. Reject (do not truncate) a
+    // graph that needs more run slots than the device budgets, because the run
+    // slots index per-run command buffers and semaphores.
+    queue_runs_ = compiled_ ? VulkanEngine::RenderGraph::BuildQueueRuns(compiled_graph_)
+                            : VulkanEngine::RenderGraph::QueueRunPlan{};
+    if (compiled_ && queue_runs_.ExceedsLimit()) {
+        errors.push_back(PassError{
+            PassErrorCode::CompileFailed,
+            "graph requires " + std::to_string(queue_runs_.runs.size()) +
+                " queue runs; the device supports at most " +
+                std::to_string(VulkanEngine::RenderGraph::kMaxQueueRuns),
+            {}});
+        compiled_ = false;
+        queue_runs_ = {};
+    }
+
     validation_errors_ = errors;
     for (const auto& error : errors) {
         LOGIFACE_LOG(error, "RenderPipeline: pass '" + error.pass + "': " + error.message);
     }
-
-    compiled_graph_ = graph_builder_.Compile();
-    compiled_ = compiled_graph_.success;
     if (!compiled_) {
         for (const auto& diagnostic : compiled_graph_.diagnostics) {
             LOGIFACE_LOG(error, "RenderPipeline: graph compile: " + diagnostic.message);
@@ -1153,7 +1171,6 @@ void RenderPipeline::BeginFrame(const void* user_data, std::uint32_t image_index
     frame_data_.frame.resource_lookup = &frame_lookup_;
 
     barrier_plan_ = plan;
-    queue_runs_ = VulkanEngine::RenderGraph::BuildQueueRuns(compiled_graph_);
 }
 
 void RenderPipeline::RecordRun(std::uint32_t run_index, vk::CommandBuffer command_buffer,

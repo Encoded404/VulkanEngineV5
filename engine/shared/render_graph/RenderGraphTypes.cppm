@@ -807,6 +807,14 @@ inline BarrierPlan PlanBarriers(const CompiledRenderGraph& graph,
 // queue. Runs are submitted in order; a run on a different queue than the
 // previous one is separated by a semaphore. Pure and device-free so the
 // partitioning is unit-testable.
+
+// Maximum number of graph queue runs a frame may be partitioned into. The
+// device allocates one command buffer and one cross-queue semaphore per run
+// slot per frame-in-flight, so the plan is rejected (not truncated) when it
+// exceeds this. Kept here so the shared planner and the backend agree on the
+// single source of truth.
+inline constexpr std::uint32_t kMaxQueueRuns = 8;
+
 struct QueueRun {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     QueueType queue = QueueType::Graphics;
@@ -827,6 +835,14 @@ struct QueueRunPlan {
         return std::ranges::any_of(runs, [](const QueueRun& run) {
             return run.queue != QueueType::Graphics;
         });
+    }
+    // True when the plan needs more run slots than the device budgets for.
+    [[nodiscard]] bool ExceedsLimit() const { return runs.size() > kMaxQueueRuns; }
+    // True when the very first run is on the graphics queue (the engine's scene
+    // prep can then be folded into it); false when a graphics preamble must be
+    // submitted ahead of the graph.
+    [[nodiscard]] bool StartsWithGraphics() const {
+        return !runs.empty() && runs.front().queue == QueueType::Graphics;
     }
 };
 

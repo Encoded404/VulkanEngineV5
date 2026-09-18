@@ -10,6 +10,8 @@ import VulkanBackend.Vulkan.VulkanInstance;
 import VulkanBackend.Vulkan.CommonTypes;
 import VulkanBackend.Vulkan.VulkanCapabilities;
 
+import VulkanShared.RenderGraphTypes;
+
 export namespace VulkanBackend::Vulkan {
 
 class VulkanDevice {
@@ -45,8 +47,9 @@ public:
     [[nodiscard]] bool IsQueueFamilySharingSupported() const { return queue_families_.size() > 1; }
 
     // Multi-queue run recording: each queue run gets its own command buffer, and
-    // cross-queue boundaries are ordered with per-run binary semaphores.
-    static constexpr std::uint32_t kMaxQueueRuns = 8;
+    // cross-queue boundaries are ordered with per-run binary semaphores. The cap
+    // is shared with the planner so the two cannot drift.
+    static constexpr std::uint32_t kMaxQueueRuns = VulkanEngine::RenderGraph::kMaxQueueRuns;
     [[nodiscard]] vk::raii::CommandBuffer& GetRunCommandBuffer(bool compute, std::uint32_t frame_idx,
                                                                std::uint32_t run_slot);
     [[nodiscard]] const vk::raii::Semaphore& GetRunSemaphore(std::uint32_t frame_idx,

@@ -1,4 +1,5 @@
 #include "scene_entries.slang"
+#include "technique_packing.slang"   // kCompactionMode (constant_id 0): draw-mode selector
 
 [[vk::binding(0, 1)]]
 StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
@@ -23,16 +24,32 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput main(uint vertexId : SV_VertexID) {
-    // Hardware indexed draw: SV_VertexID is the value from draw_indices, which
-    // is an absolute slot into vertex_indirection (vertexOffset is always 0).
+VSOutput main(uint vertexId : SV_VertexID,
+              uint submeshIndex : SV_StartInstanceLocation) {
+    // Monolithic: draw_indices holds absolute slots into vertexIndirection
+    // (vertexOffset is always 0) and the submesh id comes from the entry.
+    // MID: draw_indices holds absolute vertex indices, so SV_VertexID is the
+    // vertex index directly, and firstInstance (the raw instance builtin, NOT
+    // the zero-based SV_InstanceID) is the submesh id.
     VSOutput result;
-    VertexIndirectionEntry entry = vertexIndirection[vertexId];
-    uint vertexBufferSlot = entry.vertexIndex >> 24;
-    uint vertexIndex = entry.vertexIndex & 0xFFFFFFu;
-    uint submeshIndex = entry.submeshIndex;
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint vertexIndex;
+    uint vertexBufferSlot;
+    uint block;
+    uint elementIndex;
+    if (kCompactionMode == 0) {
+        VertexIndirectionEntry entry = vertexIndirection[vertexId];
+        vertexBufferSlot = entry.vertexIndex >> 24;
+        vertexIndex = entry.vertexIndex & 0xFFFFFFu;
+        submeshIndex = entry.submeshIndex;
+        block = submeshIndex / 256u;
+        elementIndex = submeshIndex % 256u;
+    } else {
+        vertexIndex = vertexId;
+        block = submeshIndex / 256u;
+        elementIndex = submeshIndex % 256u;
+        vertexBufferSlot =
+            submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot;
+    }
     Vertex vert = vertexBuffers[NonUniformResourceIndex(vertexBufferSlot)][vertexIndex];
     float3 p = float3(vert.px, vert.py, vert.pz);
     float2 t = float2(vert.u, vert.v);

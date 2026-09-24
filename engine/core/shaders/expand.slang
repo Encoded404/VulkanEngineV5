@@ -13,13 +13,16 @@ RWStructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 [[vk::binding(3, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
-// One entry per vertex slot in each submesh's tight window. Indexed draws make
-// SV_VertexID the draw_indices value, which is a slot here. Shared by both
-// modes today; the optimized-MID addressing plan makes it monolithic-only.
+// One entry per vertex slot in each submesh's tight window. Monolithic-only:
+// there SV_VertexID is the draw_indices value, which is a slot here. MID reads
+// the vertex buffer slot from VertexEntry and takes the vertex index from the
+// raw builtin, so it never touches this buffer.
 [[vk::binding(4, 0)]]
 RWStructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 
-// Absolute slot indices into vertexIndirection, one per index occurrence.
+// Monolithic: absolute slot indices into vertexIndirection, one per index
+// occurrence. MID: absolute vertex indices (baseVertex + rawIndex), one per
+// occurrence, consumed directly as SV_VertexID.
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<uint, CDataLayout> drawIndices;
 
@@ -118,23 +121,36 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // Allocate this submesh's vertex-entry range and its draw-index range. The
     // ranges are independent: entry slots are dense over the tight vertex
-    // window, index slots are dense over the index range.
+    // window, index slots are dense over the index range. MID skips the
+    // per-slot indirection stamping; the counter is still advanced so both
+    // modes allocate identically.
     uint entryBase;
     InterlockedAdd(expandCounter[0], vertexSpan, entryBase);
     uint indexBase;
     InterlockedAdd(expandCounter[1], indexRange, indexBase);
 
-    // One entry per vertex slot; no per-occurrence duplication.
-    for (uint j = 0; j < vertexSpan; j++) {
-        vertexIndirection[entryBase + j].vertexIndex =
-            (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
-        vertexIndirection[entryBase + j].submeshIndex = submeshIndex;
+    // Both modes publish the vertex buffer slot for the MID vertex shaders.
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot = vertexBufferSlot;
+
+    if (kCompactionMode == 0) {
+        // Monolithic: one entry per vertex slot; no per-occurrence duplication.
+        for (uint j = 0; j < vertexSpan; j++) {
+            vertexIndirection[entryBase + j].vertexIndex =
+                (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
+            vertexIndirection[entryBase + j].submeshIndex = submeshIndex;
+        }
     }
 
-    // Replay the asset indices once into absolute entry slots.
+    // Replay the asset indices once. Monolithic maps each occurrence to its
+    // indirection slot; MID writes the absolute vertex index with no block
+    // bits, which the vertex shader receives directly as SV_VertexID. The
+    // 24-bit upload invariant (baseVertex + windowBase + vertexSpan < 2^24)
+    // keeps every value below the maxDrawIndexedIndexValue bound.
     for (uint i = 0; i < indexRange; i++) {
         uint rawIndex = indexBuffers[NonUniformResourceIndex(indexBufSlot)][indexOffset + i];
-        drawIndices[indexBase + i] = entryBase + (rawIndex - windowBase);
+        drawIndices[indexBase + i] = (kCompactionMode == 0)
+            ? entryBase + (rawIndex - windowBase)
+            : baseVertex + rawIndex;
     }
 
     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexBase = indexBase;

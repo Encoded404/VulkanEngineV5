@@ -309,8 +309,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // VertexEntry mirror (written by the GPU expand pass, only sized here).
     // Slang C layout: mvp@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
     // + modelMatrix@76 (64B) + normalMatrix@140 (3 tightly packed float3 rows,
-    // 36B) = 176 bytes. No alignment padding — matrices sit on 4-byte
-    // boundaries, which is exactly what scalar block layout permits.
+    // 36B) + vertexBufferSlot@176 = 180 bytes. No alignment padding — matrices
+    // sit on 4-byte boundaries, which is exactly what scalar block layout
+    // permits.
     struct VertexEntry {
         std::array<float, 16> mvp;           // 0
         float max_scale;                     // 64
@@ -318,8 +319,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::uint32_t orm_packed;            // 72
         std::array<float, 16> model_matrix;  // 76
         std::array<float, 9> normal_matrix;  // 140 (row-major, 12B row stride)
+        std::uint32_t vertex_buffer_slot;    // 176 (read by the MID vertex shaders)
     };
-    static_assert(sizeof(VertexEntry) == 176, "VertexEntry must match Slang VertexEntry (CDataLayout)");
+    static_assert(sizeof(VertexEntry) == 180, "VertexEntry must match Slang VertexEntry (CDataLayout)");
 
     std::uint32_t ci = 0;
 

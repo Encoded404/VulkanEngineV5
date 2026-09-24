@@ -246,12 +246,6 @@ public:
     void DispatchExpand(vk::CommandBuffer cmd, std::uint32_t object_count,
                         const glm::mat4& view_proj, std::uint32_t frame_index);
 
-    // Buffer access for render graph
-    [[nodiscard]] vk::Buffer GetTechniqueDrawCommandsBuffer(std::uint32_t frame_index) const {
-        const auto& fr = frames_[frame_index % frames_in_flight_];
-        return static_cast<vk::Buffer>(*fr.technique_draw_commands.GetBuffer());
-    }
-
     // Engine-standard descriptor sets 1-3 for a frame (set 0 is the bindless
     // manager's, set 4 is GetSceneUniformSet()).
     [[nodiscard]] vk::DescriptorSet GetFrameSubmeshVertexEntriesSet(std::uint32_t frame_index) const {
@@ -286,12 +280,15 @@ private:
         VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
         VulkanEngine::GpuResources::BlockArray cull_entries{};
 
-        // ── Indexed-drawing substrate (shared by both modes) ──
-        // One VertexIndirectionEntry per slot in each submesh's tight vertex window.
-        // Shared by both modes; the optimized-MID addressing plan makes it
-        // monolithic-only (MID then carries both indices in the command).
+        // ── Indexed-drawing substrate ──
+        // One VertexIndirectionEntry per slot in each submesh's tight vertex
+        // window. Monolithic-only content: MID binds a fixed 8 B dummy and
+        // never writes or reads it (it carries the addressing in firstInstance
+        // and the index buffer).
         VulkanEngine::GpuResources::GpuBuffer vertex_indirection{};
-        // 4 B absolute slot indices into vertex_indirection, one per occurrence.
+        // Monolithic: 4 B absolute slot indices into vertex_indirection, one
+        // per occurrence. MID: 4 B absolute vertex indices, one per occurrence
+        // (bound as the index buffer).
         VulkanEngine::GpuResources::GpuBuffer draw_indices{};
         // 2 x u32 atomic counters allocated by expand: [0]=entryBase, [1]=indexBase.
         VulkanEngine::GpuResources::GpuBuffer expand_counter{};
@@ -506,6 +503,10 @@ private:
 
     DrawMode draw_mode_ = DrawMode::Monolithic;
     bool draw_indirect_count_supported_ = false;
+    bool draw_indirect_first_instance_supported_ = false;
+    // MID requires both drawIndirectCount and drawIndirectFirstInstance; this
+    // single resolved rule feeds selection, IsDrawModeSupported and Reinitialize.
+    bool mid_supported_ = false;
     SceneCapacity scene_capacity_{};
     // CPU prefix sum (MID): region_base_[t] = first command slot of technique t.
     std::vector<std::uint32_t> region_base_{};

@@ -307,7 +307,6 @@ struct FrameContext {
     VulkanEngine::BindlessManager::BindlessManager* bindless = nullptr;
     VulkanEngine::ComponentRegistry* registry = nullptr;
     VulkanEngine::ImGui::ImGuiSystem* imgui = nullptr;
-    vk::Buffer technique_draw_commands_buffer = nullptr;
     std::uint32_t entity_count = 0;
     std::uint32_t render_width = 0;
     std::uint32_t render_height = 0;

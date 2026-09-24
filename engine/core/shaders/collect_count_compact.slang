@@ -113,7 +113,9 @@ void passCompactMid(uint submeshIndex) {
     mainOut[base + 1] = 1u;
     mainOut[base + 2] = entry.indexBase;
     mainOut[base + 3] = 0u;
-    mainOut[base + 4] = 0u;
+    // firstInstance carries the submesh id; the MID vertex shader reads it from
+    // the raw instance builtin (SV_StartInstanceLocation / BaseInstance).
+    mainOut[base + 4] = submeshIndex;
 }
 
 [numthreads(256, 1, 1)]

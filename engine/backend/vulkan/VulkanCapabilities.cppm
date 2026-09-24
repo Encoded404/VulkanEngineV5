@@ -52,6 +52,7 @@ enum class Feature : std::uint16_t {
     DescriptorBindingVariableDescriptorCount,
     ScalarBlockLayout,  // scalar block layout for StructuredBuffers (Slang CDataLayout/ScalarDataLayout)
     DrawIndirectCount,  // vkCmdDrawIndexedIndirectCount (MID draw mode; optional)
+    DrawIndirectFirstInstance, // non-zero firstInstance in indirect commands (MID; optional)
     // core 1.3
     DynamicRendering,
     PipelineCreationCacheControl,
@@ -112,6 +113,7 @@ inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count
     { "descriptorBindingVariableDescriptorCount", Requirement::Required },
     { "scalarBlockLayout", Requirement::Required },
     { "drawIndirectCount", Requirement::Optional },
+    { "drawIndirectFirstInstance", Requirement::Optional },
     { "dynamicRendering", Requirement::Required },
     { "pipelineCreationCacheControl", Requirement::Required },
     { "synchronization2", Requirement::Required },

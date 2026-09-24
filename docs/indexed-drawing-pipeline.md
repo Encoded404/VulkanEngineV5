@@ -38,20 +38,23 @@ Two modes share one vertex-fetch path and differ only in the compaction output:
 
 | | Monolithic | Multi-indirect-draw (MID) |
 |---|---|---|
-| Compaction output | 4 B absolute slot indices, packed per pass/technique | 20 B `DrawIndexedIndirectCommand` per alive submesh + a 4 B count |
+| Compaction output | 4 B absolute slot indices, packed per pass/technique | 20 B `DrawIndexedIndirectCommand` per alive submesh + a 4 B count; `firstInstance` = submesh id |
 | Depth/occluder prepass | one `drawIndexedIndirect` with a GPU-written command | `drawIndexedIndirectCount` |
 | Main pass | one `drawIndexedIndirect` per technique | one `drawIndexedIndirectCount` per technique |
 | Commands per technique | 1 | one per alive submesh |
-| Vulkan feature | none (`drawIndexedIndirect` is core 1.0) | `drawIndirectCount` (Vulkan 1.2 core / `VK_KHR_draw_indirect_count`) |
+| Vulkan feature | none (`drawIndexedIndirect` is core 1.0) | `drawIndirectCount` + `drawIndirectFirstInstance` |
 
 Both modes produce the same survivors and the same vertex-cache behavior. They are
 an A/B pair and a device-capability fallback, not a per-frame switch.
 
-### 2.3 `drawIndirectCount` is optional
+### 2.3 `drawIndirectCount` and `drawIndirectFirstInstance` are optional
 
-Monolithic mode needs no feature beyond core 1.0. MID mode needs
-`drawIndirectCount`, which is optional at device creation. When it is not
-available, fall back to monolithic.
+Monolithic mode needs no feature beyond core 1.0. MID mode needs both
+`drawIndirectCount` (Vulkan 1.2 core / `VK_KHR_draw_indirect_count`) and
+`drawIndirectFirstInstance` (core 1.0). `drawIndirectFirstInstance` is required
+because MID puts the submesh id in the command's `firstInstance`; a driver that
+ignores a non-zero `firstInstance` would read the wrong submesh. When either
+feature is not available, fall back to monolithic and log once.
 
 ### 2.4 One specialization constant selects the emission variant
 
@@ -80,6 +83,28 @@ The entry slot `j ∈ [0, vertexSpan)` maps to absolute vertex
 `baseVertex + vertexWindowBase + j`. A 24-bit vertex pack bounds
 `baseVertex + vertexWindowBase + vertexSpan`; enforce this at upload and fail
 loudly, never mask silently.
+
+### 2.5.1 MID addresses vertices without an indirection entry
+
+Monolithic needs a per-vertex indirection entry because one draw spans many
+submeshes and `SV_VertexID` alone cannot say which mesh's vertex buffer to read.
+MID gives each submesh its own command, so it can carry that identity elsewhere
+and drop the entry:
+
+- `firstInstance` = the submesh id (flattened slot). The vertex shader reads it
+  from the raw instance builtin (`SV_StartInstanceLocation`, SPIR-V
+  `BaseInstance`), never `SV_InstanceID`: Slang lowers `SV_InstanceID` to
+  `InstanceIndex - BaseInstance`, so with `instanceCount == 1` it is always 0.
+- The index buffer holds absolute vertex indices `baseVertex + rawIndex` (no
+  vertex-buffer block bits). `SV_VertexID` is therefore the vertex index.
+- The vertex buffer slot comes from the submesh's `VertexEntry.vertexBufferSlot`.
+
+The 24-bit upload invariant keeps `baseVertex + rawIndex < 2^24`, so no
+`fullDrawIndexUint32` feature is needed. Do not pack the block into the index
+value; that would exceed `2^24` and require the feature.
+
+MID still allocates and binds an 8 B dummy for `vertexIndirection` so both
+descriptor writes stay valid, but it never writes or reads the buffer.
 
 ### 2.6 Streamed meshes must keep topology stable
 
@@ -123,13 +148,13 @@ Symbols: `N` = total index count, `S` = submeshes, `r` = index/vertex ratio
 
 | Metric | Occurrence indirection | Monolithic | MID |
 |---|---|---|---|
-| Indirection VRAM/frame | 4 × 8 B × N = **32 B/index** | 8 B/r (entries) + 4 B (draw indices) + 3 × 4 B (compact copies) ≈ **16–20 B/index** | 8 B/r + 4 B + ~0 (commands) ≈ **12 B/index** |
-| expand traffic/index | 12 B (4r read + 8 write) | ~12 B (4r + 4w + 8/r) — neutral | same |
+| Indirection VRAM/frame | 4 × 8 B × N = **32 B/index** | 8 B/r (entries) + 4 B (draw indices) + 3 × 4 B (compact copies) ≈ **16–20 B/index** | 4 B + ~0 (commands) ≈ **4 B/index** |
+| expand traffic/index | 12 B (4r read + 8 write) | ~12 B (4r + 4w + 8/r) — neutral | 4r + 4w (no indirection write) |
 | Compaction copies/pass | 16 B/index (read + write of 8 B) | **8 B/index** | ~0 (20 B/submesh) |
 | Copy-traffic saving at 2 M visible indices | — | ~48 MB/frame | ~96 MB/frame (≈0.1–0.25 ms) |
 | Vertex-shader invocations | 1 per occurrence | **÷ r/ACMR ≈ 1.5–3.3×** | same |
 | Draw calls | 1 prepass + 1 occluder + 1/technique | unchanged | unchanged |
-| Vulkan features | — | none beyond core 1.0 | `drawIndirectCount` (optional) |
+| Vulkan features | — | none beyond core 1.0 | `drawIndirectCount` + `drawIndirectFirstInstance` (optional) |
 
 Asset-quality dependency: the vertex-shader gain is `r / ACMR` per submesh. The
 post-transform cache (historically 16–32 entries) converts occurrences to unique

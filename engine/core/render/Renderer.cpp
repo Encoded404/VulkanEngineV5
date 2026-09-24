@@ -323,7 +323,6 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     frame.registry = &registry;
     frame.imgui = imgui;
     frame.default_sampler = default_sampler_ ? static_cast<vk::Sampler>(**default_sampler_) : nullptr;
-    frame.technique_draw_commands_buffer = scene_renderer.GetTechniqueDrawCommandsBuffer(frame_counter_);
     frame.entity_count = scene_renderer.GetCurrentEntityCount();
     frame.render_width = width;
     frame.render_height = height;

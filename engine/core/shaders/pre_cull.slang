@@ -211,6 +211,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         depthOut[base + 1] = 1u;
         depthOut[base + 2] = entry.indexBase;
         depthOut[base + 3] = 0u;
-        depthOut[base + 4] = 0u;
+        // firstInstance carries the submesh id (see collect_count_compact.slang).
+        depthOut[base + 4] = submeshIndex;
     }
 }

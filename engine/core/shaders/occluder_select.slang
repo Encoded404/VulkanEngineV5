@@ -155,7 +155,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         occluderOut[base + 1] = 1u;
         occluderOut[base + 2] = entry.indexBase;
         occluderOut[base + 3] = 0u;
-        occluderOut[base + 4] = 0u;
+        // firstInstance carries the submesh id (see collect_count_compact.slang).
+        occluderOut[base + 4] = submeshIndex;
     }
 
     cullEntries[NonUniformResourceIndex(block)][elementIndex].flags |= kOccluderBit;

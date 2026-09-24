@@ -44,6 +44,8 @@ bool VulkanCapabilitiesBuilder::GetSupportedFeature(const SupportedDeviceState& 
             return supported.vulkan12.scalarBlockLayout == vk::True;
         case Feature::DrawIndirectCount:
             return supported.vulkan12.drawIndirectCount == vk::True;
+        case Feature::DrawIndirectFirstInstance:
+            return supported.features2.features.drawIndirectFirstInstance == vk::True;
         case Feature::DynamicRendering:
             return supported.vulkan13.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
@@ -88,6 +90,8 @@ bool VulkanCapabilitiesBuilder::GetRequestedFeature(const VulkanCapabilities& ca
             return caps.vulkan12_features_.scalarBlockLayout == vk::True;
         case Feature::DrawIndirectCount:
             return caps.vulkan12_features_.drawIndirectCount == vk::True;
+        case Feature::DrawIndirectFirstInstance:
+            return caps.core_features2_.features.drawIndirectFirstInstance == vk::True;
         case Feature::DynamicRendering:
             return caps.vulkan13_features_.dynamicRendering == vk::True;
         case Feature::PipelineCreationCacheControl:
@@ -146,6 +150,9 @@ void VulkanCapabilitiesBuilder::SetRequestedFeature(VulkanCapabilities& caps, Fe
             break;
         case Feature::DrawIndirectCount:
             caps.vulkan12_features_.drawIndirectCount = bit;
+            break;
+        case Feature::DrawIndirectFirstInstance:
+            caps.core_features2_.features.drawIndirectFirstInstance = bit;
             break;
         case Feature::DynamicRendering:
             caps.vulkan13_features_.dynamicRendering = bit;

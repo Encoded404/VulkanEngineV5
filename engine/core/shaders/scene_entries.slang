@@ -30,7 +30,7 @@ struct StaticEntry {
 // of 12 bytes (stride 12), float4x4 members are NOT 16-byte aligned —
 // byte-identical to the C++ mirror struct in MeshGatherSystem.cpp:
 //   mvp@0 (64B) maxScale@64 materialId@68 ormPacked@72 modelMatrix@76 (64B)
-//   normalMatrix@140 (36B) -> sizeof 176.
+//   normalMatrix@140 (36B) vertexBufferSlot@176 -> sizeof 180.
 struct VertexEntry {
     float4x4 mvp;
     float maxScale;
@@ -38,6 +38,7 @@ struct VertexEntry {
     uint ormPacked;         // unorm8 ORM factors packed by the CPU gather pass
     float4x4 modelMatrix;   // world matrix for per-vertex world-space position computation
     float3x3 normalMatrix;  // inverse-transpose of the 3x3 of modelMatrix
+    uint vertexBufferSlot;  // vertex buffer table slot for this mesh; read by the MID vertex shaders
 };
 
 struct CullEntry {

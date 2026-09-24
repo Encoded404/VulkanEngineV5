@@ -45,9 +45,18 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     draw_indirect_count_supported_ =
         be.GetCapabilities().IsFeatureEnabled(
             VulkanBackend::Vulkan::Feature::DrawIndirectCount);
+    draw_indirect_first_instance_supported_ =
+        be.GetCapabilities().IsFeatureEnabled(
+            VulkanBackend::Vulkan::Feature::DrawIndirectFirstInstance);
+    // MID needs both: the count-driven draw and a non-zero firstInstance
+    // (the submesh id). Store the combined rule once so selection and
+    // Reinitialize cannot disagree.
+    mid_supported_ =
+        draw_indirect_count_supported_ && draw_indirect_first_instance_supported_;
     draw_mode_ = draw_mode;
-    if (draw_mode_ == DrawMode::MultiIndirect && !draw_indirect_count_supported_) {
-        LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount unsupported; falling back to Monolithic draw mode");
+    if (draw_mode_ == DrawMode::MultiIndirect && !mid_supported_) {
+        LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount and drawIndirectFirstInstance "
+                           "not both supported; falling back to Monolithic draw mode");
         draw_mode_ = DrawMode::Monolithic;
     }
     scene_capacity_ = SceneCapacity{
@@ -463,11 +472,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.submesh_vertex_entries.Initialize(be,
-                make_block_config(176, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 176, Slang CDataLayout
+                make_block_config(180, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 180, Slang CDataLayout
                                                         // (scalar block layout): 64 mvp + 12 (maxScale/mat/orm)
-                                                        // + 64 modelMatrix + 36 normalMatrix. No padding —
-                                                        // matrices are 4B-aligned. Byte-identical to the
-                                                        // VertexEntry mirror + static_assert in
+                                                        // + 64 modelMatrix + 36 normalMatrix + 4 slot. No
+                                                        // padding — matrices are 4B-aligned. Byte-identical to
+                                                        // the VertexEntry mirror + static_assert in
                                                         // MeshGatherSystem.cpp. MUST match the VertexEntry
                                                         // definition in scene_entries.slang.
                     vk::BufferUsageFlagBits::eTransferSrc,
@@ -586,7 +595,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 bool SceneRenderer::IsDrawModeSupported(DrawMode mode) const {
     switch (mode) {
         case DrawMode::Monolithic: return true;
-        case DrawMode::MultiIndirect: return draw_indirect_count_supported_;
+        case DrawMode::MultiIndirect: return mid_supported_;
     }
     return false;
 }
@@ -624,8 +633,15 @@ bool SceneRenderer::CreateFrameBuffers() {
         vk::BufferUsageFlagBits::eTransferDst;
 
     for (auto& fr : frames_) {
+        // MID neither writes nor reads vertex_indirection: it carries the
+        // vertex buffer slot in VertexEntry and the vertex index in
+        // draw_indices. A fixed 8 B dummy keeps both descriptor writes (the
+        // shared indirection set and the expand set) valid without allocating
+        // 8 B per vertex window slot that MID would never touch.
+        const std::uint64_t indirection_bytes =
+            mid ? 8u : std::max<std::uint64_t>(vertex_indirection_size, 8u);
         fr.vertex_indirection = GpuResources::GpuBuffer::Create(
-            be, std::max<std::uint64_t>(vertex_indirection_size, 8u),
+            be, indirection_bytes,
             vk::BufferUsageFlagBits::eStorageBuffer |
                 vk::BufferUsageFlagBits::eTransferDst,
             vk::MemoryPropertyFlagBits::eDeviceLocal);

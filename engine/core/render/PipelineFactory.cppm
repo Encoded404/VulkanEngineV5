@@ -29,6 +29,14 @@ struct GraphicsPipelineDesc {
     std::vector<vk::Format> color_formats;
     vk::Format depth_format = vk::Format::eUndefined;
     vk::Format stencil_format = vk::Format::eUndefined;
+
+    // Optional specialization constants for the vertex stage (the draw-mode
+    // selector lives here). The desc owns the data; the vectors must not be
+    // reallocated between storing the desc and pipeline creation. Applied to
+    // the vertex stage only: the monolithic vertex shader and, for GPL, the
+    // pre-rasterization library (which holds the vertex shader).
+    std::vector<vk::SpecializationMapEntry> spec_entries{};
+    std::vector<std::byte> spec_data{};
 };
 
 struct ComputePipelineDesc {

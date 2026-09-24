@@ -38,6 +38,12 @@ struct PipelineConfig {
 
     // Topology
     vk::PrimitiveTopology primitive_topology = vk::PrimitiveTopology::eTriangleList;
+
+    // Resolved draw mode (SceneRenderer::DrawMode, after capability fallback).
+    // Specialized into the vertex shader's kCompactionMode constant:
+    // 0 = monolithic, 1 = MID. Must be the resolved mode, never the requested
+    // one: a MID-specialized vertex shader would misread monolithic indices.
+    std::uint32_t draw_mode = 0;
 };
 
 

@@ -10,6 +10,7 @@ add_executable(backend_tests
   runtime_shell_tests.cpp
   event_system_tests.cpp
   component_system_tests.cpp
+  vulkan_capabilities_tests.cpp
 )
 target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET} ${ENGINE_TARGET})
 

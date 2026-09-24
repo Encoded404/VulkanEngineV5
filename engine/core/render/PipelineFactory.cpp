@@ -197,8 +197,20 @@ namespace {
         const vk::PipelineRasterizationStateCreateInfo& rs,
         const vk::PipelineMultisampleStateCreateInfo& ms,
         vk::PipelineLayout layout,
-        const std::vector<vk::DynamicState>& dynamic_states) {
+        const std::vector<vk::DynamicState>& dynamic_states,
+        std::span<const vk::SpecializationMapEntry> spec_entries,
+        std::span<const std::byte> spec_data) {
+        vk::SpecializationInfo spec{};
+        if (!spec_entries.empty()) {
+            spec.mapEntryCount = static_cast<std::uint32_t>(spec_entries.size());
+            spec.pMapEntries = spec_entries.data();
+            spec.dataSize = spec_data.size();
+            spec.pData = spec_data.data();
+        }
         vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eVertex, vert_module, "main");
+        if (!spec_entries.empty()) {
+            ss.pSpecializationInfo = &spec;
+        }
         vk::PipelineDynamicStateCreateInfo dyn_state({}, dynamic_states);
         vk::GraphicsPipelineLibraryCreateInfoEXT lib{};
         lib.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders;
@@ -441,8 +453,22 @@ PipelineFactory::CreateGraphicsMonolithic(const GraphicsPipelineDesc& desc,
     auto vert_mod = FetchModule(shaders, desc.vertex_shader);
     auto frag_mod = FetchModule(shaders, desc.fragment_shader);
 
+    // Vertex-stage specialization constants select the draw mode. The fragment
+    // shader has no constant_id 0, so the map applies to the vertex stage only.
+    vk::SpecializationInfo vs_spec{};
+    if (!desc.spec_entries.empty()) {
+        vs_spec.mapEntryCount = static_cast<std::uint32_t>(desc.spec_entries.size());
+        vs_spec.pMapEntries = desc.spec_entries.data();
+        vs_spec.dataSize = desc.spec_data.size();
+        vs_spec.pData = desc.spec_data.data();
+    }
+
+    vk::PipelineShaderStageCreateInfo vs({}, vk::ShaderStageFlagBits::eVertex, vert_mod, "main");
+    if (!desc.spec_entries.empty()) {
+        vs.pSpecializationInfo = &vs_spec;
+    }
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
-        vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, vert_mod, "main"},
+        vs,
         vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, frag_mod, "main"}
     };
 
@@ -482,6 +508,13 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
                                      desc.dynamic_states, desc.layout);
         pr_hash ^= static_cast<std::uint64_t>(desc.vertex_shader) << 32;
         pr_hash ^= shaders.GetVersion(desc.vertex_shader);
+        // The pre-raster library is cached by vertex shader id/version only, so
+        // the vertex-stage spec data must enter the key: without it two draw
+        // modes that share a vertex shader alias to one library.
+        pr_hash = fnv1a_hash(
+            std::string_view(reinterpret_cast<const char*>(desc.spec_data.data()),
+                             desc.spec_data.size()),
+            pr_hash);
         // The old single fragment key splits into the shader-dependent FS part
         // and the shader-independent FOI part. Output formats/depth/stencil
         // enter the FOI key only: the FOI (and combined) libraries bake them
@@ -533,7 +566,8 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
             get_or_create(shared_->pre_raster, pr_hash, desc.vertex_shader, shaders.GetVersion(desc.vertex_shader),
                           [&]() { return createPreRasterLibrary(device_, cache_, vert_mod, desc.viewport,
                                                                  desc.rasterization, desc.multisample,
-                                                                 desc.layout, desc.dynamic_states); });
+                                                                 desc.layout, desc.dynamic_states,
+                                                                 desc.spec_entries, desc.spec_data); });
         LOGIFACE_LOG(debug, std::format("GPL: pre-raster library {}: 0x{:x}",
                                         pr_created ? "created" : "reused", HandleToU64(**pr_lib)));
 

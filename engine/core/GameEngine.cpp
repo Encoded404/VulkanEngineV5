@@ -109,6 +109,11 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     }
 
     ctx_.technique_mgr = std::make_unique<TechniqueManager::TechniqueManager>();
+    // The draw mode is resolved during Initialize (capability fallback), so the
+    // technique pipelines must specialize on the resolved mode, not the
+    // requested config_.draw_mode.
+    config_.pipeline_config.draw_mode =
+        static_cast<std::uint32_t>(ctx_.scene_renderer->GetDrawMode());
     {
         auto mesh_tech = std::make_unique<TechniqueManager::DefaultMeshTechnique>();
         if (!mesh_tech->CompileDefaultMesh(

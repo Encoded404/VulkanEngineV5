@@ -244,6 +244,16 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         pipeline_desc_.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };
         pipeline_desc_.depth_format = bootstrap.GetBackend().GetDepthFormat();
 
+        // Vertex-stage draw-mode specialization (constant_id 0). main_indir and
+        // depth_indir read it to select the addressing path. Applied to the
+        // vertex stage only; the fragment shader does not declare it.
+        pipeline_desc_.spec_entries = {
+            vk::SpecializationMapEntry(0, 0, sizeof(std::uint32_t))
+        };
+        pipeline_desc_.spec_data.resize(sizeof(std::uint32_t));
+        std::memcpy(pipeline_desc_.spec_data.data(), &config.draw_mode,
+                    sizeof(config.draw_mode));
+
         auto result = pipeline_factory.CreateGraphics(pipeline_desc_, shader_mgr);
         if (!result.has_value()) {
             LOGIFACE_LOG(error, std::format(

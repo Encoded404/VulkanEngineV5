@@ -17,10 +17,10 @@ struct DrawIndexedIndirectCommand {
 };
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<TechniqueResult, CDataLayout> intermediateResults;
+StructuredBuffer<TechniqueResult, CDataLayout> techniqueResults;
 
 [[vk::binding(1, 0)]]
-RWStructuredBuffer<DrawIndexedIndirectCommand, CDataLayout> tech_cmds;
+RWStructuredBuffer<DrawIndexedIndirectCommand, CDataLayout> techniqueDrawCommands;
 
 struct WritePC {
     uint elementCount;
@@ -36,8 +36,8 @@ ConstantBuffer<WritePC> pc;
 [shader("compute")]
 void main() {
     for (uint t = 0; t < pc.techniqueCount; t++) {
-        uint count = intermediateResults[t].count;
-        uint entryOffset = intermediateResults[t].offset;
-        tech_cmds[t] = DrawIndexedIndirectCommand(count, 1u, entryOffset, 0, 0u);
+        uint count = techniqueResults[t].count;
+        uint entryOffset = techniqueResults[t].offset;
+        techniqueDrawCommands[t] = DrawIndexedIndirectCommand(count, 1u, entryOffset, 0, 0u);
     }
 }

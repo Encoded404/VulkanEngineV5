@@ -3,48 +3,27 @@
 //
 // Runs once per submesh after expand. Each thread projects its submesh's OBB
 // (model-space center + half-extent axes, transformed by the expand-written
-// MVP) to a screen-pixel AABB and, when the coverage passes the area
+// mvp) to a screen-pixel AABB and, when the coverage passes the area
 // threshold, appends the submesh to the occluder set: its indirection range is
-// copied into the occluder-only draw buffer and the CullEntry.pad bit is set
+// copied into the occluder-only draw buffer and the CullEntry.flags bit is set
 // so the pre-cull pass excludes it from the depth-prepass survivor list while
 // collect keeps drawing it in the main pass.
 //
 // No sort, no scan, no ranking: any set of large real-geometry occluders is a
 // valid occluder set — selection can only miss culls, never cause false ones.
-struct CullEntry {
-    uint indexBase;  // slot base of the submesh's indices in draw_indices
-    uint indexCount;
-    uint techniqueId;
-    uint pad; // bit0 = selected occluder this frame
-};
+#include "scene_entries.slang"
 
 [[vk::binding(0, 0)]]
-RWStructuredBuffer<CullEntry, CDataLayout> cull[];
+RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
-// Per-submesh transform constants written by expand (176 B VertEntry).
-struct VertEntry {
-    float4x4 MVP;
-    float maxScale;
-    uint materialId;
-    uint ormPacked;
-    float4x4 modelMatrix;
-    float3x3 normalMatrix;
-};
-
+// Per-submesh transform constants written by expand (176 B VertexEntry).
 [[vk::binding(1, 0)]]
-StructuredBuffer<VertEntry, CDataLayout> submeshInfo[];
+StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 
 // Oriented bounding box: center + 3 half-extent axes (xyz = axis, w = half-length),
 // model space (same convention as occlusion_cull.slang).
-struct OBBGPU {
-    float4 center_pad;
-    float4 u_half;
-    float4 v_half;
-    float4 w_half;
-};
-
 [[vk::binding(2, 0)]]
-StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
+StructuredBuffer<ObbEntry, CDataLayout> obbEntries[];
 
 // Per-technique flag table (SceneRenderer::UpdateTechniqueFlags). Bit layout
 // must match TECHNIQUE_FLAG_* in SceneRenderer.cppm.
@@ -64,19 +43,14 @@ RWStructuredBuffer<uint, CDataLayout> occluderOut;
 // Word 0. Monolithic: accumulates the occluder index total. MID: increments
 // once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(6, 0)]]
-globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderCounter;
+globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderOutCounter;
 
 // Entry budget counter, zeroed by the CPU each frame.
 [[vk::binding(7, 0)]]
-RWStructuredBuffer<uint, CDataLayout> occluderCount;
+RWStructuredBuffer<uint, CDataLayout> occluderCandidateCount;
 
-// 0 = monolithic (compact index copy), 1 = MID (command emission).
-[[vk::constant_id(0)]] const uint kCompactionMode = 0;
+#include "technique_packing.slang"
 
-static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
-static const uint kFlagDepthPass    = 1u << 0;
-static const uint kFlagOccluderSafe = 1u << 3;
-static const uint kOccluderBit      = 1u << 0;
 static const uint kMaxOccluders     = 512;
 static const uint kMaxOccluderIndices = 262144; // one giant mesh cannot blow the budget
 
@@ -93,13 +67,13 @@ ConstantBuffer<OccluderSelectPC> pc;
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint id = dispatchThreadId.x;
-    if (id >= pc.elementCount) return;
+    uint submeshIndex = dispatchThreadId.x;
+    if (submeshIndex >= pc.elementCount) return;
 
-    uint block = id / 256u;
-    uint elemIndex = id % 256u;
+    uint block = submeshIndex / 256u;
+    uint elementIndex = submeshIndex % 256u;
 
-    CullEntry entry = cull[NonUniformResourceIndex(block)][elemIndex];
+    CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
     if (entry.indexCount > kMaxOccluderIndices) return;
 
@@ -107,8 +81,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if ((flags & kFlagDepthPass) == 0) return;    // no prepass depth → never occludes
     if ((flags & kFlagOccluderSafe) == 0) return; // displaced bounds not conservative (§5.5)
 
-    float4x4 mvp = submeshInfo[NonUniformResourceIndex(block)][elemIndex].MVP;
-    OBBGPU obb = obbBuf[NonUniformResourceIndex(block)][elemIndex];
+    float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
+    ObbEntry obb = obbEntries[NonUniformResourceIndex(block)][elementIndex];
 
     float3 center = obb.center_pad.xyz;
     float3 axisU = obb.u_half.xyz;
@@ -162,20 +136,20 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Budgeted selection: no sort, no scan. Any set of large real-geometry
     // occluders is a valid occluder set — overflow only misses culls.
     uint slot;
-    InterlockedAdd(occluderCount[0], 1u, slot);
+    InterlockedAdd(occluderCandidateCount[0], 1u, slot);
     if (slot >= kMaxOccluders) return;
 
     if (kCompactionMode == 0) {
         // Monolithic: copy the 4 B entry slots into the packed index list.
         uint destOffset;
-        InterlockedAdd(occluderCounter[0], entry.indexCount, destOffset);
+        InterlockedAdd(occluderOutCounter[0], entry.indexCount, destOffset);
         for (uint i = 0; i < entry.indexCount; i++) {
             occluderOut[destOffset + i] = drawIndices[entry.indexBase + i];
         }
     } else {
         // MID: one 20 B indexed draw command per selected occluder.
         uint cmdSlot;
-        InterlockedAdd(occluderCounter[0], 1u, cmdSlot);
+        InterlockedAdd(occluderOutCounter[0], 1u, cmdSlot);
         uint base = cmdSlot * kCmdWords;
         occluderOut[base + 0] = entry.indexCount;
         occluderOut[base + 1] = 1u;
@@ -184,5 +158,5 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         occluderOut[base + 4] = 0u;
     }
 
-    cull[NonUniformResourceIndex(block)][elemIndex].pad |= kOccluderBit;
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].flags |= kOccluderBit;
 }

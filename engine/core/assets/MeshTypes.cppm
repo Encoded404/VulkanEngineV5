@@ -49,7 +49,7 @@ export namespace VulkanEngine
         // Tight window over the vertex indices referenced by this submesh
         // (mesh-local index values): all indices lie in
         // [vertex_window_base, vertex_window_base + vertex_span). Used by the
-        // indexed-drawing pipeline to allocate one vertex_entries slot per
+        // indexed-drawing pipeline to allocate one vertex_indirection slot per
         // referenced vertex instead of one per occurrence.
         std::uint32_t vertex_window_base{0}; //NOLINT(misc-non-private-member-variables-in-classes)
         std::uint32_t vertex_span{0}; //NOLINT(misc-non-private-member-variables-in-classes)

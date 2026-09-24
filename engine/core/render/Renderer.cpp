@@ -311,8 +311,8 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     frame.proj = proj;
     frame.view_proj = view_proj;
     frame.bindless_textures = { bindless_mgr.GetDescriptorSet() };
-    frame.submesh_vertices = { scene_renderer.GetFrameSubmeshVertexSet(frame_counter_) };
-    frame.raw_vertex_buffers = { scene_renderer.GetFrameRawVertexSet(frame_counter_) };
+    frame.submesh_vertices = { scene_renderer.GetFrameSubmeshVertexEntriesSet(frame_counter_) };
+    frame.raw_vertex_buffers = { scene_renderer.GetFrameVertexBuffersSet(frame_counter_) };
     frame.indirection_data = { scene_renderer.GetFrameIndirectionSet(frame_counter_) };
     frame.scene_uniforms = { scene_renderer.GetSceneUniformSet() };
     frame.depth_pyramid = { scene_renderer.GetHizImage(frame_counter_),

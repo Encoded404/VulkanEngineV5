@@ -96,12 +96,12 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         LOGIFACE_LOG(debug, "PrepareCompute: current_entity_count_ is 0, no work to do");
     }
 
-    fr.compact_dynamic.EnsureCapacity(total);
-    fr.compact_static.EnsureCapacity(total);
+    fr.dynamic_entries.EnsureCapacity(total);
+    fr.static_entries.EnsureCapacity(total);
     fr.bounding_spheres.EnsureCapacity(total);
-    fr.bounding_obb.EnsureCapacity(total);
-    fr.submesh_vertex_data.EnsureCapacity(total);
-    fr.submesh_cull.EnsureCapacity(total);
+    fr.obb_entries.EnsureCapacity(total);
+    fr.submesh_vertex_entries.EnsureCapacity(total);
+    fr.cull_entries.EnsureCapacity(total);
 
     const bool mid = draw_mode_ == DrawMode::MultiIndirect;
 
@@ -110,20 +110,20 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         const std::uint32_t zero2[2] = {0u, 0u};
         fr.expand_counter.Upload(zero2, sizeof(zero2));
         const std::uint32_t zero = 0u;
-        fr.occluder_count_buffer.Upload(&zero, sizeof(zero));
+        fr.occluder_candidate_count.Upload(&zero, sizeof(zero));
         if (mid) {
-            fr.depth_command_count.Upload(&zero, sizeof(zero));
-            fr.occluder_command_count.Upload(&zero, sizeof(zero));
+            fr.depth_out_command_count.Upload(&zero, sizeof(zero));
+            fr.occluder_out_command_count.Upload(&zero, sizeof(zero));
         } else {
             const vk::DrawIndexedIndirectCommand zero_cmd{0u, 1u, 0u, 0, 0u};
-            fr.depth_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
-            fr.occluder_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
+            fr.depth_out_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
+            fr.occluder_out_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
         }
     }
 
     // Zero CPU-consumed buffers. technique_draw_commands only exists in
-    // monolithic mode; tech_counts is written by the MID compact pass.
-    for (auto* buf : {&fr.intermediate_buffer, &fr.tech_counts_buffer}) {
+    // monolithic mode; technique_counts is written by the MID compact pass.
+    for (auto* buf : {&fr.technique_results, &fr.technique_counts}) {
         auto* p = buf->Map(0, buf->GetSize());
         if (p) {
             std::memset(p, 0, buf->GetSize());
@@ -138,47 +138,47 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         }
     }
 
-    LOGIFACE_LOG(trace, "PrepareCompute: binding compact_dynamic blocks=" +
-                 std::to_string(fr.compact_dynamic.BlockCount()) +
-                 " compact_static blocks=" + std::to_string(fr.compact_static.BlockCount()) +
+    LOGIFACE_LOG(trace, "PrepareCompute: binding dynamic_entries blocks=" +
+                 std::to_string(fr.dynamic_entries.BlockCount()) +
+                 " static_entries blocks=" + std::to_string(fr.static_entries.BlockCount()) +
                  " total=" + std::to_string(total));
 
-    WriteBlocks(fr.expand_set.GetHandle(), 0, fr.compact_dynamic,
+    WriteBlocks(fr.expand_set.GetHandle(), 0, fr.dynamic_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 1, fr.compact_static,
+    WriteBlocks(fr.expand_set.GetHandle(), 1, fr.static_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 2, fr.submesh_vertex_data,
+    WriteBlocks(fr.expand_set.GetHandle(), 2, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 3, fr.submesh_cull,
+    WriteBlocks(fr.expand_set.GetHandle(), 3, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_entries, dev);
+    WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_indirection, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 5, fr.draw_indices, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 6, fr.expand_counter, dev);
 
     // Occluder-select block arrays (block counts change with scene capacity).
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 0, fr.submesh_cull,
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 0, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_data,
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 2, fr.bounding_obb,
+    WriteBlocks(fr.occluder_select_set.GetHandle(), 2, fr.obb_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags_buffer_, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 4, fr.draw_indices, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 5,
-                mid ? fr.occluder_commands : fr.occluder_compact_indices, dev);
+                mid ? fr.occluder_commands : fr.occluder_indices, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 6,
-                mid ? fr.occluder_command_count : fr.occluder_draw_command, dev);
-    WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_count_buffer, dev);
+                mid ? fr.occluder_out_command_count : fr.occluder_out_draw_command, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_candidate_count, dev);
 
-    WriteBlocks(fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_data,
+    WriteBlocks(fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_data,
+    WriteBlocks(fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 1, fr.submesh_cull,
+    WriteBlocks(fr.occlusion_set.GetHandle(), 1, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBlocks(fr.occlusion_set.GetHandle(), 2, fr.bounding_spheres,
                 vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 4, fr.bounding_obb,
+    WriteBlocks(fr.occlusion_set.GetHandle(), 4, fr.obb_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
     {
         const vk::DescriptorImageInfo hiz_info(
@@ -196,7 +196,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         // Technique flag table consumed by the occlusion cull and pre-cull
         // shaders (receives_occlusion gate).
         const vk::DescriptorBufferInfo bi(
-            *technique_flags_buffer_.GetBuffer(), 0, vk::WholeSize);
+            *technique_flags.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = fr.occlusion_set.GetHandle();
         w.dstBinding = 5;
@@ -208,29 +208,29 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     // Pre-cull survivor compaction bindings 6-8.
     WriteBuffer(fr.occlusion_set.GetHandle(), 6, fr.draw_indices, dev);
     WriteBuffer(fr.occlusion_set.GetHandle(), 7,
-                mid ? fr.depth_commands : fr.depth_compact_indices, dev);
+                mid ? fr.depth_commands : fr.depth_indices, dev);
     WriteBuffer(fr.occlusion_set.GetHandle(), 8,
-                mid ? fr.depth_command_count : fr.depth_draw_command, dev);
+                mid ? fr.depth_out_command_count : fr.depth_out_draw_command, dev);
 
     // Collect bindings 1-4.
-    WriteBlocks(fr.collect_set.GetHandle(), 0, fr.submesh_cull,
+    WriteBlocks(fr.collect_set.GetHandle(), 0, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer, dev);
     WriteBuffer(fr.collect_set.GetHandle(), 1, fr.draw_indices, dev);
     WriteBuffer(fr.collect_set.GetHandle(), 2,
-                mid ? fr.main_commands : fr.main_compact_indices, dev);
-    WriteBuffer(fr.collect_set.GetHandle(), 3, fr.intermediate_buffer, dev);
-    WriteBuffer(fr.collect_set.GetHandle(), 4, fr.region_base_buffer, dev);
-    WriteBuffer(fr.collect_set.GetHandle(), 5, fr.tech_counts_buffer, dev);
+                mid ? fr.main_commands : fr.main_indices, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 3, fr.technique_results, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 4, fr.technique_region_bases, dev);
+    WriteBuffer(fr.collect_set.GetHandle(), 5, fr.technique_counts, dev);
 
     // Collect-write bindings (monolithic only): intermediate + technique commands.
     if (!mid) {
-        WriteBuffer(fr.collect_write_set.GetHandle(), 0, fr.intermediate_buffer, dev);
+        WriteBuffer(fr.collect_write_set.GetHandle(), 0, fr.technique_results, dev);
         WriteBuffer(fr.collect_write_set.GetHandle(), 1, fr.technique_draw_commands, dev);
     }
 
-    // Single shared indirection set (set 3) bound to vertex_entries.
+    // Single shared indirection set (set 3) bound to vertex_indirection.
     {
-        const vk::DescriptorBufferInfo bi(*fr.vertex_entries.GetBuffer(), 0, vk::WholeSize);
+        const vk::DescriptorBufferInfo bi(*fr.vertex_indirection.GetBuffer(), 0, vk::WholeSize);
         vk::WriteDescriptorSet w{};
         w.dstSet = *fr.indirection_raw_set;
         w.dstBinding = 0;
@@ -256,8 +256,8 @@ void SceneRenderer::SetTechniqueCommandRegions(
 
     if (!backend_) return;
     for (auto& fr : frames_) {
-        if (fr.region_base_buffer.GetSize() >= region_base_.size() * sizeof(std::uint32_t)) {
-            fr.region_base_buffer.Upload(region_base_.data(),
+        if (fr.technique_region_bases.GetSize() >= region_base_.size() * sizeof(std::uint32_t)) {
+            fr.technique_region_bases.Upload(region_base_.data(),
                 region_base_.size() * sizeof(std::uint32_t));
         }
     }
@@ -292,7 +292,7 @@ void SceneRenderer::UpdateTechniqueFlags(
     // Upload only when contents change (flags are static in practice).
     if (technique_flags_cache_ != flags) {
         technique_flags_cache_ = flags;
-        technique_flags_buffer_.Upload(flags.data(), sizeof(std::uint32_t) * flags.size());
+        technique_flags.Upload(flags.data(), sizeof(std::uint32_t) * flags.size());
     }
 }
 
@@ -317,7 +317,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     const std::array<vk::DescriptorSet, 4> ds{
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
+        static_cast<vk::DescriptorSet>(*fr.vertex_buffers_set),
         *fr.indirection_raw_set
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
@@ -325,11 +325,11 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     if (draw_mode_ == DrawMode::MultiIndirect) {
         cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
         cmd.drawIndexedIndirectCount(*fr.depth_commands.GetBuffer(), 0,
-            *fr.depth_command_count.GetBuffer(), 0,
+            *fr.depth_out_command_count.GetBuffer(), 0,
             scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
     } else {
-        cmd.bindIndexBuffer(*fr.depth_compact_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirect(*fr.depth_draw_command.GetBuffer(), 0, 1,
+        cmd.bindIndexBuffer(*fr.depth_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirect(*fr.depth_out_draw_command.GetBuffer(), 0, 1,
             sizeof(vk::DrawIndexedIndirectCommand));
     }
 }
@@ -353,7 +353,7 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
     const std::array<vk::DescriptorSet, 4> ds{
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set),
+        static_cast<vk::DescriptorSet>(*fr.vertex_buffers_set),
         *fr.indirection_raw_set
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
@@ -361,11 +361,11 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
     if (draw_mode_ == DrawMode::MultiIndirect) {
         cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
         cmd.drawIndexedIndirectCount(*fr.occluder_commands.GetBuffer(), 0,
-            *fr.occluder_command_count.GetBuffer(), 0,
+            *fr.occluder_out_command_count.GetBuffer(), 0,
             scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
     } else {
-        cmd.bindIndexBuffer(*fr.occluder_compact_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirect(*fr.occluder_draw_command.GetBuffer(), 0, 1,
+        cmd.bindIndexBuffer(*fr.occluder_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.drawIndexedIndirect(*fr.occluder_out_draw_command.GetBuffer(), 0, 1,
             sizeof(vk::DrawIndexedIndirectCommand));
     }
 }
@@ -390,7 +390,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     // Engine descriptor set handles (used by both legacy and BaseTechnique paths)
     const vk::DescriptorSet engine_set0 = bm.GetDescriptorSet();
     const vk::DescriptorSet engine_set1 = fr.submesh_vertex_set.GetHandle();
-    const vk::DescriptorSet engine_set2 = static_cast<vk::DescriptorSet>(*fr.bindless_vertex_set);
+    const vk::DescriptorSet engine_set2 = static_cast<vk::DescriptorSet>(*fr.vertex_buffers_set);
     const vk::DescriptorSet engine_set3 = *fr.indirection_raw_set;
 
     LOGIFACE_LOG(trace, "RenderMain: submesh_count=" + std::to_string(current_entity_count_) +
@@ -405,7 +405,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
     const bool mid = draw_mode_ == DrawMode::MultiIndirect;
     cmd.bindIndexBuffer(
-        mid ? *fr.draw_indices.GetBuffer() : *fr.main_compact_indices.GetBuffer(),
+        mid ? *fr.draw_indices.GetBuffer() : *fr.main_indices.GetBuffer(),
         0, vk::IndexType::eUint32);
 
     for (uint32_t t = 0; t < static_cast<uint32_t>(tm.GetTechniqueCount()); ++t) {
@@ -455,7 +455,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             cmd.drawIndexedIndirectCount(
                 *fr.main_commands.GetBuffer(),
                 static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
-                *fr.tech_counts_buffer.GetBuffer(),
+                *fr.technique_counts.GetBuffer(),
                 static_cast<vk::DeviceSize>(t) * sizeof(std::uint32_t),
                 cnt, sizeof(vk::DrawIndexedIndirectCommand));
         } else {
@@ -479,7 +479,7 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, expand_slot_.Get());
     const std::array<vk::DescriptorSet, 2> ds{
         fr.expand_set.GetHandle(),
-        static_cast<vk::DescriptorSet>(*fr.bindless_index_set)
+        static_cast<vk::DescriptorSet>(*fr.index_buffers_set)
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *expand_pipeline_layout_,
                              0, ds, {});

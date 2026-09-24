@@ -1,23 +1,8 @@
 // Per-submesh transform and material info (written by expand pass).
-// C layout: byte-identical to the C++ mirror in MeshGatherSystem.cpp (176 B).
-struct VertEntry {
-    float4x4 MVP;
-    float maxScale;
-    uint materialId;       // named materialId (was texSlot) — unused by occlusion cull
-    uint ormPacked;        // packed by expand pass, unused by occlusion cull
-    float4x4 modelMatrix;  // unused by occlusion cull, must match main_indir size
-    float3x3 normalMatrix; // unused by occlusion cull, must match main_indir size
-};
+#include "scene_entries.slang"
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<VertEntry, CDataLayout> submeshVertexInfo[];
-
-struct CullEntry {
-    uint indexBase;
-    uint indexCount;
-    uint techniqueId;
-    uint pad;
-};
+StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 
 [[vk::binding(1, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
@@ -32,17 +17,8 @@ StructuredBuffer<float4, CDataLayout> boundingSpheres[];
 [[vk::binding(3, 0)]]
 Sampler2D<float> hizTex;
 
-// Oriented bounding box: center + 3 axis-aligned half-extent vectors (xyz = axis, w = half-length)
-// C layout matches the CPU OBBGPUEntry (4 x float4, 64 B).
-struct OBBGPU {
-    float4 center_pad;
-    float4 u_half;
-    float4 v_half;
-    float4 w_half;
-};
-
 [[vk::binding(4, 0)]]
-StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
+StructuredBuffer<ObbEntry, CDataLayout> obbEntries[];
 
 // Per-technique pass participation flags (written by the CPU from PipelineFlags).
 // Bit layout must match SceneRenderer's TECHNIQUE_FLAG_* constants:
@@ -51,7 +27,9 @@ StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
 [[vk::binding(5, 0)]]
 StructuredBuffer<uint, CDataLayout> techniqueFlags;
 
-static const uint kFlagReceivesOcclusion = 1u << 1;
+#include "technique_packing.slang"
+
+static const int kMaxRefineTexels = 64;
 
 struct OccPC {
     uint elementCount;
@@ -65,77 +43,41 @@ struct OccPC {
 [[vk::push_constant]]
 ConstantBuffer<OccPC> pc;
 
-static const float kDepthEps = 0.001;
-static const int kMaxRefineTexels = 64;
+#include "hiz_helpers.slang"
 
-// Depth (NDC z) of the near pole of a sphere of radius worldR whose center projects to
-// clipPos. The near pole lies one radius closer to the camera along the view axis, so
-// its clip-space z is clipPos.z + proj[2][2] * worldR. For a perspective projection its
-// w becomes clipPos.w - worldR; for an orthographic projection w stays 1 and no divide
-// applies. Using the projection's own scale (instead of a term extracted from the
-// combined MVP) keeps this exact for rolled views and scaled models, and correct for
-// both projection types.
-float NearPoleDepth(float4 clipPos, float worldR) {
-    if (pc.projInfo.w > 0.5)
-        return (clipPos.z + pc.projInfo.z * worldR) / max(clipPos.w - worldR, kDepthEps);
-    return clipPos.z + pc.projInfo.z * worldR;
-}
-
-// True when the near pole is at/beyond the near plane: the object is at least partially
-// visible (possibly through the camera itself) and must never be culled. The near plane
-// is z_clip + w_clip = 0 (non-reversed depth): for perspective w = -z_view so the near
-// pole's clip z/w shift by projInfo.z and -worldR respectively; for ortho w stays 1 and
-// only the z term applies (the near plane sits at z_ndc = -1).
-bool NearPoleClipped(float4 clipPos, float worldR) {
-    // Zero-to-one depth: near plane is ndc z = 0, i.e. clip z = 0.
-    return clipPos.z + pc.projInfo.z * worldR <= kDepthEps;
-}
-
-// Largest valid Hi-Z mip index (hiz level 0 is half the depth resolution).
-int MaxHizMip() {
-    return int(floor(log2(max(float(pc.hizWidth), float(pc.hizHeight)))));
-}
-
-// Mip whose texels are ~1-2 level-0 texels large, so a single sample at that mip
-// covers the whole rect (rectSizeUV in [0,1] UV units).
-int RectMip(float2 rectSizeUV) {
-    float maxDim = max(rectSizeUV.x * float(pc.hizWidth), rectSizeUV.y * float(pc.hizHeight));
-    return min(int(ceil(log2(max(maxDim, 1.0)))), MaxHizMip());
-}
-
-void CullSubmesh(uint block, uint elemIndex) {
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = 0;
+void CullSubmesh(uint block, uint elementIndex) {
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
 }
 
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint id = dispatchThreadId.x;
-    if (id >= pc.elementCount) return;
+    uint submeshIndex = dispatchThreadId.x;
+    if (submeshIndex >= pc.elementCount) return;
 
-    uint block = id / 256u;
-    uint elemIndex = id % 256u;
+    uint block = submeshIndex / 256u;
+    uint elementIndex = submeshIndex % 256u;
 
-    uint currentIndexCount = cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount;
+    uint currentIndexCount = cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount;
     if (currentIndexCount == 0) return;
 
     // Techniques with receives_occlusion == false (e.g. transparents) are never
     // Hi-Z culled: kept alive unconditionally, regardless of test outcome.
-    if ((techniqueFlags[cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId]
+    if ((techniqueFlags[cullEntries[NonUniformResourceIndex(block)][elementIndex].techniqueId]
          & kFlagReceivesOcclusion) == 0) return;
 
-    float4x4 mvp = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].MVP;
-    float maxScaleVal = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].maxScale;
+    float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
+    float maxScaleVal = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale;
 
     // ── Bounding sphere test: cheap conservative early-out ──
-    float4 sphere = boundingSpheres[NonUniformResourceIndex(block)][elemIndex];
+    float4 sphere = boundingSpheres[NonUniformResourceIndex(block)][elementIndex];
     float4 clipPos = mul(float4(sphere.xyz, 1.0), mvp);
     if (clipPos.w <= 0.0) return;   // sphere center behind the camera, but the sphere may
                                     // still be visible (camera inside it / near plane)
 
     float worldRadius = sphere.w * maxScaleVal;
-    if (NearPoleClipped(clipPos, worldRadius)) return;   // intersects the near plane → keep alive
-    float nearZ = NearPoleDepth(clipPos, worldRadius);
+    if (NearPoleClipped(clipPos, worldRadius, pc.projInfo)) return;   // intersects the near plane → keep alive
+    float nearZ = NearPoleDepth(clipPos, worldRadius, pc.projInfo);
 
     // Screen-space AABB of the sphere. The radius is measured at the near-pole depth
     // (clipPos.w - worldRadius), not the center depth: the apparent size of a sphere
@@ -155,21 +97,21 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // zero-area rect (e.g. an object with degenerate/uncomputed bounds) on-screen,
     // so it is never treated as off-screen while it is actually visible.
     if (maxUV.x <= 0.0 || minUV.x >= 1.0 || maxUV.y <= 0.0 || minUV.y >= 1.0) {
-        CullSubmesh(block, elemIndex);
+        CullSubmesh(block, elementIndex);
         return;
     }
     float2 clampedMin = clamp(minUV, 0.0, 1.0);
     float2 clampedMax = clamp(maxUV, 0.0, 1.0);
 
-    int mip = RectMip(clampedMax - clampedMin);
+    int mip = RectMip(clampedMax - clampedMin, int(pc.hizWidth), int(pc.hizHeight));
     float hizDepthVal = hizTex.SampleLevel((clampedMin + clampedMax) * 0.5, float(mip));
     if (nearZ > hizDepthVal + kDepthEps) {
-        CullSubmesh(block, elemIndex);
+        CullSubmesh(block, elementIndex);
         return;
     }
 
     // ── OBB test: exact screen AABB from the transformed corners ──
-    OBBGPU obb = obbBuf[NonUniformResourceIndex(block)][elemIndex];
+    ObbEntry obb = obbEntries[NonUniformResourceIndex(block)][elementIndex];
 
     float3 center = obb.center_pad.xyz;
     float3 axisU = obb.u_half.xyz;
@@ -189,8 +131,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // as any surface point of the object and can never cause a false cull.
     float4 obbClipPos = mul(float4(center, 1.0), mvp);
     float obbWorldRadius = maxScaleVal * sqrt(halfU * halfU + halfV * halfV + halfW * halfW);
-    if (NearPoleClipped(obbClipPos, obbWorldRadius)) return;
-    float nearZ_OBB = NearPoleDepth(obbClipPos, obbWorldRadius);
+    if (NearPoleClipped(obbClipPos, obbWorldRadius, pc.projInfo)) return;
+    float nearZ_OBB = NearPoleDepth(obbClipPos, obbWorldRadius, pc.projInfo);
 
     // Screen-space AABB of the OBB from its transformed corners. Because the sphere
     // guard above guarantees every corner is in front of the near plane, the loop
@@ -236,12 +178,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float2 screenMin = clamp(min(uvA, uvB), 0.0, 1.0);
     float2 screenMax = clamp(max(uvA, uvB), 0.0, 1.0);
 
-    int obbMip = RectMip(screenMax - screenMin);
+    int obbMip = RectMip(screenMax - screenMin, int(pc.hizWidth), int(pc.hizHeight));
 
     float2 centerUV_OBB = (screenMin + screenMax) * 0.5;
     float obbHizDepth = hizTex.SampleLevel(centerUV_OBB, float(obbMip));
     if (nearZ_OBB > obbHizDepth + kDepthEps) {
-        CullSubmesh(block, elemIndex);
+        CullSubmesh(block, elementIndex);
         return;
     }
 
@@ -294,6 +236,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // and every covered texel was occluding. With obbMip == 0 or refineLevel == 0
     // the loop cannot run and the object must be kept.
     if (ranRefinement && fullyOccluded) {
-        CullSubmesh(block, elemIndex);
+        CullSubmesh(block, elementIndex);
     }
 }

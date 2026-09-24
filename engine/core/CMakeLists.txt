@@ -215,6 +215,9 @@ add_slang_shaders(
     SHADER_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
     COMPILER    ${VKENGINE_SLANG_SPIRV_COMPILER}
     COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_entries.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/technique_packing.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/hiz_helpers.slang"
     OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         ${_engine_shaders}

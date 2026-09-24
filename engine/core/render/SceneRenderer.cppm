@@ -149,8 +149,8 @@ public:
     // each technique's fixed command region in the shared command buffer.
     void SetTechniqueCommandRegions(std::span<const std::uint32_t> submeshes_per_technique);
 
-    [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexDataLayout() const;
-    [[nodiscard]] vk::DescriptorSetLayout* GetRawVertexLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetSubmeshVertexEntriesLayout() const;
+    [[nodiscard]] vk::DescriptorSetLayout* GetVertexBuffersLayout() const;
     [[nodiscard]] vk::DescriptorSetLayout* GetIndirectionLayout() const;
 
     void UpdateVertexBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
@@ -220,10 +220,10 @@ public:
     [[nodiscard]] const std::vector<VulkanEngine::SubMesh>& GetSubmeshes() const { return scene_submeshes_; }
 
     struct FrameBlockArrays {
-        VulkanEngine::GpuResources::BlockArray* compact_dynamic;
-        VulkanEngine::GpuResources::BlockArray* compact_static;
+        VulkanEngine::GpuResources::BlockArray* dynamic_entries;
+        VulkanEngine::GpuResources::BlockArray* static_entries;
         VulkanEngine::GpuResources::BlockArray* bounding_spheres;
-        VulkanEngine::GpuResources::BlockArray* bounding_obb;
+        VulkanEngine::GpuResources::BlockArray* obb_entries;
     };
     [[nodiscard]] FrameBlockArrays GetFrameBlockArrays(std::uint32_t frame_index);
 
@@ -254,11 +254,11 @@ public:
 
     // Engine-standard descriptor sets 1-3 for a frame (set 0 is the bindless
     // manager's, set 4 is GetSceneUniformSet()).
-    [[nodiscard]] vk::DescriptorSet GetFrameSubmeshVertexSet(std::uint32_t frame_index) const {
+    [[nodiscard]] vk::DescriptorSet GetFrameSubmeshVertexEntriesSet(std::uint32_t frame_index) const {
         return frames_[frame_index % frames_in_flight_].submesh_vertex_set.GetHandle();
     }
-    [[nodiscard]] vk::DescriptorSet GetFrameRawVertexSet(std::uint32_t frame_index) const {
-        return static_cast<vk::DescriptorSet>(*frames_[frame_index % frames_in_flight_].bindless_vertex_set);
+    [[nodiscard]] vk::DescriptorSet GetFrameVertexBuffersSet(std::uint32_t frame_index) const {
+        return static_cast<vk::DescriptorSet>(*frames_[frame_index % frames_in_flight_].vertex_buffers_set);
     }
     [[nodiscard]] vk::DescriptorSet GetFrameIndirectionSet(std::uint32_t frame_index) const {
         return *frames_[frame_index % frames_in_flight_].indirection_raw_set;
@@ -279,42 +279,44 @@ private:
     struct TechniqueResult { std::uint32_t offset; std::uint32_t count; };
     struct FrameResources {
         // Block-based per-submesh buffers
-        VulkanEngine::GpuResources::BlockArray compact_dynamic{};
-        VulkanEngine::GpuResources::BlockArray compact_static{};
+        VulkanEngine::GpuResources::BlockArray dynamic_entries{};
+        VulkanEngine::GpuResources::BlockArray static_entries{};
         VulkanEngine::GpuResources::BlockArray bounding_spheres{};
-        VulkanEngine::GpuResources::BlockArray bounding_obb{};
-        VulkanEngine::GpuResources::BlockArray submesh_vertex_data{};
-        VulkanEngine::GpuResources::BlockArray submesh_cull{};
+        VulkanEngine::GpuResources::BlockArray obb_entries{};
+        VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
+        VulkanEngine::GpuResources::BlockArray cull_entries{};
 
         // ── Indexed-drawing substrate (shared by both modes) ──
-        // One IndirEntry per slot in each submesh's tight vertex window.
-        VulkanEngine::GpuResources::GpuBuffer vertex_entries{};
-        // 4 B absolute slot indices into vertex_entries, one per occurrence.
+        // One VertexIndirectionEntry per slot in each submesh's tight vertex window.
+        // Shared by both modes; the optimized-MID addressing plan makes it
+        // monolithic-only (MID then carries both indices in the command).
+        VulkanEngine::GpuResources::GpuBuffer vertex_indirection{};
+        // 4 B absolute slot indices into vertex_indirection, one per occurrence.
         VulkanEngine::GpuResources::GpuBuffer draw_indices{};
         // 2 x u32 atomic counters allocated by expand: [0]=entryBase, [1]=indexBase.
         VulkanEngine::GpuResources::GpuBuffer expand_counter{};
 
         // ── Monolithic destinations (4 B compact index lists) ──
-        VulkanEngine::GpuResources::GpuBuffer main_compact_indices{};
-        VulkanEngine::GpuResources::GpuBuffer depth_compact_indices{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_compact_indices{};
+        VulkanEngine::GpuResources::GpuBuffer main_indices{};
+        VulkanEngine::GpuResources::GpuBuffer depth_indices{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_indices{};
         // Monolithic GPU-accumulated indexed draw commands (word 0 = indexCount).
-        VulkanEngine::GpuResources::GpuBuffer depth_draw_command{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_draw_command{};
+        VulkanEngine::GpuResources::GpuBuffer depth_out_draw_command{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_out_draw_command{};
 
         // ── MID destinations (20 B indexed indirect commands + count) ──
         VulkanEngine::GpuResources::GpuBuffer main_commands{};
         VulkanEngine::GpuResources::GpuBuffer depth_commands{};
         VulkanEngine::GpuResources::GpuBuffer occluder_commands{};
-        VulkanEngine::GpuResources::GpuBuffer depth_command_count{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_command_count{};
+        VulkanEngine::GpuResources::GpuBuffer depth_out_command_count{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_out_command_count{};
         // CPU prefix sum of submeshes per technique (host-visible, MID main pass).
-        VulkanEngine::GpuResources::GpuBuffer region_base_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer technique_region_bases{};
 
-        VulkanEngine::GpuResources::GpuBuffer occluder_count_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_candidate_count{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
-        VulkanEngine::GpuResources::GpuBuffer tech_counts_buffer{};
-        VulkanEngine::GpuResources::GpuBuffer intermediate_buffer{};
+        VulkanEngine::GpuResources::GpuBuffer technique_counts{};
+        VulkanEngine::GpuResources::GpuBuffer technique_results{};
 
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
@@ -323,11 +325,11 @@ private:
         VulkanEngine::GpuResources::GpuDescriptorSet collect_write_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet occluder_select_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
-        // Single shared indirection set (set 3) bound to vertex_entries and
+        // Single shared indirection set (set 3) bound to vertex_indirection and
         // reused by the depth, occluder and main passes.
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
-        vk::raii::DescriptorSet bindless_vertex_set = vk::raii::DescriptorSet(nullptr);
-        vk::raii::DescriptorSet bindless_index_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet vertex_buffers_set = vk::raii::DescriptorSet(nullptr);
+        vk::raii::DescriptorSet index_buffers_set = vk::raii::DescriptorSet(nullptr);
         VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
 
         vk::raii::Image hiz_image = vk::raii::Image(nullptr);
@@ -384,15 +386,15 @@ private:
     ShaderSystem::PipelineFactory* pipeline_factory_ = nullptr;
     EngineShaderIds shader_ids_{};
 
-    // Set 1: SubmeshVertexData blocks
+    // Set 1: SubmeshVertexEntries blocks
     std::unique_ptr<vk::raii::DescriptorSetLayout> submesh_vertex_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> submesh_vertex_pool_;
 
-    // Set 2: Bindless vertex buffer array
-    std::unique_ptr<vk::raii::DescriptorSetLayout> raw_vertex_layout_{};
-    std::unique_ptr<vk::raii::DescriptorPool> raw_vertex_pool_;
+    // Set 2: Vertex buffer table
+    std::unique_ptr<vk::raii::DescriptorSetLayout> vertex_buffers_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> vertex_buffers_pool_;
 
-    // Set 3: Indirection buffer (depth uses dedicated set, main uses indirection_raw_set)
+    // Set 3: Vertex-indirection buffer (depth uses dedicated set, main uses indirection_raw_set)
     std::unique_ptr<vk::raii::DescriptorSetLayout> indirection_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> indirection_pool_;
     std::unique_ptr<vk::raii::DescriptorPool> indirection_raw_pool_;
@@ -461,13 +463,13 @@ private:
     std::optional<ShaderSystem::ComputePipelineDesc> hiz_desc_;
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> hiz_pool_;
 
-    // Bindless index buffer array (used by expand at set 5)
-    std::unique_ptr<vk::raii::DescriptorSetLayout> bindless_index_layout_{};
-    std::unique_ptr<vk::raii::DescriptorPool> bindless_index_pool_;
+    // Bindless index buffer table (used by expand at set 5)
+    std::unique_ptr<vk::raii::DescriptorSetLayout> index_buffers_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> index_buffers_pool_;
 
     // Lighting system (set 4)
-    VulkanEngine::GpuResources::GpuBuffer scene_header_buffer_{};
-    VulkanEngine::GpuResources::BlockArray scene_light_blocks_{};
+    VulkanEngine::GpuResources::GpuBuffer scene_header{};
+    VulkanEngine::GpuResources::BlockArray scene_lights{};
     std::unique_ptr<vk::raii::DescriptorSetLayout> scene_uniform_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> scene_uniform_pool_{};
     std::unique_ptr<vk::raii::DescriptorSet> scene_uniform_set_{};
@@ -478,7 +480,7 @@ private:
     // so a single host-visible buffer is updated in place only when contents
     // change. Worst case on a change is one frame reading a torn word, which is
     // self-correcting next frame.
-    VulkanEngine::GpuResources::GpuBuffer technique_flags_buffer_{};
+    VulkanEngine::GpuResources::GpuBuffer technique_flags{};
     std::vector<std::uint32_t> technique_flags_cache_{};
 
     // Create/destroy the mode-dependent per-frame buffers at the current

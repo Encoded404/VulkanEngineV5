@@ -244,21 +244,21 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     auto& scene_submeshes = renderer.GetSubmeshes();
 
     {
-        const std::uint32_t blk_pre = frame_blocks.compact_dynamic->BlockCount();
-        frame_blocks.compact_dynamic->EnsureCapacity(total_submeshes);
-        LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic EnsureCapacity(" + std::to_string(total_submeshes) +
+        const std::uint32_t blk_pre = frame_blocks.dynamic_entries->BlockCount();
+        frame_blocks.dynamic_entries->EnsureCapacity(total_submeshes);
+        LOGIFACE_LOG(trace, "ProcessFrame: dynamic_entries EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
-                     std::to_string(frame_blocks.compact_dynamic->BlockCount()));
+                     std::to_string(frame_blocks.dynamic_entries->BlockCount()));
     }
     {
-        const std::uint32_t blk_pre = frame_blocks.compact_static->BlockCount();
-        frame_blocks.compact_static->EnsureCapacity(total_submeshes);
-        LOGIFACE_LOG(trace, "ProcessFrame: compact_static EnsureCapacity(" + std::to_string(total_submeshes) +
+        const std::uint32_t blk_pre = frame_blocks.static_entries->BlockCount();
+        frame_blocks.static_entries->EnsureCapacity(total_submeshes);
+        LOGIFACE_LOG(trace, "ProcessFrame: static_entries EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
-                     std::to_string(frame_blocks.compact_static->BlockCount()));
+                     std::to_string(frame_blocks.static_entries->BlockCount()));
     }
     frame_blocks.bounding_spheres->EnsureCapacity(total_submeshes);
-    frame_blocks.bounding_obb->EnsureCapacity(total_submeshes);
+    frame_blocks.obb_entries->EnsureCapacity(total_submeshes);
 
     // Pack ORM override factors into one u32: bits [7:0]=AO, [15:8]=roughness,
     // [23:16]=metallic, [31:24]=spare. Unorm8 per channel, must match the
@@ -283,33 +283,35 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         float sx, sy, sz, pad1;
         float rx, ry, rz, rw;
     };
-    static_assert(sizeof(DynamicEntry) == 48, "DynamicEntry must match Slang DynEntry (CDataLayout)");
+    static_assert(sizeof(DynamicEntry) == 48, "DynamicEntry must match Slang DynamicEntry (CDataLayout)");
 
     struct StaticEntry {
         std::uint32_t index_start_packed;
         std::uint32_t index_range;
-        std::uint32_t technique_material;  // packed: hi 16 = material_id, lo 16 = technique_id
-        std::uint32_t vertex_info;
+        // Packed: hi 18 = material id, lo 14 = technique id
+        // (TechniquePacking::TECHNIQUE_BITS = 14, BaseTechnique.cppm).
+        std::uint32_t technique_material;
+        std::uint32_t vertex_info_packed;
         std::uint32_t orm_packed;          // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
         std::uint32_t vertex_window_base;  // min mesh-local index referenced by the submesh
         std::uint32_t vertex_span;         // number of distinct slots in the tight vertex window
     };
     static_assert(sizeof(StaticEntry) == 28, "StaticEntry must match Slang StaticEntry (CDataLayout)");
 
-    struct OBBGPUEntry {
+    struct ObbEntry {
         float cx, cy, cz, pad0;
         float ux, uy, uz, hu;
         float vx, vy, vz, hv;
         float wx, wy, wz, hw;
     };
-    static_assert(sizeof(OBBGPUEntry) == 64, "OBBGPUEntry must match Slang OBBGPU (CDataLayout)");
+    static_assert(sizeof(ObbEntry) == 64, "ObbEntry must match Slang ObbEntry (CDataLayout)");
 
-    // VertEntry mirror (written by the GPU expand pass, only sized here).
-    // Slang C layout: MVP@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
+    // VertexEntry mirror (written by the GPU expand pass, only sized here).
+    // Slang C layout: mvp@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
     // + modelMatrix@76 (64B) + normalMatrix@140 (3 tightly packed float3 rows,
     // 36B) = 176 bytes. No alignment padding — matrices sit on 4-byte
     // boundaries, which is exactly what scalar block layout permits.
-    struct VertEntryGPU {
+    struct VertexEntry {
         std::array<float, 16> mvp;           // 0
         float max_scale;                     // 64
         std::uint32_t material_id;           // 68
@@ -317,7 +319,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::array<float, 16> model_matrix;  // 76
         std::array<float, 9> normal_matrix;  // 140 (row-major, 12B row stride)
     };
-    static_assert(sizeof(VertEntryGPU) == 176, "VertEntryGPU must match Slang VertEntry (CDataLayout)");
+    static_assert(sizeof(VertexEntry) == 176, "VertexEntry must match Slang VertexEntry (CDataLayout)");
 
     std::uint32_t ci = 0;
 
@@ -339,11 +341,11 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         static bool reported = false;
         if (!reported && abs_vertex_end >= (1u << 24)) {
             reported = true;
-            LOGIFACE_LOG(error, "vertex_info 24-bit packing overflow: "
+            LOGIFACE_LOG(error, "vertex_info_packed 24-bit packing overflow: "
                 "baseVertex + vertexWindowBase + vertexSpan >= 2^24; geometry will be corrupt");
         }
         assert(abs_vertex_end < (1u << 24) &&
-               "vertex_info 24-bit packing overflow");
+               "vertex_info_packed 24-bit packing overflow");
     };
 
     // Write static mesh entries
@@ -409,13 +411,13 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 orm_metallic = mat.metallic_factor;
             }
 
-            if (auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci))) {
+            if (auto* d = static_cast<DynamicEntry*>(frame_blocks.dynamic_entries->Get(ci))) {
                 d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
                 d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
                 d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
             }
 
-            if (auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci))) {
+            if (auto* s2 = static_cast<StaticEntry*>(frame_blocks.static_entries->Get(ci))) {
                 s2->index_start_packed = (index_buf_slot << 24) | sm.index_start;
                 s2->index_range = sm.index_count;
                 if (effective.technique != nullptr) {
@@ -427,7 +429,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->technique_material =
                         TechniqueManager::TechniquePacking::Pack(0u, 0u);
                 }
-                s2->vertex_info = (vertex_buf_slot << 24) | base_vertex;
+                s2->vertex_info_packed = (vertex_buf_slot << 24) | base_vertex;
                 s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
                 s2->vertex_window_base = sm.vertex_window_base;
                 s2->vertex_span = sm.vertex_span;
@@ -442,7 +444,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 sp->w = sm.sphere.radius;
             }
 
-            if (auto* ob = static_cast<OBBGPUEntry*>(frame_blocks.bounding_obb->Get(ci))) {
+            if (auto* ob = static_cast<ObbEntry*>(frame_blocks.obb_entries->Get(ci))) {
                 ob->cx = sm.obb.center.x; ob->cy = sm.obb.center.y; ob->cz = sm.obb.center.z; ob->pad0 = 0;
                 ob->ux = sm.obb.axis_u.x; ob->uy = sm.obb.axis_u.y; ob->uz = sm.obb.axis_u.z; ob->hu = sm.obb.half_extent_u;
                 ob->vx = sm.obb.axis_v.x; ob->vy = sm.obb.axis_v.y; ob->vz = sm.obb.axis_v.z; ob->hv = sm.obb.half_extent_v;
@@ -514,9 +516,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 e.dyn_mesh->gpu_handle.id, e.dyn_mesh->submesh_count, entity_id);
 
             {
-                auto* d = static_cast<DynamicEntry*>(frame_blocks.compact_dynamic->Get(ci));
+                auto* d = static_cast<DynamicEntry*>(frame_blocks.dynamic_entries->Get(ci));
                 if (d) {
-                    LOGIFACE_LOG(trace, "ProcessFrame: writing compact_dynamic[" + std::to_string(ci) +
+                    LOGIFACE_LOG(trace, "ProcessFrame: writing dynamic_entries[" + std::to_string(ci) +
                                  "] pos=(" + std::to_string(pos.x) + "," + std::to_string(pos.y) + "," + std::to_string(pos.z) +
                                  ") scale=(" + std::to_string(scale.x) + "," + std::to_string(scale.y) + "," + std::to_string(scale.z) +
                                  ") rot=(" + std::to_string(rot.x) + "," + std::to_string(rot.y) + "," + std::to_string(rot.z) + "," + std::to_string(rot.w) +
@@ -524,20 +526,20 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     d->px = pos.x; d->py = pos.y; d->pz = pos.z; d->pad0 = 0;
                     d->sx = scale.x; d->sy = scale.y; d->sz = scale.z; d->pad1 = 0;
                     d->rx = rot.x; d->ry = rot.y; d->rz = rot.z; d->rw = rot.w;
-                    LOGIFACE_LOG(trace, "ProcessFrame: written compact_dynamic[" + std::to_string(ci) +
+                    LOGIFACE_LOG(trace, "ProcessFrame: written dynamic_entries[" + std::to_string(ci) +
                                  "] verify px=" + std::to_string(d->px) + " py=" + std::to_string(d->py) +
                                  " sx=" + std::to_string(d->sx) + " rx=" + std::to_string(d->rx));
                 } else {
-                    LOGIFACE_LOG(warn, "ProcessFrame: compact_dynamic->Get(" + std::to_string(ci) + ") returned null");
+                    LOGIFACE_LOG(warn, "ProcessFrame: dynamic_entries->Get(" + std::to_string(ci) + ") returned null");
                 }
             }
 
             {
-                auto* s2 = static_cast<StaticEntry*>(frame_blocks.compact_static->Get(ci));
+                auto* s2 = static_cast<StaticEntry*>(frame_blocks.static_entries->Get(ci));
                 if (s2) {
                     const std::uint32_t packed_index = (index_buf_slot << 24) | (index_offset + sm.index_start);
                     const std::uint32_t packed_vertex = (vertex_buf_slot << 24) | base_vertex;
-                    LOGIFACE_LOG(trace, "ProcessFrame: writing compact_static[" + std::to_string(ci) +
+                    LOGIFACE_LOG(trace, "ProcessFrame: writing static_entries[" + std::to_string(ci) +
                                  "] index_buf_slot=" + std::to_string(index_buf_slot) +
                                  " index_offset=" + std::to_string(index_offset) +
                                  " sm.index_start=" + std::to_string(sm.index_start) +
@@ -576,13 +578,13 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                         orm_metallic = mat.metallic_factor;
                     }
                     s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
-                    s2->vertex_info = packed_vertex;
+                    s2->vertex_info_packed = packed_vertex;
                     s2->vertex_window_base = sm.vertex_window_base;
                     s2->vertex_span = sm.vertex_span;
                     check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);
                     accumulate(sm, s2->technique_material);
                 } else {
-                    LOGIFACE_LOG(warn, "ProcessFrame: compact_static->Get(" + std::to_string(ci) + ") returned null");
+                    LOGIFACE_LOG(warn, "ProcessFrame: static_entries->Get(" + std::to_string(ci) + ") returned null");
                 }
             }
 
@@ -597,7 +599,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             }
 
             {
-                auto* ob = static_cast<OBBGPUEntry*>(frame_blocks.bounding_obb->Get(ci));
+                auto* ob = static_cast<ObbEntry*>(frame_blocks.obb_entries->Get(ci));
                 if (ob) {
                     ob->cx = sm.obb.center.x; ob->cy = sm.obb.center.y; ob->cz = sm.obb.center.z; ob->pad0 = 0;
                     ob->ux = sm.obb.axis_u.x; ob->uy = sm.obb.axis_u.y; ob->uz = sm.obb.axis_u.z; ob->hu = sm.obb.half_extent_u;
@@ -628,7 +630,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     for (std::uint32_t bi = 0; bi < dyn_vtx_block_count; ++bi) {
         const vk::Buffer vbuf = mesh_mgr.GetDynamicVertexBuffer(fif, bi);
-        LOGIFACE_LOG(trace, "ProcessFrame: update bindless_vertex_set frame=" +
+        LOGIFACE_LOG(trace, "ProcessFrame: update vertex_buffers_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_vtx_count + bi));
         renderer.UpdateVertexBufferArrayElement(
             frame_index,
@@ -638,7 +640,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     }
     for (std::uint32_t bi = 0; bi < dyn_idx_block_count; ++bi) {
         const vk::Buffer ibuf = mesh_mgr.GetDynamicIndexBuffer(fif, bi);
-        LOGIFACE_LOG(trace, "ProcessFrame: update bindless_index_set frame=" +
+        LOGIFACE_LOG(trace, "ProcessFrame: update index_buffers_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_idx_count + bi));
         renderer.UpdateIndexBufferArrayElement(
             frame_index,
@@ -647,12 +649,12 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             mesh_mgr.GetDynamicIndexBlockSize(fif));
     }
 
-    // Verify compact_dynamic content from mapped memory
+    // Verify dynamic_entries content from mapped memory
     if (ci > 0) {
         for (std::uint32_t vi = 0; vi < std::min(ci, 4u); ++vi) {
-            auto* d = static_cast<const DynamicEntry*>(frame_blocks.compact_dynamic->Get(vi));
+            auto* d = static_cast<const DynamicEntry*>(frame_blocks.dynamic_entries->Get(vi));
             if (d) {
-                LOGIFACE_LOG(trace, "ProcessFrame: compact_dynamic verify[" + std::to_string(vi) +
+                LOGIFACE_LOG(trace, "ProcessFrame: dynamic_entries verify[" + std::to_string(vi) +
                              "] px=" + std::to_string(d->px) + " py=" + std::to_string(d->py) + " pz=" + std::to_string(d->pz) +
                              " sx=" + std::to_string(d->sx) + " sy=" + std::to_string(d->sy) + " sz=" + std::to_string(d->sz) +
                              " rx=" + std::to_string(d->rx) + " ry=" + std::to_string(d->ry) + " rz=" + std::to_string(d->rz) + " rw=" + std::to_string(d->rw));

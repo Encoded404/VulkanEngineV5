@@ -1,74 +1,29 @@
-// Per-instance dynamic data buffer entry: world-space transform for one submesh
-struct DynEntry {
-    float3 pos;
-    float pad0;
-    float3 scale;
-    float pad1;
-    float4 rot;
-};
+#include "scene_entries.slang"
+#include "technique_packing.slang"
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<DynEntry, CDataLayout> dynamicInstances[];
-
-struct StaticEntry {
-    uint indexStart;       // packed: hi 8 = indexBufSlot, lo 24 = indexOffset
-    uint indexRange;
-    uint techniqueMaterial; // packed: hi (32 - kTechniqueBits) = materialId, lo kTechniqueBits = techniqueId
-    uint vertexInfo;       // packed: hi 8 = vertexBufSlot, lo 24 = baseVertex
-    uint ormPacked;        // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
-    uint vertexWindowBase; // min mesh-local index referenced by the submesh (indexed-drawing window)
-    uint vertexSpan;       // tight vertex-window size: max-min+1 (indexed-drawing pipeline)
-};
+StructuredBuffer<DynamicEntry, CDataLayout> dynamicEntries[];
 
 [[vk::binding(1, 0)]]
-StructuredBuffer<StaticEntry, CDataLayout> staticMeshes[];
-
-// TechniquePacking constants — MUST match C++ TechniquePacking in BaseTechnique.cppm
-static const uint kTechniqueBits = 14;
-static const uint kTechniqueMask = (1u << kTechniqueBits) - 1;
-
-// C layout (scalar block layout feature): float3x3 is 3 tightly-packed rows
-// of 12 bytes (stride 12), float4x4 members are NOT 16-byte aligned —
-// byte-identical to the C++ mirror struct in MeshGatherSystem.cpp:
-//   MVP@0 (64B) maxScale@64 materialId@68 ormPacked@72 modelMatrix@76 (64B)
-//   normalMatrix@140 (36B) -> sizeof 176.
-struct VertEntry {
-    float4x4 MVP;
-    float maxScale;
-    uint materialId;
-    uint ormPacked;         // unorm8 ORM factors packed by the CPU gather pass
-    float4x4 modelMatrix;   // world matrix for per-vertex world-space position computation
-    float3x3 normalMatrix;  // inverse-transpose of the 3x3 of modelMatrix
-};
+StructuredBuffer<StaticEntry, CDataLayout> staticEntries[];
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<VertEntry, CDataLayout> vertexConstants[];
-
-struct CullEntry {
-    uint indexBase;   // slot base of this submesh's indices in drawIndices
-    uint indexCount;
-    uint techniqueId;
-    uint pad;
-};
+RWStructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 
 [[vk::binding(3, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
-struct IndirEntry {
-    uint vertexId;
-    uint submeshId;
-};
-
 // One entry per vertex slot in each submesh's tight window. Indexed draws make
-// SV_VertexID the draw_indices value, which is a slot here.
+// SV_VertexID the draw_indices value, which is a slot here. Shared by both
+// modes today; the optimized-MID addressing plan makes it monolithic-only.
 [[vk::binding(4, 0)]]
-RWStructuredBuffer<IndirEntry, CDataLayout> vertexEntries;
+RWStructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 
-// Absolute slot indices into vertexEntries, one per index occurrence.
+// Absolute slot indices into vertexIndirection, one per index occurrence.
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<uint, CDataLayout> drawIndices;
 
-// [0] = next vertex-entry base, [1] = next draw-index base. Zeroed by the CPU.
+// [0] = next vertex-indirection base, [1] = next draw-index base. Zeroed by the CPU.
 [[vk::binding(6, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> expandCounter;
 
@@ -126,18 +81,18 @@ float3x3 normalMat(float4 rot, float3 scale) {
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint id = dispatchThreadId.x; // submesh index
-    if (id >= pushConstant.objectCount) return;
+    uint submeshIndex = dispatchThreadId.x;
+    if (submeshIndex >= pushConstant.objectCount) return;
 
-    uint block = id / 256u;    // which storage buffer block (max 256 submeshes per block)
-    uint elemIndex = id % 256u; // index within that block
+    uint block = submeshIndex / 256u;    // which storage buffer block (max 256 submeshes per block)
+    uint elementIndex = submeshIndex % 256u; // index within that block
 
-    float3 position = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].pos;
-    float3 scale = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].scale;
-    float4 rotation = dynamicInstances[NonUniformResourceIndex(block)][elemIndex].rot;
+    float3 position = dynamicEntries[NonUniformResourceIndex(block)][elementIndex].pos;
+    float3 scale = dynamicEntries[NonUniformResourceIndex(block)][elementIndex].scale;
+    float4 rotation = dynamicEntries[NonUniformResourceIndex(block)][elementIndex].rot;
 
-    uint indexRange = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexRange;
-    uint techniqueMaterial = staticMeshes[NonUniformResourceIndex(block)][elemIndex].techniqueMaterial;
+    uint indexRange = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexRange;
+    uint techniqueMaterial = staticEntries[NonUniformResourceIndex(block)][elementIndex].techniqueMaterial;
     uint techId = techniqueMaterial & kTechniqueMask;
     uint matId  = techniqueMaterial >> kTechniqueBits;
 
@@ -146,20 +101,20 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float4x4 mvp = mul(model, pushConstant.vp);
     float3x3 nrm = normalMat(rotation, scale);
 
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].MVP = mvp;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].maxScale = maxScaleVal;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].materialId = matId;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].ormPacked =
-        staticMeshes[NonUniformResourceIndex(block)][elemIndex].ormPacked;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].modelMatrix = model;
-    vertexConstants[NonUniformResourceIndex(block)][elemIndex].normalMatrix = nrm;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp = mvp;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale = maxScaleVal;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].materialId = matId;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].ormPacked =
+        staticEntries[NonUniformResourceIndex(block)][elementIndex].ormPacked;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].modelMatrix = model;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].normalMatrix = nrm;
 
-    uint indexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart >> 24;
-    uint indexOffset  = staticMeshes[NonUniformResourceIndex(block)][elemIndex].indexStart & 0xFFFFFFu;
-    uint vertexBufSlot = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo >> 24;
-    uint baseVertex    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexInfo & 0xFFFFFFu;
-    uint windowBase    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexWindowBase;
-    uint vertexSpan    = staticMeshes[NonUniformResourceIndex(block)][elemIndex].vertexSpan;
+    uint indexBufSlot = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexStartPacked >> 24;
+    uint indexOffset  = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexStartPacked & 0xFFFFFFu;
+    uint vertexBufferSlot = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexInfoPacked >> 24;
+    uint baseVertex    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexInfoPacked & 0xFFFFFFu;
+    uint windowBase    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexWindowBase;
+    uint vertexSpan    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexSpan;
 
     // Allocate this submesh's vertex-entry range and its draw-index range. The
     // ranges are independent: entry slots are dense over the tight vertex
@@ -171,9 +126,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // One entry per vertex slot; no per-occurrence duplication.
     for (uint j = 0; j < vertexSpan; j++) {
-        vertexEntries[entryBase + j].vertexId =
-            (vertexBufSlot << 24) | (baseVertex + windowBase + j);
-        vertexEntries[entryBase + j].submeshId = id;
+        vertexIndirection[entryBase + j].vertexIndex =
+            (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
+        vertexIndirection[entryBase + j].submeshIndex = submeshIndex;
     }
 
     // Replay the asset indices once into absolute entry slots.
@@ -182,8 +137,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         drawIndices[indexBase + i] = entryBase + (rawIndex - windowBase);
     }
 
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexBase = indexBase;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = indexRange;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].techniqueId = techId;
-    cullEntries[NonUniformResourceIndex(block)][elemIndex].pad = 0; // occluder bit, set by occluder_select
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].indexBase = indexBase;
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = indexRange;
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].techniqueId = techId;
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].flags = 0; // occluder bit, set by occluder_select
 }

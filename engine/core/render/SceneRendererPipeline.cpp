@@ -49,7 +49,7 @@ bool SceneRenderer::CreateExpandPipeline(const VulkanBackend::Vulkan::IVulkanBoo
     vk::PushConstantRange pr{};
     pr.stageFlags = vk::ShaderStageFlagBits::eCompute;
     pr.size = sizeof(ExpandPC);
-    std::array<vk::DescriptorSetLayout, 2> sl{ *expand_layout_, *bindless_index_layout_ };
+    std::array<vk::DescriptorSetLayout, 2> sl{ *expand_layout_, *index_buffers_layout_ };
     vk::PipelineLayoutCreateInfo li{};
     li.setLayoutCount = static_cast<std::uint32_t>(sl.size());
     li.pSetLayouts = sl.data();
@@ -80,7 +80,7 @@ bool SceneRenderer::CreateDepthPipeline(VulkanBackend::Vulkan::IVulkanBootstrap&
     LOGIFACE_LOG(debug, "Creating depth pipeline...");
     const auto& dev = be.GetDevice();
     std::array<vk::DescriptorSetLayout, 4> sl{
-        *empty_layout_, *submesh_vertex_layout_, *raw_vertex_layout_, *indirection_layout_
+        *empty_layout_, *submesh_vertex_layout_, *vertex_buffers_layout_, *indirection_layout_
     };
     vk::PipelineLayoutCreateInfo li{};
     li.setLayoutCount = static_cast<std::uint32_t>(sl.size());

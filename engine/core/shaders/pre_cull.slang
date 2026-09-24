@@ -10,30 +10,16 @@
 //   4. surviving depth-pass participants are compacted into the
 //      depth-prepass-only indirection buffer + draw command.
 //
-// Occluders (pad bit set by occluder_select) return before the tests: they
+// Occluders (flags bit set by occluder_select) return before the tests: they
 // already wrote their depth in the occluder prepass and must NOT be zeroed —
 // collect keeps drawing them in the main pass.
 //
 // Depth convention: non-reversed [0,1] (0 = near, 1 = far), every Hi-Z texel
 // stores the FARTHEST depth in its footprint (max reduction in hiz_gen).
-struct VertEntry {
-    float4x4 MVP;
-    float maxScale;
-    uint materialId;
-    uint ormPacked;
-    float4x4 modelMatrix;
-    float3x3 normalMatrix;
-};
+#include "scene_entries.slang"
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<VertEntry, CDataLayout> submeshVertexInfo[];
-
-struct CullEntry {
-    uint indexBase;  // slot base of the submesh's indices in draw_indices
-    uint indexCount;
-    uint techniqueId;
-    uint pad; // bit0 = selected occluder (set by occluder_select)
-};
+StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 
 [[vk::binding(1, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
@@ -44,15 +30,8 @@ StructuredBuffer<float4, CDataLayout> boundingSpheres[];
 [[vk::binding(3, 0)]]
 Sampler2D<float> hizTex;
 
-struct OBBGPU {
-    float4 center_pad;
-    float4 u_half;
-    float4 v_half;
-    float4 w_half;
-};
-
 [[vk::binding(4, 0)]]
-StructuredBuffer<OBBGPU, CDataLayout> obbBuf[];
+StructuredBuffer<ObbEntry, CDataLayout> obbEntries[];
 
 // Per-technique flag table (SceneRenderer::UpdateTechniqueFlags). Bit layout
 // must match TECHNIQUE_FLAG_* in SceneRenderer.cppm:
@@ -69,22 +48,16 @@ StructuredBuffer<uint, CDataLayout> drawIndices;
 //   monolithic: a packed uint index list
 //   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
 [[vk::binding(7, 0)]]
-RWStructuredBuffer<uint, CDataLayout> prepassOut;
+RWStructuredBuffer<uint, CDataLayout> depthOut;
 
 // Counter word. Monolithic: word 0 accumulates the survivor index total.
 // MID: increments once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(8, 0)]]
-globallycoherent RWStructuredBuffer<uint, CDataLayout> prepassCounter;
+globallycoherent RWStructuredBuffer<uint, CDataLayout> depthOutCounter;
 
 // 0 = monolithic (compact index copy), 1 = MID (command emission).
-[[vk::constant_id(0)]] const uint kCompactionMode = 0;
-
-static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
-static const uint kFlagDepthPass          = 1u << 0;
-static const uint kFlagReceivesOcclusion  = 1u << 1;
-static const uint kOccluderBit            = 1u << 0;
-
-static const float kDepthEps = 0.001;
+#include "technique_packing.slang"
+#include "hiz_helpers.slang"
 
 struct PreCullPC {
     uint elementCount;
@@ -98,63 +71,36 @@ struct PreCullPC {
 [[vk::push_constant]]
 ConstantBuffer<PreCullPC> pc;
 
-// Largest valid Hi-Z mip index (hiz level 0 is half the depth resolution).
-int MaxHizMip() {
-    return int(floor(log2(max(float(pc.hizWidth), float(pc.hizHeight)))));
-}
-
-// Mip whose texels are ~1-2 level-0 texels large, so a single sample at that
-// mip covers the whole rect (rectSizeUV in [0,1] UV units).
-int RectMip(float2 rectSizeUV) {
-    float maxDim = max(rectSizeUV.x * float(pc.hizWidth), rectSizeUV.y * float(pc.hizHeight));
-    return min(int(ceil(log2(max(maxDim, 1.0)))), MaxHizMip());
-}
-
-// Depth (NDC z) of the near pole of a sphere of radius worldR whose center
-// projects to clipPos. Ported from occlusion_cull.slang: exact for rolled
-// views and scaled models, correct for perspective and orthographic.
-float NearPoleDepth(float4 clipPos, float worldR) {
-    if (pc.projInfo.w > 0.5)
-        return (clipPos.z + pc.projInfo.z * worldR) / max(clipPos.w - worldR, kDepthEps);
-    return clipPos.z + pc.projInfo.z * worldR;
-}
-
-// True when the near pole is at/beyond the near plane: the object is at least
-// partially visible and must never be culled. Ported from occlusion_cull.slang.
-bool NearPoleClipped(float4 clipPos, float worldR) {
-    return clipPos.z + pc.projInfo.z * worldR <= kDepthEps;
-}
-
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint id = dispatchThreadId.x;
-    if (id >= pc.elementCount) return;
+    uint submeshIndex = dispatchThreadId.x;
+    if (submeshIndex >= pc.elementCount) return;
 
-    uint block = id / 256u;
-    uint elemIndex = id % 256u;
+    uint block = submeshIndex / 256u;
+    uint elementIndex = submeshIndex % 256u;
 
-    CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elemIndex];
+    CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return; // already culled earlier this frame
 
     // Occluders already wrote their depth in the occluder prepass; they are
     // visible and must reach the main pass through collect — never re-test
     // them and never compact them into the survivor list.
-    if ((entry.pad & kOccluderBit) != 0) return;
+    if ((entry.flags & kOccluderBit) != 0) return;
 
     uint flags = techniqueFlags[entry.techniqueId];
 
-    float4x4 mvp = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].MVP;
-    float maxScaleVal = submeshVertexInfo[NonUniformResourceIndex(block)][elemIndex].maxScale;
+    float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
+    float maxScaleVal = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale;
 
     // ── Bounding sphere frustum test: cheap conservative early-out ──
-    float4 sphere = boundingSpheres[NonUniformResourceIndex(block)][elemIndex];
+    float4 sphere = boundingSpheres[NonUniformResourceIndex(block)][elementIndex];
     float4 clipPos = mul(float4(sphere.xyz, 1.0), mvp);
     if (clipPos.w <= 0.0) return;   // sphere center behind the camera, but the
                                     // sphere may still be visible → keep alive
 
     float worldRadius = sphere.w * maxScaleVal;
-    if (NearPoleClipped(clipPos, worldRadius)) return;   // intersects near plane
+    if (NearPoleClipped(clipPos, worldRadius, pc.projInfo)) return;   // intersects near plane
 
     float2 centerUV = clipPos.xy / clipPos.w * 0.5 + 0.5;
     centerUV.y = 1.0 - centerUV.y;
@@ -165,27 +111,28 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // One-sided unclamped off-screen test (never treats a zero-area rect as
     // off-screen) — see occlusion_cull.slang for the full rationale.
     if (maxUV.x <= 0.0 || minUV.x >= 1.0 || maxUV.y <= 0.0 || minUV.y >= 1.0) {
-        cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = 0;
+        cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
         return;
     }
 
     // ── Hi-Z occlusion test (only techniques that receive occlusion) ──
     if ((flags & kFlagReceivesOcclusion) != 0) {
-        float nearZ = NearPoleDepth(clipPos, worldRadius);
+        float nearZ = NearPoleDepth(clipPos, worldRadius, pc.projInfo);
         float2 clampedMin = clamp(minUV, 0.0, 1.0);
         float2 clampedMax = clamp(maxUV, 0.0, 1.0);
 
-        int mip = RectMip(clampedMax - clampedMin);
+        int mip = RectMip(clampedMax - clampedMin, int(pc.hizWidth), int(pc.hizHeight));
         float hizDepthVal = hizTex.SampleLevel((clampedMin + clampedMax) * 0.5, float(mip));
         if (nearZ > hizDepthVal + kDepthEps) {
-            cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = 0;
+            cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
             return;
         }
 
         // OBB test: exact screen AABB from the transformed corners, with the
         // conservative sphere-based near bound (the min-over-corners variant is
         // a documented false-cull hazard — see occlusion_cull.slang).
-        OBBGPU obb = obbBuf[NonUniformResourceIndex(block)][elemIndex];
+        ObbEntry obb = obbEntries[NonUniformResourceIndex(block)][elementIndex];
+
 
         float3 center = obb.center_pad.xyz;
         float3 axisU = obb.u_half.xyz;
@@ -197,10 +144,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
         float4 obbClipPos = mul(float4(center, 1.0), mvp);
         float obbWorldRadius = maxScaleVal * sqrt(halfU * halfU + halfV * halfV + halfW * halfW);
-        if (NearPoleClipped(obbClipPos, obbWorldRadius)) {
+        if (NearPoleClipped(obbClipPos, obbWorldRadius, pc.projInfo)) {
             // near-pole clipped → cannot test conservatively, keep alive
         } else {
-            float nearZ_OBB = NearPoleDepth(obbClipPos, obbWorldRadius);
+            float nearZ_OBB = NearPoleDepth(obbClipPos, obbWorldRadius, pc.projInfo);
 
             int cornerCount = 0;
             bool cornerClipped = false;
@@ -231,11 +178,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
                 float2 screenMin = clamp(min(uvA, uvB), 0.0, 1.0);
                 float2 screenMax = clamp(max(uvA, uvB), 0.0, 1.0);
 
-                int obbMip = RectMip(screenMax - screenMin);
+                int obbMip = RectMip(screenMax - screenMin, int(pc.hizWidth), int(pc.hizHeight));
                 float2 centerUV_OBB = (screenMin + screenMax) * 0.5;
                 float obbHizDepth = hizTex.SampleLevel(centerUV_OBB, float(obbMip));
                 if (nearZ_OBB > obbHizDepth + kDepthEps) {
-                    cullEntries[NonUniformResourceIndex(block)][elemIndex].indexCount = 0;
+                    cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
                     return;
                 }
             }
@@ -251,19 +198,19 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (kCompactionMode == 0) {
         // Monolithic: copy the 4 B entry slots into the packed index list.
         uint destOffset;
-        InterlockedAdd(prepassCounter[0], entry.indexCount, destOffset);
+        InterlockedAdd(depthOutCounter[0], entry.indexCount, destOffset);
         for (uint i = 0; i < entry.indexCount; i++) {
-            prepassOut[destOffset + i] = drawIndices[entry.indexBase + i];
+            depthOut[destOffset + i] = drawIndices[entry.indexBase + i];
         }
     } else {
         // MID: one 20 B indexed draw command per survivor.
         uint slot;
-        InterlockedAdd(prepassCounter[0], 1u, slot);
+        InterlockedAdd(depthOutCounter[0], 1u, slot);
         uint base = slot * kCmdWords;
-        prepassOut[base + 0] = entry.indexCount;
-        prepassOut[base + 1] = 1u;
-        prepassOut[base + 2] = entry.indexBase;
-        prepassOut[base + 3] = 0u;
-        prepassOut[base + 4] = 0u;
+        depthOut[base + 0] = entry.indexCount;
+        depthOut[base + 1] = 1u;
+        depthOut[base + 2] = entry.indexBase;
+        depthOut[base + 3] = 0u;
+        depthOut[base + 4] = 0u;
     }
 }

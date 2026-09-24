@@ -115,8 +115,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                 *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
                 vert_id, frag_id, config_.pipeline_config,
                 *ctx_.bindless_mgr->GetLayout(),
-                *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-                *ctx_.scene_renderer->GetRawVertexLayout(),
+                *ctx_.scene_renderer->GetSubmeshVertexEntriesLayout(),
+                *ctx_.scene_renderer->GetVertexBuffersLayout(),
                 *ctx_.scene_renderer->GetIndirectionLayout(),
                 ctx_.scene_renderer->GetSceneUniformLayout())) {
             LOGIFACE_LOG(error, "GameEngine::InitRenderer: DefaultMeshTechnique pipeline creation failed");
@@ -133,8 +133,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                 *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
                 vert_id, ctx_.shader_ids.unlit_frag, config_.pipeline_config,
                 *ctx_.bindless_mgr->GetLayout(),
-                *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-                *ctx_.scene_renderer->GetRawVertexLayout(),
+                *ctx_.scene_renderer->GetSubmeshVertexEntriesLayout(),
+                *ctx_.scene_renderer->GetVertexBuffersLayout(),
                 *ctx_.scene_renderer->GetIndirectionLayout(),
                 ctx_.scene_renderer->GetSceneUniformLayout())) {
             LOGIFACE_LOG(error, "GameEngine::InitRenderer: UnlitTextureTechnique pipeline creation failed");
@@ -187,8 +187,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     // pipelines and layouts.
     ctx_.renderer->SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5>{
         *ctx_.bindless_mgr->GetLayout(),
-        *ctx_.scene_renderer->GetSubmeshVertexDataLayout(),
-        *ctx_.scene_renderer->GetRawVertexLayout(),
+        *ctx_.scene_renderer->GetSubmeshVertexEntriesLayout(),
+        *ctx_.scene_renderer->GetVertexBuffersLayout(),
         *ctx_.scene_renderer->GetIndirectionLayout(),
         ctx_.scene_renderer->GetSceneUniformLayout(),
     });

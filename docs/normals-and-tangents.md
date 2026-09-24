@@ -1,27 +1,18 @@
-# Normals, Tangents & Packed Tangent Frames
+# Normals, tangents & packed tangent frames
 
-This document describes how the engine stores, encodes, and transforms surface
-normal and tangent data, and credits the techniques and their authors.
-
-Scope: static geometry. GPU skinning (DQS) is planned separately; the design
-below is compatible with it (see [Future work](#future-work)).
+This document records the encoding decisions and measured error data for surface
+normal and tangent storage, and credits the techniques and their authors.
 
 ---
 
-## 1. Overview
+## 1. Decision: pack the whole tangent frame into 32 bits
 
-A vertex carries exactly **24 bytes**:
+A vertex carries position, one 32-bit packed tangent frame, and texcoord. There is
+no separate normal (12 B) or tangent (16 B) attribute — the entire tangent frame is
+recovered from 4 bytes by a ~40-instruction branchless decode in the vertex shader.
 
-| Field       | Size | Notes                                          |
-|-------------|------|------------------------------------------------|
-| position    | 12 B | 3× float32                                     |
-| `packedTBN` | 4 B  | normal + tangent + handedness in one `uint32`  |
-| texcoord    | 8 B  | 2× float32                                     |
-
-There is no separate normal (12 B) or tangent (16 B) attribute — the entire
-tangent frame is recovered from 4 bytes by a ~40-instruction branchless decode
-in the vertex shader. On a vertex-bandwidth-bound pipeline this is the
-dominant win; the decode ALU cost is noise on any modern GPU.
+On a vertex-bandwidth-bound pipeline this is the dominant win; the decode ALU cost
+is noise on any modern GPU.
 
 ## 2. Packed tangent frame layout (32 bits)
 
@@ -116,21 +107,7 @@ becomes the precision bottleneck. For comparison, smallest-three quaternion
 packing (3×10+2) lands at ≈ 0.06° avg / 0.20° max for *both* vectors, while
 plain SNORM8 per-axis is ≈ 0.9° max.
 
-## 3. Pack/unpack code map
-
-| Location | Role |
-|---|---|
-| `engine/core/assets/NormalEncoding.cppm` | CPU-side encoder: octahedral + Duff basis + diamond + handedness → `uint32`. Single source of truth for the bit layout. |
-| `engine/core/shaders/normal_encoding.slang` | GPU-side decoder (shared Slang include), mirror of the encoder. |
-| `engine/core/render/MeshPipeline.cppm` | Canonical `Vertex` struct + `static_assert(sizeof(Vertex) == 24)`. |
-| `engine/core/shaders/main_indir.slang`, `depth_indir.slang` | SSBO vertex fetch; `Vertex` structs MUST change in lockstep with the C++ struct. |
-| `engine/core/assets/FileLoaders/Mesh/TangentGenerator.cppm` | MikkTSpace wrapper producing per-vertex tangents. |
-
-**The encoder and decoder MUST be changed together.** There is no test harness
-yet; adding a CPU round-trip test (pack → unpack → angular error < 0.5° over
-a sphere sampling) is cheap insurance.
-
-### Correctness rules baked into the encoder
+## 3. Encoding rules
 
 1. **The tangent basis is built from the *requantized* normal** — the
    octahedral value is encoded, dequantized, and *that* normal's basis is used
@@ -139,39 +116,34 @@ a sphere sampling) is cheap insurance.
    (Same trap identified by Kapoulkine for angle encoding.)
 2. The tangent is orthogonalized against the requantized normal before
    projection; a degenerate (zero-length) tangent falls back to the basis
-   tangent — the shader-side `normal_texture != 0` gating then never samples
-   the frame.
+   tangent.
 3. Always renormalize after decode. Octahedral decode output is renormalized
    in-shader; hides quantization drift at negligible cost.
 
-## 4. Tangent generation: MikkTSpace
+## 4. Decision: MikkTSpace for tangent generation
 
 Normal maps in the wild are baked in **MikkTSpace** tangent space (xNormal,
 Substance, Blender, etc.). Computing tangents with a different convention
 renders third-party normal maps subtly-to-visibly wrong, especially at hard
 edges and mirrored UVs. The engine therefore uses the canonical reference
-implementation, vendored as a git submodule:
+implementation:
 
 - M. S. Mikkelsen, **"Tangent Space Computation for Arbitrary Meshes"**
   (MikkTSpace), 2008/2011.
   Reference implementation: <https://github.com/mmikk/MikkTSpace> (zlib-style
-  license, vendored at `external/MikkTSpace/`, unaltered).
+  license).
 - Mikkelsen's degenerate-triangle (zero UV area) rule is the non-obvious part
   that hand-rolled implementations get wrong; the reference handles it, and
   glTF 2.0 normatively references MikkTSpace as the fallback when the
   `TANGENT` attribute is absent.
 
-Pipeline integration:
+Generation rules:
 
-- `ObjMeshAssembler` runs MikkTSpace per submesh **after** vertex dedup
-  (MikkTSpace accumulates across shared vertices; true UV seams must already
-  be split into distinct vertices — the `(pos, normal, uv)` dedup key
-  guarantees this).
-- The wrapper (`TangentGenerator.cppm`) implements the C callback interface
-  against `VulkanEngine::Mesh` and scatters the unindexed per-face results
-  back onto vertices.
-- When the glTF assembler is implemented, prefer the file's baked `TANGENT`
-  attribute (including `.w` handedness) and only generate when absent.
+- Run MikkTSpace per submesh **after** vertex dedup (MikkTSpace accumulates
+  across shared vertices; true UV seams must already be split into distinct
+  vertices — a `(pos, normal, uv)` dedup key guarantees this).
+- Prefer the file's baked `TANGENT` attribute (including `.w` handedness) and
+  only generate when it is absent.
 
 Terminology note: the third basis vector is the **bitangent** (per
 T. Forsyth, *"Bitangent versus Binormal"*,
@@ -185,59 +157,42 @@ the matrix itself. `mul(n, modelMatrix)` is only correct under uniform scale
 (when the model matrix has no shear, the uniform factor is erased by the
 shader's `normalize()`).
 
-### Closed form used by the engine
+### Closed form for a rotation-scale transform
 
-The expand pass composes `modelMat(pos, rot, scale) = T · R · S` with an
-orthonormal quaternion rotation `R` and diagonal scale `S`. Therefore:
+For a transform composed as `modelMat(pos, rot, scale) = T · R · S` with an
+orthonormal quaternion rotation `R` and diagonal scale `S`:
 
 ```
 (M⁻¹)ᵀ = (R · S)⁻ᵀ = R · S⁻¹
 ```
 
-No matrix inversion is needed — `expand.slang` builds `R · S⁻¹` analytically
-from the same quaternion code path as `modelMat()`, using `1/scale` per row,
-with a `1e-8` guard against degenerate scale components.
-
-- `expand.slang` computes `normalMatrix` per drawn instance and writes it into
-  `VertEntry` (alongside `MVP`/`modelMatrix`), growing `sizeof(VertEntry)`
-  from 144 → 192 bytes. All four shader copies of `VertEntry`
-  (`expand`, `main_indir`, `depth_indir`, `occlusion_cull`) alias the same
-  buffer and must change in lockstep; `SceneRenderer.cpp` block config must
-  match (`192`).
-- `main_indir.slang` transforms both normal and tangent with
-  `mul(v, info.normalMatrix)` and renormalizes. The bitangent handedness
-  passes through unchanged (scalar, unaffected by rotation/scale).
+No matrix inversion is needed — the closed form is built analytically from the
+same quaternion code path as the model matrix, with `1/scale` per row and a
+guard against degenerate scale components.
 
 ### Why per-instance, not per-vertex
 
 The normal matrix is a function of the transform, not the vertex — computing
-it per vertex would repeat identical work for every vertex of an instance.
-The engine's invariant: **the normal matrix rides with the transform entry,
-computed by whoever composes the transform** (today: expand pass; later, if
-transform composition moves to GPU-driven compute, the same compute pass).
-When mesh shaders arrive, the same invariant moves one level down
-(per-cluster, in a task/pre-pass compute dispatch).
+it per vertex would repeat identical work for every vertex of an instance. The
+invariant: **the normal matrix rides with the transform entry, computed by
+whoever composes the transform**.
 
 ### Consistency
 
-`MVP`, `modelMatrix`, and `normalMatrix` are written from the same transform
-snapshot in the same invocation. Mixed snapshots show up as lighting that
-lags geometry on fast rotation.
+The model-view-projection matrix, model matrix, and normal matrix must be
+written from the same transform snapshot in the same invocation. Mixed
+snapshots show up as lighting that lags geometry on fast rotation.
 
 Negative scale (mirrored instances) flips the determinant — handle winding/
 culling separately; the normal matrix math itself remains valid.
 
 ## 6. Fragment-stage normal mapping
 
-`standard_mesh.slang` builds the world-space TBN from the interpolated
-geometric normal (so the frame stays orthonormal even where the interpolated
-tangent drifts from perpendicularity), samples the normal map only when
-`material.normal_texture != 0` (bindless slot 0 is the "no texture" sentinel,
-matching the ORM-texture convention), and applies the glTF convention
-(`n_ts = tex.rgb * 2 − 1`, green up). Note: Slang's `float3x3` row/column
-orientation in `mul()` can make lighting appear inverted on test assets — if
-that happens, transpose the TBN in the `mul` and update this section with the
-settled convention.
+The world-space TBN is built from the interpolated geometric normal (so the
+frame stays orthonormal even where the interpolated tangent drifts from
+perpendicularity). The normal map is sampled with the glTF convention
+(`n_ts = tex.rgb * 2 − 1`, green up) and applied only where a normal texture
+exists.
 
 ## 7. Alternative encodings considered (and why not)
 
@@ -253,22 +208,7 @@ settled convention.
 Full quantitative comparison (all numbers above): Kapoulkine 2026, Cigolle
 et al. 2014.
 
-## 8. Future work
-
-- **DQS GPU skinning (planned separately):** dual quaternion skinning
-  transforms normal/tangent frames rigidly by construction (Kavan et al.,
-  *"Skinning with Dual Quaternions"*, I3D 2007 / *"Geometric Skinning with
-  Approximate Dual Quaternion Blending"*, TVCG 2008). It slots in *before*
-  the per-instance normal matrix; nothing in this plan changes.
-- **Meshlets / mesh shaders:** unpack cost already amortizes; per-cluster
-  normal matrices follow the same "rides with the transform entry" invariant.
-- **Visibility buffer:** per-pixel 3× decode changes the cost tradeoff;
-  quaternion TBN (nlerp-interpolable) becomes attractive. The pack/unpack
-  pair is isolated in two files to keep that swap cheap.
-- **Round-trip unit test** for `PackTBN` (max angular error over sphere).
-- **half2 texcoords** would shrink the vertex further (24 → 20 B).
-
-## 9. Reference list
+## 8. Reference list
 
 1. Meyer, Süßmuth, Sußner, Stamminger, Greiner — *On Floating-Point Normal
    Vectors*, CGF 2010.

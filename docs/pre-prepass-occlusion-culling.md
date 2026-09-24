@@ -1,68 +1,47 @@
-# Pre-Prepass Occlusion Culling: Analysis, Cost Model, and Design
+# Pre-Prepass Occlusion Culling: Analysis, Cost Model, and Decisions
 
-*Design study for culling occluded objects **before** the depth prepass, using only current-frame information (no temporal / last-frame data).*
+*Current-frame occlusion culling before the depth prepass, using no temporal or last-frame data.*
 
 ---
 
 ## Table of contents
 
 1. [Motivation and problem statement](#1-motivation-and-problem-statement)
-2. [Cost model of the current pipeline](#2-cost-model-of-the-current-pipeline)
+2. [Cost model: why the prepass is vertex-bound](#2-cost-model-why-the-prepass-is-vertex-bound)
 3. [Theory: the occluder/occludee asymmetry](#3-theory-the-occluderoccludee-asymmetry)
 4. [Survey of existing techniques (with real measured data)](#4-survey-of-existing-techniques-with-real-measured-data)
-5. [Proposed design: occluder prepass before the depth prepass](#5-proposed-design-occluder-prepass-before-the-depth-prepass)
+5. [Decisions](#5-decisions)
 6. [Step-by-step cost estimates](#6-step-by-step-cost-estimates)
 7. [Break-even analysis](#7-break-even-analysis)
 8. [Correctness](#8-correctness)
 9. [Failure modes](#9-failure-modes)
-10. [Implementation mapping (this engine)](#10-implementation-mapping-this-engine)
-11. [References](#11-references)
+10. [References](#10-references)
 
 ---
 
 ## 1. Motivation and problem statement
 
-The current frame layout (Renderer.cpp / SceneRendererFrame.cpp) is:
+**Goal:** reduce the objects submitted to the depth prepass using only
+current-frame information, accepting a serial but small added GPU chain, with no
+last-frame data anywhere.
 
-```
-expand ──► depth prepass ──► hi-z gen ──► occlusion cull ──► collect ──► main pass
-(all)      (ALL submeshes)   (from full    (cullEntries      (compact for
-            via draw_count    depth         indexCount := 0)  main pass)
-            buffer)           pyramid
-```
-
-The depth prepass draws **everything**: `expand.slang` accumulates every submesh's
-`indexRange` into `draw_count_buffer`, and `DepthPrepass()` issues one
-`drawIndirect` whose `vertexCount` is the sum of all submesh index counts.
-The existing occlusion cull (`occlusion_cull.slang`: bounding-sphere early-out,
-screen-AABB, Hi-Z mip test, OBB corner loop, per-texel refinement) only reduces
-the **main pass**; it runs after Hi-Z generation and cannot influence the
-prepass that produced the Hi-Z.
-
-The engine's own profiling concern: the prepass is **vertex-transform bound**.
-`depth_indir.slang` maps `SV_VertexID → IndirEntry → random StructuredBuffer
-fetch (176 B `VertEntry`) → one 4×4 MVP mul` with an empty fragment shader.
-The depth *writes* are nearly free (empty FS, early-Z, depth compression);
-the vertex fetch + transform of every index is the cost.
-
-**Goal:** reduce objects submitted to the depth prepass using only
-current-frame information, accepting a serial but small added GPU chain,
-with no last-frame data anywhere in the engine.
+A prepass that draws everything is **vertex-transform bound**. The depth writes are
+nearly free (empty fragment shader, early-Z, hierarchical depth compression); the
+vertex fetch and transform of every index is the cost. An occlusion cull that runs
+only after Hi-Z generation cannot influence the prepass that produced the Hi-Z.
+Culling before the prepass removes whole objects from the vertex work.
 
 ---
 
-## 2. Cost model of the current pipeline
-
-### 2.1 Why the prepass is vertex-bound, not depth-bound
+## 2. Cost model: why the prepass is vertex-bound
 
 - Depth writes: empty fragment shader, early-Z, hierarchical depth compression.
   Nearly free on all modern architectures.
-- Vertex cost per index: one 176-byte `StructuredBuffer` fetch (bindless,
-  poorly localized — threads within a wave fetch *different* blocks) plus a
-  4×4 matrix mul (~64 FMAs). Because the indirection buffer maps
-  `vertexId → (buffer, vertex)` directly, **there is no post-transform vertex
-  reuse at all**: every index of every triangle is a separate shader
-  invocation. A closed mesh transforms each vertex ~6× (once per incident
+- Vertex cost per index: one bindless `StructuredBuffer` fetch (poorly localized —
+  threads within a wave fetch *different* blocks) plus a 4×4 matrix mul (~64
+  FMAs). With occurrence-based indirection the fetch is random and there is **no
+  post-transform vertex reuse**: every index of every triangle is a separate
+  shader invocation. A closed mesh transforms each vertex ~6× (once per incident
   triangle) compared to a hardware indexed draw with a post-transform cache.
 
 So the prepass cost is approximately:
@@ -87,17 +66,15 @@ total vertex processing from ~3 ms down to ~1.3 ms *after* moving culling into
 compute — i.e., single-digit-millisecond prepasses are the normal regime for
 heavy scenes, and vertex processing is exactly the stage culling targets.)
 
-### 2.2 The asymmetry that motivates all of this
+### 2.1 The asymmetry that motivates all of this
 
 Every object the prepass does *not* draw saves:
 
-1. its vertex fetches + MVP muls (the dominant cost),
+1. its vertex fetches + mvp muls (the dominant cost),
 2. its triangle setup and rasterization in the prepass,
 3. its slot in the compaction/collect passes downstream,
-4. nothing in the main pass (main already reads the compacted buffer — but
-   the same cullEntries zeroing *does* propagate there for free, since
-   `collect_count_compact` and the post-prepass occlusion pass both early-out
-   on `indexCount == 0`).
+4. nothing extra in the main pass — the main pass already reads the compacted
+   buffer, and the zero-index-count convention propagates there for free.
 
 Compute-side culling work, by contrast, is measured in *submeshes* (10⁴–10⁵
 threads), not *vertices* (10⁶–10⁷). That is a 2–3 order-of-magnitude
@@ -178,9 +155,8 @@ so cheap. The same article explains why 4 texel fetches at mip *N* beat 1
 fetch at mip *N+1*: better footprint fit, simpler LOD math, no effectiveness
 collapse for centered objects.
 
-Notes relevant to this engine: our `hiz_gen.slang` already implements max
-reduction; our non-reversed [0,1] depth with farthest-depth-in-footprint
-matches the "store maximum depth" policy exactly.
+The max-reduction chain stores the farthest depth per footprint, which is the
+standard "store maximum depth" policy.
 
 ### 4.2 NVIDIA nvpro batched occlusion culling sample (Kubisch et al.)
 
@@ -246,108 +222,88 @@ for the fine tier — same two-tier shape as §5.
 Per-object occlusion queries (or their batched `GL_ARB_occlusion_query`
 descendants) require either CPU sync or conditional rendering, one query per
 object per frame, and pipeline bubbles. The nvpro sample exists precisely to
-replace them; this engine's cullEntries/compaction design is already the
-GPU-driven replacement, so queries are out.
+replace them; a GPU-driven bounds-testing design replaces them.
 
 ---
 
-## 5. Proposed design: occluder prepass before the depth prepass
+## 5. Decisions
 
-```mermaid
-flowchart LR
-    E[expand\nMVP + cullEntries\nall submeshes] --> S[select\nscreen-area threshold\natomic-append, capped]
-    S --> OD[occluder prepass\nlow-res depth\ne.g. 512x288]
-    OD --> HZ[hiz_gen\nsmall mip chain]
-    HZ --> PC[pre-cull compute\nOBB vs Hi-Z\ntwo-pass compact]
-    PC --> DP[depth prepass\nsurvivors only\nfiltered indirection]
-    DP --> HZ2[hiz_gen full res] --> OCC[occlusion pass\nexisting] --> C[collect] --> M[main pass]
+### 5.1 Cull before the depth prepass with current-frame data
+
+```
+expand ──► select ──► occluder prepass ──► hiz gen ──► pre-cull
+       ──► depth prepass ──► hiz gen ──► occlusion ──► collect ──► main pass
 ```
 
-### 5.1 Pass-by-pass design
+Every cull decision is made against depth rasterized *this frame* from real
+geometry. No temporal state, no camera-cut handling, no first-frame special case,
+no pop-in risk beyond normal conservative false-negatives (objects kept alive).
 
-**A. Selection (compute, one dispatch, N = submesh count).**
-Each thread transforms its OBB's 8 corners with the MVP already computed by
-expand, produces the screen AABB, computes area, and if
+### 5.2 Occluder selection: any large-occluder set
+
+Each submesh transforms its bounding-box corners with the mvp, produces the screen
+AABB, computes area, and appends its submesh id via an atomic when
 
 ```
 area ≥ kMinAreaPx²  &&  listCount < kMaxOccluders
 ```
 
-appends its submesh id via `InterlockedAdd` to a small candidate list
-(capped at e.g. 256–1024 entries). No sort, no scan, no ranking: *any* set of
-large occluders is a valid occluder set — selection can only miss culls,
-never cause false ones (§2). Optionally also require
-`indexRange ≤ kMaxOccluderTris` so a giant candidate cannot blow the occluder
-prepass budget.
+No sort, no scan, no ranking: *any* set of large occluders is a valid occluder
+set — selection can only miss culls, never cause false ones. Optionally also
+require `indexRange ≤ kMaxOccluderTris` so a giant candidate cannot blow the
+occluder prepass budget.
 
-Threshold tuning: a single fixed threshold such as "OBB covers ≥ 0.25–0.5 %
-of the screen" self-adapts (few occluders facing the sky, more inside
-rooms). If budget overflow becomes routine, upgrade to a 256-bin histogram of
-`log2(area)` + one reduction pass to pick the cutoff bin — two cheap passes,
-still no sort. (Full sorts — bitonic, or NVIDIA oneSweep radix at ~0.1–0.2 ms
-per 1 M keys — are overkill for occluder selection.)
+Threshold tuning: a single fixed threshold such as "OBB covers ≥ 0.25–0.5 % of
+the screen" self-adapts (few occluders facing the sky, more inside rooms). If
+budget overflow becomes routine, upgrade to a 256-bin histogram of `log2(area)`
+plus one reduction pass to pick the cutoff bin — two cheap passes, still no sort.
+Full sorts (bitonic, or a oneSweep radix at ~0.1–0.2 ms per 1 M keys) are
+overkill for occluder selection.
 
-**B. Occluder prepass.** Hardware raster of the *actual meshes* of selected
-candidates into a low-res depth image (e.g. 512×288, clear to 1.0 = far).
-Reuse the depth-prepass vertex path (it is already indirection-driven), with
-a second filtered indirection buffer written by a small compaction over the
-candidate list. Crucially this draws **real geometry**, so the depth is a
+### 5.3 Occluder prepass: draw real geometry
+
+Hardware-raster the actual meshes of the selected candidates into a low-res depth
+image (for example 512×288, clear to 1.0 = far). Reuse the depth-prepass vertex
+path, with a second filtered indirection buffer written by a small compaction over
+the candidate list. Crucially this draws **real geometry**, so the depth is a
 valid under-approximation for free; no OBB-silhouette or proxy generation is
 needed (and fitted-OBB silhouettes would be *wrong* — §3).
 
 Alternative for later: Drobot-style coarse rasterization of the candidates in
-compute into a ~256×144 depth buffer, avoiding the graphics-pipeline round
-trip. More code, marginal gain at this scale; the hardware path is simpler
-and the rasterizer is otherwise idle at this point in the frame.
+compute into a ~256×144 depth buffer, avoiding the graphics-pipeline round trip.
+More code, marginal gain at this scale; the hardware path is simpler and the
+rasterizer is otherwise idle at this point in the frame.
 
-**C. Small Hi-Z chain.** Reuse `hiz_gen.slang` as-is on the 512×288 image
-(~9 mips, a handful of tiny dispatches). Measured cost class: <0.2 ms for a
-*full-screen* chain on 2010 hardware (§4.1); this is a quarter of that.
+### 5.4 Small Hi-Z chain
 
-**D. Pre-cull compute + compaction.** Per-submesh thread: frustum reject
-(OBB all-outside any plane or AABB off-screen — code already exists in
-`occlusion_cull.slang` lines 116–146/157–214), then the same near-pole /
-`SampleLevel` test against the small Hi-Z, then the two-pass compaction
-(clone of `collect_count_compact.slang` minus the per-technique
-`sharedOffsets` machinery — single-technique variant, ~50 lines). Output:
+Reuse the existing Hi-Z generator as-is on the low-res image (~9 mips, a handful
+of tiny dispatches). Measured cost class: <0.2 ms for a *full-screen* chain on 2010
+hardware (§4.1); this is a quarter of that.
 
-- `cullEntries[i].indexCount = 0` for culled submeshes (so the existing
-  post-prepass occlusion pass and collect pass skip them for free), and
-- a filtered indirection buffer + `DrawIndirectCommand` whose `vertexCount` =
-  sum of surviving index counts, consumed by `DepthPrepass()` instead of the
+### 5.5 Pre-cull compute + compaction
+
+Per-submesh thread: frustum reject (OBB all-outside any plane or AABB off-screen),
+then the same near-pole / `SampleLevel` test against the small Hi-Z, then the
+two-pass compaction (a single-technique variant of the collect count+compact flow,
+~50 lines). Output:
+
+- the per-submesh cull entry's index count set to 0 for culled submeshes (so the
+  post-prepass occlusion pass and collect skip them for free), and
+- a filtered indirection buffer + `DrawIndirectCommand` whose `vertexCount` = sum
+  of surviving index counts, consumed by the depth prepass instead of the
   expand-written total.
 
-**E. Full depth prepass.** Unchanged except the bound buffer/count. Optional
-refinement: keep the occluder depth in the buffer (`load_op = LOAD` for the
-full prepass) so survivors' depth pass only adds new content.
+### 5.6 Depth-buffer reuse variant
 
-### 5.2 What this buys structurally
+The occluder prepass need not target a separate low-res image. Since the prepass
+fragment stage is empty, the occluder pass can render **at full resolution into the
+actual prepass depth buffer** (`load_op = CLEAR`, `store_op = STORE`), and the full
+depth prepass then switches to `load_op = LOAD` and draws only survivors:
 
-- **Current-frame occlusion, zero temporal state.** Every cull decision is
-  made against depth rasterized *this frame* from real geometry. No
-  camera-cut handling, no first-frame special case, no pop-in risk beyond
-  normal conservative false-negatives (objects kept alive).
-- **Reuse, as identified in discussion:** the post-prepass occlusion pass
-  only ever sees survivors (culled entries are already 0), the compacted
-  indirection pattern is shared, and the small Hi-Z logic is the existing
-  `hiz_gen`.
-
-### 5.3 Depth-buffer reuse variant (recommended refinement)
-
-The occluder prepass need not target a separate low-res image. Since the
-prepass fragment stage is empty, the occluder pass can render **at full
-resolution into the actual prepass depth buffer** (`load_op = CLEAR`,
-`store_op = STORE`), and the full depth prepass then switches to
-`load_op = LOAD` and draws only survivors:
-
-```mermaid
-flowchart LR
-    E[expand] --> S[select]
-    S --> OD[occluder prepass\nclear + write full-res depth\nselected meshes only]
-    OD --> HZ[hiz gen\npartial depth]
-    HZ --> PC[pre-cull compute\nOBB vs Hi-Z\ntwo-pass compact]
-    PC --> DP[depth prepass\nload_op = LOAD\nsurvivors minus occluders]
-    DP --> HZ2[hiz gen full\ncomplete depth] --> OCC[occlusion pass] --> C[collect] --> M[main pass]
+```
+expand ──► select ──► occluder prepass (clear + write full-res depth)
+       ──► hiz gen (partial) ──► pre-cull ──► depth prepass (load)
+       ──► hiz gen (full) ──► occlusion ──► collect ──► main pass
 ```
 
 Properties of this variant versus the separate small-buffer variant:
@@ -359,86 +315,59 @@ Properties of this variant versus the separate small-buffer variant:
   vertex-transform saving available.
 - One depth image, one clear, no second render target; the full-res Hi-Z
   built from the partial depth is *more accurate* than a 512×288 chain, so
-  the pre-cull cull rate improves slightly (coarser buffers can only fail to
+  the pre-cull rate improves slightly (coarser buffers can only fail to
   prove occlusion, never falsely cull).
 - The full prepass clear disappears; survivors are added on top of the
-  occluder depth via early-Z (fragments of survivors behind occluders are
-  rejected — irrelevant with an empty FS, but the depth image ends the
-  prepass complete either way).
+  occluder depth via early-Z.
 - Net extra cost over the small-buffer variant: one full-resolution Hi-Z
   build instead of a tiny one (tens of µs). Net saving: the occluder meshes'
   duplicate vertex transforms plus one render target.
 
 **The one correctness trap:** occluders must be excluded from the *prepass
-survivor list* but must NOT have their `cullEntries.indexCount` zeroed — they
-are visible and must reach the main pass through collect. Use a separate flag
-(e.g. an occluder bit in the currently-unused `CullEntry.pad`), and let the
-prepass compaction skip flagged entries while the post-prepass occlusion pass
-and collect treat them as alive.
+survivor list* but must NOT have their cull-entry index count zeroed — they are
+visible and must reach the main pass through collect. Use a separate occluder bit,
+and let the prepass compaction skip flagged entries while the post-prepass
+occlusion pass and collect treat them as alive.
 
-Render-graph fit: the engine already sets per-pass depth attachment
-`load_op` (`eClear` in the depth prepass, `eLoad` in the main pass —
-Renderer.cpp passes 2 and 6), so an occluder-prepass node with clear+store
-followed by the full prepass with load+store is a declarative change, not new
-machinery.
+Render-graph fit: the per-pass depth attachment load/store op is already
+declarative, so an occluder-prepass node with clear+store followed by the full
+prepass with load+store is a declarative change, not new machinery.
 
-**What this variant does not save:** fragment cost in the prepass. The
-prepass fragment shader is empty and early-Z already rejects occluded
-fragments, so "draw all visible meshes but keep occluder depth" saves nothing
-in the fragment stage — the savings are vertex transforms (occluders drawn
-once), the clear, and one image/chain worth of bandwidth.
+**What this variant does not save:** fragment cost in the prepass. The prepass
+fragment shader is empty and early-Z already rejects occluded fragments, so "draw
+all visible meshes but keep occluder depth" saves nothing in the fragment stage —
+the savings are vertex transforms (occluders drawn once), the clear, and one
+image/chain worth of bandwidth.
 
-### 5.4 Pass participation flags — consuming the dead `PipelineFlags`
+### 5.7 Per-technique participation flags
 
-Current state of the technique system: `PipelineFlags`
-(`BaseTechnique.cppm:26-30`) declares three per-technique hints —
+Three per-technique hints govern participation:
 
 ```
 participates_in_depth_pass = true;  // writes depth → occludes others
-receives_occlusion         = true;  // gets culled by HiZ (set false for transparents)
+receives_occlusion         = true;  // gets culled by Hi-Z (set false for transparents)
 participates_in_collect    = true;  // generates indirect draw commands
 ```
 
-but only `participates_in_collect` is ever consumed (`SceneRendererFrame.cpp`,
-main-pass technique loop). The depth prepass binds one universal pipeline
-(`depth_indir.slang` + empty FS) and draws **every** submesh with no technique
-knowledge whatsoever. Consequences today:
-
-- A technique with `participates_in_depth_pass = false` (transparents) is
-  still rasterized into the prepass depth buffer. The main pass then runs
-  early-Z against that depth and rejects everything behind the transparent
-  surface. **Latent correctness bug, independent of any occlusion work.**
-- `receives_occlusion` is dead: the existing occlusion cull tests every
-  submesh regardless of flag.
-- Custom techniques with custom vertex stages are *shadowed* in the prepass
-  by the generic `depth_indir.slang` path — correct only as long as the
-  vertex shader does not move vertices (no skinning, morphs, or displacement).
-
-Planned consumption (cheap because `CullEntry` already carries `techniqueId`):
-upload a per-technique flag table (a single `uint[MAX_TECHNIQUES]` storage
-buffer, three relevant bits per technique) that the GPU passes read:
+Upload a per-technique flag table (three relevant bits per technique) that the GPU
+passes read:
 
 | Flag | Consumer | Action |
 |---|---|---|
-| `participates_in_depth_pass == false` | prepass filtering | submesh is excluded from the *depth prepass indirection* (its `cullEntries.indexCount` stays nonzero — collect still needs it for the main pass). Fixes the transparent-into-depth bug |
+| `participates_in_depth_pass == false` | prepass filtering | submesh is excluded from the *depth prepass indirection* (its cull-entry index count stays nonzero — collect still needs it for the main pass) |
 | `receives_occlusion == false` | pre-cull test | entry is kept alive unconditionally; never an occluder candidate |
-| (new) `bounds_conservative` | occluder selection | see §5.5 — displaced techniques are occludee-only unless they supply conservative post-deform bounds |
+| `bounds_conservative` | occluder selection | see §5.8 — displaced techniques are occludee-only unless they supply conservative post-deform bounds |
 
-With the depth-buffer-reuse design (§5.3) the depth prepass consumes its own
-filtered indirection buffer, so `participates_in_depth_pass` filtering lives
-in the pre-cull/compaction stage rather than as a `cullEntries` mutation —
-the main pass compaction (collect) must keep such entries alive.
+Without this gating, a technique excluded from the depth pass (for example a
+transparent) is still rasterized into the depth buffer, and the main pass then
+rejects everything behind it. With the depth-buffer-reuse design the depth prepass
+consumes its own filtered indirection buffer, so the flag filtering lives in the
+pre-cull/compaction stage while collect keeps such entries alive.
 
-This fix is worth doing **independently of the occlusion work** (phase 0 in
-§10): it is a small standalone correctness fix for transparency + depth
-prepass interaction.
+### 5.8 Interaction with geometry-deformation compute
 
-### 5.5 Interaction with planned geometry-deformation compute
-
-Planned engine direction (informational, from design discussion): custom
-**compute shaders that modify geometry and write it to storage**, with custom
-vertex pipelines layered on top — avoiding per-technique pipeline/shader
-variants for skinning and other deformation. How the culling plan must adapt:
+If custom **compute shaders that modify geometry and write it to storage** are used,
+with custom vertex pipelines layered on top:
 
 1. **Ordering constraint:** any deform pass must run *after* expand (it needs
    the submesh transforms/indirection) and **before the first pass that
@@ -454,22 +383,17 @@ variants for skinning and other deformation. How the culling plan must adapt:
    `participates_in_depth_pass && !has_vertex_displacement` (or a
    conservative-bounds override).
 3. **Occludee bounds:** displaced submeshes can still be occluded, but only
-   if their OBB encloses the full deformation envelope. Techniques must
+   if their bound encloses the full deformation envelope. Techniques must
    either declare conservative bounds (CPU-known animation envelope) or opt
    out via a bounds flag; otherwise the §8 correctness argument is void for
    them.
 4. **The prepass depth of displaced geometry is only exact if the deform pass
-   writes before the prepass** — which the slot above guarantees. Since the
-   pre-cull tests OBBs against depth *rasterized from the deformed buffers*
-   (the prepass vertex path fetches post-deform storage when the technique's
-   vertex pipeline redirects its position source), occlusion decisions stay
-   exact rather than approximate.
+   writes before the prepass** — which the slot above guarantees.
 
 Practical consequence for the design: the deform pass slots into the same
 serial chain without new machinery (it is one more compute node depending on
-expand, and everything downstream already depends on expand), but the flag
-table from §5.4 must carry the deformation/bounds bits so expand, occluder
-selection, and the pre-cull all make consistent decisions.
+expand), but the flag table from §5.7 must carry the deformation/bounds bits so
+expand, occluder selection, and the pre-cull all make consistent decisions.
 
 ---
 
@@ -533,25 +457,23 @@ occlusion, it pays for itself by roughly an order of magnitude over break-even.
 
 Claim: the pipeline never falsely culls. Proof sketch:
 
-1. Occluder prepass rasterizes actual triangle geometry with a normal
+1. The occluder prepass rasterizes actual triangle geometry with a normal
    (LEQUAL) depth test; the resulting depth value at any pixel is ≥ true
    scene depth at that pixel (occluder depth is real geometry depth, and
    nothing farther can be recorded due to the depth test).
-2. Hi-Z mip stores the *farthest* occluder depth per footprint.
+2. The Hi-Z mip stores the *farthest* occluder depth per footprint.
 3. A submesh is culled only if every Hi-Z texel in its conservative screen
    AABB holds depth strictly in front of the object's conservative near
-   bound (near pole of its bounding sphere — existing convention in
-   `occlusion_cull.slang`, lines 168–179, which avoids the min-over-corners
+   bound (near pole of its bounding sphere — this avoids the min-over-corners
    false-cull hazard).
 4. Then every real surface point of the object projects into the AABB at a
    depth beyond the recorded occluder depth, which is real depth → the
    object is fully covered by real, nearer geometry → invisible.
 
 No assumption about frame-to-frame coherence is used anywhere, so camera
-cuts, teleports, and the first frame are all correct by construction.
-(Conservative `near pole` depth, not corner-min, must be preserved in the
-pre-cull shader — the corner-min variant is documented in the shader as a
-false-cull hazard.)
+cuts, teleports, and the first frame are all correct by construction. Use the
+conservative near pole, never the corner minimum; the corner-min variant is a
+false-cull hazard.
 
 Remaining correctness caveat: the *effectiveness* is bounded by occluder
 selection (missed culls only) and by the small Hi-Z resolution; at 512×288 an
@@ -564,11 +486,11 @@ sub-pixel objects are candidates for size culling, not occlusion culling.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Objects pop in at screen edges | OBB screen-AABB clamping eating off-screen extents | keep the unclamped one-sided off-screen test (already in occlusion_cull.slang) |
+| Objects pop in at screen edges | OBB screen-AABB clamping eating off-screen extents | keep the unclamped one-sided off-screen test |
 | Objects pop behind large close walls | Occluder set misses a dominant occluder (threshold too high / budget too low) | lower threshold, raise cap; histogram if needed |
-| Everything culled behind camera | `clipPos.w <= 0` mishandled | existing near-pole guard (lines 119–123) must be ported to pre-cull |
-| Small Hi-Z says visible but full depth disagrees | expected: low-res occluder buffer is coarser than full prepass | not a bug; post-prepass pass catches the rest |
-| y-flip / NDC sign bugs | depth image row 0 = NDC +y | existing uvA/uvB sort pattern (lines 220–223) must be ported |
+| Everything culled behind camera | `clipPos.w <= 0` mishandled | near-pole guard for `w <= 0` |
+| Small Hi-Z says visible but full depth disagrees | expected: low-res occluder buffer is coarser than full prepass | not a bug; the post-prepass pass catches the rest |
+| y-flip / NDC sign bugs | depth image row 0 = NDC +y | sort the two UV corners before sampling |
 
 Debug tooling worth building with the feature: visualize the small Hi-Z mip
 chain and a per-submesh "culled by" enum (none / frustum / occlusion) — both
@@ -576,72 +498,7 @@ are single buffers readable via the existing debug-readback paths.
 
 ---
 
-## 10. Implementation mapping (this engine)
-
-| Engine piece | Reuse / change |
-|---|---|
-| Selection + area compute | new small compute pass; MVP data already produced by `expand.slang` (could even fuse area computation into expand itself, removing one pass) |
-| Occluder prepass | clone of `DepthPrepass` with filtered indirection set (§5.3: full-res, clear+store); new render-graph node between expand and depth-prepass in `Renderer.cpp` |
-| Small Hi-Z | `DispatchHiZGen` parameterized for the small image, or a second hiz pipeline instance |
-| Pre-cull test | `occlusion_cull.slang` minus the refine loop, plus threshold/append in expand |
-| Compaction | `collect_count_compact.slang` with `techniqueCount == 1` semantics; count pass reuses `indexCount == 0` convention |
-| Buffers | one `BlockArray` for the candidate list + filtered indirection (capacity = total, same pattern as `submesh_cull`) |
-| Render graph | new nodes between `expand` and `depth-prepass`; reads `hiz-image` (small), writes `scene-buffers` + `draw-indirect`; existing `AddDependency` chain extended |
-| PipelineFlags plumbing | new tiny per-technique flag buffer (≤ `MAX_TECHNIQUES` entries) read by expand; consumes `participates_in_depth_pass` and `receives_occlusion` (currently dead code — `BaseTechnique.cppm:26-30`); plus a bounds-conservatism bit for displaced techniques (§5.5) |
-| Geometry-deform pass (future) | one more compute node after expand, before the occluder prepass; everything downstream already depends on expand, so no new dependency machinery — flag table gains deformation bits (§5.5) |
-
-Phasing:
-
-0. **Consume `participates_in_depth_pass`** (standalone bug fix, independent
-   of occlusion work): upload the per-technique flag table; expand skips
-   writing indirection entries for depth-pass-excluded techniques (or the
-   depth path filters them). Fixes transparents currently being written into
-   prepass depth (early-Z then rejects main-pass fragments behind them).
-   Also consume `receives_occlusion` in the existing post-prepass occlusion
-   shader (one branch on the flag buffer).
-1. **Frustum-only pre-cull** (no occluder prepass): biggest win per line of
-   code, no new resources, works frame 1.
-2. **Occluder prepass chain** with fixed threshold and no sort; depth-buffer
-   reuse per §5.3; occluder candidacy gated on
-   `participates_in_depth_pass && bounds_conservative` (§5.4).
-3. **Deform-compute integration** when custom geometry-modification compute
-   lands: deform node slots between expand and the occluder prepass; displaced
-   techniques default to occludee-only (§5.5).
-4. **Refinements** (only if profiling demands): histogram-based occluder
-   budget, refine loop in pre-cull, artist occluder proxies, compute-side
-   coarse rasterization.
-
-Implementation status (phases 0–3 landed; phase 4 deferred pending profiling):
-
-- Phases 0–2 are implemented as the final §5.3 chain:
-  `expand → occluder-select → occluder-prepass (clear) → hiz-gen-pre →
-  pre-cull → depth-prepass (load) → hiz-gen (full) → occlusion → collect →
-  main`. The intermediate phase-1-only filter pass was superseded and removed
-  (pre-cull includes the frustum test).
-- GPU flag table: `TECHNIQUE_FLAG_*` in `SceneRenderer.cppm`; `PipelineFlags`
-  gained `bounds_conservative` (occluder-safe). Consumers:
-  `occluder_select.slang` (depth-pass + occluder-safe gating),
-  `pre_cull.slang` (depth-pass + receives-occlusion gating),
-  `occlusion_cull.slang` (receives-occlusion gate).
-- New shaders: `occluder_select.slang` (selection + occluder compaction,
-  kMaxOccluders = 512, kMaxOccluderIndices = 262144, min coverage = 0.25 % of
-  screen via `kOccluderMinAreaFraction` in SceneRenderer.cppm),
-  `pre_cull.slang` (ported conservative tests minus the refine loop).
-- Occluder exclusion uses the `CullEntry.pad` bit 0 as specified — occluders
-  are never compacted into the survivor list but keep their `indexCount` for
-  collect.
-- Phase 3 (deform-compute slot) is flag-plumbed only: the engine has no deform
-  compute yet; when it lands, the node goes between expand and
-  occluder-select and displaced techniques flip `bounds_conservative` (§5.5).
-
-Explicitly deferred: temporal/last-frame Hi-Z (rejected by requirement),
-pairwise OBB-occlusion analytic tests (§3.1), full software occlusion
-buffers (Intel MOC) — a hardware z-buffer dominates that design for this
-engine.
-
----
-
-## 11. References
+## 10. References
 
 - D. Rákos, "Hierarchical-Z map based occlusion culling", RasterGrid, 2010 —
   Hi-Z construction details; <0.2 ms construction on HD5770.

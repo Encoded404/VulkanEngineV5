@@ -22,25 +22,22 @@ The toolchain is expected **inside this project** at `toolchains/`. That
 directory is listed in `.gitignore`, so the toolchain is never committed and
 nothing outside the checkout is required.
 
+Download the newest **ucrt** release for your Linux host from
+<https://github.com/mstorsjo/llvm-mingw/releases> into `toolchains/`, then extract
+it in place:
+
 ```bash
 cd /path/to/VulkanEngineV5
 
 mkdir -p toolchains
-curl -L -o toolchains/llvm-mingw.tar.xz \
-  https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64.tar.xz
+# put the newest llvm-mingw-*-ucrt-ubuntu-*-x86_64.tar.xz here
+sha256sum toolchains/llvm-mingw-*.tar.xz   # compare against the release page
 
-# verify the download
-echo "2258c745e3155870c80793f3e8c80b28fbde11b9ff73c4c78783635b3440b092  toolchains/llvm-mingw.tar.xz" | sha256sum -c -
-
-tar -xf toolchains/llvm-mingw.tar.xz -C toolchains
-rm toolchains/llvm-mingw.tar.xz
+tar -xf toolchains/llvm-mingw-*.tar.xz -C toolchains
+rm toolchains/llvm-mingw-*.tar.xz
 ```
 
-After extracting you have:
-
-```
-toolchains/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64/
-```
+After extracting you have a `toolchains/llvm-mingw-.../` directory.
 
 Use the **ucrt** variant (the msvcrt variant is only for very old Windows).
 `cmake/toolchains/llvm-mingw.cmake` auto-detects `toolchains/llvm-mingw*`, so no

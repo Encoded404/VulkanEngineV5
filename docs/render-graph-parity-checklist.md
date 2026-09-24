@@ -1,10 +1,8 @@
 # Render-graph manual parity checklist
 
-Complements the automated gates (device-free unit tests, golden `BarrierPlan`
-snapshot, and the device-gated offscreen frame hash). Run this by hand after any
-change that touches graph compilation, barrier planning, resource aliasing, or
-the pass dispatch path. Automated tests catch determinism and hashes; this list
-covers the things a human notices.
+The automated tests catch determinism and hashes. This list covers the things a
+human notices. Run it by hand after any change that touches graph compilation,
+barrier planning, resource aliasing, or the pass dispatch path.
 
 Run the reference scene with validation layers and watch the log:
 

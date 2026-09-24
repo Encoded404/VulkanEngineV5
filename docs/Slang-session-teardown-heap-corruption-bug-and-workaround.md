@@ -26,9 +26,8 @@
 6. [Release-order matrix](#6-release-order-matrix)
 7. [Crash inventory](#7-crash-inventory)
 8. [Upstream findings & issues](#8-upstream-findings--issues)
-9. [Practical checklist for your engine](#9-practical-checklist-for-your-engine)
-10. [Testing guide (repro harness)](#10-testing-guide-repro-harness)
-11. [Version detection & pinning notes](#11-version-detection--pinning-notes)
+9. [Testing guide (repro harness)](#9-testing-guide-repro-harness)
+10. [Version detection notes](#10-version-detection-notes)
 
 - [Appendix A: release-order variant matrix](#appendix-a-release-order-variant-matrix)
 - [Appendix B: API-surface bisection findings](#appendix-b-api-surface-bisection-findings)
@@ -41,11 +40,11 @@
 | Question | Answer |
 |---|---|
 | Does the modern Session API teardown work on Linux? | **No** — 2025.14.3 → 2026.7.1 all broken (empirically tested, §4) |
-| Is it caused by the vcpkg upgrade? | No — it reproduces on the version you were on before (2025.14.3); the upgrade just changed which heap layout crashes (§3.1, §4) |
+| Is it caused by a package upgrade? | No — it reproduces on all tested versions (2025.14.3 → 2026.7.1); a rebuild only changes which heap layout crashes (§3.1, §4) |
 | Does any release order fix it? | No — 6+ orders tested; every partial-release order crashes some shader (§6, Appendix A) |
 | Does `slangc` crash? | No — it uses the old `CompileRequest` API, which is unaffected (§3) |
 | What works? | (a) **Long-lived session**: keep the session + global session alive, release the per-compile objects normally (§5.1) — the recommended pattern, not a leak; (b) same pattern in short-lived tools, session left for the OS (§5.2); (c) sometimes plain luck of heap layout (§3.1) |
-| Does keeping only the global session alive help (the #8658 workaround)? | **No** — the tool already releases the global session last; the crash happens at *session* teardown, so retaining just the global session changes nothing (§6, mode C) |
+| Does keeping only the global session alive help (the #8658 workaround)? | **No** — an order that releases the global session last still crashes; the crash happens at *session* teardown, so retaining just the global session changes nothing (§6, mode C) |
 | Ever reported upstream? | Yes, partially: #8658 (identical stack trace, closed with a workaround), #6344 (documented in the user guide), #6480 (open, covers only global-session ordering) (§8) |
 | Is there a fix in master? | **No** — checked 300 commits since the v2026.7.1 tag (2026-08-03) (§8) |
 
@@ -70,7 +69,7 @@
 
 ### 2.2 Verification methods
 
-**a) Minimal API repro** (the whole bug in ~60 lines; see §10)
+**a) Minimal API repro** (the whole bug in ~60 lines; see §9)
 
 ```cpp
 slang::createGlobalSession(&gs);
@@ -186,8 +185,7 @@ $SLANG_TOOLS/slangc shader.slang -entry main -stage compute -target spirv -O0 -o
   of order freeing, but such case might not be as well tested."*
 - **#6480** — "Make sure that IGlobalSession can be released before ISession" (Feb 2025,
   **still open**, no assignee): the official tracking issue for the lifetime family. It only
-  covers global-session-before-session ordering — **not** the module double-release here, so a
-  separate issue with the §10 repro is warranted.
+  covers global-session-before-session ordering — **not** the module double-release here.
 - **#6344** — "Access violation when releasing a GlobalSession before other sessions" (Feb
   2025): the documented case; led to the user-guide note and #6480.
 - **No fix in master**: `git log 135610c..master` (300 commits, 2026-08-03) touching
@@ -197,7 +195,7 @@ $SLANG_TOOLS/slangc shader.slang -entry main -stage compute -target spirv -O0 -o
 
 ## 4. Affected versions
 
-All tested with the same repro (`/tmp/opencode/minrepro.cpp` + `trivial.slang`, §10) on host
+All tested with the same repro (a minimal `minrepro` program plus a trivial shader, §9) on host
 Fedora 43:
 
 | Version | Binary origin | Result |
@@ -259,41 +257,19 @@ entryPoint->release(); module->release();      // ← safe: session is kept aliv
 
 ### 5.2 Short-lived tools: the same pattern, session left for the OS
 
-A one-shot process (one invocation per shader, like `slang-spirv-compiler`) uses the exact
-§5.1 pattern — release the per-compile objects, keep the session + global session — and simply
-skips releasing the session/global session because the process exits right after (the OS
-reclaims them). This is what `SlangSpriVCompilerHelper` now does:
-
-```cpp
-    // ---- cleanup ----
-    // Release the per-compile objects (code, linkedProgram, composite, entryPoint,
-    // module) but KEEP the session and global session alive.
-    //
-    // Slang's Session API has an upstream lifetime bug: tearing down the session
-    // while per-compile objects exist corrupts the heap on Linux regardless of
-    // release order (verified against 2025.14.3, 2026.2, 2026.5 and 2026.7.1, both
-    // the official binaries and a self-built v2026.7.1). As long as the session
-    // lives, its module cache keeps the module alive, so releasing our references
-    // is safe; releasing the session itself is what double-frees the module.
-    // This tool is a short-lived process invoked once per shader, so the session
-    // and global session are intentionally left for the OS to reclaim at exit.
-    code->release();
-    linkedProgram->release();
-    composite->release();
-    entryPoint->release();
-    module->release();
-```
-
-This releases most of the compile-time memory (blobs, linked programs, reflection-adjacent
-objects) while keeping only the two session objects for the OS — strictly better than
-releasing nothing, and verified clean with the efence UAF shim on fragment and compute
-shaders (2026.7.1).
+A one-shot process (one invocation per shader) uses the same §5.1 pattern — release
+the per-compile objects, keep the session + global session — and skips releasing
+the session/global session because the process exits right after (the OS reclaims
+them). This releases most of the compile-time memory (blobs, linked programs,
+reflection-adjacent objects) while keeping only the two session objects for the
+OS — strictly better than releasing nothing, and verified clean with the efence
+UAF shim on fragment and compute shaders.
 
 ### 5.3 What does *not* work or matter (all verified)
 
-- **Keeping only the global session alive does NOT help.** The tool's original order already
-  releases the global session last; the crash occurs at *session* teardown, before the global
-  session is even touched (§6, mode C). The #8658 workaround (global session outliving the
+- **Keeping only the global session alive does NOT help.** Releasing the global session last
+  still crashes; the crash occurs at *session* teardown, before the global session is even
+  touched (§6, mode C). The #8658 workaround (global session outliving the
   session) fixes a *different* ordering bug — there, the global session was released *before*
   the session.
 - **Releasing the session at all** (after per-compile objects were released) crashes — §6,
@@ -355,7 +331,7 @@ itself must outlive its per-compile objects (mode D), which is the standard usag
 | 4 | No releases at all | clean | — | — |
 
 None of these have a dedicated tracking issue at the time of writing (closest: #8658, #6480 —
-§8). Worth filing upstream with the §10 harness.
+§8). The §9 harness reproduces all of them.
 
 ---
 
@@ -379,29 +355,9 @@ bug is real but rarely observed.
 
 ---
 
-## 9. Practical checklist for your engine
+## 9. Testing guide (repro harness)
 
-- [ ] **Long-lived process (engine, hot-reload)**: create the global session + session once,
-      keep them for the application's lifetime, and release the per-compile objects
-      (`module`, `entryPoint`, `composite`, `linkedProgram`, `code`) normally — §5.1. This is
-      *not* a leak: modules are retained by the session's cache by design.
-- [ ] **Short-lived tool (`slang-spirv-compiler`)**: release the per-compile objects,
-      keep the session + global session (OS reclaims them at exit) — §5.2.
-- [ ] Do **not** release the session while per-compile objects exist — there is no safe order
-      (§6, Appendix A).
-- [ ] Do **not** rely on the "keep only the global session alive" workaround from #8658 — it
-      fixes a different ordering bug and does not help here (§6, mode C).
-- [ ] Document the chosen pattern next to the cleanup code (the NOTE comment in §5.2).
-- [ ] File an upstream issue with `/tmp/opencode/bisect.cpp` + `trivial.slang` (§10),
-      referencing #8658 (same trace) and #6480 (family), noting the
-      list-vs-dictionary teardown-order discrepancy (§3.2).
-- [ ] Re-test after each Slang upgrade — this is a moving target (heap-layout dependent).
-
----
-
-## 10. Testing guide (repro harness)
-
-Harness: `/tmp/opencode/` — minimal repros, all verified:
+Minimal repros, all verified:
 
 ```sh
 # minimal repro (whole bug, all versions): compile against any libslang-compiler
@@ -414,41 +370,33 @@ LD_LIBRARY_PATH=<slang>/lib ./bisect trivial.slang 5          # crashes; stage 1
 
 # electric-fence shim (turns silent UAF into SIGSEGV at the bad access)
 clang -shared -fPIC -O1 efence.c -o efence.so
-LD_PRELOAD=/tmp/opencode/efence.so ./minrepro trivial.slang
+LD_PRELOAD=./efence.so ./minrepro trivial.slang
 ```
 
 `trivial.slang`: `[numthreads(1,1,1)] void main() {}`
 
 Testing other versions without touching the system: the official release zips
-(`slang-<ver>-linux-x86_64.zip`, SHA512-verifiable against the vcpkg port) unpack to
+(`slang-<ver>-linux-x86_64.zip`, SHA512-verifiable against the published sums) unpack to
 `lib/libslang-compiler.so.<ver>`; point `LD_LIBRARY_PATH` at them and re-run. A self-built
 tag: `git clone --branch v2026.7.1 --depth 1 https://github.com/shader-slang/slang.git` +
 `cmake -B build -G Ninja -DSLANG_BUILD_TESTING=OFF` (reproduces the bug too — §4).
 
 ---
 
-## 11. Version detection & pinning notes
+## 10. Version detection notes
 
-- **How the upgrade actually happened here:** the project pins vcpkg baseline
-  `4334d8b4c8` (→ slang 2025.14.3), but an **untracked overlay port**
-  (`vcpkg-overlays/ports/shader-slang`, `2026.7.1#1`, created 2026-08-03) overrode the registry
-  port — overlay ports win over the pinned baseline. Removing the overlay reverts the version;
-  it does **not** fix the crash (2025.14.3 is broken too, §4).
-- **Pin by baseline, not by "latest"**: `vcpkg-configuration.json` → `default-registry.baseline`
-  is the only thing that protects you from accidental bumps; audit `vcpkg-overlays/` on every
-  `vcpkg update`.
-- **Do not gate behavior on the Slang version** to dodge this bug — no known-good version
-  exists in the tested range; the §5 pattern is correct on all versions.
 - The official release binaries embed no git hash (`strings` check), so the only reliable way
-  to match a binary to source is the SHA512 in the vcpkg portfile plus the `.dwarf` debug files.
+  to match a binary to source is the published SHA512 plus the `.dwarf` debug files.
+- Do not gate behavior on the Slang version: no known-good version of the modern Session API
+  exists in the tested range, and the §5 pattern is correct on all versions.
 
 ---
 
 ## Appendix A: release-order variant matrix (a–h)
 
-All on **2026.7.1** (vcpkg-installed), `hiz_gen.slang` (compute) + `solid.slang` (fragment),
-unless noted. ✓ = clean; ✗ = heap corruption. (2026.2: identical pattern; 2025.14.3/2026.5:
-same for the orders tested.)
+All on **2026.7.1**, with a compute shader and a fragment shader, unless noted. ✓ = clean;
+✗ = heap corruption. (2026.2: identical pattern; 2025.14.3/2026.5: same for the orders
+tested.)
 
 | Var | Lifetime pattern | compute | fragment |
 |---|---|---|---|
@@ -462,8 +410,9 @@ same for the orders tested.)
 | **h** | **no releases** | **✓** | **✓** |
 
 Take-aways: only variants **g** (long-lived session, §5.1), **h** (no releases) and the
-tool's §5.2 pattern (g with the session left to the OS) are universally clean; **b** passes compute/vertex but not fragment. Every variant that
-releases the session crashes at least one shader type.
+§5.2 pattern (g with the session left to the OS) are universally clean; **b** passes
+compute/vertex but not fragment. Every variant that releases the session crashes at least one
+shader type.
 
 ---
 

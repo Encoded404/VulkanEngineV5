@@ -20,9 +20,8 @@
 6. [Linking: flags, fast link vs. optimized link](#6-linking-flags-fast-link-vs-optimized-link)
 7. [Crash inventory](#7-crash-inventory)
 8. [Validation-layer findings & spec VUIDs](#8-validation-layer-findings--spec-vuids)
-9. [Practical checklist for your engine](#9-practical-checklist-for-your-engine)
-10. [Testing guide (repro harness + packaged drivers)](#10-testing-guide-repro-harness--packaged-drivers)
-11. [Driver detection & version gating notes](#11-driver-detection--version-gating-notes)
+9. [Testing guide (repro harness + packaged drivers)](#9-testing-guide-repro-harness--packaged-drivers)
+10. [Driver detection notes](#10-driver-detection-notes)
 
 - [Appendix A: full variant matrix (a–x)](#appendix-a-full-variant-matrix-a-x)
 - [Appendix B: VUIDs encountered](#appendix-b-vuids-encountered)
@@ -40,7 +39,7 @@
 | Minimal working structure | FS lib = `FRAGMENT_SHADER` bit only; separate FOI lib with `pColorBlendState` + `pMultisampleState`; empty `VkPipelineRenderingCreateInfo` chained into GE **and** FS libs (§5) |
 | Fast link and LTO link on <26? | Both work **with** the split structure; both broken without it (§6) |
 | Ever reported upstream? | No public Mesa issue; fixed silently in 26.0 (MR 33979, MR 33928, `17e597093d`) (§3.3) |
-| Should you gate by version? | Only if you can't change the structure; prefer structure change (§11) |
+| Should you gate by version? | Only if you can't change the structure; prefer structure change (§10) |
 
 ---
 
@@ -155,7 +154,7 @@ throwaway podman containers with /dev/dri passthrough):
 | Mesa 24.1.7 (Fedora 40) | **broken** | |
 | Mesa 25.0.7 (Fedora 41) | **broken** | |
 | Mesa 25.1.9 (Fedora 42) | **broken** | |
-| Mesa 25.3.6 (Fedora 43; last 25.3 release) | **broken** | your host driver |
+| Mesa 25.3.6 (Fedora 43; last 25.3 release) | **broken** | |
 | Mesa 26.0.6 (flatpak `org.freedesktop.Platform.GL.default//24.08`) | **fixed** | |
 | Mesa 26.1.4 (flatpak `…GL.default//25.08`) | **fixed** | |
 | llvmpipe/lavapipe 25.3.6 (control) | works | same calls, software driver |
@@ -315,7 +314,7 @@ both 25.3.6 and 26.0.6/26.1.4 unless noted):
 | 3 | Final pipeline linked **without any fragment library** (noop-FS case) | Segfault — NULL `state->ms` | `radv_pipeline_graphics.c:968` (`radv_pipeline_init_dynamic_state`, alpha-to-coverage branch) | Always link at least an FS library |
 | 4 | Pre-rasterization lib with DXVK-style **dynamic** states merged with the vertex-input lib (VI\|PRE combined + dynamic cull/front-face/bias) | Segfault — same NULL `state->ms` family | `radv_pipeline_graphics.c:968` | Keep VI/PRE in separate libraries when using dynamic pre-rast states, or use the §5 structure |
 
-These are worth filing upstream (mesa/gitlab) with the repro harness (§10) — none of them have a
+These are worth filing upstream (mesa/gitlab) with the repro harness (§9) — none of them have a
 tracking issue at the time of writing.
 
 ---
@@ -342,29 +341,14 @@ Ran the harness under `VK_LAYER_KHRONOS_validation` (Fedora 43's SDK):
 
 ---
 
-## 9. Practical checklist for your engine
+## 9. Testing guide (repro harness + packaged drivers)
 
-To use GPL on RADV < 26 (this also stays valid on 26+):
-
-- [ ] FS library uses `FRAGMENT_SHADER` bit only (no FOI bit).
-- [ ] FOI is a separate library with `pColorBlendState` + `pMultisampleState`.
-- [ ] `VkPipelineRenderingCreateInfo` (empty is fine) chained into GE and FS library creates.
-- [ ] Draw-time pipelines: final create without `LINK_TIME_OPTIMIZATION` (fast link).
-- [ ] Background-optimized pipelines: libs created with `LTO | RETAIN`, final with `LTO`.
-- [ ] Handle `VK_PIPELINE_COMPILE_REQUIRED` as a valid return value.
-- [ ] Optionally chain `VkPipelineCreateFlags2CreateInfo` (validation hygiene, §8).
-- [ ] Re-verify once per Mesa major with the harness (§10) — the bug may re-enter via future
-      refactors.
-
----
-
-## 10. Testing guide (repro harness + packaged drivers)
-
-Harness: `/tmp/opencode/gpl-probe/` — single-file C app (`gpl_probe.c`), 24 pipeline variants
-(a–x), GLSL shaders, pipeline-statistics + pixel readback + optional SSBO probe.
+A single-file C probe with 24 pipeline variants (a–x), GLSL shaders, and
+pipeline-statistics + pixel readback + an optional SSBO probe is the recommended
+harness. Run each variant and compare fragment-shader invocations and pixel
+output:
 
 ```sh
-cd /tmp/opencode/gpl-probe
 gcc -O2 -o gpl_probe gpl_probe.c $(pkg-config --cflags --libs vulkan)
 ./gpl_probe vert.spv frag.spv 0    # broken fast-link (combined FS|FOI)  -> PS=0, clear pixels
 ./gpl_probe vert.spv frag.spv 18   # working split structure (variant s) -> PS>0, red pixels
@@ -372,19 +356,14 @@ gcc -O2 -o gpl_probe gpl_probe.c $(pkg-config --cflags --libs vulkan)
 RADV_DEBUG=pso_history ./gpl_probe vert.spv frag.spv 18   # -> /tmp/radv_pso_history.log
 ```
 
-Testing newer packaged Mesa without touching the system (package-managed):
-
-```sh
-# flatpak GL extensions already install Mesa 26.0.6 (24.08) and 26.1.4 (25.08)
-VK_ICD_FILENAMES=icd_flatpak_2606.json LD_LIBRARY_PATH=<26.0.6 GL lib dir> ./gpl_probe vert.spv frag.spv 18
-VK_ICD_FILENAMES=icd_flatpak_2614.json LD_LIBRARY_PATH=<26.1.4 GL lib dir> ./gpl_probe vert.spv frag.spv 18
-# or older packaged drivers in a throwaway container:
-podman run --device /dev/dri/renderD128 --device /dev/dri/card1 fedora:40 ...   # mesa 24.1.7
-```
+Test newer packaged Mesa without touching the system by pointing
+`VK_ICD_FILENAMES` at its ICD JSON and `LD_LIBRARY_PATH` at its GL library
+directory (flatpak GL extensions ship newer Mesa; a throwaway container with
+`/dev/dri` passthrough works for older versions).
 
 ---
 
-## 11. Driver detection & version gating notes
+## 10. Driver detection notes
 
 - **Detect by driver ID, never by device-name string**: `VkPhysicalDeviceDriverProperties.driverID
   == VK_DRIVER_ID_MESA_RADV` (value 3; device names like "RADV NAVI21" are GPU-family-specific).
@@ -392,11 +371,10 @@ podman run --device /dev/dri/renderD128 --device /dev/dri/card1 fedora:40 ...   
   `VK_MAKE_API_VERSION(0, major, minor, patch)` — e.g. 25.3.6 = `(25<<22)|(3<<12)|6 =
   104869894 = 0x6403006` (note: not `0x64003006` — a stray zero that decodes to
   (400, 48, 6)).
-- Prefer fixing the library structure (§5) over version gating — the structure is correct on all
-  versions and drivers. If you must gate (e.g. until a driver update lands):
-  `RADV && mesaVersion < VK_MAKE_API_VERSION(0, 26, 0, 0)`.
-- Last-resort escape hatch: `RADV_DEBUG=nogpl` makes RADV not advertise
-  `VK_EXT_graphics_pipeline_library` at all (useful for diagnosis, not a fix).
+- The library structure in §5 is correct on all versions and drivers; version gating is not
+  required when that structure is used.
+- `RADV_DEBUG=nogpl` makes RADV not advertise `VK_EXT_graphics_pipeline_library` at all
+  (useful for diagnosis, not a fix).
 
 ---
 

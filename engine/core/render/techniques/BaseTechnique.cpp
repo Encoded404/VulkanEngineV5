@@ -28,6 +28,18 @@ namespace {
     std::uint64_t HandleToU64(Handle h) {
         return reinterpret_cast<std::uint64_t>(static_cast<typename Handle::CType>(h));
     }
+
+    // Draw-mode specialization (constant_id 0): 0 = monolithic, 1 = MID. The
+    // vertex shader (main_indir) reads it to select its addressing path. One
+    // writer keeps Compile and the runtime draw-mode switch identical.
+    void SetDrawModeSpec(VulkanEngine::ShaderSystem::GraphicsPipelineDesc& desc,
+                         std::uint32_t draw_mode) {
+        desc.spec_entries = {
+            vk::SpecializationMapEntry(0, 0, sizeof(std::uint32_t))
+        };
+        desc.spec_data.resize(sizeof(std::uint32_t));
+        std::memcpy(desc.spec_data.data(), &draw_mode, sizeof(draw_mode));
+    }
 }
 
 namespace VulkanEngine::TechniqueManager {
@@ -247,12 +259,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // Vertex-stage draw-mode specialization (constant_id 0). main_indir and
         // depth_indir read it to select the addressing path. Applied to the
         // vertex stage only; the fragment shader does not declare it.
-        pipeline_desc_.spec_entries = {
-            vk::SpecializationMapEntry(0, 0, sizeof(std::uint32_t))
-        };
-        pipeline_desc_.spec_data.resize(sizeof(std::uint32_t));
-        std::memcpy(pipeline_desc_.spec_data.data(), &config.draw_mode,
-                    sizeof(config.draw_mode));
+        SetDrawModeSpec(pipeline_desc_, config.draw_mode);
 
         auto result = pipeline_factory.CreateGraphics(pipeline_desc_, shader_mgr);
         if (!result.has_value()) {
@@ -430,6 +437,26 @@ void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,
                 ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
                 : std::nullopt;
         }, frame_index);
+}
+
+bool BaseTechnique::RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
+                                       ShaderSystem::PipelineFactory& factory,
+                                       std::uint32_t draw_mode,
+                                       std::uint32_t frame_index) {
+    pipeline_slot_.RetireFrame(frame_index);
+    if (!compiled_) return true;
+    SetDrawModeSpec(pipeline_desc_, draw_mode);
+    auto result = factory.CreateGraphics(pipeline_desc_, shaders);
+    if (!result.has_value()) {
+        LOGIFACE_LOG(error, std::format(
+            "BaseTechnique {}: draw-mode pipeline rebuild failed: {}",
+            id_.value, result.error().message));
+        return false;
+    }
+    pipeline_slot_.Swap(std::move(result.value()), frame_index);
+    LOGIFACE_LOG(debug, std::format("BaseTechnique {}: re-specialized for draw mode {}",
+                                    id_.value, draw_mode));
+    return true;
 }
 
 } // namespace VulkanEngine::TechniqueManager

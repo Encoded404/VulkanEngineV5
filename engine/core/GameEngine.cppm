@@ -58,6 +58,13 @@ public:
                       ShaderSystem::ShaderId frag_id = 0,
                       ShaderSystem::ShaderManager* shader_mgr = nullptr);
 
+    // Switches the indexed-drawing mode at runtime. Resolves the request against
+    // device capabilities, re-creates the mode-dependent SceneRenderer buffers
+    // and compaction pipelines, and re-specializes the main-pass technique
+    // pipelines (which SceneRenderer does not own). No-op when the resolved mode
+    // already matches. Returns false if a pipeline rebuild failed.
+    bool SetDrawMode(SceneRenderer::DrawMode requested);
+
     struct UploadedMesh {
         std::uint32_t first_submesh = 0;
         std::uint32_t submesh_count = 0;

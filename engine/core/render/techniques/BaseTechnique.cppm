@@ -262,6 +262,15 @@ public:
                         ShaderSystem::PipelineFactory& factory,
                         std::uint32_t frame_index);
 
+    // ── Draw-mode switch: re-specialize the vertex-stage draw-mode constant
+    // and re-create the pipeline. No-op (returns true) when the technique was
+    // never compiled. frame_index selects the retire-ring bucket; callers must
+    // have device-idled first so the old pipeline is not in flight. ──
+    [[nodiscard]] bool RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
+                                          ShaderSystem::PipelineFactory& factory,
+                                          std::uint32_t draw_mode,
+                                          std::uint32_t frame_index);
+
 private:
     TechniqueId id_{};
     std::vector<BindingDecl> bindings_;

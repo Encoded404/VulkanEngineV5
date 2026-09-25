@@ -128,8 +128,11 @@ public:
 
     // Switches draw mode at runtime: device idle, destroy + re-create the
     // mode-dependent buffers at the current capacity, then rebuild the
-    // kCompactionMode-specialized compute pipelines. Descriptor set layouts,
-    // pools and technique graphics pipelines are mode-independent and reused.
+    // draw-mode-specialized compaction pipelines (expand, cull, collect, depth).
+    // Descriptor set layouts and pools are mode-independent and are reused. The
+    // main-pass technique pipelines are owned by TechniqueManager and are NOT
+    // rebuilt here: the caller must re-specialize them too (GameEngine::SetDrawMode
+    // does this).
     void Reinitialize(DrawMode mode);
 
     // Re-creates the resolution-dependent Hi-Z image ring and sampler when the
@@ -143,6 +146,11 @@ public:
     [[nodiscard]] DrawMode GetDrawMode() const { return draw_mode_; }
     [[nodiscard]] const SceneCapacity& GetSceneCapacity() const { return scene_capacity_; }
     [[nodiscard]] bool IsDrawModeSupported(DrawMode mode) const;
+    // Resolves a requested draw mode against the device capabilities: MID needs
+    // both drawIndirectCount and drawIndirectFirstInstance, otherwise the result
+    // is Monolithic. This is the single selection rule used by Initialize and by
+    // a runtime switch, so the two cannot disagree. Call after Initialize.
+    [[nodiscard]] DrawMode ResolveDrawMode(DrawMode requested) const;
     [[nodiscard]] std::uint32_t GetTechniqueRegionTotal() const { return region_total_; }
 
     // MID main pass: CPU prefix-sum of submesh counts per technique. Defines
@@ -491,8 +499,8 @@ private:
     // mip coverage matches what the cull shaders sample.
     bool CreateHiZResources();
     void DestroyHiZResources();
-    // Rebuild the kCompactionMode-specialized compute pipelines (pre-cull,
-    // occluder-select, collect count/compact, collect write).
+    // Rebuild the draw-mode-specialized pipelines SceneRenderer owns: expand,
+    // occluder-select, pre-cull, collect count/compact, collect write, depth.
     bool RebuildCompactionPipelines();
 
     // Runtime-sized per-frame resource ring (see frames_in_flight_).

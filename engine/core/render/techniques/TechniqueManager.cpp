@@ -40,5 +40,19 @@ void TechniqueManager::PollShaders(ShaderSystem::ShaderManager& shaders,
     }
 }
 
+bool TechniqueManager::RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
+                                          ShaderSystem::PipelineFactory& factory,
+                                          std::uint32_t draw_mode,
+                                          std::uint32_t frame_index) {
+    bool ok = true;
+    for (auto& technique : techniques_) {
+        if (technique.base_technique) {
+            ok = technique.base_technique->RebuildForDrawMode(
+                     shaders, factory, draw_mode, frame_index) && ok;
+        }
+    }
+    return ok;
+}
+
 }
 

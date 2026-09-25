@@ -326,10 +326,10 @@ bool SceneRenderer::RebuildCompactionPipelines() {
     // reused so pipelines still in a retire ring keep valid layouts. The
     // draw-mode spec value is updated on each stored desc first.
     //
-    // Technique pipelines (which also carry the draw-mode spec) are NOT rebuilt
-    // here: the draw mode is fixed at init and Reinitialize is unused today, so
-    // they always match. If Reinitialize ever becomes reachable in production,
-    // it must also recompile the technique pipelines.
+    // Technique pipelines also carry the draw-mode spec, but TechniqueManager
+    // owns them. The caller of Reinitialize re-specializes them
+    // (GameEngine::SetDrawMode); this function covers only SceneRenderer's own
+    // pipelines.
     const auto rebuild = [this](ShaderSystem::PipelineSlot& slot, auto& desc) {
         if (!desc) return true;
         using Desc = std::remove_cvref_t<decltype(*desc)>;

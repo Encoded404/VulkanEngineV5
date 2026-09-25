@@ -70,6 +70,14 @@ public:
                      ShaderSystem::PipelineFactory& factory,
                      std::uint32_t frame_index);
 
+    // ── Draw-mode switch: re-specialize every technique pipeline for the new
+    // draw mode. Callers must device-idle first. Returns false if any technique
+    // failed to re-create (the others are still switched). ──
+    [[nodiscard]] bool RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
+                                          ShaderSystem::PipelineFactory& factory,
+                                          std::uint32_t draw_mode,
+                                          std::uint32_t frame_index);
+
 private:
     friend class BaseTechnique;
 

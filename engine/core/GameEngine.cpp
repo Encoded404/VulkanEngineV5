@@ -240,6 +240,41 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     return true;
 }
 
+bool GameEngine::SetDrawMode(SceneRenderer::DrawMode requested) {
+    if (!initialized_ || !ctx_.scene_renderer || !ctx_.technique_mgr) {
+        LOGIFACE_LOG(warn, "GameEngine::SetDrawMode: engine is not initialized");
+        return false;
+    }
+    const SceneRenderer::DrawMode resolved =
+        ctx_.scene_renderer->ResolveDrawMode(requested);
+    if (resolved != requested) {
+        LOGIFACE_LOG(warn, "GameEngine::SetDrawMode: requested draw mode unsupported; "
+                           "falling back to Monolithic");
+    }
+    if (resolved == ctx_.scene_renderer->GetDrawMode()) return true;
+
+    // Reinitialize device-idles, then re-creates the mode-dependent buffers and
+    // rebuilds the compaction pipelines (expand, cull, collect, depth).
+    ctx_.scene_renderer->Reinitialize(resolved);
+
+    // The main-pass technique pipelines are owned by TechniqueManager, not
+    // SceneRenderer, so they must be re-specialized here. Retire-ring index 0 is
+    // safe: Reinitialize already idled the device.
+    if (!ctx_.technique_mgr->RebuildForDrawMode(*ctx_.shader_manager,
+                                                *ctx_.pipeline_factory,
+                                                static_cast<std::uint32_t>(resolved), 0)) {
+        LOGIFACE_LOG(error, "GameEngine::SetDrawMode: technique pipeline rebuild failed");
+        return false;
+    }
+
+    // Keep the stored config in sync so later recompiles (hot reload) use the
+    // resolved mode.
+    config_.pipeline_config.draw_mode = static_cast<std::uint32_t>(resolved);
+    LOGIFACE_LOG(info, std::string("GameEngine: draw mode set to ") +
+        (resolved == SceneRenderer::DrawMode::MultiIndirect ? "MultiIndirect" : "Monolithic"));
+    return true;
+}
+
 VulkanEngine::RenderPipeline::RenderPipeline& GameEngine::GetRenderPipeline() {
     return ctx_.renderer->GetRenderPipeline();
 }

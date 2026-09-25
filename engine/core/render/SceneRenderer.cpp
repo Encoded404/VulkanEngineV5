@@ -53,11 +53,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     // Reinitialize cannot disagree.
     mid_supported_ =
         draw_indirect_count_supported_ && draw_indirect_first_instance_supported_;
-    draw_mode_ = draw_mode;
-    if (draw_mode_ == DrawMode::MultiIndirect && !mid_supported_) {
+    draw_mode_ = ResolveDrawMode(draw_mode);
+    if (draw_mode_ != draw_mode) {
         LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount and drawIndirectFirstInstance "
                            "not both supported; falling back to Monolithic draw mode");
-        draw_mode_ = DrawMode::Monolithic;
     }
     scene_capacity_ = SceneCapacity{
         std::max(initial_capacity.index_count, 1u),
@@ -598,6 +597,13 @@ bool SceneRenderer::IsDrawModeSupported(DrawMode mode) const {
         case DrawMode::MultiIndirect: return mid_supported_;
     }
     return false;
+}
+
+DrawMode SceneRenderer::ResolveDrawMode(DrawMode requested) const {
+    if (requested == DrawMode::MultiIndirect && !mid_supported_) {
+        return DrawMode::Monolithic;
+    }
+    return requested;
 }
 
 bool SceneRenderer::CreateFrameBuffers() {

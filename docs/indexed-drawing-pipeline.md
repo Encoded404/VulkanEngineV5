@@ -130,8 +130,12 @@ The `maxDrawCount` VUID holds by construction:
 Buffers are sized and usage-flagged per mode. No aliasing and no dual-purpose
 buffers, so the validation layer catches accidental cross-mode use. A mode change
 re-creates the mode-dependent frame buffers with the target mode's flags and
-sizes, and rebuilds the specialization-constant pipelines. Descriptor-set layouts,
-pools, and technique pipelines are mode-independent and are reused.
+sizes, and rebuilds the specialization-constant pipelines. Descriptor-set
+layouts and pools are mode-independent and are reused. The main-pass technique
+pipelines are not mode-independent: they carry the draw-mode constant in the
+vertex shader, so the engine re-specializes them as part of the same switch
+(`GameEngine::SetDrawMode`). The retire ring keeps the previous pipeline alive
+until frames that recorded it have finished.
 
 ### 2.9 Capacity follows the scene
 

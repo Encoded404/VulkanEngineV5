@@ -5,6 +5,7 @@ module Runtime.Overrides;
 import std;
 
 import VulkanEngine.GplPolicy;
+import VulkanEngine.DrawMode;
 
 namespace Runtime {
 
@@ -27,6 +28,9 @@ inline constexpr std::span<const Choice<GplPolicy>> kChoicesOf<GplPolicy> = kGpl
 
 template <>
 inline constexpr std::span<const Choice<GplStructurePolicy>> kChoicesOf<GplStructurePolicy> = kGplStructureChoices;
+
+template <>
+inline constexpr std::span<const Choice<std::optional<DrawMode>>> kChoicesOf<std::optional<DrawMode>> = kDrawModeChoices;
 
 template <typename T>
 std::string JoinLabels(std::span<const Choice<T>> choices) {
@@ -111,6 +115,16 @@ inline constexpr std::array kBuiltinSpecs{
         .apply = [](std::string_view value, Overrides& o) { ApplyChoice("gpl.structure", value, o.gpl_structure); },
         .describe = [](const Overrides& o) { return DescribeChoice(o.gpl_structure); },
         .choices_help = [] { return FormatChoicesHelp<GplStructurePolicy>(); },
+    },
+    OverrideSpec{
+        .key = "draw.mode",
+        .summary = "Indexed-drawing compaction / draw shape (CID vs MID)",
+        .details = "See docs/indexed-drawing-pipeline.md. MID falls back to CID and logs once "
+                   "when the device lacks drawIndirectCount or drawIndirectFirstInstance.",
+        .value_hint = [] { return JoinLabels(kChoicesOf<std::optional<DrawMode>>); },
+        .apply = [](std::string_view value, Overrides& o) { ApplyChoice("draw.mode", value, o.draw_mode); },
+        .describe = [](const Overrides& o) { return DescribeChoice(o.draw_mode); },
+        .choices_help = [] { return FormatChoicesHelp<std::optional<DrawMode>>(); },
     },
 };
 

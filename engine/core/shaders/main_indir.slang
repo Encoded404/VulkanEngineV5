@@ -26,7 +26,7 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput main(uint vertexId : SV_VertexID,
               uint submeshIndex : SV_StartInstanceLocation) {
-    // Monolithic: draw_indices holds absolute slots into vertexIndirection
+    // CID: draw_indices holds absolute slots into vertexIndirection
     // (vertexOffset is always 0) and the submesh id comes from the entry.
     // MID: draw_indices holds absolute vertex indices, so SV_VertexID is the
     // vertex index directly, and firstInstance (the raw instance builtin, NOT

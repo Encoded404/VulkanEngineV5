@@ -56,7 +56,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     draw_mode_ = ResolveDrawMode(draw_mode);
     if (draw_mode_ != draw_mode) {
         LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount and drawIndirectFirstInstance "
-                           "not both supported; falling back to Monolithic draw mode");
+                           "not both supported; falling back to CID draw mode");
     }
     scene_capacity_ = SceneCapacity{
         std::max(initial_capacity.index_count, 1u),
@@ -370,7 +370,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         collect_pool_->SetDebugName(dev, "collect-pool");
     }
 
-    // Set 7: Collect write shader layout (monolithic-only: emits one indexed
+    // Set 7: Collect write shader layout (CID-only: emits one indexed
     // indirect command per technique from the technique results).
     {
         std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
@@ -593,15 +593,15 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
 bool SceneRenderer::IsDrawModeSupported(DrawMode mode) const {
     switch (mode) {
-        case DrawMode::Monolithic: return true;
-        case DrawMode::MultiIndirect: return mid_supported_;
+        case DrawMode::CID: return true;
+        case DrawMode::MID: return mid_supported_;
     }
     return false;
 }
 
 DrawMode SceneRenderer::ResolveDrawMode(DrawMode requested) const {
-    if (requested == DrawMode::MultiIndirect && !mid_supported_) {
-        return DrawMode::Monolithic;
+    if (requested == DrawMode::MID && !mid_supported_) {
+        return DrawMode::CID;
     }
     return requested;
 }
@@ -625,7 +625,7 @@ bool SceneRenderer::CreateFrameBuffers() {
         static_cast<std::uint64_t>(MAX_TECHNIQUES) * sizeof(TechniqueResult);
     constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
 
-    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    const bool mid = draw_mode_ == DrawMode::MID;
     const vk::BufferUsageFlags index_dest_usage =
         vk::BufferUsageFlagBits::eStorageBuffer |
         vk::BufferUsageFlagBits::eIndexBuffer |
@@ -739,9 +739,9 @@ bool SceneRenderer::CreateFrameBuffers() {
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_region_bases.GetBuffer(),
                                                    vk::ObjectType::eBuffer, "technique-region-bases");
 
-        // technique_draw_commands: monolithic main pass only. In MID the
+        // technique_draw_commands: CID main pass only. In MID the
         // per-technique commands live in main_commands, so nothing is bound to
-        // the monolithic-only collect-write set.
+        // the CID-only collect-write set.
         if (!mid) {
             fr.technique_draw_commands = GpuResources::GpuBuffer::Create(
                 be, static_cast<std::uint64_t>(MAX_TECHNIQUES) *
@@ -1033,7 +1033,7 @@ void SceneRenderer::Reinitialize(DrawMode mode) {
         LOGIFACE_LOG(error, "SceneRenderer::Reinitialize: failed to rebuild compaction pipelines");
     }
     LOGIFACE_LOG(info, std::string("SceneRenderer: draw mode set to ") +
-        (mode == DrawMode::MultiIndirect ? "MultiIndirect" : "Monolithic"));
+        (mode == DrawMode::MID ? "MID" : "CID"));
 }
 
 namespace {

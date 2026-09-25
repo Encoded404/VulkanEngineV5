@@ -13,7 +13,7 @@ StructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 [shader("vertex")]
 float4 main(uint vertexId : SV_VertexID,
             uint submeshIndex : SV_StartInstanceLocation) : SV_Position {
-    // See main_indir.slang: monolithic reads the indirection entry, MID takes
+    // See main_indir.slang: CID reads the indirection entry, MID takes
     // the vertex index from SV_VertexID and the submesh id from the raw
     // instance builtin (never the zero-based SV_InstanceID).
     uint vertexIndex;

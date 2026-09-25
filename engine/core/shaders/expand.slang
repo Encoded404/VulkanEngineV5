@@ -13,14 +13,14 @@ RWStructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 [[vk::binding(3, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
-// One entry per vertex slot in each submesh's tight window. Monolithic-only:
+// One entry per vertex slot in each submesh's tight window. CID-only:
 // there SV_VertexID is the draw_indices value, which is a slot here. MID reads
 // the vertex buffer slot from VertexEntry and takes the vertex index from the
 // raw builtin, so it never touches this buffer.
 [[vk::binding(4, 0)]]
 RWStructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 
-// Monolithic: absolute slot indices into vertexIndirection, one per index
+// CID: absolute slot indices into vertexIndirection, one per index
 // occurrence. MID: absolute vertex indices (baseVertex + rawIndex), one per
 // occurrence, consumed directly as SV_VertexID.
 [[vk::binding(5, 0)]]
@@ -133,7 +133,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot = vertexBufferSlot;
 
     if (kCompactionMode == 0) {
-        // Monolithic: one entry per vertex slot; no per-occurrence duplication.
+        // CID: one entry per vertex slot; no per-occurrence duplication.
         for (uint j = 0; j < vertexSpan; j++) {
             vertexIndirection[entryBase + j].vertexIndex =
                 (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
@@ -141,7 +141,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         }
     }
 
-    // Replay the asset indices once. Monolithic maps each occurrence to its
+    // Replay the asset indices once. CID maps each occurrence to its
     // indirection slot; MID writes the absolute vertex index with no block
     // bits, which the vertex shader receives directly as SV_VertexID. The
     // 24-bit upload invariant (baseVertex + windowBase + vertexSpan < 2^24)

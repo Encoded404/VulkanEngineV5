@@ -1,6 +1,6 @@
 // Main-pass compaction.
 //
-// Monolithic: two-dispatch index compaction.
+// CID: two-dispatch index compaction.
 //   pass 0 (count):   per-technique sum of indexCount into techniqueResults[].count.
 //   pass 1 (prefix):  single thread computes the exclusive prefix into
 //                     techniqueResults[].offset and resets techniqueResults[].count to 0.
@@ -16,7 +16,7 @@
 #include "scene_entries.slang"
 
 struct TechniqueResult {
-    uint offset; // monolithic: compaction base; MID: alive-submesh count scratch
+    uint offset; // CID: compaction base; MID: alive-submesh count scratch
     uint count;
 };
 
@@ -26,7 +26,7 @@ StructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 [[vk::binding(1, 0)]]
 StructuredBuffer<uint, CDataLayout> drawIndices;
 
-// Monolithic: packed uint index list. MID: 5 x u32 command records.
+// CID: packed uint index list. MID: 5 x u32 command records.
 [[vk::binding(2, 0)]]
 RWStructuredBuffer<uint, CDataLayout> mainOut;
 

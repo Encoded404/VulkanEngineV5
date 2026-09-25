@@ -32,8 +32,10 @@ std::string CustomValueHint() {
     return std::string{"<custom>"};
 }
 
+using Runtime::DrawMode;
 using Runtime::GplPolicy;
 using Runtime::GplStructurePolicy;
+using Runtime::kDrawModeChoices;
 using Runtime::kGplChoices;
 using Runtime::kGplStructureChoices;
 using Runtime::OverrideError;
@@ -104,6 +106,55 @@ TEST(OverridesTest, GplStructureLastWins) {
     EXPECT_EQ(o.gpl_structure, GplStructurePolicy::Split);
 }
 
+TEST(OverridesTest, DrawModeParsesEveryChoice) {
+    for (const auto& choice : kDrawModeChoices) {
+        Overrides o;
+        o.Apply(std::string{"draw.mode="} + std::string{choice.label});
+        EXPECT_EQ(o.draw_mode, choice.value);
+    }
+}
+
+TEST(OverridesTest, DrawModeDefaultIsAuto) {
+    Overrides o;
+    EXPECT_FALSE(o.draw_mode.has_value());
+}
+
+TEST(OverridesTest, DrawModeOptInChoicesResolveToEngineEnum) {
+    Overrides cid;
+    cid.Apply("draw.mode=cid");
+    ASSERT_TRUE(cid.draw_mode.has_value());
+    EXPECT_EQ(*cid.draw_mode, DrawMode::CID);
+
+    Overrides mid;
+    mid.Apply("draw.mode=mid");
+    ASSERT_TRUE(mid.draw_mode.has_value());
+    EXPECT_EQ(*mid.draw_mode, DrawMode::MID);
+}
+
+TEST(OverridesTest, DrawModeRejectsUnknownValue) {
+    Overrides o;
+    try {
+        o.Apply("draw.mode=banana");
+        FAIL() << "expected OverrideError";
+    } catch (const OverrideError& e) {
+        const std::string msg{e.what()};
+        EXPECT_NE(msg.find("banana"), std::string::npos) << msg;
+        EXPECT_NE(msg.find("auto|cid|mid"), std::string::npos) << msg;
+    }
+}
+
+TEST(OverridesTest, DrawModeRejectsEmptyValue) {
+    Overrides o;
+    EXPECT_THROW(o.Apply("draw.mode="), OverrideError);
+}
+
+TEST(OverridesTest, DrawModeLastWins) {
+    Overrides o;
+    o.Apply("draw.mode=mid");
+    o.Apply("draw.mode=auto");
+    EXPECT_FALSE(o.draw_mode.has_value());
+}
+
 TEST(OverridesTest, ExtDisableAppendsAndIsRepeatable) {
     Overrides o;
     o.Apply("ext.disable=VK_EXT_debug_utils");
@@ -163,6 +214,7 @@ TEST(OverridesTest, HelpGeneration) {
     EXPECT_NE(help.find("ext.disable"), std::string::npos) << help;
     EXPECT_NE(help.find("gpl"), std::string::npos) << help;
     EXPECT_NE(help.find("gpl.structure"), std::string::npos) << help;
+    EXPECT_NE(help.find("draw.mode"), std::string::npos) << help;
     EXPECT_NE(help.find("default: auto"), std::string::npos) << help;
     EXPECT_NE(help.find("default: none"), std::string::npos) << help;
     for (const auto& choice : kGplChoices) {
@@ -170,6 +222,10 @@ TEST(OverridesTest, HelpGeneration) {
         EXPECT_NE(help.find(choice.description), std::string::npos) << help;
     }
     for (const auto& choice : kGplStructureChoices) {
+        EXPECT_NE(help.find(choice.label), std::string::npos) << help;
+        EXPECT_NE(help.find(choice.description), std::string::npos) << help;
+    }
+    for (const auto& choice : kDrawModeChoices) {
         EXPECT_NE(help.find(choice.label), std::string::npos) << help;
         EXPECT_NE(help.find(choice.description), std::string::npos) << help;
     }
@@ -220,16 +276,19 @@ TEST(OverridesTest, DescribeEffectivePristine) {
     EXPECT_NE(effective.find("ext.disable=none"), std::string::npos) << effective;
     EXPECT_NE(effective.find("gpl=auto"), std::string::npos) << effective;
     EXPECT_NE(effective.find("gpl.structure=auto"), std::string::npos) << effective;
+    EXPECT_NE(effective.find("draw.mode=auto"), std::string::npos) << effective;
 }
 
 TEST(OverridesTest, DescribeEffectiveAfterOverrides) {
     Overrides o;
     o.Apply("gpl=force");
     o.Apply("gpl.structure=split");
+    o.Apply("draw.mode=mid");
     o.Apply("ext.disable=VK_EXT_debug_utils");
     const std::string effective = o.DescribeEffective();
     EXPECT_NE(effective.find("gpl=force"), std::string::npos) << effective;
     EXPECT_NE(effective.find("gpl.structure=split"), std::string::npos) << effective;
+    EXPECT_NE(effective.find("draw.mode=mid"), std::string::npos) << effective;
     EXPECT_NE(effective.find("VK_EXT_debug_utils"), std::string::npos) << effective;
 }
 

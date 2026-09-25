@@ -45,17 +45,17 @@ StructuredBuffer<uint, CDataLayout> techniqueFlags;
 StructuredBuffer<uint, CDataLayout> drawIndices;
 
 // Compaction destination, viewed as raw u32:
-//   monolithic: a packed uint index list
+//   CID: a packed uint index list
 //   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
 [[vk::binding(7, 0)]]
 RWStructuredBuffer<uint, CDataLayout> depthOut;
 
-// Counter word. Monolithic: word 0 accumulates the survivor index total.
+// Counter word. CID: word 0 accumulates the survivor index total.
 // MID: increments once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(8, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> depthOutCounter;
 
-// 0 = monolithic (compact index copy), 1 = MID (command emission).
+// 0 = CID (compact index copy), 1 = MID (command emission).
 #include "technique_packing.slang"
 #include "hiz_helpers.slang"
 
@@ -196,7 +196,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if ((flags & kFlagDepthPass) == 0) return;
 
     if (kCompactionMode == 0) {
-        // Monolithic: copy the 4 B entry slots into the packed index list.
+        // CID: copy the 4 B entry slots into the packed index list.
         uint destOffset;
         InterlockedAdd(depthOutCounter[0], entry.indexCount, destOffset);
         for (uint i = 0; i < entry.indexCount; i++) {

@@ -17,6 +17,7 @@ import VulkanShared.CallbackList;
 import VulkanShared.Storage;
 import VulkanEngine.Input;
 import VulkanBackend.Vulkan.VulkanBootstrap;
+export import VulkanEngine.DrawMode;
 
 export namespace VulkanEngine::Application {
 
@@ -60,6 +61,11 @@ struct ApplicationContext {
     ApplicationFrameState frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanEngine::Input::ActionHandle quit_action_handle{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Draw-mode override resolved from the command line (--overwrite draw.mode).
+    // Unset means "no override": GameEngine::Setup leaves the game's own
+    // GameConfig::draw_mode untouched. A set value replaces it before the
+    // SceneRenderer resolves it against device capabilities.
+    std::optional<SceneRenderer::DrawMode> draw_mode{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationConfig {
@@ -102,6 +108,9 @@ struct ApplicationConfig {
     // quits. Used by automated smoke runs (`--max-frames`).
     std::uint32_t max_frames = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint64_t geometry_buffer_size_mb = 128; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Draw-mode override from --overwrite draw.mode, or unset. RunApplication
+    // copies it into ApplicationContext, where GameEngine::Setup applies it.
+    std::optional<SceneRenderer::DrawMode> draw_mode{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
 struct ApplicationHooks {

@@ -19,6 +19,7 @@ export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.GpuResources.BlockArray;
+export import VulkanEngine.DrawMode;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.ShaderRegistration;
@@ -59,14 +60,7 @@ inline constexpr std::uint32_t TECHNIQUE_FLAG_OCCLUDER_SAFE = 1u << 3;        //
 // entry budget (docs/pre-prepass-occlusion-culling.md §5.1-A).
 inline constexpr float kOccluderMinAreaFraction = 0.0025f; // 0.25 % of the screen
 
-// ── Indexed-drawing pipeline (docs/indexed-drawing-pipeline.md) ──
-// Compaction output / draw shape. Fixed at initialization; changing it
-// re-creates the mode-dependent frame buffers and rebuilds the
-// kCompactionMode-specialized compute pipelines.
-enum class DrawMode : std::uint8_t {
-    Monolithic = 0,      // 4 B absolute slot indices, one drawIndexedIndirect per pass/technique
-    MultiIndirect = 1,   // 20 B DrawIndexedIndirectCommand per alive submesh, drawIndexedIndirectCount
-};
+// DrawMode (CID / MID) is defined by VulkanEngine.DrawMode and re-exported above.
 
 // Runtime scene totals that size the per-frame indexed-drawing buffers. Since
 // MeshRenderSystem::ProcessFrame accumulates the real values after upload,
@@ -117,7 +111,7 @@ public:
                     ShaderSystem::PipelineFactory& pipeline_factory,
                     const EngineShaderIds& shader_ids,
                     std::uint32_t frames_in_flight,
-                    DrawMode draw_mode = DrawMode::Monolithic);
+                    DrawMode draw_mode = DrawMode::CID);
     void Shutdown();
 
     // Grows (never shrinks) the indexed-drawing frame ring to cover the given
@@ -148,7 +142,7 @@ public:
     [[nodiscard]] bool IsDrawModeSupported(DrawMode mode) const;
     // Resolves a requested draw mode against the device capabilities: MID needs
     // both drawIndirectCount and drawIndirectFirstInstance, otherwise the result
-    // is Monolithic. This is the single selection rule used by Initialize and by
+    // is CID. This is the single selection rule used by Initialize and by
     // a runtime switch, so the two cannot disagree. Call after Initialize.
     [[nodiscard]] DrawMode ResolveDrawMode(DrawMode requested) const;
     [[nodiscard]] std::uint32_t GetTechniqueRegionTotal() const { return region_total_; }
@@ -290,22 +284,22 @@ private:
 
         // ── Indexed-drawing substrate ──
         // One VertexIndirectionEntry per slot in each submesh's tight vertex
-        // window. Monolithic-only content: MID binds a fixed 8 B dummy and
+        // window. CID-only content: MID binds a fixed 8 B dummy and
         // never writes or reads it (it carries the addressing in firstInstance
         // and the index buffer).
         VulkanEngine::GpuResources::GpuBuffer vertex_indirection{};
-        // Monolithic: 4 B absolute slot indices into vertex_indirection, one
+        // CID: 4 B absolute slot indices into vertex_indirection, one
         // per occurrence. MID: 4 B absolute vertex indices, one per occurrence
         // (bound as the index buffer).
         VulkanEngine::GpuResources::GpuBuffer draw_indices{};
         // 2 x u32 atomic counters allocated by expand: [0]=entryBase, [1]=indexBase.
         VulkanEngine::GpuResources::GpuBuffer expand_counter{};
 
-        // ── Monolithic destinations (4 B compact index lists) ──
+        // ── CID destinations (4 B compact index lists) ──
         VulkanEngine::GpuResources::GpuBuffer main_indices{};
         VulkanEngine::GpuResources::GpuBuffer depth_indices{};
         VulkanEngine::GpuResources::GpuBuffer occluder_indices{};
-        // Monolithic GPU-accumulated indexed draw commands (word 0 = indexCount).
+        // CID GPU-accumulated indexed draw commands (word 0 = indexCount).
         VulkanEngine::GpuResources::GpuBuffer depth_out_draw_command{};
         VulkanEngine::GpuResources::GpuBuffer occluder_out_draw_command{};
 
@@ -509,7 +503,7 @@ private:
     std::uint32_t current_entity_count_ = 0;
     glm::mat4 view_proj_{1.0f};
 
-    DrawMode draw_mode_ = DrawMode::Monolithic;
+    DrawMode draw_mode_ = DrawMode::CID;
     bool draw_indirect_count_supported_ = false;
     bool draw_indirect_first_instance_supported_ = false;
     // MID requires both drawIndirectCount and drawIndirectFirstInstance; this

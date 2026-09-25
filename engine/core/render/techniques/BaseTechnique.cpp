@@ -29,7 +29,7 @@ namespace {
         return reinterpret_cast<std::uint64_t>(static_cast<typename Handle::CType>(h));
     }
 
-    // Draw-mode specialization (constant_id 0): 0 = monolithic, 1 = MID. The
+    // Draw-mode specialization (constant_id 0): 0 = CID, 1 = MID. The
     // vertex shader (main_indir) reads it to select its addressing path. One
     // writer keeps Compile and the runtime draw-mode switch identical.
     void SetDrawModeSpec(VulkanEngine::ShaderSystem::GraphicsPipelineDesc& desc,

@@ -5,6 +5,7 @@ export module Runtime.Overrides;
 import std;
 
 import VulkanEngine.GplPolicy;
+import VulkanEngine.DrawMode;
 
 export namespace Runtime {
 
@@ -13,6 +14,7 @@ export namespace Runtime {
 // exported because they sit in an exported namespace.
 using VulkanEngine::ShaderSystem::GplPolicy;
 using VulkanEngine::ShaderSystem::GplStructurePolicy;
+using VulkanEngine::SceneRenderer::DrawMode;
 
 // One possible value for a typed override. Parse, hint, help and format all
 // derive from this table — the value grammar lives exactly once.
@@ -54,15 +56,26 @@ inline constexpr std::array kGplStructureChoices = std::to_array<Choice<GplStruc
     {"combined", GplStructurePolicy::Combined, "single combined FS+FOI library; broken on RADV < Mesa 26 (doc §3.1/§4)"},
 });
 
-// Override registry. The engine-standard keys (ext.disable, gpl, gpl.structure)
-// are built in; examples extend the registry with Register() to add their own
-// --overwrite keys. Apply must be called after all registrations.
+// Draw-mode override. std::nullopt ("auto") means "no override": the game or
+// settings default applies. The engine enum has no Auto value, so the optional
+// carries that neutral third state. This keeps an unset override from
+// overwriting a mode chosen elsewhere (a future settings UI).
+inline constexpr std::array kDrawModeChoices = std::to_array<Choice<std::optional<DrawMode>>>({
+    {"auto", std::nullopt,  "no override; use the game or settings draw mode"},
+    {"cid",  DrawMode::CID, "one drawIndexedIndirect per pass/technique; core 1.0 only"},
+    {"mid",  DrawMode::MID, "one command per alive submesh; needs drawIndirectCount + drawIndirectFirstInstance"},
+});
+
+// Override registry. The engine-standard keys (ext.disable, gpl, gpl.structure,
+// draw.mode) are built in; examples extend the registry with Register() to add
+// their own --overwrite keys. Apply must be called after all registrations.
 class Overrides {
 public:
     // Built-in outcome state, consumed directly by ApplicationConfig / GameConfig.
     std::vector<std::string> force_disabled_extensions;
     GplPolicy gpl_policy = GplPolicy::Auto;
     GplStructurePolicy gpl_structure = GplStructurePolicy::Auto;
+    std::optional<DrawMode> draw_mode = std::nullopt;
 
     // Register an example-defined --overwrite key. Must be called before
     // Apply()/GenerateHelp() so parse and help see it.

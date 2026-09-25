@@ -103,7 +103,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     fr.submesh_vertex_entries.EnsureCapacity(total);
     fr.cull_entries.EnsureCapacity(total);
 
-    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    const bool mid = draw_mode_ == DrawMode::MID;
 
     // Per-frame counters/commands.
     {
@@ -122,7 +122,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     }
 
     // Zero CPU-consumed buffers. technique_draw_commands only exists in
-    // monolithic mode; technique_counts is written by the MID compact pass.
+    // CID mode; technique_counts is written by the MID compact pass.
     for (auto* buf : {&fr.technique_results, &fr.technique_counts}) {
         auto* p = buf->Map(0, buf->GetSize());
         if (p) {
@@ -222,7 +222,7 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     WriteBuffer(fr.collect_set.GetHandle(), 4, fr.technique_region_bases, dev);
     WriteBuffer(fr.collect_set.GetHandle(), 5, fr.technique_counts, dev);
 
-    // Collect-write bindings (monolithic only): intermediate + technique commands.
+    // Collect-write bindings (CID only): intermediate + technique commands.
     if (!mid) {
         WriteBuffer(fr.collect_write_set.GetHandle(), 0, fr.technique_results, dev);
         WriteBuffer(fr.collect_write_set.GetHandle(), 1, fr.technique_draw_commands, dev);
@@ -322,7 +322,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
-    if (draw_mode_ == DrawMode::MultiIndirect) {
+    if (draw_mode_ == DrawMode::MID) {
         cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
         cmd.drawIndexedIndirectCount(*fr.depth_commands.GetBuffer(), 0,
             *fr.depth_out_command_count.GetBuffer(), 0,
@@ -358,7 +358,7 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
                              0, ds, {});
-    if (draw_mode_ == DrawMode::MultiIndirect) {
+    if (draw_mode_ == DrawMode::MID) {
         cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
         cmd.drawIndexedIndirectCount(*fr.occluder_commands.GetBuffer(), 0,
             *fr.occluder_out_command_count.GetBuffer(), 0,
@@ -403,7 +403,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     const glm::mat4 inv_view = glm::inverse(view);
     float camera_pos[4] = {inv_view[3][0], inv_view[3][1], inv_view[3][2], 0.0f};
 
-    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    const bool mid = draw_mode_ == DrawMode::MID;
     cmd.bindIndexBuffer(
         mid ? *fr.draw_indices.GetBuffer() : *fr.main_indices.GetBuffer(),
         0, vk::IndexType::eUint32);
@@ -565,7 +565,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     }
     LOGIFACE_LOG(trace, "DispatchCollect: submeshes=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(MAX_TECHNIQUES));
-    const bool mid = draw_mode_ == DrawMode::MultiIndirect;
+    const bool mid = draw_mode_ == DrawMode::MID;
 
     const auto barrier = [&cmd]() {
         vk::MemoryBarrier mb{};
@@ -585,7 +585,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
 
     const std::uint32_t groups = (current_entity_count_ + 255) / 256;
     if (!mid) {
-        // Monolithic: count -> global prefix -> compact -> command emission.
+        // CID: count -> global prefix -> compact -> command emission.
         CollectPC pc0{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc0);

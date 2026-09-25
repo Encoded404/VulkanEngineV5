@@ -1,4 +1,4 @@
-// Monolithic main-pass epilogue: one 20 B indexed draw command per technique
+// CID main-pass epilogue: one 20 B indexed draw command per technique
 // at a fixed slot (indexCount = Σ alive indices, firstIndex = compaction base).
 //
 // MID does not use this shader: its compact pass emits the per-submesh commands

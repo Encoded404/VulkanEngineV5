@@ -288,6 +288,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/materials/MaterialId.cppm
             render/materials/MaterialHandle.cppm
             render/SceneRenderer.cppm
+            render/DrawMode.cppm
             render/bindless/BindlessManager.cppm
             render/bindless/TextureSlot.cppm
             render/ShaderManager.cppm

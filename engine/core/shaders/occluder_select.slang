@@ -35,12 +35,12 @@ StructuredBuffer<uint, CDataLayout> techniqueFlags;
 StructuredBuffer<uint, CDataLayout> drawIndices;
 
 // Compaction destination, viewed as raw u32:
-//   monolithic: a packed uint index list
+//   CID: a packed uint index list
 //   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<uint, CDataLayout> occluderOut;
 
-// Word 0. Monolithic: accumulates the occluder index total. MID: increments
+// Word 0. CID: accumulates the occluder index total. MID: increments
 // once per emitted command. Zeroed by the CPU each frame.
 [[vk::binding(6, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderOutCounter;
@@ -140,7 +140,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (slot >= kMaxOccluders) return;
 
     if (kCompactionMode == 0) {
-        // Monolithic: copy the 4 B entry slots into the packed index list.
+        // CID: copy the 4 B entry slots into the packed index list.
         uint destOffset;
         InterlockedAdd(occluderOutCounter[0], entry.indexCount, destOffset);
         for (uint i = 0; i < entry.indexCount; i++) {

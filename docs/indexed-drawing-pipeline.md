@@ -36,7 +36,7 @@ list as an index buffer and issues an indexed indirect draw.
 
 Two modes share one vertex-fetch path and differ only in the compaction output:
 
-| | Monolithic | Multi-indirect-draw (MID) |
+| | CID | MID |
 |---|---|---|
 | Compaction output | 4 B absolute slot indices, packed per pass/technique | 20 B `DrawIndexedIndirectCommand` per alive submesh + a 4 B count; `firstInstance` = submesh id |
 | Depth/occluder prepass | one `drawIndexedIndirect` with a GPU-written command | `drawIndexedIndirectCount` |
@@ -47,14 +47,36 @@ Two modes share one vertex-fetch path and differ only in the compaction output:
 Both modes produce the same survivors and the same vertex-cache behavior. They are
 an A/B pair and a device-capability fallback, not a per-frame switch.
 
+Mode names follow `[qualifier]ID`: the qualifier names the compaction output and
+`ID` means Indirect Draw. `CID` is Compacted-Indirect Draw; `MID` is
+Multi-Indirect Draw. A new mode takes a new qualifier and the same suffix.
+
 ### 2.3 `drawIndirectCount` and `drawIndirectFirstInstance` are optional
 
-Monolithic mode needs no feature beyond core 1.0. MID mode needs both
+CID mode needs no feature beyond core 1.0. MID mode needs both
 `drawIndirectCount` (Vulkan 1.2 core / `VK_KHR_draw_indirect_count`) and
 `drawIndirectFirstInstance` (core 1.0). `drawIndirectFirstInstance` is required
 because MID puts the submesh id in the command's `firstInstance`; a driver that
 ignores a non-zero `firstInstance` would read the wrong submesh. When either
-feature is not available, fall back to monolithic and log once.
+feature is not available, fall back to CID and log once.
+
+### 2.3.1 Selecting the draw mode
+
+The mode is resolved once at renderer initialization and is fixed for the run.
+`GameEngine::SetDrawMode` switches it at runtime: it idles the device, re-creates
+the mode-dependent buffers, and re-specializes the compaction and main-pass
+pipelines. Both entries share one resolver, so the requested mode, the runtime
+switch, and the capability fallback cannot disagree.
+
+A test or a diagnostic run forces a mode with an override:
+
+```
+--overwrite draw.mode=auto|cid|mid
+```
+
+`auto` (the default) applies no override, so the game or a settings UI decides.
+`cid` and `mid` force that mode. `mid` still falls back to CID when the device
+lacks `drawIndirectCount` or `drawIndirectFirstInstance` (§2.3).
 
 ### 2.4 One specialization constant selects the emission variant
 
@@ -86,7 +108,7 @@ loudly, never mask silently.
 
 ### 2.5.1 MID addresses vertices without an indirection entry
 
-Monolithic needs a per-vertex indirection entry because one draw spans many
+CID needs a per-vertex indirection entry because one draw spans many
 submeshes and `SV_VertexID` alone cannot say which mesh's vertex buffer to read.
 MID gives each submesh its own command, so it can carry that identity elsewhere
 and drop the entry:
@@ -150,7 +172,7 @@ changes need no descriptor surgery.
 Symbols: `N` = total index count, `S` = submeshes, `r` = index/vertex ratio
 (1.5–2.5), `ACMR` = average cache miss ratio.
 
-| Metric | Occurrence indirection | Monolithic | MID |
+| Metric | Occurrence indirection | CID | MID |
 |---|---|---|---|
 | Indirection VRAM/frame | 4 × 8 B × N = **32 B/index** | 8 B/r (entries) + 4 B (draw indices) + 3 × 4 B (compact copies) ≈ **16–20 B/index** | 4 B + ~0 (commands) ≈ **4 B/index** |
 | expand traffic/index | 12 B (4r read + 8 write) | ~12 B (4r + 4w + 8/r) — neutral | 4r + 4w (no indirection write) |
@@ -169,7 +191,7 @@ at the high end (about 2.5–3.3×).
 ## 4. Other decisions
 
 - Compaction shaders keep their culling logic; only the emission changes. In
-  monolithic mode they copy a 4 B index; in MID mode they emit a 20 B command and
+  CID mode they copy a 4 B index; in MID mode they emit a 20 B command and
   increment a count.
 - Occlusion culling is unchanged in both modes: the zero-index-count convention
   and the occluder flag still gate survivors.

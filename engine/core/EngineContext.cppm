@@ -42,7 +42,7 @@ struct GameConfig {
     Renderer::RendererConfig renderer_config{};
     // Advanced setting: indexed-drawing compaction/draw shape. Fixed at
     // renderer init; see SceneRenderer::DrawMode / Reinitialize.
-    SceneRenderer::DrawMode draw_mode = SceneRenderer::DrawMode::Monolithic;
+    SceneRenderer::DrawMode draw_mode = SceneRenderer::DrawMode::CID;
     std::uint64_t geometry_buffer_size_mb = 128;
     bool enable_imgui = true;
     std::string shader_data_dir;

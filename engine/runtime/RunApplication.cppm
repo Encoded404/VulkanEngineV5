@@ -254,6 +254,7 @@ export namespace VulkanEngine::Application {
         context.window = window;
         context.platform_state = &platform->GetState();
         context.geometry_buffer_size_mb = config.geometry_buffer_size_mb;
+        context.draw_mode = config.draw_mode;
 
         VulkanEngine::Crash::Stage("app setup");
         if (!hooks.on_setup.Call(context)) {

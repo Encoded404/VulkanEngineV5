@@ -110,6 +110,7 @@ VulkanEngine::Application::ApplicationConfig Cli::MakeConfig() const {
         force_validation_ ||
         (config.bootstrap_config.enable_validation && !force_no_validation_);
     config.bootstrap_config.force_disabled_extensions = overrides_.force_disabled_extensions;
+    config.draw_mode = overrides_.draw_mode;
     return config;
 }
 

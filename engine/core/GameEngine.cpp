@@ -29,6 +29,14 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     vk_backend_ = ctx.bootstrap;
     config_ = config;
 
+    // A draw-mode override from the command line replaces the game's choice.
+    // Unset ("auto") leaves GameConfig::draw_mode untouched. Applied here,
+    // before InitRenderer, so SceneRenderer::Initialize sees the final request
+    // and its capability fallback is the single resolution point.
+    if (ctx.draw_mode.has_value()) {
+        config_.draw_mode = *ctx.draw_mode;
+    }
+
     // An empty cache directory means "wherever the resolved per-user cache
     // root is". It used to default to "data/cache", which is relative to the
     // process working directory: the same build cached into a different place
@@ -249,7 +257,7 @@ bool GameEngine::SetDrawMode(SceneRenderer::DrawMode requested) {
         ctx_.scene_renderer->ResolveDrawMode(requested);
     if (resolved != requested) {
         LOGIFACE_LOG(warn, "GameEngine::SetDrawMode: requested draw mode unsupported; "
-                           "falling back to Monolithic");
+                           "falling back to CID");
     }
     if (resolved == ctx_.scene_renderer->GetDrawMode()) return true;
 
@@ -271,7 +279,7 @@ bool GameEngine::SetDrawMode(SceneRenderer::DrawMode requested) {
     // resolved mode.
     config_.pipeline_config.draw_mode = static_cast<std::uint32_t>(resolved);
     LOGIFACE_LOG(info, std::string("GameEngine: draw mode set to ") +
-        (resolved == SceneRenderer::DrawMode::MultiIndirect ? "MultiIndirect" : "Monolithic"));
+        (resolved == SceneRenderer::DrawMode::MID ? "MID" : "CID"));
     return true;
 }
 

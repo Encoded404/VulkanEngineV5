@@ -27,14 +27,14 @@ namespace VulkanEngine::SceneRenderer {
         struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
 
         // kCompactionMode specialization constant (constant_id 0):
-        //   0 = monolithic (4 B compact index copies)
+        //   0 = CID (4 B compact index copies)
         //   1 = MID (20 B DrawIndexedIndirectCommand emission)
         // Applied to both compute pipelines and the vertex-stage graphics
         // pipelines (draw-mode-specialized vertex shaders).
         template <typename Desc>
         void SetDrawModeSpec(Desc& desc, DrawMode mode) {
             const std::uint32_t value =
-                (mode == DrawMode::MultiIndirect) ? 1u : 0u;
+                (mode == DrawMode::MID) ? 1u : 0u;
             desc.spec_entries = {
                 vk::SpecializationMapEntry(0, 0, sizeof(std::uint32_t))
             };
@@ -353,7 +353,7 @@ bool SceneRenderer::RebuildCompactionPipelines() {
     if (pre_cull_desc_)       SetDrawModeSpec(*pre_cull_desc_, draw_mode_);
     if (collect_count_desc_)  SetDrawModeSpec(*collect_count_desc_, draw_mode_);
     if (depth_desc_)          SetDrawModeSpec(*depth_desc_, draw_mode_);
-    // collect_write is monolithic-only and has no specialization constant.
+    // collect_write is CID-only and has no specialization constant.
 
     bool ok = true;
     ok = rebuild(expand_slot_, expand_desc_) && ok;

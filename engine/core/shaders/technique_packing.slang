@@ -14,7 +14,7 @@ static const uint kTechniqueBits = 14;
 static const uint kTechniqueMask = (1u << kTechniqueBits) - 1;
 static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
 
-// 0 = monolithic (compact index copy), 1 = MID (command emission).
+// 0 = CID (compact index copy), 1 = MID (command emission).
 // Declared once here so constant_id 0 is claimed by a single definition.
 [[vk::constant_id(0)]] const uint kCompactionMode = 0;
 

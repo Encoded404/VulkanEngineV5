@@ -48,7 +48,7 @@ constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;
 
 // ── GPU technique flag-table bit layout ──
 // SceneRenderer::UpdateTechniqueFlags packs BaseTechnique::PipelineFlags into a
-// uint[MAX_TECHNIQUES] storage buffer consumed by the occluder-select,
+// uint[MAX_DRAW_GROUPS] storage buffer consumed by the occluder-select,
 // pre-cull and occlusion cull shaders. Bit positions must match the kFlag*
 // constants in occluder_select.slang, pre_cull.slang and occlusion_cull.slang.
 inline constexpr std::uint32_t TECHNIQUE_FLAG_DEPTH_PASS = 1u << 0;           // participates_in_depth_pass
@@ -83,7 +83,14 @@ public:
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
     static constexpr std::uint32_t BLOCK_ENTRIES = 256;
     static constexpr std::uint32_t MAX_BLOCKS = 1024;
-    static constexpr std::uint32_t MAX_TECHNIQUES = 256;
+    // Draw-key table capacity: the full technique/draw-group bit width from
+    // TechniquePacking (TECHNIQUE_BITS = 14 -> 16384). Every per-key GPU table
+    // (flags, counts, results, command regions) is sized to this, and the
+    // collect push constants carry the live count, never a hardcoded 256.
+    // A key can never exceed this: the low TECHNIQUE_BITS of a packed
+    // technique_material are the key, and registration caps the count.
+    static constexpr std::uint32_t MAX_DRAW_GROUPS =
+        1u << VulkanEngine::TechniqueManager::TechniquePacking::TECHNIQUE_BITS;
 
     // Highest Hi-Z level covered by whole HIZ_BATCH-sized DispatchHiZGen
     // iterations for a `mip_count`-level pyramid. The cull shaders clamp their
@@ -514,6 +521,13 @@ private:
     std::vector<std::uint32_t> region_base_{};
     std::vector<std::uint32_t> region_count_{};
     std::uint32_t region_total_ = 0;
+
+    // Number of draw keys present in the tables above for the frame being
+    // recorded. The GPU tables are sized to MAX_DRAW_GROUPS, but the collect
+    // push constants and the flag-table upload carry this live count so a small
+    // scene never scans the full capacity. Set by SetTechniqueCommandRegions,
+    // advanced by UpdateTechniqueFlags, and read by DispatchCollect.
+    std::uint32_t technique_count_ = 0;
 };
 
 }

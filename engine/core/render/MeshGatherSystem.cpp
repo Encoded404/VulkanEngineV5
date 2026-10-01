@@ -329,7 +329,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     std::uint32_t total_index_count = 0;
     std::uint32_t total_vertex_span = 0;
     constexpr std::uint32_t kTechniqueCount =
-        SceneRenderer::SceneRenderer::MAX_TECHNIQUES;
+        SceneRenderer::SceneRenderer::MAX_DRAW_GROUPS;
     std::vector<std::uint32_t> tech_submeshes(kTechniqueCount, 0);
     const auto accumulate = [&](const SubMesh& sm, std::uint32_t tech_material) {
         total_index_count += sm.index_count;

@@ -350,7 +350,11 @@ participates_in_collect    = true;  // generates indirect draw commands
 ```
 
 Upload a per-technique flag table (three relevant bits per technique) that the GPU
-passes read:
+passes read. The table is indexed by the draw key packed into the low bits of
+`StaticEntry.techniqueMaterial`, sized to the full key space (`1 << TECHNIQUE_BITS`,
+16384). The collect passes carry the live key count in their push constants, so a
+small scene scans only the keys that can appear; the shaders bounds-guard the
+index defensively.
 
 | Flag | Consumer | Action |
 |---|---|---|

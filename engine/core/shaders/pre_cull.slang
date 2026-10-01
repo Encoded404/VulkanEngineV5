@@ -88,6 +88,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // them and never compact them into the survivor list.
     if ((entry.flags & kOccluderBit) != 0) return;
 
+    if (entry.techniqueId >= kMaxDrawGroups) return;
     uint flags = techniqueFlags[entry.techniqueId];
 
     float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;

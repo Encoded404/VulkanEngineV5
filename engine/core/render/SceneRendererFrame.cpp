@@ -243,16 +243,22 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 
 void SceneRenderer::SetTechniqueCommandRegions(
     std::span<const std::uint32_t> submeshes_per_technique) {
-    region_base_.assign(MAX_TECHNIQUES, 0);
-    region_count_.assign(MAX_TECHNIQUES, 0);
+    region_base_.assign(MAX_DRAW_GROUPS, 0);
+    region_count_.assign(MAX_DRAW_GROUPS, 0);
     std::uint32_t offset = 0;
-    const std::size_t n = std::min<std::size_t>(submeshes_per_technique.size(), MAX_TECHNIQUES);
+    std::uint32_t highest = 0;
+    const std::size_t n = std::min<std::size_t>(submeshes_per_technique.size(), MAX_DRAW_GROUPS);
     for (std::size_t t = 0; t < n; ++t) {
         region_base_[t] = offset;
         region_count_[t] = submeshes_per_technique[t];
         offset += submeshes_per_technique[t];
+        if (submeshes_per_technique[t] != 0) highest = static_cast<std::uint32_t>(t) + 1;
     }
     region_total_ = offset;
+    // The collect passes only need to scan keys that can appear; the highest
+    // key with submeshes is the tight bound. UpdateTechniqueFlags may raise it
+    // to the registered count before the dispatches run.
+    technique_count_ = highest;
 
     if (!backend_) return;
     for (auto& fr : frames_) {
@@ -268,15 +274,19 @@ void SceneRenderer::UpdateTechniqueFlags(
     if (!backend_) return;
 
     const std::uint32_t count =
-        std::min<std::uint32_t>(tm.GetTechniqueCount(), MAX_TECHNIQUES);
-    if (tm.GetTechniqueCount() > MAX_TECHNIQUES) {
+        std::min<std::uint32_t>(tm.GetTechniqueCount(), MAX_DRAW_GROUPS);
+    if (tm.GetTechniqueCount() > MAX_DRAW_GROUPS) {
         LOGIFACE_LOG(warn, "UpdateTechniqueFlags: " +
                      std::to_string(tm.GetTechniqueCount()) +
                      " techniques exceed flag-table capacity " +
-                     std::to_string(MAX_TECHNIQUES));
+                     std::to_string(MAX_DRAW_GROUPS));
     }
+    // The registered technique count is an upper bound on any draw key, so the
+    // collect passes never scan beyond it. Keep the tight region bound when it
+    // is already higher (registered-but-unused techniques cost one iteration).
+    technique_count_ = std::max(technique_count_, count);
 
-    std::vector<std::uint32_t> flags(MAX_TECHNIQUES, 0);
+    std::vector<std::uint32_t> flags(MAX_DRAW_GROUPS, 0);
     for (std::uint32_t t = 0; t < count; ++t) {
         auto* tech = tm.GetTechnique(static_cast<std::uint16_t>(t));
         if (!tech) continue;
@@ -563,8 +573,14 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         LOGIFACE_LOG(debug, "DispatchCollect: current_entity_count_ is 0, skipping");
         return;
     }
+    // Only keys below the live draw-key count can appear in cull entries; the
+    // GPU tables are larger, but scanning the capacity would waste a serial
+    // prefix pass and the collect-write loop. The count is a hard upper bound
+    // (set from the registered technique count and the region table).
+    const std::uint32_t key_count =
+        std::min(technique_count_, MAX_DRAW_GROUPS);
     LOGIFACE_LOG(trace, "DispatchCollect: submeshes=" + std::to_string(current_entity_count_) +
-                 " techniques=" + std::to_string(MAX_TECHNIQUES));
+                 " drawKeys=" + std::to_string(key_count));
     const bool mid = draw_mode_ == DrawMode::MID;
 
     const auto barrier = [&cmd]() {
@@ -586,21 +602,21 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
     const std::uint32_t groups = (current_entity_count_ + 255) / 256;
     if (!mid) {
         // CID: count -> global prefix -> compact -> command emission.
-        CollectPC pc0{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
+        CollectPC pc0{ current_entity_count_, 0, key_count, 0 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc0);
         cmd.dispatch(groups, 1, 1);
 
         barrier();
 
-        CollectPC pc1{ current_entity_count_, 0, MAX_TECHNIQUES, 1 };
+        CollectPC pc1{ current_entity_count_, 0, key_count, 1 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc1);
         cmd.dispatch(1, 1, 1);
 
         barrier();
 
-        CollectPC pc2{ current_entity_count_, 0, MAX_TECHNIQUES, 2 };
+        CollectPC pc2{ current_entity_count_, 0, key_count, 2 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc2);
         cmd.dispatch(groups, 1, 1);
@@ -611,14 +627,14 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         const std::array<vk::DescriptorSet, 1> ds2{ fr.collect_write_set.GetHandle() };
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_layout_,
                                 0, ds2, {});
-        WritePC pcw{ current_entity_count_, 0, MAX_TECHNIQUES, 0 };
+        WritePC pcw{ current_entity_count_, 0, key_count, 0 };
         cmd.pushConstants(*collect_write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(WritePC), &pcw);
         cmd.dispatch(1, 1, 1);
     } else {
         // MID: single compact pass appends commands into CPU-prefixed regions
         // and publishes the per-technique alive count. No epilogue dispatch.
-        CollectPC pcMid{ current_entity_count_, 0, MAX_TECHNIQUES, 2 };
+        CollectPC pcMid{ current_entity_count_, 0, key_count, 2 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pcMid);
         cmd.dispatch(groups, 1, 1);

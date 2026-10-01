@@ -76,6 +76,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
     if (entry.indexCount > kMaxOccluderIndices) return;
+    if (entry.techniqueId >= kMaxDrawGroups) return;
 
     uint flags = techniqueFlags[entry.techniqueId];
     if ((flags & kFlagDepthPass) == 0) return;    // no prepass depth → never occludes

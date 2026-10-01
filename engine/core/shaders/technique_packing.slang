@@ -12,6 +12,11 @@
 
 static const uint kTechniqueBits = 14;
 static const uint kTechniqueMask = (1u << kTechniqueBits) - 1;
+// Draw-key table capacity (SceneRenderer::MAX_DRAW_GROUPS). The per-key tables
+// (flags, results, counts, regions) are sized to this; a key derived from a
+// packed techniqueMaterial is masked to kTechniqueMask and so is always below
+// it. Guards use it defensively so a corrupt entry can never index OOB.
+static const uint kMaxDrawGroups = 1u << kTechniqueBits;
 static const uint kCmdWords = 5; // VkDrawIndexedIndirectCommand words
 
 // 0 = CID (compact index copy), 1 = MID (command emission).

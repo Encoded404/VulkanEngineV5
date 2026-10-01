@@ -16,6 +16,10 @@ struct DrawIndexedIndirectCommand {
     uint firstInstance;
 };
 
+// 0 = CID (compact index copy), 1 = MID (command emission). Shared with the
+// collect/cull shaders; provides kMaxDrawGroups.
+#include "technique_packing.slang"
+
 [[vk::binding(0, 0)]]
 StructuredBuffer<TechniqueResult, CDataLayout> techniqueResults;
 
@@ -35,7 +39,7 @@ ConstantBuffer<WritePC> pc;
 [numthreads(1, 1, 1)]
 [shader("compute")]
 void main() {
-    for (uint t = 0; t < pc.techniqueCount; t++) {
+    for (uint t = 0; t < min(pc.techniqueCount, kMaxDrawGroups); t++) {
         uint count = techniqueResults[t].count;
         uint entryOffset = techniqueResults[t].offset;
         techniqueDrawCommands[t] = DrawIndexedIndirectCommand(count, 1u, entryOffset, 0, 0u);

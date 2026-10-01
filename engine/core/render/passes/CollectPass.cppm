@@ -9,7 +9,9 @@ import VulkanEngine.SceneRenderer;
 
 export namespace VulkanEngine::SceneRenderer {
 
-inline constexpr std::uint32_t MAX_TECHNIQUES = 256;
+// Draw-key table capacity, owned by SceneRenderer (the full technique bit
+// width). Kept as a name here for callers that predate the rename.
+inline constexpr std::uint32_t MAX_DRAW_GROUPS = SceneRenderer::MAX_DRAW_GROUPS;
 
 struct CollectPC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t mt; std::uint32_t pass; };
 struct WritePC { std::uint32_t cnt; std::uint32_t p0; std::uint32_t techniqueCount; std::uint32_t p1; };

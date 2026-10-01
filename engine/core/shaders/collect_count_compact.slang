@@ -54,6 +54,13 @@ struct CollectPC {
 [[vk::push_constant]]
 ConstantBuffer<CollectPC> pc;
 
+// A key comes from the low kTechniqueBits of a packed techniqueMaterial and is
+// always below kMaxDrawGroups; the guard keeps a corrupt entry from indexing
+// the technique tables out of range.
+bool ValidKey(uint key) {
+    return key < kMaxDrawGroups;
+}
+
 void passCount(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
 
@@ -62,6 +69,7 @@ void passCount(uint submeshIndex) {
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
+    if (!ValidKey(entry.techniqueId)) return;
 
     InterlockedAdd(techniqueResults[entry.techniqueId].count, entry.indexCount);
 }
@@ -70,7 +78,7 @@ void passCount(uint submeshIndex) {
 // pass can use them as per-technique append cursors without a reset race.
 void passPrefix() {
     uint offset = 0;
-    for (uint t = 0; t < min(pc.techniqueCount, 256u); t++) {
+    for (uint t = 0; t < min(pc.techniqueCount, kMaxDrawGroups); t++) {
         uint cnt = techniqueResults[t].count;
         techniqueResults[t].offset = offset;
         offset += cnt;
@@ -85,6 +93,7 @@ void passCompactMono(uint submeshIndex) {
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
+    if (!ValidKey(entry.techniqueId)) return;
 
     uint local;
     InterlockedAdd(techniqueResults[entry.techniqueId].count, entry.indexCount, local);
@@ -101,6 +110,7 @@ void passCompactMid(uint submeshIndex) {
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
+    if (!ValidKey(entry.techniqueId)) return;
 
     uint slot;
     InterlockedAdd(techniqueResults[entry.techniqueId].count, 1u, slot);

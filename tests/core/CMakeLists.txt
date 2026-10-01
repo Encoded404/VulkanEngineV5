@@ -8,6 +8,7 @@ add_executable(engine_tests
   texture_mip_chain_tests.cpp
   texture_loader_subresource_tests.cpp
   normal_encoding_material_tests.cpp
+  draw_key_bound_tests.cpp
   frame_ring_tests.cpp
   gpl_resolution_tests.cpp
   tlsf_allocator_tests.cpp

@@ -429,7 +429,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     // Per-frame ring resources
     {
         constexpr std::uint64_t technique_flags_size =
-            static_cast<uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
+            static_cast<uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
 
         auto make_block_config = [](std::uint32_t entry_size, std::uint32_t entries_per_block,
                                      vk::BufferUsageFlags extra_usage,
@@ -620,9 +620,9 @@ bool SceneRenderer::CreateFrameBuffers() {
         static_cast<std::uint64_t>(scene_capacity_.submesh_count) *
             sizeof(vk::DrawIndexedIndirectCommand);
     constexpr std::uint64_t tech_counts_size =
-        static_cast<std::uint64_t>(MAX_TECHNIQUES) * sizeof(std::uint32_t);
+        static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
     constexpr std::uint64_t technique_results_size =
-        static_cast<std::uint64_t>(MAX_TECHNIQUES) * sizeof(TechniqueResult);
+        static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(TechniqueResult);
     constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
 
     const bool mid = draw_mode_ == DrawMode::MID;
@@ -744,7 +744,7 @@ bool SceneRenderer::CreateFrameBuffers() {
         // the CID-only collect-write set.
         if (!mid) {
             fr.technique_draw_commands = GpuResources::GpuBuffer::Create(
-                be, static_cast<std::uint64_t>(MAX_TECHNIQUES) *
+                be, static_cast<std::uint64_t>(MAX_DRAW_GROUPS) *
                         sizeof(vk::DrawIndexedIndirectCommand),
                 indirect_usage,
                 vk::MemoryPropertyFlagBits::eHostVisible |
@@ -777,9 +777,10 @@ bool SceneRenderer::CreateFrameBuffers() {
     }
 
     // CPU-prefix region bases for MID (recomputed when topology changes).
-    region_base_.assign(MAX_TECHNIQUES, 0);
-    region_count_.assign(MAX_TECHNIQUES, 0);
+    region_base_.assign(MAX_DRAW_GROUPS, 0);
+    region_count_.assign(MAX_DRAW_GROUPS, 0);
     region_total_ = 0;
+    technique_count_ = 0;
     return true;
 }
 

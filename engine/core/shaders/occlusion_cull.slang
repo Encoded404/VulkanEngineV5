@@ -58,13 +58,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint block = submeshIndex / 256u;
     uint elementIndex = submeshIndex % 256u;
 
-    uint currentIndexCount = cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount;
-    if (currentIndexCount == 0) return;
+    CullEntry cullEntry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
+    if (cullEntry.indexCount == 0) return;
+    if (cullEntry.techniqueId >= kMaxDrawGroups) return;
 
     // Techniques with receives_occlusion == false (e.g. transparents) are never
     // Hi-Z culled: kept alive unconditionally, regardless of test outcome.
-    if ((techniqueFlags[cullEntries[NonUniformResourceIndex(block)][elementIndex].techniqueId]
-         & kFlagReceivesOcclusion) == 0) return;
+    if ((techniqueFlags[cullEntry.techniqueId] & kFlagReceivesOcclusion) == 0) return;
 
     float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
     float maxScaleVal = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale;

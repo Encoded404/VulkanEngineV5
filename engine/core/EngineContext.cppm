@@ -44,6 +44,9 @@ struct GameConfig {
     // renderer init; see SceneRenderer::DrawMode / Reinitialize.
     SceneRenderer::DrawMode draw_mode = SceneRenderer::DrawMode::CID;
     std::uint64_t geometry_buffer_size_mb = 128;
+    // Requested bindless combined-image-sampler capacity. Clamped at boot by the
+    // device limits minus the other update-after-bind pools' descriptor counts.
+    std::uint32_t bindless_capacity = 65536;
     bool enable_imgui = true;
     std::string shader_data_dir;
     // Empty means "the resolved per-user cache root" (see GameEngine::Setup).

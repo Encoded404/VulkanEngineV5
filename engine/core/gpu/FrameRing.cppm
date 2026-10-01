@@ -21,7 +21,10 @@ public:
 
     void Initialize(std::uint32_t frames_in_flight) {
         frames_in_flight_ = std::max<std::uint32_t>(frames_in_flight, 1U);
-        rings_.assign(frames_in_flight_, {});
+        // resize (not assign-with-value): Op may be move-only, so the entries
+        // must be default-constructed in place, never copied.
+        rings_.clear();
+        rings_.resize(frames_in_flight_);
     }
 
     [[nodiscard]] std::uint32_t GetFramesInFlight() const noexcept { return frames_in_flight_; }

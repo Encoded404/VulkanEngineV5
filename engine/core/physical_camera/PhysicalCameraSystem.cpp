@@ -208,6 +208,9 @@ struct CameraStream {
 
     // GPU
     std::vector<std::uint32_t> source_slots{};
+    // Generation-checked handles for the same slots; used to release them when
+    // the stream closes so the bounded bindless allocator does not leak.
+    std::vector<VulkanEngine::BindlessManager::TextureHandle> source_handles{};
     std::array<StagingSlot, kStagingSlots> staging{};
     vk::ImageLayout source_layout = vk::ImageLayout::eUndefined;
     std::uint64_t last_uploaded_seq = 0;
@@ -218,6 +221,7 @@ struct CameraStream {
 struct CameraTarget {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::uint32_t bindless_slot = 0;
+    VulkanEngine::BindlessManager::TextureHandle handle{};
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     vk::ImageLayout layout = vk::ImageLayout::eUndefined;
@@ -247,6 +251,9 @@ struct PhysicalCameraSystem::Impl {
     ShaderSystem::PipelineFactory* pipeline_factory = nullptr;
 
     bool sdl_camera_inited = false;
+    // Newest frame index seen by Execute; the recording frame for slot releases
+    // issued outside the per-frame path (close/destroy).
+    std::uint32_t last_frame = 0;
 
     std::vector<std::uint32_t> free_streams;
     std::vector<std::uint32_t> free_targets;
@@ -266,8 +273,21 @@ struct PhysicalCameraSystem::Impl {
     static CameraStream* FindStream(Impl& impl, const PhysicalCameraHandle& handle);
     static CameraTarget* FindTarget(Impl& impl, const PhysicalCameraTargetId& id);
     static CameraBinding* FindBinding(Impl& impl, const PhysicalCameraBindingHandle& handle);
+    // Releases every bindless slot a stream owns (frame-gated; the slot returns
+    // to the free list when the decommit applies).
+    static void ReleaseStreamSlots(Impl& impl, CameraStream& stream);
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
+
+void PhysicalCameraSystem::Impl::ReleaseStreamSlots(Impl& impl, CameraStream& stream) {
+    if (impl.bindless != nullptr) {
+        for (const auto& handle : stream.source_handles) {
+            impl.bindless->ReleaseSlot(handle, impl.last_frame);
+        }
+    }
+    stream.source_handles.clear();
+    stream.source_slots.clear();
+}
 
 CameraStream* PhysicalCameraSystem::Impl::FindStream(Impl& impl, const PhysicalCameraHandle& handle) {
     if (!handle.IsValid()) return nullptr;
@@ -431,15 +451,6 @@ void PhysicalCameraSystem::Shutdown() {
 
     // The system owns every binding and target it handed out; close them all
     // here so apps don't have to unwind their camera resources manually.
-    for (auto& target : impl_->targets) {
-        target.valid = false;
-        target.generation++;
-    }
-    for (auto& binding : impl_->bindings) {
-        binding.valid = false;
-        binding.generation++;
-    }
-
     for (auto& stream : impl_->streams) {
         if (!stream) continue;
         StopWorker(*stream);
@@ -449,7 +460,6 @@ void PhysicalCameraSystem::Shutdown() {
         }
         stream->state = PhysicalCameraState::Closed;
     }
-    impl_->streams.clear();
 
     if (impl_->backend) {
         try {
@@ -459,6 +469,35 @@ void PhysicalCameraSystem::Shutdown() {
             LOGIFACE_LOG(warn, std::string("PhysicalCameraSystem: waitIdle during shutdown: ") + err.what());
         }
     }
+
+    // The device is idle, so return every bindless slot synchronously instead of
+    // leaving deferred decommits that would never drain after shutdown.
+    if (impl_->bindless) {
+        for (auto& target : impl_->targets) {
+            if (target.handle.IsValid()) {
+                impl_->bindless->ReleaseSlotImmediate(target.handle.slot);
+                target.handle = {};
+            }
+            target.bindless_slot = 0;
+        }
+        for (auto& stream : impl_->streams) {
+            if (!stream) continue;
+            for (const auto& handle : stream->source_handles) {
+                impl_->bindless->ReleaseSlotImmediate(handle.slot);
+            }
+            stream->source_handles.clear();
+            stream->source_slots.clear();
+        }
+    }
+    for (auto& target : impl_->targets) {
+        target.valid = false;
+        target.generation++;
+    }
+    for (auto& binding : impl_->bindings) {
+        binding.valid = false;
+        binding.generation++;
+    }
+    impl_->streams.clear();
 
     impl_->composite_desc.reset();
     impl_->composite_pipeline_layout.reset();
@@ -621,6 +660,7 @@ PhysicalCameraHandle PhysicalCameraSystem::Open(std::uint32_t device_index,
         stream.worker_started = false;
         stream.worker_stop.store(false, std::memory_order_relaxed);
         stream.source_slots.clear();
+        stream.source_handles.clear();
 
         // GPU source images + bindless slots
         const auto specs = ImageSpecsFor(gpu_format, stream.width, stream.height);
@@ -635,9 +675,14 @@ PhysicalCameraHandle PhysicalCameraSystem::Open(std::uint32_t device_index,
             }
             const std::string name = "physical-camera-" + std::to_string(stream_index) +
                                      "-plane-" + std::to_string(stream.source_slots.size());
-            const std::uint32_t slot = impl_->bindless->AllocateTextureSlot(
+            const auto handle = impl_->bindless->AllocateTextureSlot(
                 std::move(texture), VulkanEngine::ResourceId{name});
-            stream.source_slots.push_back(slot);
+            if (!handle.has_value()) {
+                gpu_ok = false;
+                break;
+            }
+            stream.source_slots.push_back(handle->slot);
+            stream.source_handles.push_back(*handle);
         }
         if (!gpu_ok) {
             SDL_CloseCamera(camera);
@@ -704,6 +749,7 @@ void PhysicalCameraSystem::Close(PhysicalCameraHandle camera) {
     }
     stream->state = PhysicalCameraState::Closed;
     stream->generation++;
+    Impl::ReleaseStreamSlots(*impl_, *stream);
 }
 
 PhysicalCameraState PhysicalCameraSystem::GetState(PhysicalCameraHandle camera) const {
@@ -743,10 +789,15 @@ PhysicalCameraTargetId PhysicalCameraSystem::CreateTarget(std::uint32_t width, s
     }
     auto& target = impl_->targets[target_index];
     target.generation++;
-    const std::uint32_t slot = impl_->bindless->AllocateTextureSlot(
+    const auto handle = impl_->bindless->AllocateTextureSlot(
         std::move(texture), VulkanEngine::ResourceId{
             "physical-camera-target-" + std::to_string(target_index)});
-    target.bindless_slot = slot;
+    if (!handle.has_value()) {
+        impl_->free_targets.push_back(target_index);
+        return {};
+    }
+    target.bindless_slot = handle->slot;
+    target.handle = *handle;
     target.width = width;
     target.height = height;
     target.layout = vk::ImageLayout::eUndefined;
@@ -771,6 +822,11 @@ void PhysicalCameraSystem::DestroyTarget(PhysicalCameraTargetId target) {
             impl_->free_bindings.push_back(static_cast<std::uint32_t>(&binding - impl_->bindings.data()));
         }
     }
+    if (impl_->bindless && t->handle.IsValid()) {
+        impl_->bindless->ReleaseSlot(t->handle, impl_->last_frame);
+        t->handle = {};
+    }
+    t->bindless_slot = 0;
     t->valid = false;
     t->generation++;
     impl_->free_targets.push_back(target.index);
@@ -871,6 +927,8 @@ void PhysicalCameraSystem::ProcessSdlEvent(void* sdl_event) {
 
 void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_index) {
     if (!impl_ || !impl_->backend) return;
+    // Recording frame for slot releases issued off the per-frame path.
+    impl_->last_frame = frame_index;
 
     const std::uint32_t staging_index = frame_index % kStagingSlots;
 

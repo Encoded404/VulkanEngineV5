@@ -53,8 +53,21 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     ctx.fallback_handle = ctx.resource_manager.Register(ctx.missing_texture);
 
     ctx.bindless_mgr = std::make_unique<BindlessManager::BindlessManager>();
-    if (!ctx.bindless_mgr->Initialize(vk_backend)) {
-        return false;
+    {
+        // Subtract every other update-after-bind pool's descriptor count so the
+        // bindless pool cannot exceed the global update-after-bind budget. The
+        // engine's vertex-buffer, index-buffer and indirection sets are
+        // allocated per frame in flight (see SceneRenderer::Initialize).
+        const std::uint32_t fif = vk_backend.GetFramesInFlight();
+        constexpr std::uint32_t kVertexBuffers = 64;
+        constexpr std::uint32_t kIndexBuffers = 64;
+        BindlessManager::BindlessCapacityConfig capacity_config{};
+        capacity_config.app_capacity = config.bindless_capacity;
+        capacity_config.other_update_after_bind_descriptors =
+            fif * (kVertexBuffers + kIndexBuffers + 1U);
+        if (!ctx.bindless_mgr->Initialize(vk_backend, capacity_config)) {
+            return false;
+        }
     }
 
     GpuResources::HeapConfig heap_config{};

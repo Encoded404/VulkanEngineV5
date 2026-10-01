@@ -131,7 +131,10 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
     auto gpu_tex = GpuResources::GpuTexture::CreateFromTextureData(
         ctx.bootstrap->GetBackend(), ctx_.image_heap, upload_data, resolved.format, sampler);
     if (gpu_tex.IsValid()) {
-        return ctx_.bindless_mgr->AllocateTextureSlot(std::move(gpu_tex), tex->GetId());
+        // Synchronous dev path: no frame is recording, so commit immediately.
+        if (auto handle = ctx_.bindless_mgr->AllocateTextureSlot(std::move(gpu_tex), tex->GetId())) {
+            return handle->slot;
+        }
     }
     LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId().value + ", using fallback");
     return BindlessManager::kFallbackSlot;
@@ -508,6 +511,21 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
         const std::uint32_t fif = ctx.bootstrap->GetBackend().GetFramesInFlight();
         ctx_.mesh_manager->EndFrame(ctx.frame.frame_counter % fif);
     }
+
+    // Drain deferred bindless descriptor ops (uploads published, released slots
+    // returned to the free list, retired bindings destroyed). This runs after
+    // AcquireNextImage has waited the ring's in-flight fence for this slot, so
+    // any op from `frame_counter - FIF` is GPU-safe. A gated publish applies
+    // only when its recording frame was actually submitted.
+    ctx_.bindless_mgr->BeginFrame(
+        ctx.frame.frame_counter,
+        [&ctx](std::uint32_t recording_frame) {
+            return ctx.bootstrap->IsFrameComplete(recording_frame);
+        },
+        [](BindlessManager::TextureHandle handle, std::uint32_t /*frame*/) {
+            LOGIFACE_LOG(warn, "BindlessManager: dropped a publish for slot " +
+                                   std::to_string(handle.slot) + " (recording frame not submitted)");
+        });
 
     // Flush dirty material data to GPU before rendering
     ctx_.material_mgr.FlushDirtyMaterials();

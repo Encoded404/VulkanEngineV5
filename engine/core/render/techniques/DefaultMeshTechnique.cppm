@@ -14,14 +14,33 @@ import VulkanEngine.PipelineFactory;
 
 export namespace VulkanEngine::TechniqueManager {
 
+// Final material contract: C layout, std430-safe, 64 bytes. The tail is
+// float4-packed for unambiguous layout. flags bits 0..1 carry the declared
+// TextureNormalEncoding (Standard/Full/Bent); bit 2 alpha_mask; bit 3
+// has_transform. The encoding is declared content, never derived from the
+// resolved upload format. `standard_mesh.slang` mirrors this struct exactly —
+// change both together. No unlit bit: unlit is a separate technique.
 struct DefaultMeshPerMaterialData {
     std::uint32_t albedo_texture{0};
     std::uint32_t normal_texture{0};
     std::uint32_t orm_texture{0};       // occlusion(R) roughness(G) metallic(B)
+    std::uint32_t emissive_texture{0};
+    std::uint32_t flags{0};             // bits0..1 normal encoding; bit2 alpha_mask; bit3 has_transform
+    std::uint32_t uv_sets{0};           // 2 bits per texture slot (albedo/normal/orm/emissive)
     float     roughness_factor{1.0f};
     float     metallic_factor{0.0f};
     float     ao_factor{1.0f};
+    float     normal_scale{1.0f};
+    float     occlusion_strength{1.0f};
+    float     alpha_cutoff{0.5f};
+    float     emissive_factor[4]{0.0f, 0.0f, 0.0f, 1.0f}; // rgb + strength
 };
+static_assert(sizeof(DefaultMeshPerMaterialData) == 64);
+static_assert(std::is_trivially_copyable_v<DefaultMeshPerMaterialData>);
+
+constexpr std::uint32_t kNormalEncodingMask = 0x3u;
+constexpr std::uint32_t kAlphaMaskFlag = 1u << 2;
+constexpr std::uint32_t kHasTransformFlag = 1u << 3;
 
 class DefaultMeshTechnique final : public BaseTechnique {
 public:

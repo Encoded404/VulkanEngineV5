@@ -29,15 +29,27 @@ struct Light {
 StructuredBuffer<Light, CDataLayout> sceneLights[];
 
 // Per-material data (set 5, binding 0) — C layout matches the C++
-// DefaultMeshPerMaterialData (4 x u32 + 3 x f32 = 28 B).
+// DefaultMeshPerMaterialData exactly (64 B). Change both together.
 struct MaterialData {
     uint albedo_texture;
     uint normal_texture;
     uint orm_texture;
+    uint emissive_texture;
+    uint flags;          // bits0..1 normal encoding; bit2 alpha_mask; bit3 has_transform
+    uint uv_sets;
     float roughness_factor;
     float metallic_factor;
     float ao_factor;
+    float normal_scale;
+    float occlusion_strength;
+    float alpha_cutoff;
+    float4 emissive_factor; // rgb + strength
 };
+
+// Declared TextureNormalEncoding (content, not derived from the upload).
+static const uint kNormalEncodingStandard = 0u;
+static const uint kNormalEncodingFull = 1u;
+static const uint kNormalEncodingBent = 2u;
 
 [[vk::binding(0, 5)]]
 StructuredBuffer<MaterialData, CDataLayout> materialBuffer[];
@@ -113,12 +125,27 @@ float4 main(PSInput input) : SV_TARGET {
     // sign w; bitangent reconstructed, never stored). The TBN frame is built
     // from the interpolated geometric normal so the frame stays orthonormal
     // even where the tangent drifts slightly from perpendicularity.
+    //
+    // Normal decode follows the DECLARED encoding:
+    //   Standard: reconstruct z from RG (BC5 or RGB maps; stored B ignored).
+    //   Full/Bent: use RGB as authored, scale xy.
     if (mat.normal_texture != 0) {
         float3 t = normalize(input.tangent);
         float3 b = cross(N, t) * input.handedness;
         float3x3 TBN = float3x3(t, b, N);
-        float3 n_ts = allTextures[NonUniformResourceIndex(mat.normal_texture)]
-            .Sample(input.texCoord).xyz * 2.0 - 1.0;
+        float3 sampled = allTextures[NonUniformResourceIndex(mat.normal_texture)]
+            .Sample(input.texCoord).xyz;
+        float3 n_ts;
+        const uint encoding = mat.flags & 0x3u;
+        if (encoding == kNormalEncodingStandard) {
+            float2 xy = sampled.rg * 2.0 - 1.0;
+            xy *= mat.normal_scale;
+            float z = sqrt(saturate(1.0 - dot(xy, xy)));
+            n_ts = float3(xy, z);
+        } else {
+            n_ts = sampled * 2.0 - 1.0;
+            n_ts.xy *= mat.normal_scale;
+        }
         N = normalize(mul(normalize(n_ts), TBN));
     }
 

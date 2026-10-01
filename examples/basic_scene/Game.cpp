@@ -173,11 +173,8 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                             auto webcam_handle = engine_game_.GetContext().GetMaterialManager().Register<
                                 VulkanEngine::TechniqueManager::UnlitTextureTechnique>(
                                 VulkanEngine::MaterialManager::BlendMode::Opaque,
-                                VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData{
-                                    .albedo_texture = cam_target_slot_,
-                                    .roughness_factor = 1.0f,
-                                    .metallic_factor = 0.0f,
-                                    .ao_factor = 1.0f
+                                VulkanEngine::TechniqueManager::UnlitPerMaterialData{
+                                    .albedo_texture = cam_target_slot_
                                 });
                             const auto webcam_mat_id = VulkanEngine::MaterialManager::MaterialId{webcam_handle.Id()};
                             auto quad = VulkanEngine::SceneLoader::CreateFallbackQuad();

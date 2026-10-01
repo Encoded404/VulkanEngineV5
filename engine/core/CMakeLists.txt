@@ -124,6 +124,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/FileLoaders/Mesh/MeshLoaderBase.cpp
     assets/FileLoaders/Textures/TextureLoaders.cpp
     assets/FileLoaders/Textures/TextureLoaders.cppm
+    assets/TextureFormat.cpp
     assets/ResourceCache.cpp
     assets/TextureResource.cpp
     ui/ImGuiSystem.cpp
@@ -238,6 +239,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             input/InputSystem.cppm
             assets/MeshTypes.cppm
             assets/NormalEncoding.cppm
+            assets/TextureTypes.cppm
+            assets/TextureFormat.cppm
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
             bootstrap/Startup.cppm

@@ -52,11 +52,19 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
     if (data == nullptr || data->pMessage == nullptr) return vk::False;
 
     std::string message = std::string("[Vulkan] ") + data->pMessage;
+    // Demote the non-VUID "SPIR-V Interface" pipeline-note.
+    // (vertex-stage outputs with no matching fragment input, e.g. the minimal example's checker shader) to debug level.
+    // it is informational about discarded writes, not a defect, but fires on every pipeline creation otherwise.
+    const bool spirv_interface_note = message.find("but there is no corresponding Input declared") != std::string::npos;
     const auto severity_bits = static_cast<VkDebugUtilsMessageSeverityFlagsEXT>(severity);
     if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0u) {
         LOGIFACE_LOG(error, message);
     } else if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0u) {
-        LOGIFACE_LOG(warn, message);
+        if (spirv_interface_note) {
+            LOGIFACE_LOG(debug, message);
+        } else {
+            LOGIFACE_LOG(warn, message);
+        }
     } else if ((severity_bits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) != 0u) {
         LOGIFACE_LOG(info, message);
     } else {

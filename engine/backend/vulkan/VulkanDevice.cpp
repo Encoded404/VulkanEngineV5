@@ -1,6 +1,7 @@
 module;
 
 #include <logging/logging_macros.hpp>
+#include <vulkan/vulkan_core.h>
 
 #include <vulkan/vulkan_hpp_macros.hpp>
 
@@ -42,6 +43,27 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
             supported_.properties = props2.get<vk::PhysicalDeviceProperties2>().properties;
             supported_.descriptor_indexing = props2.get<vk::PhysicalDeviceDescriptorIndexingProperties>();
             supported_.driver_properties = props2.get<vk::PhysicalDeviceDriverProperties>();
+
+            // Format support for the texture-system candidate set, via
+            // vkGetPhysicalDeviceFormatProperties2 + VkFormatProperties3.
+            supported_.format_supports.clear();
+            supported_.format_supports.reserve(kCandidateFormats.size());
+            for (const vk::Format format : kCandidateFormats) {
+                VkFormatProperties3 props3{};
+                props3.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3;
+                VkFormatProperties2 props2_raw{};
+                props2_raw.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+                props2_raw.pNext = &props3;
+                vk_instance.getDispatcher()->vkGetPhysicalDeviceFormatProperties2(
+                    static_cast<VkPhysicalDevice>(*device),
+                    static_cast<VkFormat>(format),
+                    &props2_raw);
+                supported_.format_supports.push_back(FormatSupport{
+                    .format = format,
+                    .linear_features = vk::FormatFeatureFlags2{props3.linearTilingFeatures},
+                    .optimal_features = vk::FormatFeatureFlags2{props3.optimalTilingFeatures},
+                });
+            }
 
             const auto device_name = std::string(supported_.properties.deviceName);
 
@@ -322,6 +344,8 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     builder.SetProperties(supported_.properties);
     builder.SetDescriptorIndexingProperties(supported_.descriptor_indexing);
     builder.SetDriverProperties(supported_.driver_properties);
+    builder.SetFormatSupports(supported_.format_supports);
+    builder.FinalizeDescriptorCapabilities(kBindlessAppSampledReserve);
     for (const auto& name : requested_dynamic_names) {
         builder.AddDeviceExtensionName(name);
     }

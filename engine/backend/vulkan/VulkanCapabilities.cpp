@@ -18,6 +18,12 @@ bool VulkanCapabilitiesBuilder::GetSupportedFeature(const SupportedDeviceState& 
     switch (f) {
         case Feature::PipelineStatisticsQuery:
             return supported.features2.features.pipelineStatisticsQuery == vk::True;
+        case Feature::TextureCompressionBC:
+            return supported.features2.features.textureCompressionBC == vk::True;
+        case Feature::TextureCompressionASTC_LDR:
+            return supported.features2.features.textureCompressionASTC_LDR == vk::True;
+        case Feature::SamplerAnisotropy:
+            return supported.features2.features.samplerAnisotropy == vk::True;
         case Feature::ShaderDrawParameters:
             return supported.vulkan11.shaderDrawParameters == vk::True;
         case Feature::HostQueryReset:
@@ -64,6 +70,12 @@ bool VulkanCapabilitiesBuilder::GetRequestedFeature(const VulkanCapabilities& ca
     switch (f) {
         case Feature::PipelineStatisticsQuery:
             return caps.core_features2_.features.pipelineStatisticsQuery == vk::True;
+        case Feature::TextureCompressionBC:
+            return caps.core_features2_.features.textureCompressionBC == vk::True;
+        case Feature::TextureCompressionASTC_LDR:
+            return caps.core_features2_.features.textureCompressionASTC_LDR == vk::True;
+        case Feature::SamplerAnisotropy:
+            return caps.core_features2_.features.samplerAnisotropy == vk::True;
         case Feature::ShaderDrawParameters:
             return caps.vulkan11_features_.shaderDrawParameters == vk::True;
         case Feature::HostQueryReset:
@@ -111,6 +123,15 @@ void VulkanCapabilitiesBuilder::SetRequestedFeature(VulkanCapabilities& caps, Fe
     switch (f) {
         case Feature::PipelineStatisticsQuery:
             caps.core_features2_.features.pipelineStatisticsQuery = bit;
+            break;
+        case Feature::TextureCompressionBC:
+            caps.core_features2_.features.textureCompressionBC = bit;
+            break;
+        case Feature::TextureCompressionASTC_LDR:
+            caps.core_features2_.features.textureCompressionASTC_LDR = bit;
+            break;
+        case Feature::SamplerAnisotropy:
+            caps.core_features2_.features.samplerAnisotropy = bit;
             break;
         case Feature::ShaderDrawParameters:
             caps.vulkan11_features_.shaderDrawParameters = bit;

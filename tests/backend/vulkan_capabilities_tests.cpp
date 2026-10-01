@@ -53,4 +53,45 @@ TEST(VulkanCapabilitiesDrawIndirectFirstInstance, UnsupportedOptionalStaysOff) {
     EXPECT_FALSE(caps.HasUnmetRequirements());
 }
 
+// The candidate set is the closed list the format resolver may consult. Every
+// entry must be a real format: a value-initialized (eUndefined) tail would be
+// matched by Find and would answer queries for the wrong format.
+TEST(FormatCapabilitiesTest, CandidateSetHasNoUndefinedFormat) {
+    for (const vk::Format format : Caps::kCandidateFormats) {
+        EXPECT_NE(format, vk::Format::eUndefined);
+    }
+}
+
+TEST(FormatCapabilitiesTest, FlagsComeFromOptimalTiling) {
+    const std::array<Caps::FormatSupport, 1> formats{{
+        Caps::FormatSupport{
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .linear_features = {},
+            .optimal_features = vk::FormatFeatureFlagBits2::eSampledImage,
+        },
+    }};
+    const Caps::FormatCapabilities caps{formats};
+
+    EXPECT_TRUE(caps.sampled(vk::Format::eR8G8B8A8Unorm));
+    EXPECT_FALSE(caps.transfer_dst(vk::Format::eR8G8B8A8Unorm));
+    EXPECT_FALSE(caps.linear_filter(vk::Format::eR8G8B8A8Unorm));
+}
+
+// A format the snapshot does not carry (e.g. a native source the resolver has
+// no candidate for) reports unsupported instead of asserting.
+TEST(FormatCapabilitiesTest, FormatOutsideTheSnapshotReportsUnsupported) {
+    const std::array<Caps::FormatSupport, 1> formats{{
+        Caps::FormatSupport{
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .optimal_features = vk::FormatFeatureFlagBits2::eSampledImage |
+                                vk::FormatFeatureFlagBits2::eTransferDst,
+        },
+    }};
+    const Caps::FormatCapabilities caps{formats};
+
+    EXPECT_FALSE(caps.sampled(vk::Format::eBc2UnormBlock));
+    EXPECT_FALSE(caps.transfer_dst(vk::Format::eBc2UnormBlock));
+    EXPECT_FALSE(caps.sampled(vk::Format::eUndefined));
+}
+
 }  // namespace

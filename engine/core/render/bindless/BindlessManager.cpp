@@ -37,47 +37,66 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     limits.max_combined_image_samplers = desc_caps.max_bindless_combined_image_samplers;
     limits.max_update_after_bind_in_all_pools =
         desc_caps.max_update_after_bind_descriptors_in_all_pools;
-    capacity_ = ComputeBindlessCapacity(capacity_config, limits);
+    // This pool always spends one descriptor on the GpuTextureInfo storage
+    // buffer (binding 1), so account for it against the global budget.
+    BindlessCapacityConfig effective_config = capacity_config;
+    effective_config.own_non_image_descriptors =
+        std::max(effective_config.own_non_image_descriptors, 1U);
+    capacity_ = ComputeBindlessCapacity(effective_config, limits);
     capacity_ = std::min(capacity_, desc_caps.max_bindless_combined_image_samplers);
 
     LOGIFACE_LOG(debug, "BindlessManager: bindless_capacity=" + std::to_string(capacity_));
 
     // Fixed descriptor count (no VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT):
     // the capacity is known up front and the set is always allocated at it.
+    // Binding 0 is the bindless combined-image-sampler array; binding 1 is the
+    // per-slot GpuTextureInfo storage buffer. Both are partially bound and
+    // update-after-bind (the metadata buffer is written as slots recycle).
     vk::DescriptorSetLayoutBinding binding{};
     binding.binding = 0;
     binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
     binding.descriptorCount = capacity_;
-    binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    binding.stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute;
     binding.pImmutableSamplers = nullptr;
 
-    constexpr vk::DescriptorBindingFlags binding_flags =
+    vk::DescriptorSetLayoutBinding info_binding{};
+    info_binding.binding = 1;
+    info_binding.descriptorType = vk::DescriptorType::eStorageBuffer;
+    info_binding.descriptorCount = 1;
+    info_binding.stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute;
+    info_binding.pImmutableSamplers = nullptr;
+
+    const std::array<vk::DescriptorSetLayoutBinding, 2> bindings{binding, info_binding};
+    const std::array<vk::DescriptorBindingFlags, 2> binding_flags{
         vk::DescriptorBindingFlagBits::ePartiallyBound |
-        vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+            vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+        vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+    };
 
     vk::DescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
-    binding_flags_info.bindingCount = 1;
-    binding_flags_info.pBindingFlags = &binding_flags;
+    binding_flags_info.bindingCount = static_cast<std::uint32_t>(binding_flags.size());
+    binding_flags_info.pBindingFlags = binding_flags.data();
 
     vk::DescriptorSetLayoutCreateInfo layout_info{};
     layout_info.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
     layout_info.pNext = &binding_flags_info;
-    layout_info.bindingCount = 1;
-    layout_info.pBindings = &binding;
+    layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layout_info.pBindings = bindings.data();
 
     layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(device, layout_info);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, *layout_, "bindless-layout");
 
-    vk::DescriptorPoolSize pool_size{};
-    pool_size.type = vk::DescriptorType::eCombinedImageSampler;
-    pool_size.descriptorCount = capacity_;
+    const std::array<vk::DescriptorPoolSize, 2> pool_sizes{{
+        vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, capacity_),
+        vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, 1),
+    }};
 
     vk::DescriptorPoolCreateInfo pool_info{};
     pool_info.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
                     | vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     pool_info.maxSets = 1;
-    pool_info.poolSizeCount = 1;
-    pool_info.pPoolSizes = &pool_size;
+    pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+    pool_info.pPoolSizes = pool_sizes.data();
 
     pool_ = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, *pool_, "bindless-pool");
@@ -94,6 +113,40 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     }
     descriptor_set_ = std::move(sets[0]);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, descriptor_set_, "bindless-descriptor-set");
+
+    // Per-slot metadata: one host-visible, persistently mapped element per
+    // bindless slot. Allocates as one storage buffer so a shader can index it
+    // by slot alongside the sampled-image array.
+    const vk::DeviceSize info_bytes =
+        static_cast<vk::DeviceSize>(capacity_) * sizeof(VulkanEngine::Textures::GpuTextureInfo);
+    texture_info_buffer_ = std::make_unique<VulkanEngine::GpuResources::GpuBuffer>(
+        VulkanEngine::GpuResources::GpuBuffer::Create(
+            backend, info_bytes, vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    if (!texture_info_buffer_ || !texture_info_buffer_->IsValid()) {
+        LOGIFACE_LOG(error, "BindlessManager: failed to create GpuTextureInfo buffer");
+        return false;
+    }
+    VulkanBackend::Vulkan::SetVulkanObjectName(device, texture_info_buffer_->GetBuffer(),
+                                               "bindless-texture-info");
+    mapped_texture_info_ = static_cast<VulkanEngine::Textures::GpuTextureInfo*>(
+        texture_info_buffer_->Map(0, info_bytes));
+    for (std::uint32_t i = 0; i < capacity_; ++i) {
+        mapped_texture_info_[i] = VulkanEngine::Textures::GpuTextureInfo{};
+    }
+
+    vk::DescriptorBufferInfo info_descriptor{};
+    info_descriptor.buffer = static_cast<vk::Buffer>(*texture_info_buffer_->GetBuffer());
+    info_descriptor.offset = 0;
+    info_descriptor.range = info_bytes;
+    vk::WriteDescriptorSet info_write{};
+    info_write.dstSet = *descriptor_set_;
+    info_write.dstBinding = 1;
+    info_write.dstArrayElement = 0;
+    info_write.descriptorCount = 1;
+    info_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+    info_write.pBufferInfo = &info_descriptor;
+    device.updateDescriptorSets({info_write}, {});
 
     slots_.resize(capacity_);
     free_slots_.clear();
@@ -120,6 +173,11 @@ void BindlessManager::Shutdown() {
     }
     slots_.clear();
     free_slots_.clear();
+    if (texture_info_buffer_ && texture_info_buffer_->IsValid()) {
+        texture_info_buffer_->Unmap();
+    }
+    mapped_texture_info_ = nullptr;
+    texture_info_buffer_.reset();
     ring_ = VulkanEngine::GpuResources::FrameRing<SlotOp>{};
     pool_.reset();
     layout_.reset();
@@ -388,6 +446,24 @@ void BindlessManager::WriteFallback(std::uint32_t slot) {
     write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
     write.pImageInfo = &image_info;
     backend_->GetDevice().updateDescriptorSets({write}, {});
+    // The descriptor points at the fallback, so the metadata must too.
+    WriteTextureInfo(slot, VulkanEngine::GpuResources::GpuTexture{});
+}
+
+void BindlessManager::WriteTextureInfo(std::uint32_t slot,
+                                       const VulkanEngine::GpuResources::GpuTexture& texture) {
+    if (mapped_texture_info_ == nullptr || slot >= capacity_) {
+        return;
+    }
+    // An invalid binding means the descriptor currently points at the fallback
+    // (a reserved or released slot), so describe the fallback instead.
+    const auto* source = &texture;
+    if ((!texture.IsValid() || texture.GetImageView() == nullptr) && !slots_.empty()) {
+        source = &slots_[kFallbackSlot].binding;
+    }
+    // Host-coherent memory: the mapped write is visible without a flush.
+    mapped_texture_info_[slot] = source->IsValid() ? source->ToTextureInfo()
+                                                   : VulkanEngine::Textures::GpuTextureInfo{};
 }
 
 void BindlessManager::UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture) {
@@ -409,6 +485,22 @@ void BindlessManager::UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuReso
     write.pImageInfo = &image_info;
 
     backend_->GetDevice().updateDescriptorSets({write}, {});
+    // Keep the shader-visible metadata in lockstep with the descriptor.
+    WriteTextureInfo(slot, texture);
+}
+
+vk::Buffer BindlessManager::GetTextureInfoBuffer() const {
+    return texture_info_buffer_ && texture_info_buffer_->IsValid()
+               ? static_cast<vk::Buffer>(*texture_info_buffer_->GetBuffer())
+               : vk::Buffer{nullptr};
+}
+
+const VulkanEngine::Textures::GpuTextureInfo* BindlessManager::GetTextureInfo(
+    std::uint32_t slot) const {
+    if (mapped_texture_info_ == nullptr || slot >= capacity_) {
+        return nullptr;
+    }
+    return &mapped_texture_info_[slot];
 }
 
 vk::DescriptorSetLayout* BindlessManager::GetLayout() {

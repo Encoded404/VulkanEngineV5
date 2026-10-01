@@ -188,6 +188,31 @@ struct AlphaAnalysis {
     float opaqueCoverage = 1.0f; //NOLINT(misc-non-private-member-variables-in-classes)
 };
 
+// ── Per-slot GPU metadata buffer ──────────────────────────────────────
+
+// One element per bindless slot, exposed to shaders as a
+// `StructuredBuffer<GpuTextureInfo>` (set 0, binding 1). A shader that needs a
+// texture's extent, chain length, layer count or device format reads it here
+// instead of inferring it from the sampled value; that is how mip-aware
+// sampling, procedural fallbacks and debug views stay possible with no
+// per-texture push constant.
+//
+// CDataLayout-compatible: six tightly packed 32-bit words, no padding, so the
+// C++ and shader views are byte-identical. `format` carries the numeric value
+// of the resolved vk::Format and tracks the descriptor, including while a
+// reserved slot still points at the fallback.
+struct GpuTextureInfo {
+    std::uint32_t width{0};
+    std::uint32_t height{0};
+    std::uint32_t mip_levels{1};
+    std::uint32_t array_layers{1};
+    std::uint32_t format{0};  // vk::Format numeric value; 0 == eUndefined
+    std::uint32_t flags{0};   // reserved for future packed metadata
+};
+
+static_assert(sizeof(GpuTextureInfo) == 24,
+              "GpuTextureInfo must stay six packed 32-bit words for the shader mirror");
+
 // ── Subresource-complete texture payload ──────────────────────────────
 
 // One entry per (mip, layer, face). gpu_layer = layer * face_count + face.

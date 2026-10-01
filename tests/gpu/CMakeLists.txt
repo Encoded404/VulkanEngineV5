@@ -10,6 +10,7 @@ add_executable(gpu_tests
   staging_pool_gpu_tests.cpp
   texture_uploader_gpu_tests.cpp
   sampler_cache_gpu_tests.cpp
+  texture_info_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE
@@ -54,6 +55,7 @@ add_slang_shaders(
   SHADERS
     test_fullscreen_vs test_fullscreen_vs.slang vertex main
     test_sample_frag   test_sample_frag.slang   fragment main
+    test_texture_info  test_texture_info.cs.slang compute main
 )
 add_dependencies(gpu_tests gpu_test_shaders)
 

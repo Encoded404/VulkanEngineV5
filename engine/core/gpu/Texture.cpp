@@ -101,6 +101,7 @@ GpuTexture::GpuTexture(GpuTexture&& other) noexcept
       image_(other.image_),
       sampler_(other.sampler_),
       owned_sampler_(std::move(other.owned_sampler_)),
+      format_(other.format_),
       width_(other.width_),
       height_(other.height_),
       mip_levels_(other.mip_levels_),
@@ -119,6 +120,7 @@ GpuTexture& GpuTexture::operator=(GpuTexture&& other) noexcept {
         image_ = other.image_;
         sampler_ = other.sampler_;
         owned_sampler_ = std::move(other.owned_sampler_);
+        format_ = other.format_;
         width_ = other.width_;
         height_ = other.height_;
         mip_levels_ = other.mip_levels_;
@@ -182,6 +184,16 @@ vk::Sampler GpuTexture::GetSampler() const {
     return sampler_;
 }
 
+VulkanEngine::Textures::GpuTextureInfo GpuTexture::ToTextureInfo() const {
+    VulkanEngine::Textures::GpuTextureInfo info{};
+    info.width = width_;
+    info.height = height_;
+    info.mip_levels = mip_levels_;
+    info.array_layers = array_layers_;
+    info.format = static_cast<std::uint32_t>(format_);
+    return info;
+}
+
 GpuTexture GpuTexture::CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                      GpuImageHeap& heap,
                                      const VulkanEngine::Textures::TextureData& data,
@@ -193,6 +205,7 @@ GpuTexture GpuTexture::CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& ba
         return texture;
     }
 
+    texture.format_ = resolved;
     texture.width_ = data.width;
     texture.height_ = data.height;
     texture.mip_levels_ = data.mip_levels;
@@ -348,6 +361,7 @@ GpuTexture GpuTexture::CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& bac
     if (!heap.IsValid()) {
         return texture;
     }
+    texture.format_ = format;
     texture.width_ = width;
     texture.height_ = height;
 
@@ -390,6 +404,7 @@ GpuTexture GpuTexture::CreateColorTarget(VulkanBackend::Vulkan::IVulkanBootstrap
     if (!heap.IsValid()) {
         return texture;
     }
+    texture.format_ = format;
     texture.width_ = width;
     texture.height_ = height;
 

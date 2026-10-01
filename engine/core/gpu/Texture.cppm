@@ -83,11 +83,17 @@ public:
     [[nodiscard]] vk::Image GetImage() const;
     [[nodiscard]] vk::ImageView GetImageView() const;
     [[nodiscard]] vk::Sampler GetSampler() const;
+    [[nodiscard]] vk::Format GetFormat() const { return format_; }
     [[nodiscard]] std::uint32_t GetWidth() const { return width_; }
     [[nodiscard]] std::uint32_t GetHeight() const { return height_; }
     [[nodiscard]] std::uint32_t GetMipLevels() const { return mip_levels_; }
     [[nodiscard]] std::uint32_t GetArrayLayers() const { return array_layers_; }
     [[nodiscard]] bool IsValid() const { return heap_ != nullptr && image_.IsValid(); }
+
+    // Metadata snapshot for the bindless GpuTextureInfo buffer: extent, chain
+    // length, layer count and the resolved device format. Shaders read it
+    // through the buffer instead of inferring it from the sampled value.
+    [[nodiscard]] VulkanEngine::Textures::GpuTextureInfo ToTextureInfo() const;
 
     // Frame-gated destruction: hands the heap image to the heap's retire
     // ring; freed one FIF cycle after `recording_frame`. The sampler dies with
@@ -109,6 +115,7 @@ private:
     // Non-owning when the sampler came from a SamplerCache; owning otherwise.
     vk::Sampler sampler_{nullptr};
     std::unique_ptr<vk::raii::Sampler> owned_sampler_{};
+    vk::Format format_ = vk::Format::eUndefined;
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
     std::uint32_t mip_levels_ = 1;

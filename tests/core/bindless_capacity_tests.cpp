@@ -50,6 +50,17 @@ TEST(BindlessCapacityTest, BothClampsApply) {
     EXPECT_EQ(ComputeBindlessCapacity(config, limits), 400u);
 }
 
+TEST(BindlessCapacityTest, MetadataBindingCountsAgainstTheGlobalPoolBudget) {
+    BindlessCapacityConfig config{};
+    config.app_capacity = 65536;
+    config.own_non_image_descriptors = 1;  // the GpuTextureInfo storage buffer
+    BindlessCapacityLimits limits{};
+    limits.max_combined_image_samplers = 1u << 20;
+    limits.max_update_after_bind_in_all_pools = 8192;
+    // 8192 - 1 metadata descriptor = 8191 available for the image array.
+    EXPECT_EQ(ComputeBindlessCapacity(config, limits), 8191u);
+}
+
 TEST(BindlessCapacityTest, NeverBelowTheFallbackSlot) {
     BindlessCapacityConfig config{};
     config.app_capacity = 0;

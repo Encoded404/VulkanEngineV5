@@ -11,6 +11,7 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.BindlessManager.TextureSlot;
 import VulkanEngine.GpuResources.FrameRing;
+import VulkanEngine.TextureTypes;
 import VulkanEngine.ResourceSystem;
 
 export namespace VulkanEngine::BindlessManager {
@@ -28,6 +29,13 @@ struct BindlessCapacityConfig {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::uint32_t app_capacity = 65536;
     std::uint32_t other_update_after_bind_descriptors = 0;
+    // Descriptors this pool spends on bindings other than the combined-image
+    // array (the GpuTextureInfo storage buffer). Subtracted from the global
+    // update-after-bind budget alongside the other pools so the pool as a whole
+    // stays inside it. `Initialize` raises this to at least 1, since the
+    // metadata binding is always allocated; the default 0 keeps the standalone
+    // ComputeBindlessCapacity arithmetic unchanged for direct callers.
+    std::uint32_t own_non_image_descriptors = 0;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
@@ -45,10 +53,11 @@ struct BindlessCapacityLimits {
     const BindlessCapacityConfig& config, const BindlessCapacityLimits& limits) {
     std::uint32_t capacity = config.app_capacity;
     capacity = std::min(capacity, limits.max_combined_image_samplers);
+    const std::uint32_t spent = config.other_update_after_bind_descriptors +
+                                config.own_non_image_descriptors;
     const std::uint32_t pool_budget =
-        limits.max_update_after_bind_in_all_pools > config.other_update_after_bind_descriptors
-            ? limits.max_update_after_bind_in_all_pools -
-                  config.other_update_after_bind_descriptors
+        limits.max_update_after_bind_in_all_pools > spent
+            ? limits.max_update_after_bind_in_all_pools - spent
             : 0U;
     capacity = std::min(capacity, pool_budget);
     // Slot 0 is always available for the fallback.
@@ -120,6 +129,11 @@ public:
 
     [[nodiscard]] vk::DescriptorSetLayout* GetLayout();
     [[nodiscard]] vk::DescriptorSet GetDescriptorSet() const;
+    // The per-slot GpuTextureInfo storage buffer (set 0, binding 1). Shaders
+    // read one element per bindless slot; the host keeps it in sync with the
+    // descriptor as slots are written, reserved and released.
+    [[nodiscard]] vk::Buffer GetTextureInfoBuffer() const;
+    [[nodiscard]] const VulkanEngine::Textures::GpuTextureInfo* GetTextureInfo(std::uint32_t slot) const;
     [[nodiscard]] bool IsValid() const { return *descriptor_set_ != nullptr; }
 
 private:
@@ -147,10 +161,19 @@ private:
     void ApplyOp(SlotOp& op);
     void DestroyBinding(VulkanEngine::GpuResources::GpuTexture& binding);
 
+    // Writes one GpuTextureInfo element and publishes the mapped range to the
+    // device. `texture` may be invalid (a released/reserved slot): the element
+    // then describes the fallback that the descriptor points at.
+    void WriteTextureInfo(std::uint32_t slot, const VulkanEngine::GpuResources::GpuTexture& texture);
+
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     std::unique_ptr<vk::raii::DescriptorSetLayout> layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> pool_{};
     vk::raii::DescriptorSet descriptor_set_{nullptr};
+
+    // Host-visible per-slot metadata, mirrored to shaders at set 0 binding 1.
+    std::unique_ptr<VulkanEngine::GpuResources::GpuBuffer> texture_info_buffer_{};
+    VulkanEngine::Textures::GpuTextureInfo* mapped_texture_info_ = nullptr;
 
     std::vector<Slot> slots_{};
     std::vector<std::uint32_t> free_slots_{};   // LIFO free list, slot 0 excluded

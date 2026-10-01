@@ -17,4 +17,5 @@ add_executable(engine_tests
   gpu_stats_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
+target_include_directories(engine_tests PRIVATE ${TEST_SUPPORT_DIR})
 setup_test_target(engine_tests)

@@ -58,56 +58,75 @@ using KtxTexturePtr = std::unique_ptr<ktxTexture, KtxTextureDeleter>;
     return level == 0 ? base : std::max<std::uint32_t>(1u, base >> level);
 }
 
-// KHR_DF parse: sample count, distinct data channels, alpha presence. Layout:
-// two u32 header words, then a u32 word whose low byte is the color model and
-// whose third byte is the descriptor block size, followed by 16-byte samples.
+// KHR_DF parse: sample count, distinct data channels, alpha presence.
+//
+// `ktxTexture2::pDfd` points at the whole data format descriptor, whose first
+// word is `dfdTotalSize`; the basic descriptor block (BDB) starts one word
+// later. Within the BDB: word 1 holds the descriptor block size in bytes (upper
+// 16 bits), word 2 holds the color model in the low byte, and the 16-byte
+// samples start at word 6 (KHR_DF_WORD_SAMPLESTART). Reading pDfd as if it were
+// the BDB yields blockSize=0 and model=0 for every texture, which silently
+// zeroed source_channels (and so disabled the resolver's channel-model rules).
 struct DfdInfo {
     std::uint8_t channels{0};
     bool alpha{false};
     bool hdr{false};
 };
 
+// KHR_DF color models (KHR/khr_df.h).
+constexpr std::uint8_t kDfModelUASTC = 166U;
+// KHR_DF_CHANNEL_RGBSDA_ALPHA.
+constexpr std::uint8_t kDfChannelAlpha = 15U;
+
+[[nodiscard]] std::uint8_t DfdChannelId(const std::uint32_t* sample) {
+    return static_cast<std::uint8_t>((sample[0] >> 24U) & 0xFU);
+}
+
+// Channel count comes from libktx: the DFD channel model is format-specific
+// (RGBSDA ids for uncompressed, RRR/RG/RRRG/RGBA for UASTC, RRR/GGG/AAA for
+// ETC1S), and libktx already decodes it. The plan's format rules key off the
+// independent-channel count (2 -> BC5, 1 data -> BC4), so this is the resolver's
+// rule-5 input and must not be approximated from the sample count.
 [[nodiscard]] DfdInfo ParseDfd(const ktxTexture2* texture2) {
     DfdInfo info{};
     if (texture2->pDfd == nullptr) {
         return info;
     }
-    const std::uint32_t block_size = texture2->pDfd[1] >> 16U;
-    const std::uint8_t color_model = static_cast<std::uint8_t>(texture2->pDfd[2] & 0xFFU);
-    if (block_size < 16U) {
+    const std::uint32_t* bdb = texture2->pDfd + 1;
+    const std::uint32_t block_size = bdb[1] >> 16U;
+    const std::uint8_t color_model = static_cast<std::uint8_t>(bdb[2] & 0xFFU);
+    if (block_size < 24U) {
         return info;
     }
-    const std::size_t sample_count = (block_size - 16U) / 16U;
+    // Samples begin after the 6-word BDB preamble (KHR_DF_WORD_SAMPLESTART).
+    const std::size_t sample_count = (block_size - 24U) / 16U;
     if (sample_count == 0U || sample_count > 8U) {
         return info;
     }
+    const std::uint32_t* samples = texture2->pDfd + 1 + 6;
 
+    // ETC1S encodes its second channel in the second sample, whose channel id is
+    // 15 (AAA) exactly when the encoded texture carries alpha, so one scan over
+    // the sample channel ids covers every model.
     bool alpha = false;
-    std::uint8_t max_channel = 0;
     for (std::size_t i = 0; i < sample_count; ++i) {
-        const std::uint32_t* sample = texture2->pDfd + 4 + i * 4;
-        const std::uint8_t channel = static_cast<std::uint8_t>((sample[0] >> 24U) & 0xFU);
-        if (channel == 15U) {
-            alpha = true; // KHR_DF_CHANNEL_RGBSDA_ALPHA
-        } else {
-            max_channel = std::max(max_channel, channel);
-        }
-    }
-    // ETC1S stores alpha inside the second sample's channel flags.
-    if (color_model == 160U && sample_count == 2 && !alpha) {
-        const std::uint32_t* second = texture2->pDfd + 4 + 4;
-        if ((second[0] >> 28U) != 0U) {
+        if (DfdChannelId(samples + i * 4) == kDfChannelAlpha) {
             alpha = true;
+            break;
         }
     }
 
-    info.alpha = alpha;
-    info.channels = sample_count == 1U ? 1U : sample_count == 2U ? 2U : (alpha ? 4U : 3U);
-    // UASTC HDR stores float16 samples (bitLength 15, i.e. 16 bits - 1).
-    if (color_model == 166U && sample_count > 0U) {
-        const std::uint32_t* first = texture2->pDfd + 4;
-        const std::uint8_t bit_length = static_cast<std::uint8_t>((first[0] >> 16U) & 0xFFU);
-        info.hdr = bit_length > 8U;
+    const ktx_uint32_t components = ktxTexture2_GetNumComponents(
+        const_cast<ktxTexture2*>(texture2));
+    info.channels = static_cast<std::uint8_t>(std::clamp<ktx_uint32_t>(components, 1U, 4U));
+    info.alpha = alpha || info.channels == 4U;
+    // UASTC HDR stores float16 samples, whose DFD bitLength is 15 (16 bits - 1).
+    // A block-compressed LDR sample reports bitLength 127 instead (128-bit
+    // block), so "> 8" wrongly classified every LDR UASTC texture as HDR and
+    // routed it to R16G16B16A16_SFLOAT. Match the HDR width exactly.
+    if (color_model == kDfModelUASTC) {
+        const std::uint8_t bit_length = static_cast<std::uint8_t>((samples[0] >> 16U) & 0xFFU);
+        info.hdr = bit_length == 15U;
     }
     return info;
 }

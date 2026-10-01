@@ -9,7 +9,10 @@ import std;
 import vulkan_hpp;
 import FileLoader.Types;
 import VulkanEngine.TextureTypes;
+import VulkanEngine.TextureFormat;
 import VulkanEngine.FileLoaders.TextureLoaders;
+
+#include "test_ktx_fixtures.hpp"
 
 namespace {
 
@@ -230,6 +233,116 @@ TEST(TextureLoaderSubresourceTest, PngGetsAFullCpuMipChain) {
     EXPECT_EQ(data.subresources[2].size, 4u);
     EXPECT_EQ(data.subresources[2].width, 1u);
     EXPECT_EQ(data.subresources[2].height, 1u);
+}
+
+// ── DFD channel model (regression) ───────────────────────────────────
+//
+// The loader feeds source_channels to the upload-format resolver, whose rule 5
+// picks BC5 for two independent channels and BC4 for one data channel. Those
+// rules are only reachable if the DFD is parsed correctly: ktxTexture2::pDfd
+// points at the whole descriptor, whose first word is dfdTotalSize, so the basic
+// descriptor block starts one word later. Reading pDfd as the BDB returned
+// blockSize=0 for every texture, silently reporting zero channels.
+
+[[nodiscard]] TextureData LoadBasisFixture(std::uint32_t channels) {
+    // Alpha varies only for the RGBA case: libktx drops a constant alpha channel.
+    const auto pixels = TestSupport::MakeTestImage(16, 16, /*varied_alpha=*/channels == 4);
+    const auto ktx_basis = TestSupport::MakeBasisUastc(16, 16, 1, pixels, channels);
+    if (ktx_basis.empty()) {
+        return {};
+    }
+    const std::filesystem::path path = "fixture_basis.ktx2";
+    const FileLoader::ByteBuffer buffer(ktx_basis.begin(), ktx_basis.end());
+    TextureData data{};
+    std::string error;
+    if (!VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer(path, buffer, data, &error)) {
+        ADD_FAILURE() << "loader failed: " << error;
+        return {};
+    }
+    return data;
+}
+
+TEST(TextureLoaderSubresourceTest, Rgba8KtxReportsFourChannelsWithAlpha) {
+    const auto pixels = TestSupport::MakeTestImage(8, 8);
+    const auto fixture = TestSupport::MakeKtx2Rgba8(8, 8, 1, pixels);
+    TextureData data{};
+    std::string error;
+    const FileLoader::ByteBuffer buffer(fixture.begin(), fixture.end());
+    ASSERT_TRUE(VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer("fixture.ktx2", buffer,
+                                                                           data, &error)) << error;
+    EXPECT_EQ(data.source_channels, 4u);
+    EXPECT_EQ(data.source_alpha, 1u);
+}
+
+// A Basis fixture stays encoded until transcode, so its subresource table is
+// built by TranscodeBasisToTarget; the DFD-derived channel count is what the
+// loader sets at read time and is what the resolver consumes.
+
+TEST(TextureLoaderSubresourceTest, BasisTwoChannelReportsTwoChannels) {
+    const auto data = LoadBasisFixture(/*channels=*/2);
+    EXPECT_TRUE(data.needs_transcode);
+    EXPECT_EQ(data.source_channels, 2u);
+    EXPECT_EQ(data.source_alpha, 0u);
+}
+
+TEST(TextureLoaderSubresourceTest, BasisOneChannelReportsOneChannel) {
+    const auto data = LoadBasisFixture(/*channels=*/1);
+    EXPECT_TRUE(data.needs_transcode);
+    EXPECT_EQ(data.source_channels, 1u);
+    EXPECT_EQ(data.source_alpha, 0u);
+}
+
+TEST(TextureLoaderSubresourceTest, BasisRgbaReportsFourChannelsWithAlpha) {
+    const auto data = LoadBasisFixture(/*channels=*/4);
+    EXPECT_TRUE(data.needs_transcode);
+    EXPECT_EQ(data.source_channels, 4u);
+    EXPECT_EQ(data.source_alpha, 1u);
+}
+
+TEST(TextureLoaderSubresourceTest, BasisOpaqueRgbReportsThreeChannels) {
+    const auto data = LoadBasisFixture(/*channels=*/3);
+    EXPECT_TRUE(data.needs_transcode);
+    EXPECT_EQ(data.source_channels, 3u);
+    EXPECT_EQ(data.source_alpha, 0u);
+}
+
+// The two-channel count must actually steer the resolver to BC5, which is the
+// reason the channel model exists: rule 5 picks BC5 for two independent
+// channels. A device-free fake capability table stands in for the snapshot.
+TEST(TextureLoaderSubresourceTest, TwoChannelBasisResolvesToBc5) {
+    class AllSupported final : public VulkanEngine::Textures::FormatSupportQuery {
+    public:
+        [[nodiscard]] bool sampled(vk::Format) const override { return true; }
+        [[nodiscard]] bool transfer_dst(vk::Format) const override { return true; }
+        [[nodiscard]] bool linear_filter(vk::Format) const override { return true; }
+        [[nodiscard]] bool color_attachment(vk::Format) const override { return true; }
+    };
+
+    const auto data = LoadBasisFixture(/*channels=*/2);
+    const AllSupported caps;
+    const auto resolved = VulkanEngine::Textures::ResolveUploadFormat(
+        TextureSemantic::Normal, TextureNormalEncoding::Standard, data.source_format,
+        data.needs_transcode, data.source_channels, data.source_alpha != 0,
+        data.is_hdr_source, caps);
+    EXPECT_EQ(resolved.format, vk::Format::eBc5UnormBlock);
+}
+
+TEST(TextureLoaderSubresourceTest, OneChannelDataBasisResolvesToBc4) {
+    class AllSupported final : public VulkanEngine::Textures::FormatSupportQuery {
+    public:
+        [[nodiscard]] bool sampled(vk::Format) const override { return true; }
+        [[nodiscard]] bool transfer_dst(vk::Format) const override { return true; }
+        [[nodiscard]] bool linear_filter(vk::Format) const override { return true; }
+        [[nodiscard]] bool color_attachment(vk::Format) const override { return true; }
+    };
+
+    const auto data = LoadBasisFixture(/*channels=*/1);
+    const AllSupported caps;
+    const auto resolved = VulkanEngine::Textures::ResolveUploadFormat(
+        TextureSemantic::Mask, TextureNormalEncoding::Standard, data.source_format,
+        data.needs_transcode, data.source_channels, data.source_alpha != 0,
+        data.is_hdr_source, caps);
+    EXPECT_EQ(resolved.format, vk::Format::eBc4UnormBlock);
 }
 
 }  // namespace

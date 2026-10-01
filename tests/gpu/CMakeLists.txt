@@ -4,26 +4,61 @@ add_executable(gpu_tests
   shader_watcher_tests.cpp
   gpu_stats_gpu_tests.cpp
   texture_subresource_gpu_tests.cpp
+  texture_render_gpu_tests.cpp
   bindless_slot_gpu_tests.cpp
 )
+find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE
   ${ENGINE_TARGET}
   ${BACKEND_TARGET}
+  KTX::ktx
 )
+target_include_directories(gpu_tests PRIVATE ${TEST_SUPPORT_DIR})
 
 enable_test_support_modules(gpu_tests)
 
-# Headless real-device backend for the texture subresource tests (gpu label).
+# Headless real-device backend + offscreen graphics harness for the texture
+# subresource and render tests (gpu label).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_sources(gpu_tests PRIVATE
     FILE_SET CXX_MODULES
     BASE_DIRS ${TEST_SUPPORT_DIR}
     FILES
       ${TEST_SUPPORT_DIR}/test_vulkan_backend.cppm
+      ${TEST_SUPPORT_DIR}/test_texture_render_harness.cppm
   )
 endif()
 target_sources(gpu_tests PRIVATE
   ${TEST_SUPPORT_DIR}/test_vulkan_backend.cpp
+  ${TEST_SUPPORT_DIR}/test_texture_render_harness.cpp
+)
+
+# Test-only shader: a full-screen triangle supplying the VS->FS interface the
+# real standard_mesh fragment shader declares.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
+include(SlangSpirVCompiler)
+set(_gpu_test_shader_dir "${CMAKE_BINARY_DIR}/generated/shaders/tests/gpu")
+set(_gpu_test_shader_opt "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
+add_slang_shaders(
+  TARGET gpu_test_shaders
+  OUTPUT_DIR ${_gpu_test_shader_dir}
+  NAMESPACE Tests.Gpu
+  SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+  COMPILER ${VKENGINE_SLANG_SPIRV_COMPILER}
+  COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
+  OPT_LEVEL ${_gpu_test_shader_opt}
+  SHADERS
+    test_fullscreen_vs test_fullscreen_vs.slang vertex main
+    test_sample_frag   test_sample_frag.slang   fragment main
+)
+add_dependencies(gpu_tests gpu_test_shaders)
+
+# The harness loads SPIR-V straight from the build tree, exactly as the engine
+# loads its own shaders from config.shader_data_dir.
+get_property(_engine_shader_dir GLOBAL PROPERTY VKENGINE_ENGINE_SHADER_DIR)
+target_compile_definitions(gpu_tests PRIVATE
+  VKENGINE_TEST_SHADER_DIR="${_gpu_test_shader_dir}"
+  VKENGINE_ENGINE_SHADER_DIR="${_engine_shader_dir}"
 )
 
 # `gpu` label: excluded by the default test presets, opt in with the *-gpu

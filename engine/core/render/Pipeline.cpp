@@ -867,10 +867,11 @@ void RenderPipeline::BuildPassPipelines() {
                                         state.name + "': " + product.error().message);
             }
         } else if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Graphics) {
-            state.color_blend_attachment.colorWriteMask =
+            vk::PipelineColorBlendAttachmentState blend_attachment{};
+            blend_attachment.colorWriteMask =
                 vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                 vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-            state.color_blend_attachment.blendEnable = vk::False;
+            blend_attachment.blendEnable = vk::False;
 
             state.graphics_desc = ShaderSystem::GraphicsPipelineDesc{};
             state.graphics_desc.vertex_shader = static_cast<ShaderSystem::ShaderId>(state.request.vertex_shader);
@@ -886,8 +887,7 @@ void RenderPipeline::BuildPassPipelines() {
             state.graphics_desc.rasterization.frontFace = vk::FrontFace::eCounterClockwise;
             state.graphics_desc.rasterization.lineWidth = 1.0f;
             state.graphics_desc.multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
-            state.graphics_desc.color_blend.attachmentCount = 1;
-            state.graphics_desc.color_blend.pAttachments = &state.color_blend_attachment;
+            state.graphics_desc.color_blend_attachments = {blend_attachment};
             state.graphics_desc.dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 
             if (auto product = pipeline_factory_->CreateGraphics(state.graphics_desc, *shader_manager_);

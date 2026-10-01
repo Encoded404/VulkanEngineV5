@@ -21,7 +21,16 @@ struct GraphicsPipelineDesc {
     vk::PipelineRasterizationStateCreateInfo rasterization;
     vk::PipelineMultisampleStateCreateInfo multisample;
     vk::PipelineDepthStencilStateCreateInfo depth_stencil;
-    vk::PipelineColorBlendStateCreateInfo color_blend;
+    // Color-blend attachments are OWNED by the desc, not borrowed from a caller
+    // member. `color_blend.pAttachments` is rebound to this vector at every
+    // PipelineFactory entry (see BindColorBlendAttachments), so a desc may be
+    // stored in any container and moved/copied without dangling — variants may
+    // live in a std::vector that reallocates. Callers populate
+    // color_blend_attachments and leave color_blend's attachmentCount/pAttachments
+    // unset. `color_blend` is mutable so the rebound pointer can be refreshed
+    // through a const desc reference at each creation entry.
+    mutable vk::PipelineColorBlendStateCreateInfo color_blend;
+    std::vector<vk::PipelineColorBlendAttachmentState> color_blend_attachments;
     std::vector<vk::DynamicState> dynamic_states;
 
     vk::PipelineLayout layout;

@@ -152,6 +152,17 @@ namespace {
         }
     }
 
+    // Rebind the desc's owned color-blend attachments onto color_blend. A desc
+    // may have been copied or moved into any container since it was populated;
+    // the pAttachments pointer must always point at the desc's own vector, never
+    // at a caller member. Idempotent, so every PipelineFactory entry calls it.
+    void BindColorBlendAttachments(const GraphicsPipelineDesc& desc) {
+        desc.color_blend.attachmentCount =
+            static_cast<std::uint32_t>(desc.color_blend_attachments.size());
+        desc.color_blend.pAttachments =
+            desc.color_blend_attachments.empty() ? nullptr : desc.color_blend_attachments.data();
+    }
+
     // One-line, log-friendly summary of the pipeline state a driver would reject.
     std::string Describe(const GraphicsPipelineDesc& d) {
         std::string color_formats;
@@ -390,6 +401,9 @@ void PipelineFactory::DisableGplForRun(std::string_view reason) const {
 std::expected<PipelineProduct, PipelineError>
 PipelineFactory::CreateGraphics(const GraphicsPipelineDesc& desc,
                                   ShaderManager& shaders) const {
+    // The desc owns its attachments; refresh the pointer before anything reads
+    // the blend state or hashes it for the GPL cache key.
+    BindColorBlendAttachments(desc);
     const bool runtime_disabled = gpl_runtime_disabled_.load(std::memory_order_relaxed);
     try {
         if (gpl_available_ && !runtime_disabled) {

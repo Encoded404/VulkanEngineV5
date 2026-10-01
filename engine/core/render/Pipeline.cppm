@@ -303,8 +303,8 @@ private:
             bool valid = false;
         };
         std::vector<std::vector<DescriptorBindingState>> last_written{};
-        // Stable storage for pointer-bearing desc fields (hot reload reuses it).
-        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        // The desc owns its color-blend attachments (PipelineFactory rebinds
+        // pAttachments at each entry), so hot reload reuses it safely.
         ShaderSystem::GraphicsPipelineDesc graphics_desc{};
         ShaderSystem::ComputePipelineDesc compute_desc{};
     };

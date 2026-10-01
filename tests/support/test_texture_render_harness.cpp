@@ -157,7 +157,8 @@ bool TextureRenderHarness::CreatePipeline() {
         vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f);
     desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, vk::SampleCountFlagBits::e1);
     desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, vk::False, vk::False, vk::CompareOp::eAlways);
-    desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, vk::False, vk::LogicOp::eCopy, blend);
+    desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, vk::False, vk::LogicOp::eCopy, 0, nullptr);
+    desc.color_blend_attachments = {blend};
     desc.dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     desc.layout = **pipeline_layout_;
     desc.color_formats = {vk::Format::eR8G8B8A8Unorm};

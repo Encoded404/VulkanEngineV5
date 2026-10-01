@@ -236,11 +236,11 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         vert_id_ = vert_id;
         frag_id_ = frag_id;
 
-        color_blend_attachment_ = vk::PipelineColorBlendAttachmentState(
+        pipeline_desc_.color_blend_attachments = {vk::PipelineColorBlendAttachmentState(
             config.blend_enable,
             config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
             config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
-            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)};
 
         pipeline_desc_.vertex_shader = vert_id;
         pipeline_desc_.fragment_shader = frag_id;
@@ -250,7 +250,9 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         pipeline_desc_.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
         pipeline_desc_.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
         pipeline_desc_.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
-        pipeline_desc_.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, color_blend_attachment_);
+        // Attachment pointer/count are rebound by PipelineFactory from the
+        // desc's owned color_blend_attachments vector; do not borrow a member.
+        pipeline_desc_.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, 0, nullptr);
         pipeline_desc_.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         pipeline_desc_.layout = *pipeline_layout_;
         pipeline_desc_.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };

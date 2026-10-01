@@ -261,7 +261,6 @@ struct PhysicalCameraSystem::Impl {
     std::unique_ptr<vk::raii::PipelineLayout> composite_pipeline_layout{};
     ShaderSystem::PipelineSlot composite_slot{};
     std::optional<ShaderSystem::GraphicsPipelineDesc> composite_desc{};
-    vk::PipelineColorBlendAttachmentState composite_blend_attach{};
 
     // Helpers (defined below)
     static CameraStream* FindStream(Impl& impl, const PhysicalCameraHandle& handle);
@@ -377,14 +376,15 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *impl->composite_pipeline_layout,
                                                "physical-camera-composite-layout");
 
-    impl->composite_blend_attach.blendEnable = vk::True;
-    impl->composite_blend_attach.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
-    impl->composite_blend_attach.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
-    impl->composite_blend_attach.colorBlendOp = vk::BlendOp::eAdd;
-    impl->composite_blend_attach.srcAlphaBlendFactor = vk::BlendFactor::eOne;
-    impl->composite_blend_attach.dstAlphaBlendFactor = vk::BlendFactor::eZero;
-    impl->composite_blend_attach.alphaBlendOp = vk::BlendOp::eAdd;
-    impl->composite_blend_attach.colorWriteMask =
+    vk::PipelineColorBlendAttachmentState composite_blend_attach{};
+    composite_blend_attach.blendEnable = vk::True;
+    composite_blend_attach.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+    composite_blend_attach.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    composite_blend_attach.colorBlendOp = vk::BlendOp::eAdd;
+    composite_blend_attach.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+    composite_blend_attach.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+    composite_blend_attach.alphaBlendOp = vk::BlendOp::eAdd;
+    composite_blend_attach.colorWriteMask =
         vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
@@ -402,8 +402,8 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
     desc.rasterization = rs;
     desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, vk::SampleCountFlagBits::e1);
     desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, false, false, vk::CompareOp::eLess);
-    desc.color_blend = vk::PipelineColorBlendStateCreateInfo(
-        {}, false, vk::LogicOp::eCopy, 1, &impl->composite_blend_attach);
+    desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, 0, nullptr);
+    desc.color_blend_attachments = {composite_blend_attach};
     desc.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
     desc.layout = *impl->composite_pipeline_layout;
     desc.color_formats = { vk::Format::eR8G8B8A8Unorm };

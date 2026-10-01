@@ -2,6 +2,7 @@ add_executable(engine_tests
   input_system_tests.cpp
   resource_system_texture_tests.cpp
   texture_format_tests.cpp
+  texture_upload_scheduler_tests.cpp
   texture_loader_subresource_tests.cpp
   normal_encoding_material_tests.cpp
   frame_ring_tests.cpp

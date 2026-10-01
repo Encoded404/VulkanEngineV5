@@ -241,6 +241,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/NormalEncoding.cppm
             assets/TextureTypes.cppm
             assets/TextureFormat.cppm
+            assets/TextureUploadScheduler.cppm
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
             bootstrap/Startup.cppm

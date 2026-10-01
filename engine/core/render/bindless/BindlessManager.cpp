@@ -102,22 +102,53 @@ bool BindlessManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
     descriptor_set_ = std::move(sets[0]);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, descriptor_set_, "bindless-descriptor-set");
 
-    LOGIFACE_LOG(debug, "BindlessManager initialized with unbounded texture array");
+    LOGIFACE_LOG(debug, "BindlessManager initialized; slot 0 reserved for the fallback");
     return true;
 }
 
 void BindlessManager::Shutdown() {
     // Destroy descriptor set before pool (it references the pool)
     descriptor_set_ = vk::raii::DescriptorSet{nullptr};
+    // Release the textures (their GpuTexture destructors free heap records;
+    // the image heap outlives this manager per the EngineBootstrap teardown
+    // ordering).
+    textures_.clear();
+    texture_ids_.clear();
     pool_.reset();
     layout_.reset();
     backend_ = nullptr;
-    next_slot_ = 0;
-    texture_ids_.clear();
+    next_slot_ = kFallbackSlot;
+    fallback_ready_ = false;
+}
+
+// Slot 0 is the permanent fallback. Its texture stays alive for the
+// manager's lifetime (never released, never reused) and its descriptor is
+// written before any allocation, so a slot reserved by a later commit can
+// point here while its real image is still uploading.
+void BindlessManager::SetFallback(VulkanEngine::GpuResources::GpuTexture texture,
+                                  const VulkanEngine::ResourceId& id) {
+    if (!backend_ || fallback_ready_) {
+        return;
+    }
+    textures_.resize(kFallbackSlot + 1);
+    texture_ids_.resize(kFallbackSlot + 1);
+    textures_[kFallbackSlot] = std::move(texture);
+    texture_ids_[kFallbackSlot] = id;
+    UpdateSlot(kFallbackSlot, textures_[kFallbackSlot]);
+    fallback_ready_ = true;
+    LOGIFACE_LOG(debug, "BindlessManager: fallback texture bound at slot " +
+                            std::to_string(kFallbackSlot) + " ('" + id.value + "')");
 }
 
 uint32_t BindlessManager::AllocateTextureSlot(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id) {
-    const std::uint32_t slot = next_slot_++;
+    if (!fallback_ready_) {
+        LOGIFACE_LOG(error, "BindlessManager: AllocateTextureSlot before SetFallback is a bug; texture '"
+                                + id.value + "' rejected");
+        return kFallbackSlot;
+    }
+    // Allocation starts at 1; slot 0 is the permanently-bound fallback.
+    const std::uint32_t slot = std::max<std::uint32_t>(next_slot_, kFallbackSlot + 1U);
+    next_slot_ = slot + 1U;
     if (slot >= textures_.size()) {
         textures_.resize(slot + 1);
         texture_ids_.resize(slot + 1);
@@ -143,8 +174,8 @@ void BindlessManager::UpdateSlot(std::uint32_t slot, const VulkanEngine::GpuReso
     if (!backend_ || *descriptor_set_ == nullptr) return;
 
     vk::DescriptorImageInfo image_info{};
-    image_info.sampler = *texture.GetSampler();
-    image_info.imageView = *texture.GetImageView();
+    image_info.sampler = texture.GetSampler();
+    image_info.imageView = texture.GetImageView();
     image_info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
     vk::WriteDescriptorSet write{};

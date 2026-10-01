@@ -39,8 +39,13 @@ import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.ShaderWatcher;
+import VulkanEngine.TextureTypes;
+import VulkanEngine.TextureFormat;
 
 export namespace VulkanEngine {
+using VulkanEngine::Textures::TextureSemantic;
+using VulkanEngine::Textures::TextureNormalEncoding;
+using VulkanEngine::Textures::SamplerDesc;
 
 class GameEngine {
 public:
@@ -51,8 +56,14 @@ public:
 
     bool Setup(VulkanEngine::Application::ApplicationContext& ctx, const GameConfig& config);
 
-    std::uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path);
-
+    // Loads and uploads a texture. The semantic and normal encoding are
+    // declared content (no default; Unknown resolves to _UNORM with a one-time
+    // warning), and the sampler is clamped to device limits at upload.
+    std::uint32_t LoadTexture(VulkanEngine::Application::ApplicationContext& ctx,
+                              const std::filesystem::path& path,
+                              TextureSemantic semantic,
+                              TextureNormalEncoding normal_encoding,
+                              const SamplerDesc& sampler);
     bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
                       ShaderSystem::ShaderId vert_id = 0,
                       ShaderSystem::ShaderId frag_id = 0,
@@ -111,7 +122,11 @@ public:
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
     bool IsInitialized() const { return initialized_; }
     void MarkSceneValid() { scene_valid_ = true; }
-    std::uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex);
+    std::uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx,
+                                          TextureResource* tex,
+                                          TextureSemantic semantic,
+                                          TextureNormalEncoding normal_encoding,
+                                          const SamplerDesc& sampler);
 
     // ── App shader hot-reload registration ──
     // The watcher is started during Setup() with the engine shader directories.

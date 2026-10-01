@@ -242,6 +242,7 @@ struct PhysicalCameraSystem::Impl {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::IVulkanBootstrap* backend = nullptr;
     VulkanEngine::BindlessManager::BindlessManager* bindless = nullptr;
+    VulkanEngine::GpuResources::GpuImageHeap* image_heap = nullptr;
     ShaderSystem::ShaderManager* shader_manager = nullptr;
     ShaderSystem::PipelineFactory* pipeline_factory = nullptr;
 
@@ -343,6 +344,7 @@ PhysicalCameraSystem::~PhysicalCameraSystem() {
 
 bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                       VulkanEngine::BindlessManager::BindlessManager& bindless,
+                                      VulkanEngine::GpuResources::GpuImageHeap& image_heap,
                                       ShaderSystem::ShaderManager& shader_manager,
                                       ShaderSystem::PipelineFactory& pipeline_factory,
                                       ShaderSystem::ShaderId composite_vert_id,
@@ -352,6 +354,7 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
     auto impl = std::make_unique<Impl>();
     impl->backend = &backend;
     impl->bindless = &bindless;
+    impl->image_heap = &image_heap;
     impl->shader_manager = &shader_manager;
     impl->pipeline_factory = &pipeline_factory;
     impl->composite_vert_id = composite_vert_id;
@@ -624,7 +627,7 @@ PhysicalCameraHandle PhysicalCameraSystem::Open(std::uint32_t device_index,
         bool gpu_ok = true;
         for (const auto& spec : specs) {
             auto texture = VulkanEngine::GpuResources::GpuTexture::CreateStream(
-                *impl_->backend, spec.width, spec.height, spec.format,
+                *impl_->backend, *impl_->image_heap, spec.width, spec.height, spec.format,
                 gpu_format == PhysicalCameraPixelFormat::Xrgb8888);
             if (!texture.IsValid()) {
                 gpu_ok = false;
@@ -727,7 +730,7 @@ PhysicalCameraTargetId PhysicalCameraSystem::CreateTarget(std::uint32_t width, s
     if (width == 0 || height == 0) return {};
 
     auto texture = VulkanEngine::GpuResources::GpuTexture::CreateColorTarget(
-        *impl_->backend, width, height);
+        *impl_->backend, *impl_->image_heap, width, height);
     if (!texture.IsValid()) return {};
 
     std::uint32_t target_index = 0;
@@ -912,7 +915,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
             for (const auto slot : stream.source_slots) {
                 const auto* gpu_tex = impl_->bindless->GetTexture(slot);
                 if (gpu_tex == nullptr) continue;
-                TransitionLayout(cmd, static_cast<vk::Image>(*gpu_tex->GetImage()),
+                TransitionLayout(cmd, gpu_tex->GetImage(),
                                  stream.source_layout, to_dst_layout,
                                  vk::PipelineStageFlagBits::eFragmentShader,
                                  vk::AccessFlagBits::eShaderRead,
@@ -935,7 +938,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
                 vk::ImageAspectFlagBits::eColor, 0, 0, 1);
             region.imageOffset = vk::Offset3D{0, 0, 0};
             region.imageExtent = vk::Extent3D{spec.width, spec.height, 1};
-            cmd.copyBufferToImage(static_cast<vk::Buffer>(*staging.buffer.GetBuffer()), static_cast<vk::Image>(*gpu_tex->GetImage()),
+            cmd.copyBufferToImage(static_cast<vk::Buffer>(*staging.buffer.GetBuffer()), gpu_tex->GetImage(),
                                   vk::ImageLayout::eTransferDstOptimal, region);
             offset += spec.byte_size;
         }
@@ -944,7 +947,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
         for (const auto slot : stream.source_slots) {
             const auto* gpu_tex = impl_->bindless->GetTexture(slot);
             if (gpu_tex == nullptr) continue;
-            TransitionLayout(cmd, static_cast<vk::Image>(*gpu_tex->GetImage()),
+            TransitionLayout(cmd, gpu_tex->GetImage(),
                              vk::ImageLayout::eTransferDstOptimal, to_read_layout,
                              vk::PipelineStageFlagBits::eTransfer,
                              vk::AccessFlagBits::eTransferWrite,
@@ -991,7 +994,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
         if (gpu_tex == nullptr) continue;
 
         if (target.layout != vk::ImageLayout::eColorAttachmentOptimal) {
-            TransitionLayout(cmd, static_cast<vk::Image>(*gpu_tex->GetImage()),
+            TransitionLayout(cmd, gpu_tex->GetImage(),
                              target.layout, vk::ImageLayout::eColorAttachmentOptimal,
                              vk::PipelineStageFlagBits::eFragmentShader,
                              vk::AccessFlagBits::eShaderRead,
@@ -1006,7 +1009,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
         }
 
         vk::RenderingAttachmentInfo color_attach{};
-        color_attach.imageView = static_cast<vk::ImageView>(*gpu_tex->GetImageView());
+        color_attach.imageView = gpu_tex->GetImageView();
         color_attach.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
         color_attach.loadOp = clear_first ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
         color_attach.storeOp = vk::AttachmentStoreOp::eStore;
@@ -1091,7 +1094,7 @@ void PhysicalCameraSystem::Execute(vk::CommandBuffer cmd, std::uint32_t frame_in
 
         cmd.endRendering();
 
-        TransitionLayout(cmd, static_cast<vk::Image>(*gpu_tex->GetImage()),
+        TransitionLayout(cmd, gpu_tex->GetImage(),
                          vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
                          vk::PipelineStageFlagBits::eColorAttachmentOutput,
                          vk::AccessFlagBits::eColorAttachmentWrite,

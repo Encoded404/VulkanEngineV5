@@ -48,7 +48,9 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     auto& vk_backend = backend.GetBackend();
 
     ctx.missing_texture = DefaultTextureFactory::CreateCheckerboard(ctx.resource_manager);
-    ctx.fallback_handle = ResourceHandle<TextureResource>(ResourceId{"checkerboard_default"}, &ctx.resource_manager);
+    // The checkerboard must be registered so ctx.fallback_handle resolves
+    // (ResourceHandle::IsValid is a manager lookup, not a truthiness check).
+    ctx.fallback_handle = ctx.resource_manager.Register(ctx.missing_texture);
 
     ctx.bindless_mgr = std::make_unique<BindlessManager::BindlessManager>();
     if (!ctx.bindless_mgr->Initialize(vk_backend)) {
@@ -103,7 +105,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 #ifdef VKENGINE_PHYSICAL_CAMERA
     if (config.enable_physical_camera) {
         ctx.physical_camera = std::make_unique<PhysicalCamera::PhysicalCameraSystem>();
-        if (!ctx.physical_camera->Initialize(vk_backend, *ctx.bindless_mgr,
+        if (!ctx.physical_camera->Initialize(vk_backend, *ctx.bindless_mgr, ctx.image_heap,
                                               *ctx.shader_manager, *ctx.pipeline_factory,
                                               ctx.shader_ids.physical_camera_composite_vert,
                                               ctx.shader_ids.physical_camera_composite_frag)) {

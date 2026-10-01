@@ -1,5 +1,6 @@
 module;
 
+#include <filesystem>
 #include <logging/logging_macros.hpp>
 
 module VulkanEngine.SceneLoader;

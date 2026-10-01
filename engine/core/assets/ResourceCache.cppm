@@ -405,6 +405,22 @@ struct ResourceId {
             return type_it->second.contains(resource_id.value);
         }
 
+        // Registers an already-built resource under its own id so handles made
+        // from ResourceId{manager} resolve (the checkerboard fallback never
+        // comes from a file, so LoadFromFile cannot produce it). Overwrites any
+        // prior registration of the same id.
+        template<typename T>
+        ResourceHandle<T> Register(const std::shared_ptr<T>& resource) {
+            static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+            auto type_idx = std::type_index(typeid(T));
+            {
+                std::unique_lock<std::shared_mutex> const wlock(mutex_);
+                resources_[type_idx][resource->GetId().value] = std::static_pointer_cast<Resource>(resource);
+                refCounts_[type_idx][resource->GetId().value].resource = std::static_pointer_cast<Resource>(resource);
+            }
+            return ResourceHandle<T>(resource->GetId(), this);
+        }
+
         void Release(const ResourceId& resource_id);
 
         void UnloadAll();

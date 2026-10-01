@@ -16,8 +16,32 @@ import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderWatcher;
 import VulkanShared.Storage;
 import VulkanShared.UserPaths;
+import VulkanEngine.TextureTypes;
+import VulkanEngine.TextureFormat;
+import VulkanEngine.FileLoaders.TextureLoaders;
+import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace VulkanEngine {
+
+namespace {
+
+// Adapter: the pure resolver consults the backend's immutable capability
+// snapshot through this interface; no device handle is exposed to assets.
+class BackendFormatSupportQuery final : public VulkanEngine::Textures::FormatSupportQuery {
+public:
+    explicit BackendFormatSupportQuery(const VulkanBackend::Vulkan::VulkanCapabilities& caps)
+        : caps_(caps.GetFormatCapabilities()) {}
+
+    [[nodiscard]] bool sampled(vk::Format format) const override { return caps_.sampled(format); }
+    [[nodiscard]] bool transfer_dst(vk::Format format) const override { return caps_.transfer_dst(format); }
+    [[nodiscard]] bool linear_filter(vk::Format format) const override { return caps_.linear_filter(format); }
+    [[nodiscard]] bool color_attachment(vk::Format format) const override { return caps_.color_attachment(format); }
+
+private:
+    const VulkanBackend::Vulkan::FormatCapabilities& caps_;
+};
+
+} // namespace
 
 GameEngine::~GameEngine() {
     if (initialized_) {
@@ -71,27 +95,64 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     return true;
 }
 
-uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx, TextureResource* tex) {
-    if (!tex || !tex->HasPixels()) return 0;
-    auto gpu_tex = GpuResources::GpuTexture::CreateFromPixels(
-        ctx.bootstrap->GetBackend(),
-        reinterpret_cast<const uint8_t*>(tex->GetPixels().data()),
-        tex->GetWidth(), tex->GetHeight());
+uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx,
+                                             TextureResource* tex,
+                                             TextureSemantic semantic,
+                                             TextureNormalEncoding normal_encoding,
+                                             const SamplerDesc& sampler) {
+    // 0 is the permanently-bound fallback slot; a failure maps to it.
+    if (!tex || !tex->HasData() || tex->GetId().value == ctx_.fallback_handle.GetId().value) {
+        return BindlessManager::kFallbackSlot;
+    }
+    const auto& data = tex->GetData();
+
+    const BackendFormatSupportQuery query(ctx.bootstrap->GetBackend().GetCapabilities());
+    const auto resolved = VulkanEngine::Textures::ResolveUploadFormat(
+        semantic, normal_encoding, data.source_format, data.needs_transcode,
+        data.source_channels, data.source_alpha != 0, data.is_hdr_source, query);
+    if (resolved.format == vk::Format::eUndefined) {
+        LOGIFACE_LOG(warn, "Texture '" + tex->GetId().value + "': no legal upload format "
+                           "(resource id + source format " + std::to_string(static_cast<int>(data.source_format)) +
+                           "); using fallback");
+        return BindlessManager::kFallbackSlot;
+    }
+
+    // Synchronous Basis transcode on the load path; a future async uploader
+    // moves this onto its decode worker.
+    VulkanEngine::Textures::TextureData upload_data = data;
+    if (data.needs_transcode) {
+        std::string error;
+        if (!VulkanEngine::FileLoaders::Textures::TranscodeBasisToTarget(upload_data, resolved.format, &error)) {
+            LOGIFACE_LOG(warn, "Texture '" + tex->GetId().value + "': Basis transcode failed: " + error);
+            return BindlessManager::kFallbackSlot;
+        }
+    }
+
+    auto gpu_tex = GpuResources::GpuTexture::CreateFromTextureData(
+        ctx.bootstrap->GetBackend(), ctx_.image_heap, upload_data, resolved.format, sampler);
     if (gpu_tex.IsValid()) {
         return ctx_.bindless_mgr->AllocateTextureSlot(std::move(gpu_tex), tex->GetId());
     }
     LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId().value + ", using fallback");
-    return 0;
+    return BindlessManager::kFallbackSlot;
 }
 
-uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& ctx, const std::filesystem::path& path) {
+uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& ctx,
+                                 const std::filesystem::path& path,
+                                 TextureSemantic semantic,
+                                 TextureNormalEncoding normal_encoding,
+                                 const SamplerDesc& sampler) {
     auto tex_handle = SceneLoader::LoadTextureFromPath(
         ctx_.resource_manager, path, ctx_.fallback_handle);
-    if (tex_handle.IsValid() && tex_handle->HasPixels()) {
-        return UploadTextureToBindless(ctx, tex_handle.Get());
+    // The fallback resource resolves to (is) the registered checkerboard;
+    // it is already resident at kFallbackSlot, so short-circuit instead of
+    // re-uploading it per failed load.
+    if (tex_handle.IsValid() && tex_handle->HasData()
+        && tex_handle.GetId().value != ctx_.fallback_handle.GetId().value) {
+        return UploadTextureToBindless(ctx, tex_handle.Get(), semantic, normal_encoding, sampler);
     }
     LOGIFACE_LOG(debug, "Failed to load texture from path: " + path.string() + ", using fallback");
-    return 0;
+    return BindlessManager::kFallbackSlot;
 }
 
 bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
@@ -181,8 +242,16 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_mgr);
     }
 
-    // Register fallback material (ID 0): main technique, bindless checkerboard
-    const std::uint32_t fallback_slot = UploadTextureToBindless(ctx, ctx_.missing_texture.get());
+    // Register fallback material (ID 0): main technique, bindless checkerboard.
+    // The checkerboard uploads through the dedicated fallback path landing at
+    // bindless slot 0 (kFallbackSlot), never by allocation order, and its slot
+    // is never released.
+    ctx_.bindless_mgr->SetFallback(
+        GpuResources::GpuTexture::CreateFromTextureData(
+            backend, ctx_.image_heap, ctx_.missing_texture->GetData(),
+            vk::Format::eR8G8B8A8Unorm, SamplerDesc{}),
+        ctx_.missing_texture->GetId());
+    const std::uint32_t fallback_slot = BindlessManager::kFallbackSlot;
     [[maybe_unused]] auto fallback_handle = ctx_.material_mgr.Register<TechniqueManager::DefaultMeshTechnique>(
         MaterialManager::BlendMode::Opaque,
         TechniqueManager::DefaultMeshPerMaterialData{

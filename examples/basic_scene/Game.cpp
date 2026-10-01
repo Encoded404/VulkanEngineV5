@@ -18,6 +18,7 @@ import vulkan_hpp;
 import logiface;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.GplPolicy;
 import Examples.BasicScene.Components.SimpleControllerComponent;
@@ -104,7 +105,11 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     }
 
     // 3. Create a custom material for the viking room
-    const std::uint32_t tex_slot = engine_game_.LoadTexture(ctx, exe_dir_ / "textures" / "viking_room.png");
+    const std::uint32_t tex_slot = engine_game_.LoadTexture(
+        ctx, exe_dir_ / "textures" / "viking_room.png",
+        VulkanEngine::Textures::TextureSemantic::BaseColor,
+        VulkanEngine::Textures::TextureNormalEncoding::Standard,
+        VulkanEngine::Textures::SamplerDesc{});
     constexpr auto viking_blend = VulkanEngine::MaterialManager::BlendMode::Transparent;
 
     constexpr auto pbr_roughness = 0.6f;

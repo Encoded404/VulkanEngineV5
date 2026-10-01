@@ -115,7 +115,9 @@ void WriteTinyJpegTextureToTempFile(const TempTextureFile& temp) {
 }
 
 void ExpectPixelsNear(const std::vector<std::byte>& actual, const std::array<std::uint8_t, 16>& expected, std::uint8_t tolerance) {
-    ASSERT_EQ(actual.size(), expected.size());
+    // The blob may carry a CPU mip chain below the base level; compare the
+    // base level only.
+    ASSERT_GE(actual.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         const auto value = static_cast<int>(actual[i]);
         const auto exp = static_cast<int>(expected[i]);
@@ -175,8 +177,12 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaPng) {
 
     EXPECT_EQ(texture->GetWidth(), 2u);
     EXPECT_EQ(texture->GetHeight(), 2u);
+    // Uncompressed non-KTX sources now carry a full CPU mip chain:
+    // 2x2 base + 1x1 tail.
+    EXPECT_EQ(texture->GetMipLevels(), 2u);
     EXPECT_EQ(texture->GetVkFormat(), vk::Format::eR8G8B8A8Unorm);
     EXPECT_TRUE(texture->HasPixels());
+    EXPECT_EQ(texture->GetPixels().size(), 20u);
 
     const auto expected = Make2x2RgbaPixels();
     ExpectPixelsNear(texture->GetPixels(), expected, 0);
@@ -207,7 +213,9 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaJpeg) {
     EXPECT_EQ(texture->GetHeight(), 2u);
     EXPECT_EQ(texture->GetVkFormat(), vk::Format::eR8G8B8A8Unorm);
     EXPECT_TRUE(texture->HasPixels());
-    EXPECT_EQ(texture->GetPixels().size(), 16u);
+    // 2x2 base + 1x1 tail mip.
+    EXPECT_EQ(texture->GetPixels().size(), 20u);
+    EXPECT_EQ(texture->GetMipLevels(), 2u);
 
     const std::array<std::uint8_t, 16> expected{
         64, 128, 224, 255,

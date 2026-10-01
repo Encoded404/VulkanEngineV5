@@ -208,8 +208,8 @@ void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
     }
 
     vk::DescriptorImageInfo image_info{};
-    image_info.sampler = *texture.GetSampler();
-    image_info.imageView = *texture.GetImageView();
+    image_info.sampler = texture.GetSampler();
+    image_info.imageView = texture.GetImageView();
     image_info.imageLayout = layout;
 
     vk::WriteDescriptorSet write{};

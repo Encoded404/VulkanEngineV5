@@ -9,52 +9,41 @@ import FileLoader.Types;
 
 import vulkan_hpp;
 
+import VulkanEngine.TextureTypes;
+
 export namespace VulkanEngine::FileLoaders::Textures {
 
-struct AlphaAnalysis {
-    bool hasAlphaChannel = false; //NOLINT(misc-non-private-member-variables-in-classes)
-    bool hasFractionalAlpha = false; //NOLINT(misc-non-private-member-variables-in-classes)
-    bool hasZeroAlpha = false; //NOLINT(misc-non-private-member-variables-in-classes)
-    float opaqueCoverage = 1.0f; //NOLINT(misc-non-private-member-variables-in-classes)
-};
+using VulkanEngine::Textures::AlphaAnalysis;
+using VulkanEngine::Textures::TextureData;
 
+// Alpha statistics over packed RGBA8 pixels (base level).
 [[nodiscard]] AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels);
 
-struct TextureData {
-    std::uint32_t width = 0; //NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t height = 0; //NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t mip_levels = 1; //NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t layer_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
-    std::uint32_t face_count = 1; //NOLINT(misc-non-private-member-variables-in-classes)
-    vk::Format vk_format = vk::Format::eUndefined; //NOLINT(misc-non-private-member-variables-in-classes)
-    AlphaAnalysis alpha_analysis{}; //NOLINT(misc-non-private-member-variables-in-classes)
-    std::vector<std::byte> pixels{}; //NOLINT(misc-non-private-member-variables-in-classes)
-
-    void Reset() noexcept {
-        width = 0;
-        height = 0;
-        mip_levels = 1;
-        layer_count = 1;
-        face_count = 1;
-        vk_format = vk::Format::eUndefined;
-        alpha_analysis = {};
-        pixels.clear();
-    }
-};
-
+// Full-chain PNG/JPG: decodes to RGBA8 and emits a complete CPU mip chain
+// (compressed chains come from assets; uncompressed non-KTX sources get CPU
+// chains from the loader until an async decode worker owns them).
 [[nodiscard]] bool LoadKtxTextureFromBuffer(const std::filesystem::path& path,
-                                            const ::FileLoader::ByteBuffer& buffer,
-                                            TextureData& out,
-                                            std::string* error_message = nullptr);
+                                             const ::FileLoader::ByteBuffer& buffer,
+                                             TextureData& out,
+                                             std::string* error_message = nullptr);
 
 [[nodiscard]] bool LoadStbTextureFromBuffer(const std::filesystem::path& path,
-                                           const ::FileLoader::ByteBuffer& buffer,
-                                           TextureData& out,
-                                           std::string* error_message = nullptr);
+                                             const ::FileLoader::ByteBuffer& buffer,
+                                             TextureData& out,
+                                             std::string* error_message = nullptr);
 
 [[nodiscard]] bool LoadTextureFromBuffer(const std::filesystem::path& path,
-                                         const ::FileLoader::ByteBuffer& buffer,
-                                         TextureData& out,
-                                         std::string* error_message = nullptr);
+                                          const ::FileLoader::ByteBuffer& buffer,
+                                          TextureData& out,
+                                          std::string* error_message = nullptr);
+
+// Transcodes a Basis KTX2 payload (loaded by LoadKtxTextureFromBuffer with
+// needs_transcode set) to `target_format` on the caller's thread. Synchronous
+// load-path step; an async decode worker owns this once it exists. The payload
+// is re-parsed from data.blob, transcoded via libktx, and `data` is rewritten
+// with the transcoded subresource table (needs_transcode cleared).
+[[nodiscard]] bool TranscodeBasisToTarget(TextureData& data,
+                                           vk::Format target_format,
+                                           std::string* error_message = nullptr);
 
 }  // namespace VulkanEngine::FileLoaders::Textures

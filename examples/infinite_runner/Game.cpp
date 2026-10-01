@@ -14,6 +14,7 @@ import std;
 import logiface;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.Components.MaterialOverride;
@@ -252,7 +253,11 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const auto make_material = [&](const std::array<std::uint8_t, 4>& rgba,
                                    const float roughness) {
         auto texture = VulkanEngine::DefaultTextureFactory::CreateSolidColorTexture(resource_mgr, rgba);
-        const std::uint32_t slot = engine_game_.UploadTextureToBindless(ctx, texture.get());
+        const std::uint32_t slot = engine_game_.UploadTextureToBindless(
+            ctx, texture.get(),
+            VulkanEngine::Textures::TextureSemantic::BaseColor,
+            VulkanEngine::Textures::TextureNormalEncoding::Standard,
+            VulkanEngine::Textures::SamplerDesc{});
         textures_.push_back(std::move(texture));
 
         auto handle = material_mgr.Register<VulkanEngine::TechniqueManager::DefaultMeshTechnique>(

@@ -5,6 +5,7 @@ add_executable(gpu_tests
   gpu_stats_gpu_tests.cpp
   texture_subresource_gpu_tests.cpp
   texture_render_gpu_tests.cpp
+  normal_mapping_gpu_tests.cpp
   bindless_slot_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)

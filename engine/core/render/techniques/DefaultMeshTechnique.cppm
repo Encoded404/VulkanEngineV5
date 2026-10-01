@@ -11,6 +11,7 @@ import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
+import VulkanEngine.TextureTypes;
 
 export namespace VulkanEngine::TechniqueManager {
 
@@ -41,6 +42,16 @@ static_assert(std::is_trivially_copyable_v<DefaultMeshPerMaterialData>);
 constexpr std::uint32_t kNormalEncodingMask = 0x3u;
 constexpr std::uint32_t kAlphaMaskFlag = 1u << 2;
 constexpr std::uint32_t kHasTransformFlag = 1u << 3;
+
+// Packs the declared TextureNormalEncoding into the material's flags bits 0..1.
+// The encoding is content the author/importer declares; the shader reads it to
+// pick the decode path. The enum values are contiguous from zero, so this is a
+// plain masked cast. Use it wherever a material is authored, so a writer can
+// never set an out-of-range encoding into the reserved bits.
+[[nodiscard]] constexpr std::uint32_t PackNormalEncoding(
+    const VulkanEngine::Textures::TextureNormalEncoding encoding) {
+    return static_cast<std::uint32_t>(encoding) & kNormalEncodingMask;
+}
 
 class DefaultMeshTechnique final : public BaseTechnique {
 public:

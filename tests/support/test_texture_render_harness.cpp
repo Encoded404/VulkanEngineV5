@@ -19,6 +19,7 @@ import VulkanBackend.Vulkan.VulkanCapabilities;
 import VulkanBackend.Vulkan.MemoryUtils;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
+import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.GpuImageHeap;
 import VulkanEngine.GpuTexture;
 import TestSupport.HeadlessVulkanBackend;
@@ -27,8 +28,35 @@ namespace TestSupport {
 
 namespace {
 
-// One bindless slot: the albedo being sampled.
-constexpr std::uint32_t kBindlessSlots = 1;
+// Bindless descriptor array size for the harness. Slot 0 is the sampled/albebdo
+// texture, slot 1 the normal map, slot 2 the ORM map; unused slots alias the
+// albedo view so no descriptor is left unwritten.
+constexpr std::uint32_t kBindlessSlots = 3;
+constexpr float kCameraZ = 10.0f;
+
+std::unique_ptr<vk::raii::Buffer> CreateHostBuffer(const vk::raii::Device& device,
+                                                   const vk::PhysicalDevice& physical,
+                                                   vk::DeviceSize size,
+                                                   std::unique_ptr<vk::raii::DeviceMemory>& out_memory) {
+    const vk::BufferCreateInfo info({}, size, vk::BufferUsageFlagBits::eStorageBuffer);
+    auto buffer = std::make_unique<vk::raii::Buffer>(device, info);
+    const vk::MemoryRequirements req = buffer->getMemoryRequirements();
+    const vk::MemoryAllocateInfo alloc(
+        req.size,
+        VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
+            physical, req.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    out_memory = std::make_unique<vk::raii::DeviceMemory>(device, alloc);
+    buffer->bindMemory(*out_memory, 0);
+    return buffer;
+}
+
+template <typename T>
+void WriteHostBuffer(const vk::raii::DeviceMemory& memory, const T& value) {
+    void* mapped = memory.mapMemory(0, sizeof(T));
+    std::memcpy(mapped, &value, sizeof(T));
+    memory.unmapMemory();
+}
 
 }  // namespace
 
@@ -50,8 +78,14 @@ TextureRenderHarness::~TextureRenderHarness() {
 void TextureRenderHarness::Shutdown() {
     pipeline_.reset();
     pipeline_layout_.reset();
+    host_buffers_.clear();
+    host_memories_.clear();
+    material_set5_.reset();
+    scene_set4_.reset();
     bindless_set0_.reset();
     pool_.reset();
+    material_set5_layout_.reset();
+    scene_set4_layout_.reset();
     bindless_set0_layout_.reset();
     backend_ = nullptr;
     shaders_ = nullptr;
@@ -59,20 +93,52 @@ void TextureRenderHarness::Shutdown() {
 
 bool TextureRenderHarness::CreateDescriptorLayouts() {
     const vk::raii::Device& device = backend_->GetDevice();
-    const vk::DescriptorSetLayoutBinding binding(
-        0, vk::DescriptorType::eCombinedImageSampler, kBindlessSlots,
-        vk::ShaderStageFlagBits::eFragment, nullptr);
-    bindless_set0_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-        device, vk::DescriptorSetLayoutCreateInfo{{}, 1, &binding});
+
+    {
+        const vk::DescriptorSetLayoutBinding binding(
+            0, vk::DescriptorType::eCombinedImageSampler, kBindlessSlots,
+            vk::ShaderStageFlagBits::eFragment, nullptr);
+        bindless_set0_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+            device, vk::DescriptorSetLayoutCreateInfo{{}, 1, &binding});
+    }
+
+    if (config_.mode == HarnessMode::Standard) {
+        const std::array<vk::DescriptorSetLayoutBinding, 2> scene_bindings{{
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageBuffer, 1,
+                                           vk::ShaderStageFlagBits::eFragment, nullptr),
+            vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1,
+                                           vk::ShaderStageFlagBits::eFragment, nullptr),
+        }};
+        scene_set4_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+            device, vk::DescriptorSetLayoutCreateInfo{{}, 2, scene_bindings.data()});
+        const vk::DescriptorSetLayoutBinding material_binding(
+            0, vk::DescriptorType::eStorageBuffer, 1,
+            vk::ShaderStageFlagBits::eFragment, nullptr);
+        material_set5_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
+            device, vk::DescriptorSetLayoutCreateInfo{{}, 1, &material_binding});
+    }
     return bindless_set0_layout_ != nullptr;
 }
 
 bool TextureRenderHarness::CreatePipeline() {
     const vk::raii::Device& device = backend_->GetDevice();
+    const vk::raii::PhysicalDevice& physical = backend_->GetPhysicalDevice();
 
-    const std::array<vk::DescriptorSetLayout, 1> set_layouts{**bindless_set0_layout_};
+    std::vector<vk::DescriptorSetLayout> set_layouts;
+    std::vector<vk::PushConstantRange> push_ranges;
+    if (config_.mode == HarnessMode::Standard) {
+        // The engine shader declares its sets as 0 (bindless), 4 (scene), 5
+        // (material); the reserved sets 1..3 must exist as empty layouts so the
+        // scene/material layouts land at the indices the shader names.
+        set_layouts = {**bindless_set0_layout_, {}, {}, {}, **scene_set4_layout_,
+                       **material_set5_layout_};
+        push_ranges = {vk::PushConstantRange(vk::ShaderStageFlagBits::eFragment, 0, 16)};
+    } else {
+        set_layouts = {**bindless_set0_layout_};
+    }
     vk::PipelineLayoutCreateInfo layout_info{};
     layout_info.setSetLayouts(set_layouts);
+    layout_info.setPushConstantRanges(push_ranges);
     pipeline_layout_ = std::make_unique<vk::raii::PipelineLayout>(device, layout_info);
 
     const vk::PipelineColorBlendAttachmentState blend(
@@ -99,10 +165,12 @@ bool TextureRenderHarness::CreatePipeline() {
     VulkanEngine::ShaderSystem::PipelineFactory factory(device, backend_->GetCapabilities(),
                                                         shaders_->GetPipelineCacheRAII());
     auto product = factory.CreateGraphics(desc, *shaders_);
+    (void)physical;
     if (!product.has_value()) {
         LOGIFACE_LOG(error, "TextureRenderHarness: pipeline creation failed: " + product.error().message);
         return false;
     }
+
     // PipelineProduct owns its GPL library pipelines; keep the product itself so
     // a fast-linked pipeline cannot outlive its libraries.
     pipeline_ = std::make_unique<VulkanEngine::ShaderSystem::PipelineProduct>(std::move(*product));
@@ -125,30 +193,108 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
         return false;
     }
 
-    const vk::DescriptorPoolSize size(vk::DescriptorType::eCombinedImageSampler, kBindlessSlots);
+    const std::array<vk::DescriptorPoolSize, 2> sizes{{
+        vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, kBindlessSlots),
+        vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, 3),
+    }};
     pool_ = std::make_unique<vk::raii::DescriptorPool>(
-        backend_->GetDevice(), vk::DescriptorPoolCreateInfo({}, 1, 1, &size));
+        backend_->GetDevice(), vk::DescriptorPoolCreateInfo({}, 3, sizes.size(), sizes.data()));
 
-    const std::array<vk::DescriptorSetLayout, 1> layouts{**bindless_set0_layout_};
+    std::vector<vk::DescriptorSetLayout> layouts{**bindless_set0_layout_};
+    if (config_.mode == HarnessMode::Standard) {
+        layouts.push_back(**scene_set4_layout_);
+        layouts.push_back(**material_set5_layout_);
+    }
     auto sets = backend_->GetDevice().allocateDescriptorSets(
-        vk::DescriptorSetAllocateInfo{**pool_, 1, layouts.data()});
-    if (sets.size() != 1U) {
+        vk::DescriptorSetAllocateInfo{**pool_, static_cast<std::uint32_t>(layouts.size()), layouts.data()});
+    if (sets.size() != layouts.size()) {
         return false;
     }
     bindless_set0_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
+    if (config_.mode == HarnessMode::Standard) {
+        scene_set4_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[1]));
+        material_set5_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[2]));
+    }
+
     return CreatePipeline();
 }
 
-void TextureRenderHarness::WriteDescriptors(const VulkanEngine::GpuResources::GpuTexture& albedo) {
-    const vk::DescriptorImageInfo image_info(albedo.GetSampler(), albedo.GetImageView(),
-                                             vk::ImageLayout::eShaderReadOnlyOptimal);
-    const vk::WriteDescriptorSet write(*bindless_set0_, 0, 0, kBindlessSlots,
-                                       vk::DescriptorType::eCombinedImageSampler, &image_info);
-    backend_->GetDevice().updateDescriptorSets(write, {});
+void TextureRenderHarness::WriteDescriptors(const VulkanEngine::GpuResources::GpuTexture& albedo,
+                                             const VulkanEngine::GpuResources::GpuTexture& normal,
+                                             const VulkanEngine::GpuResources::GpuTexture& orm,
+                                             const HarnessMaterialData& material,
+                                             const HarnessSceneHeader& scene,
+                                             const HarnessLight& light) {
+    const vk::raii::Device& device = backend_->GetDevice();
+
+    // Bindless array: albedo at 0, normal at 1, orm at 2, with every slot
+    // defaulting to albedo so no descriptor is left unwritten.
+    std::array<vk::DescriptorImageInfo, kBindlessSlots> images{};
+    const vk::DescriptorImageInfo albedo_info(albedo.GetSampler(), albedo.GetImageView(),
+                                              vk::ImageLayout::eShaderReadOnlyOptimal);
+    for (auto& info : images) {
+        info = albedo_info;
+    }
+    if (normal.IsValid()) {
+        images[1] = vk::DescriptorImageInfo(normal.GetSampler(), normal.GetImageView(),
+                                            vk::ImageLayout::eShaderReadOnlyOptimal);
+    }
+    if (orm.IsValid()) {
+        images[2] = vk::DescriptorImageInfo(orm.GetSampler(), orm.GetImageView(),
+                                            vk::ImageLayout::eShaderReadOnlyOptimal);
+    }
+    const vk::WriteDescriptorSet image_write(*bindless_set0_, 0, 0, kBindlessSlots,
+                                             vk::DescriptorType::eCombinedImageSampler,
+                                             images.data());
+    device.updateDescriptorSets(image_write, {});
+
+    if (config_.mode != HarnessMode::Standard) {
+        return;
+    }
+
+    // Scene header + light + material land in host-visible storage buffers kept
+    // alive by the harness until the next frame or teardown (the device is idle
+    // when RenderAndReadBack returns, so reusing them per frame is safe).
+    host_buffers_.clear();
+    host_memories_.clear();
+    std::unique_ptr<vk::raii::DeviceMemory> scene_memory;
+    std::unique_ptr<vk::raii::DeviceMemory> light_memory;
+    std::unique_ptr<vk::raii::DeviceMemory> material_memory;
+    auto scene_buffer = CreateHostBuffer(device, backend_->GetPhysicalDevice(),
+                                         std::max<vk::DeviceSize>(sizeof(HarnessSceneHeader), 64), scene_memory);
+    auto light_buffer = CreateHostBuffer(device, backend_->GetPhysicalDevice(),
+                                         sizeof(HarnessLight), light_memory);
+    auto material_buffer = CreateHostBuffer(device, backend_->GetPhysicalDevice(),
+                                            sizeof(HarnessMaterialData), material_memory);
+    WriteHostBuffer(*scene_memory, scene);
+    WriteHostBuffer(*light_memory, light);
+    WriteHostBuffer(*material_memory, material);
+
+    const vk::DescriptorBufferInfo scene_info(**scene_buffer, 0, vk::WholeSize);
+    const vk::DescriptorBufferInfo light_info(**light_buffer, 0, vk::WholeSize);
+    const vk::DescriptorBufferInfo material_info(**material_buffer, 0, vk::WholeSize);
+    const std::array<vk::WriteDescriptorSet, 3> buffer_writes{{
+        vk::WriteDescriptorSet(*scene_set4_, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &scene_info),
+        vk::WriteDescriptorSet(*scene_set4_, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &light_info),
+        vk::WriteDescriptorSet(*material_set5_, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &material_info),
+    }};
+    device.updateDescriptorSets(buffer_writes, {});
+
+    host_buffers_.push_back(std::move(scene_buffer));
+    host_buffers_.push_back(std::move(light_buffer));
+    host_buffers_.push_back(std::move(material_buffer));
+    host_memories_.push_back(std::move(scene_memory));
+    host_memories_.push_back(std::move(light_memory));
+    host_memories_.push_back(std::move(material_memory));
 }
 
 std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
-    const VulkanEngine::GpuResources::GpuTexture& albedo) {
+    const VulkanEngine::GpuResources::GpuTexture& albedo,
+    const VulkanEngine::GpuResources::GpuTexture& normal,
+    const VulkanEngine::GpuResources::GpuTexture& orm,
+    const HarnessMaterialData& material_in,
+    const HarnessSceneHeader& scene,
+    const HarnessLight& light) {
     if (!albedo.IsValid()) {
         return {};
     }
@@ -156,6 +302,11 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     const std::uint32_t width = config_.width;
     const std::uint32_t height = config_.height;
     const vk::DeviceSize pixel_bytes = static_cast<vk::DeviceSize>(width) * height * 4U;
+
+    HarnessMaterialData material = material_in;
+    material.albedo_texture = 0;
+    material.normal_texture = normal.IsValid() ? 1U : 0U;
+    material.orm_texture = orm.IsValid() ? 2U : 0U;
 
     const vk::ImageCreateInfo color_info(
         {}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, vk::Extent3D{width, height, 1},
@@ -173,7 +324,8 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     color_image.bindMemory(*color_memory, 0);
     const vk::raii::ImageView color_view(
         device, vk::ImageViewCreateInfo({}, *color_image, vk::ImageViewType::e2D,
-                                        vk::Format::eR8G8B8A8Unorm, vk::ComponentMapping{},
+                                        vk::Format::eR8G8B8A8Unorm,
+                                        vk::ComponentMapping{},
                                         vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)));
 
     const vk::raii::Buffer readback_buffer(
@@ -187,7 +339,7 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
     readback_buffer.bindMemory(*read_memory, 0);
 
-    WriteDescriptors(albedo);
+    WriteDescriptors(albedo, normal, orm, material, scene, light);
 
     vk::raii::CommandBuffer& cmd = backend_->GetCommandBuffer(0);
     cmd.reset({});
@@ -219,8 +371,21 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline_->Get());
-    const std::array<vk::DescriptorSet, 1> sets{**bindless_set0_};
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, sets, {});
+    if (config_.mode == HarnessMode::Standard) {
+        // Sets 1..3 are empty/null in the layout, so bind each real set at the
+        // index the shader names: 0, 4, 5.
+        const std::array<vk::DescriptorSet, 1> set0{**bindless_set0_};
+        const std::array<vk::DescriptorSet, 1> set4{**scene_set4_};
+        const std::array<vk::DescriptorSet, 1> set5{**material_set5_};
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, set0, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 4, set4, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
+        const std::array<float, 4> camera{kCameraZ, 0.0f, 0.0f, 0.0f};
+        cmd.pushConstants<float>(**pipeline_layout_, vk::ShaderStageFlagBits::eFragment, 0, camera);
+    } else {
+        const std::array<vk::DescriptorSet, 1> sets{**bindless_set0_};
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, sets, {});
+    }
     cmd.draw(3, 1, 0, 0);
     cmd.endRendering();
 

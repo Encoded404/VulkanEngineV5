@@ -85,7 +85,7 @@ LoadTextureFromPath(VulkanEngine::ResourceManager& resource_manager,
 
 [[nodiscard]] CombinedScene UploadCombined(
     VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
-    VulkanEngine::GpuResources::StagingManager& staging_mgr,
+    VulkanEngine::GpuResources::StagingPool& staging_mgr,
     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
     VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
     const std::vector<LoadedMeshData>& meshes);

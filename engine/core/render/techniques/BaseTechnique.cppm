@@ -14,7 +14,7 @@ export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager.TechniqueId;
 export import VulkanEngine.GpuResources.BlockArray;
 export import VulkanEngine.GpuBuffer;
-export import VulkanEngine.GpuResources.StagingManager;
+export import VulkanEngine.GpuResources.StagingPool;
 export import VulkanEngine.DescriptorDecl;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
@@ -108,7 +108,7 @@ public:
 
     // ── Update shared binding data (writes technique-local CPU buffer, stages upload to GPU) ──
     template<typename T>
-    void UpdateShared(const T& data, VulkanEngine::GpuResources::StagingManager& staging) {
+    void UpdateShared(const T& data, VulkanEngine::GpuResources::StagingPool& staging) {
         for (std::size_t i = 0; i < bindings_.size(); ++i) {
             if (bindings_[i].kind == BindingKind::Shared &&
                 bindings_[i].type_index == std::type_index(typeid(T))) {
@@ -120,8 +120,9 @@ public:
                 // Stage upload to GPU buffer
                 assert(i < shared_buffers_.size());
                 auto slice = staging.Allocate(sizeof(T), 256);
-                std::memcpy(slice.data, &data, sizeof(T));
-                staging.RecordBufferCopy(slice, *shared_buffers_[i].GetBuffer(), 0);
+                if (!slice.has_value()) return;
+                std::memcpy(slice->mapped_ptr, &data, sizeof(T));
+                staging.RecordBufferCopy(*slice, *shared_buffers_[i].GetBuffer(), 0);
                 return;
             }
         }

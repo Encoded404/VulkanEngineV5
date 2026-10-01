@@ -134,7 +134,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     gpu/Buffer.cpp
     gpu/Texture.cpp
     gpu/DescriptorSet.cpp
-    gpu/StagingRing.cpp
+    gpu/StagingPool.cpp
     gpu/BufferHeap.cpp
     gpu/ImageHeap.cpp
     gpu/TransientAllocator.cpp
@@ -269,7 +269,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             gpu/BlockArray.cppm
             gpu/Texture.cppm
             gpu/DescriptorSet.cppm
-            gpu/StagingRing.cppm
+            gpu/StagingPool.cppm
             gpu/BufferHeap.cppm
             gpu/ImageHeap.cppm
             gpu/FrameRing.cppm

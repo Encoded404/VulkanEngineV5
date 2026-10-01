@@ -10,7 +10,7 @@ import vulkan_hpp;
 
 import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 
 namespace VulkanEngine::GpuResources {
 
@@ -95,7 +95,7 @@ vk::Buffer BlockArray::GetBlockArray(std::uint32_t block_index) const {
 }
 
 void BlockArray::UploadEntry(std::uint32_t index, const void* data, std::uint64_t size,
-                              StagingManager& staging) {
+                              StagingPool& staging) {
     const std::uint32_t block_idx = index / cfg_.entries_per_block;
     const std::uint32_t local_idx = index % cfg_.entries_per_block;
     assert(block_idx < blocks_.size());
@@ -105,10 +105,12 @@ void BlockArray::UploadEntry(std::uint32_t index, const void* data, std::uint64_
                                    + static_cast<std::uint64_t>(local_idx) * cfg_.entry_size;
 
     if (cfg_.memory_mode == MemoryMode::DeviceLocal) {
-        // Staging upload path: allocate from staging manager, memcpy, record copy
+        // Staging upload path: allocate from the staging pool, memcpy, record
+        // copy. The caller flushes once for the whole batch.
         auto slice = staging.Allocate(static_cast<std::uint64_t>(size), 256);
-        std::memcpy(slice.data, data, static_cast<std::size_t>(size));
-        staging.RecordBufferCopy(slice, *blocks_[block_idx].GetBuffer(), dst_offset);
+        if (!slice.has_value()) return;
+        std::memcpy(slice->mapped_ptr, data, static_cast<std::size_t>(size));
+        staging.RecordBufferCopy(*slice, *blocks_[block_idx].GetBuffer(), dst_offset);
     } else {
         // Host-visible path: direct memcpy to mapped memory
         void* ptr = Get(index);

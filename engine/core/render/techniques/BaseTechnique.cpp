@@ -17,7 +17,7 @@ import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.GpuResources.BlockArray;
 import VulkanEngine.GpuBuffer;
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
 

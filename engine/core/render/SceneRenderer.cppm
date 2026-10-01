@@ -269,7 +269,7 @@ public:
     }
     void UploadLighting(const SceneHeader& header,
                         std::span<const Light> lights,
-                        VulkanEngine::GpuResources::StagingManager& staging);
+                        VulkanEngine::GpuResources::StagingPool& staging);
 
 private:
     struct TechniqueResult { std::uint32_t offset; std::uint32_t count; };

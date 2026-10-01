@@ -231,7 +231,7 @@ ConvertToVertices(const LoadedMeshData& mesh) {
 
 CombinedScene UploadCombined(
     VulkanBackend::Vulkan::VulkanBootstrap& /*bootstrap*/,
-    VulkanEngine::GpuResources::StagingManager& staging_mgr,
+    VulkanEngine::GpuResources::StagingPool& staging_mgr,
     VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap,
     VulkanEngine::GpuResources::DeviceBufferHeap& index_heap,
     const std::vector<LoadedMeshData>& meshes) {
@@ -339,13 +339,13 @@ CombinedScene UploadCombined(
     // Upload vertex data via staging
     {
         auto slice = staging_mgr.Allocate(vertex_data_size);
-        if (!slice.data) {
+        if (!slice.has_value()) {
             LOGIFACE_LOG(error, "UploadCombined: staging allocation failed for vertex data");
             return scene;
         }
-        std::memcpy(slice.data, all_vertices.data(), vertex_data_size);
+        std::memcpy(slice->mapped_ptr, all_vertices.data(), vertex_data_size);
 
-        staging_mgr.RecordBufferCopy(slice,
+        staging_mgr.RecordBufferCopy(*slice,
             vertex_heap.GetBuffer(scene.vertex_allocation.buffer_index),
             scene.vertex_allocation.offset);
     }
@@ -353,20 +353,19 @@ CombinedScene UploadCombined(
     // Upload index data via staging
     {
         auto slice = staging_mgr.Allocate(index_data_size);
-        if (!slice.data) {
+        if (!slice.has_value()) {
             LOGIFACE_LOG(error, "UploadCombined: staging allocation failed for index data");
             return scene;
         }
-        std::memcpy(slice.data, packed_indices.data(), index_data_size);
+        std::memcpy(slice->mapped_ptr, packed_indices.data(), index_data_size);
 
-        staging_mgr.RecordBufferCopy(slice,
+        staging_mgr.RecordBufferCopy(*slice,
             index_heap.GetBuffer(scene.index_allocation.buffer_index),
             scene.index_allocation.offset);
     }
 
     // Flush staging and wait for completion
-    staging_mgr.Flush();
-    staging_mgr.WaitForAll();
+    staging_mgr.FlushImmediate();
 
     return scene;
 }

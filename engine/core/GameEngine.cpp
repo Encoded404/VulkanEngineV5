@@ -220,7 +220,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         ctx_.technique_mgr->Register(std::move(unlit_tech));
     }
 
-    ctx_.material_mgr.Initialize(&ctx_.staging_mgr);
+    ctx_.material_mgr.Initialize(&ctx_.staging_pool);
     ctx_.material_mgr.SetTechniqueManager(ctx_.technique_mgr.get());
 
     // Upload initial lighting data via staging
@@ -242,7 +242,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
 
         std::array<SceneRenderer::Light, 1> lights = {sun_light};
         header.light_count = 1;
-        ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_mgr);
+        ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_pool);
     }
 
     // Register fallback material (ID 0): main technique, bindless checkerboard.

@@ -75,7 +75,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     if (!ctx.vertex_heap.Initialize(vk_backend, heap_config, "vertex")) return false;
     if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
     if (!ctx.image_heap.Initialize(vk_backend, {}, "image")) return false;
-    if (!ctx.staging_mgr.Initialize(vk_backend)) return false;
+    if (!ctx.staging_pool.Initialize(vk_backend)) return false;
 
     {
         GpuResources::HeapConfig dynamic_heap_config{};
@@ -97,7 +97,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 
     ctx.mesh_manager = std::make_unique<MeshManager>();
     if (!ctx.mesh_manager->Initialize(vk_backend, &ctx.vertex_heap, &ctx.index_heap,
-                                       &ctx.staging_mgr,
+                                       &ctx.staging_pool,
                                        ctx.dynamic_vertex_heaps.data(),
                                        ctx.dynamic_index_heaps.data(),
                                        static_cast<std::uint32_t>(ctx.dynamic_vertex_heaps.size()))) {
@@ -255,7 +255,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
 
     teardown.Add("engineshutdown.staging_manager", [&ctx] {
         auto s = DebugSection("engineshutdown.staging_manager");
-        ctx.staging_mgr.Shutdown();
+        ctx.staging_pool.Shutdown();
     }, {idle_id});
 
     teardown.Add("engineshutdown.static_heaps", [&ctx] {

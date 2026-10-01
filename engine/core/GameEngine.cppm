@@ -109,7 +109,7 @@ public:
     ImGui::ImGuiSystem* GetImGuiSystem() { return ctx_.imgui_system.get(); }
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return ctx_.vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return ctx_.index_heap; }
-    GpuResources::StagingManager& GetStagingManager() { return ctx_.staging_mgr; }
+    GpuResources::StagingPool& GetStagingPool() { return ctx_.staging_pool; }
     std::vector<GpuResources::DeviceBufferHeap>& GetDynamicVertexHeaps() { return ctx_.dynamic_vertex_heaps; }
     std::vector<GpuResources::DeviceBufferHeap>& GetDynamicIndexHeaps() { return ctx_.dynamic_index_heaps; }
     MeshManager& GetMeshManager() { return *ctx_.mesh_manager; }

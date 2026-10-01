@@ -153,7 +153,7 @@ void ApplySun(VulkanEngine::GameEngine& engine, const SunSettings& sun) {
     std::array<Light, 1> lights = {sun_light};
     header.light_count = 1;
 
-    engine.GetSceneRenderer().UploadLighting(header, lights, engine.GetStagingManager());
+    engine.GetSceneRenderer().UploadLighting(header, lights, engine.GetStagingPool());
 }
 
 } // namespace

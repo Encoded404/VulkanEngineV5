@@ -67,7 +67,7 @@ struct EngineContext {
     // GPU resources (constructed in order). The dynamic FIFO heap rings are
     // runtime-sized: EngineBootstrap::Initialize resizes them to the device's
     // configured frames in flight (backend.GetFramesInFlight()).
-    GpuResources::StagingManager staging_mgr;
+    GpuResources::StagingPool staging_pool;
     GpuResources::DeviceBufferHeap vertex_heap;
     GpuResources::DeviceBufferHeap index_heap;
     // Sub-allocated images (asset textures, camera streams/targets). Must
@@ -127,7 +127,7 @@ struct EngineContext {
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }
     GpuResources::GpuImageHeap& GetImageHeap() { return image_heap; }
-    GpuResources::StagingManager& GetStagingManager() { return staging_mgr; }
+    GpuResources::StagingPool& GetStagingPool() { return staging_pool; }
     auto& GetDynamicVertexHeaps() { return dynamic_vertex_heaps; }
     auto& GetDynamicIndexHeaps() { return dynamic_index_heaps; }
 

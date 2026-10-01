@@ -9,19 +9,19 @@ import std.compat;
 
 import logiface;
 
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.TechniqueManager.BaseTechnique;
 import VulkanEngine.TechniqueManager;
 
 namespace VulkanEngine::MaterialManager {
 
-void MaterialManager::Initialize(GpuResources::StagingManager* staging_mgr) {
+void MaterialManager::Initialize(GpuResources::StagingPool* staging_pool) {
     Materials.clear();
     generations_.clear();
     Dirty_list.clear();
     Free_list.clear();
     next_generation_ = 1;
-    this->staging_mgr = staging_mgr;
+    this->staging_pool = staging_pool;
 }
 
 void MaterialManager::Shutdown() {
@@ -30,7 +30,7 @@ void MaterialManager::Shutdown() {
     Dirty_list.clear();
     Free_list.clear();
     next_generation_ = 1;
-    staging_mgr = nullptr;
+    staging_pool = nullptr;
 }
 
 void MaterialManager::MarkDirty(MaterialId id) {
@@ -58,13 +58,13 @@ void MaterialManager::Destroy(MaterialId id) {
 
 void MaterialManager::FlushDirtyMaterials() {
     if (Dirty_list.empty()) return;  // ← common case: zero work
-    if (!staging_mgr) return;
+    if (!staging_pool) return;
 
     // Phase 1: allocate staging for all dirty materials
     struct PendingUpload {
         MaterialId id;
         MaterialEntry* entry;
-        VulkanEngine::GpuResources::StagingSlice slice;
+        VulkanEngine::GpuResources::StagingAlloc slice;
     };
     std::vector<PendingUpload> pending;
     pending.reserve(Dirty_list.size());
@@ -74,10 +74,11 @@ void MaterialManager::FlushDirtyMaterials() {
         auto& entry = Materials[id.value];
         if (!entry || !entry->dirty) continue;
 
-        auto slice = staging_mgr->Allocate(
+        auto slice = staging_pool->Allocate(
             static_cast<std::uint64_t>(entry->cpu_data.size()), 256);
-        std::memcpy(slice.data, entry->cpu_data.data(), entry->cpu_data.size());
-        pending.push_back({id, entry.get(), slice});
+        if (!slice.has_value()) continue;
+        std::memcpy(slice->mapped_ptr, entry->cpu_data.data(), entry->cpu_data.size());
+        pending.push_back({id, entry.get(), *slice});
     }
 
     // Phase 2: record per-binding buffer copies — only for dirty bindings
@@ -99,7 +100,7 @@ void MaterialManager::FlushDirtyMaterials() {
                         auto* ba = tech->GetBlockArrayForBinding(bi);
                         if (ba != nullptr &&
                             (p.id.value / ba->EntriesPerBlock()) < ba->BlockCount()) {
-                            staging_mgr->RecordBufferCopy(p.slice,
+                            staging_pool->RecordBufferCopy(p.slice,
                                 ba->GetBlockArray(p.id.value / ba->EntriesPerBlock()),
                                 ba->EntrySize() * (static_cast<std::uint64_t>(p.id.value % ba->EntriesPerBlock())));
                         }
@@ -112,7 +113,7 @@ void MaterialManager::FlushDirtyMaterials() {
         p.entry->dirty_bindings = 0;
     }
 
-    staging_mgr->Flush();
+    staging_pool->FlushImmediate();
     Dirty_list.clear();
 }
 

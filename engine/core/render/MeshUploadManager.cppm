@@ -3,7 +3,7 @@ module;
 export module VulkanEngine.MeshManager;
 
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
-export import VulkanEngine.GpuResources.StagingManager;
+export import VulkanEngine.GpuResources.StagingPool;
 export import VulkanEngine.GpuResources.MeshData;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.Mesh.MeshTypes;
@@ -54,7 +54,7 @@ public:
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
-                    VulkanEngine::GpuResources::StagingManager* staging_mgr,
+                    VulkanEngine::GpuResources::StagingPool* staging_mgr,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
                     std::uint32_t frames_in_flight);
@@ -99,7 +99,7 @@ private:
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
-    VulkanEngine::GpuResources::StagingManager* staging_mgr_ = nullptr;
+    VulkanEngine::GpuResources::StagingPool* staging_mgr_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps_ = nullptr;
 

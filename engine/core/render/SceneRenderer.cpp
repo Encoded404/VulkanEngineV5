@@ -1230,7 +1230,7 @@ SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(std::uint32_t
 
 void SceneRenderer::UploadLighting(const SceneHeader& header,
                                     std::span<const Light> lights,
-                                    GpuResources::StagingManager& staging) {
+                                    GpuResources::StagingPool& staging) {
     if (!backend_) return;
 
     // Grow BlockArray to fit all lights
@@ -1239,9 +1239,11 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
     // Stage the header buffer
     {
         auto header_slice = staging.Allocate(sizeof(SceneHeader));
-        std::memcpy(header_slice.data, &header, sizeof(SceneHeader));
-        staging.RecordBufferCopy(header_slice,
-                                 static_cast<vk::Buffer>(*scene_header.GetBuffer()), 0);
+        if (header_slice.has_value()) {
+            std::memcpy(header_slice->mapped_ptr, &header, sizeof(SceneHeader));
+            staging.RecordBufferCopy(*header_slice,
+                                     static_cast<vk::Buffer>(*scene_header.GetBuffer()), 0);
+        }
     }
 
     // Stage each light via BlockArray::UploadEntry (uses staging internally)
@@ -1265,7 +1267,7 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
         dev.updateDescriptorSets(w, nullptr);
     }
 
-    staging.Flush();
+    staging.FlushImmediate();
 }
 
 } // namespace VulkanEngine::SceneRenderer

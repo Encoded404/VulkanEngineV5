@@ -13,7 +13,7 @@ import vulkan_hpp;
 
 import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.StandardMeshPipeline;
 
@@ -26,7 +26,7 @@ MeshManager::~MeshManager() {
 bool MeshManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
-                              VulkanEngine::GpuResources::StagingManager* staging_mgr,
+                              VulkanEngine::GpuResources::StagingPool* staging_mgr,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
                               std::uint32_t frames_in_flight) {
@@ -88,32 +88,31 @@ MeshManager::Handle MeshManager::UploadPersistent(
 
     {
         auto slice = staging_mgr_->Allocate(vertex_data_size);
-        if (!slice.data) {
+        if (!slice.has_value()) {
             vertex_heap_->Free(vertex_alloc);
             index_heap_->Free(index_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex staging allocation failed");
             return handle;
         }
-        std::memcpy(slice.data, data.vertices.data(), vertex_data_size);
-        staging_mgr_->RecordBufferCopy(slice,
+        std::memcpy(slice->mapped_ptr, data.vertices.data(), vertex_data_size);
+        staging_mgr_->RecordBufferCopy(*slice,
             vertex_heap_->GetBuffer(vertex_alloc.buffer_index), vertex_alloc.offset);
     }
 
     {
         auto slice = staging_mgr_->Allocate(index_data_size);
-        if (!slice.data) {
+        if (!slice.has_value()) {
             vertex_heap_->Free(vertex_alloc);
             index_heap_->Free(index_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: index staging allocation failed");
             return handle;
         }
-        std::memcpy(slice.data, data.indices.data(), index_data_size);
-        staging_mgr_->RecordBufferCopy(slice,
+        std::memcpy(slice->mapped_ptr, data.indices.data(), index_data_size);
+        staging_mgr_->RecordBufferCopy(*slice,
             index_heap_->GetBuffer(index_alloc.buffer_index), index_alloc.offset);
     }
 
-    staging_mgr_->Flush();
-    staging_mgr_->WaitForAll();
+    staging_mgr_->FlushImmediate();
 
     std::uint32_t handle_id;
     if (!free_handles_.empty()) {

@@ -10,7 +10,7 @@ import vulkan_hpp;
 import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanEngine.GpuBuffer;
 
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 
 export namespace VulkanEngine::GpuResources {
 
@@ -52,7 +52,7 @@ public:
     // Upload data to a specific entry. For HostVisible memory, does a direct memcpy.
     // For DeviceLocal memory, uses StagingManager for transfer.
     void UploadEntry(std::uint32_t index, const void* data, std::uint64_t size,
-                     StagingManager& staging);
+                     StagingPool& staging);
 
     [[nodiscard]] bool IsDeviceLocal() const { return cfg_.memory_mode == MemoryMode::DeviceLocal; }
     [[nodiscard]] std::uint32_t BlockCount() const { return static_cast<std::uint32_t>(blocks_.size()); }

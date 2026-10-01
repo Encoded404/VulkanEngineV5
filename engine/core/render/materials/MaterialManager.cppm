@@ -19,7 +19,7 @@ import VulkanEngine.FileLoaders.TextureLoaders;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
 import VulkanEngine.BindlessManager;
-import VulkanEngine.GpuResources.StagingManager;
+import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.TechniqueManager.BaseTechnique;
 import VulkanEngine.TechniqueManager;
 
@@ -35,7 +35,7 @@ void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAn
 
 class MaterialManager {
 public:
-    void Initialize(VulkanEngine::GpuResources::StagingManager* staging_mgr = nullptr);
+    void Initialize(VulkanEngine::GpuResources::StagingPool* staging_pool = nullptr);
     void Shutdown();
 
     // Typed registration — technique type inferred from template.
@@ -81,65 +81,68 @@ public:
         (write_one(data), ...);
 
         // ── Immediate first upload via staging → device-local ──
-        if (staging_mgr && !entry->cpu_data.empty()) {
+        if (staging_pool && !entry->cpu_data.empty()) {
             const std::size_t total_size = entry->cpu_data.size();
-            const GpuResources::StagingSlice staging_slice = staging_mgr->Allocate(static_cast<std::uint64_t>(total_size), 256);
-            std::memcpy(staging_slice.data, entry->cpu_data.data(), total_size);
+            const auto staging_slice =
+                staging_pool->Allocate(static_cast<std::uint64_t>(total_size), 256);
+            if (staging_slice.has_value()) {
+                std::memcpy(staging_slice->mapped_ptr, entry->cpu_data.data(), total_size);
 
-            for (std::size_t bi = 0; bi < tech_ptr->GetBindingCount(); ++bi) {
-                const auto& binding = tech_ptr->GetBinding(bi);
-                if (binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) continue;
+                for (std::size_t bi = 0; bi < tech_ptr->GetBindingCount(); ++bi) {
+                    const auto& binding = tech_ptr->GetBinding(bi);
+                    if (binding.kind != TechniqueManager::BaseTechnique::BindingKind::PerMaterial) continue;
 
-                auto* ba = tech_ptr->GetBlockArrayForBinding(bi);
-                if (ba == nullptr) continue;
+                    auto* ba = tech_ptr->GetBlockArrayForBinding(bi);
+                    if (ba == nullptr) continue;
 
-                // The shader derives the block index as materialId /
-                // MATERIAL_BLOCK_SIZE, so the BlockArray geometry must match it.
-                if (ba->EntriesPerBlock() != TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) {
-                    LOGIFACE_LOG(error, "MaterialManager::Register: technique " +
-                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
-                                 " has entries_per_block " + std::to_string(ba->EntriesPerBlock()) +
-                                 " but the shaders expect " +
-                                 std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
-                                 "; material will not be uploaded");
-                    continue;
+                    // The shader derives the block index as materialId /
+                    // MATERIAL_BLOCK_SIZE, so the BlockArray geometry must match it.
+                    if (ba->EntriesPerBlock() != TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) {
+                        LOGIFACE_LOG(error, "MaterialManager::Register: technique " +
+                                     std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                     " has entries_per_block " + std::to_string(ba->EntriesPerBlock()) +
+                                     " but the shaders expect " +
+                                     std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
+                                     "; material will not be uploaded");
+                        continue;
+                    }
+
+                    const std::uint32_t block = id.value / ba->EntriesPerBlock();
+                    if (block >= TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT) {
+                        LOGIFACE_LOG(error, "MaterialManager::Register: material id " +
+                                     std::to_string(id.value) + " exceeds the per-material descriptor "
+                                     "array capacity (" +
+                                     std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT *
+                                                     TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
+                                     " materials) for technique " + std::to_string(tech_id.value) +
+                                     "; material will not be uploaded");
+                        continue;
+                    }
+
+                    ba->EnsureCapacity(id.value + 1);
+                    if (block >= ba->BlockCount()) {
+                        LOGIFACE_LOG(error, "MaterialManager::Register: BlockArray for technique " +
+                                     std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                     " could not grow to hold material " + std::to_string(id.value) +
+                                     "; material will not be uploaded");
+                        continue;
+                    }
+
+                    if (!tech_ptr->EnsureMaterialBlockBound(bi, block)) {
+                        LOGIFACE_LOG(error, "MaterialManager::Register: could not bind material block " +
+                                     std::to_string(block) + " for technique " +
+                                     std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
+                                     "; material will not be uploaded");
+                        continue;
+                    }
+
+                    staging_pool->RecordBufferCopy(*staging_slice,
+                                                   ba->GetBlockArray(block),
+                                                   ba->EntrySize() * (static_cast<std::uint64_t>(id.value % ba->EntriesPerBlock())));
                 }
 
-                const std::uint32_t block = id.value / ba->EntriesPerBlock();
-                if (block >= TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT) {
-                    LOGIFACE_LOG(error, "MaterialManager::Register: material id " +
-                                 std::to_string(id.value) + " exceeds the per-material descriptor "
-                                 "array capacity (" +
-                                 std::to_string(TechniqueManager::TechniquePacking::MATERIAL_BLOCK_COUNT *
-                                                 TechniqueManager::TechniquePacking::MATERIAL_BLOCK_SIZE) +
-                                 " materials) for technique " + std::to_string(tech_id.value) +
-                                 "; material will not be uploaded");
-                    continue;
-                }
-
-                ba->EnsureCapacity(id.value + 1);
-                if (block >= ba->BlockCount()) {
-                    LOGIFACE_LOG(error, "MaterialManager::Register: BlockArray for technique " +
-                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
-                                 " could not grow to hold material " + std::to_string(id.value) +
-                                 "; material will not be uploaded");
-                    continue;
-                }
-
-                if (!tech_ptr->EnsureMaterialBlockBound(bi, block)) {
-                    LOGIFACE_LOG(error, "MaterialManager::Register: could not bind material block " +
-                                 std::to_string(block) + " for technique " +
-                                 std::to_string(tech_id.value) + " binding " + std::to_string(bi) +
-                                 "; material will not be uploaded");
-                    continue;
-                }
-
-                staging_mgr->RecordBufferCopy(staging_slice,
-                                               ba->GetBlockArray(block),
-                                               ba->EntrySize() * (static_cast<std::uint64_t>(id.value % ba->EntriesPerBlock())));
+                staging_pool->FlushImmediate();
             }
-
-            staging_mgr->Flush();
         }
 
         MaterialEntry* entry_ptr = entry.get();
@@ -223,7 +226,7 @@ public:
     std::uint32_t next_generation_{1};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
-    GpuResources::StagingManager* staging_mgr = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    GpuResources::StagingPool* staging_pool = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
     TechniqueManager::TechniqueManager* technique_mgr = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 

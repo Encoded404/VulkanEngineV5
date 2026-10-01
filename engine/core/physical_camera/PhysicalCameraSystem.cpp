@@ -247,6 +247,7 @@ struct PhysicalCameraSystem::Impl {
     VulkanBackend::Vulkan::IVulkanBootstrap* backend = nullptr;
     VulkanEngine::BindlessManager::BindlessManager* bindless = nullptr;
     VulkanEngine::GpuResources::GpuImageHeap* image_heap = nullptr;
+    VulkanEngine::GpuResources::SamplerCache* sampler_cache = nullptr;
     ShaderSystem::ShaderManager* shader_manager = nullptr;
     ShaderSystem::PipelineFactory* pipeline_factory = nullptr;
 
@@ -364,6 +365,7 @@ PhysicalCameraSystem::~PhysicalCameraSystem() {
 bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                       VulkanEngine::BindlessManager::BindlessManager& bindless,
                                       VulkanEngine::GpuResources::GpuImageHeap& image_heap,
+                                      VulkanEngine::GpuResources::SamplerCache& sampler_cache,
                                       ShaderSystem::ShaderManager& shader_manager,
                                       ShaderSystem::PipelineFactory& pipeline_factory,
                                       ShaderSystem::ShaderId composite_vert_id,
@@ -374,6 +376,7 @@ bool PhysicalCameraSystem::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& b
     impl->backend = &backend;
     impl->bindless = &bindless;
     impl->image_heap = &image_heap;
+    impl->sampler_cache = &sampler_cache;
     impl->shader_manager = &shader_manager;
     impl->pipeline_factory = &pipeline_factory;
     impl->composite_vert_id = composite_vert_id;
@@ -668,7 +671,7 @@ PhysicalCameraHandle PhysicalCameraSystem::Open(std::uint32_t device_index,
         for (const auto& spec : specs) {
             auto texture = VulkanEngine::GpuResources::GpuTexture::CreateStream(
                 *impl_->backend, *impl_->image_heap, spec.width, spec.height, spec.format,
-                gpu_format == PhysicalCameraPixelFormat::Xrgb8888);
+                gpu_format == PhysicalCameraPixelFormat::Xrgb8888, impl_->sampler_cache);
             if (!texture.IsValid()) {
                 gpu_ok = false;
                 break;
@@ -776,7 +779,8 @@ PhysicalCameraTargetId PhysicalCameraSystem::CreateTarget(std::uint32_t width, s
     if (width == 0 || height == 0) return {};
 
     auto texture = VulkanEngine::GpuResources::GpuTexture::CreateColorTarget(
-        *impl_->backend, *impl_->image_heap, width, height);
+        *impl_->backend, *impl_->image_heap, width, height,
+        vk::Format::eR8G8B8A8Unorm, impl_->sampler_cache);
     if (!texture.IsValid()) return {};
 
     std::uint32_t target_index = 0;

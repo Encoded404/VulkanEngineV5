@@ -326,6 +326,12 @@ public:
     [[nodiscard]] const DescriptorCapabilities& GetDescriptorCapabilities() const noexcept { return descriptor_capabilities_; }
     // maxSamplerAnisotropy device limit (meaningful only with SamplerAnisotropy).
     [[nodiscard]] float GetMaxSamplerAnisotropy() const noexcept { return properties_.limits.maxSamplerAnisotropy; }
+    // maxSamplerAllocationCount: the number of VkSampler objects the device
+    // permits. The sampler cache stays within it and degrades to the nearest
+    // existing sampler when full, rather than failing a draw.
+    [[nodiscard]] std::uint32_t GetMaxSamplerAllocationCount() const noexcept {
+        return properties_.limits.maxSamplerAllocationCount;
+    }
     [[nodiscard]] const vk::PhysicalDeviceDriverProperties& GetDriverProperties() const noexcept { return driver_properties_; }
     // Root of the create-time feature chain (chained into VkDeviceCreateInfo).
     [[nodiscard]] const vk::PhysicalDeviceFeatures2& GetFeatureChain() const noexcept {

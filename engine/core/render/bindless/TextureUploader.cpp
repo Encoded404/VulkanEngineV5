@@ -75,12 +75,14 @@ bool TextureUploader::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backen
                                  GpuResources::StagingPool& staging_pool,
                                  BindlessManager::BindlessManager& bindless,
                                  const VulkanBackend::Vulkan::VulkanCapabilities& capabilities,
+                                 GpuResources::SamplerCache* sampler_cache,
                                  std::size_t worker_count) {
     backend_ = &backend;
     image_heap_ = &image_heap;
     staging_pool_ = &staging_pool;
     bindless_ = &bindless;
     capabilities_ = &capabilities;
+    sampler_cache_ = sampler_cache;
     stop_ = false;
 
     worker_count = std::max<std::size_t>(worker_count, 1U);
@@ -119,6 +121,7 @@ void TextureUploader::Shutdown() {
     staging_pool_ = nullptr;
     bindless_ = nullptr;
     capabilities_ = nullptr;
+    sampler_cache_ = nullptr;
 }
 
 std::optional<TextureReservation> TextureUploader::Reserve(TextureSemantic semantic,
@@ -235,7 +238,8 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
             continue;
         }
         GpuResources::GpuTexture texture = GpuResources::GpuTexture::CreatePending(
-            *backend_, *image_heap_, item.data, item.format, item.reservation.sampler);
+            *backend_, *image_heap_, item.data, item.format, item.reservation.sampler,
+            sampler_cache_);
         if (!texture.IsValid()) {
             CompleteItem(item, UploadStatus::Failed, "image allocation failed");
             continue;

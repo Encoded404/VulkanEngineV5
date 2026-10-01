@@ -74,6 +74,9 @@ struct EngineContext {
     // Sub-allocated images (asset textures, camera streams/targets). Must
     // outlive bindless_mgr in shutdown (textures free their heap images).
     GpuResources::GpuImageHeap image_heap;
+    // Shared, owning VkSampler cache. Must outlive every texture that samples
+    // through it (bindless slots, camera streams/targets).
+    GpuResources::SamplerCache sampler_cache;
     std::vector<GpuResources::DeviceBufferHeap> dynamic_vertex_heaps;
     std::vector<GpuResources::DeviceBufferHeap> dynamic_index_heaps;
 
@@ -131,6 +134,7 @@ struct EngineContext {
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }
     GpuResources::GpuImageHeap& GetImageHeap() { return image_heap; }
+    GpuResources::SamplerCache& GetSamplerCache() { return sampler_cache; }
     GpuResources::StagingPool& GetStagingPool() { return staging_pool; }
     auto& GetDynamicVertexHeaps() { return dynamic_vertex_heaps; }
     auto& GetDynamicIndexHeaps() { return dynamic_index_heaps; }

@@ -17,6 +17,7 @@ import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.GpuImageHeap;
+import VulkanEngine.GpuResources.SamplerCache;
 import VulkanEngine.GpuResources.FrameRing;
 import VulkanShared.DeviceScope;
 
@@ -46,40 +47,19 @@ void CreateBufferResource(const VulkanBackend::Vulkan::IVulkanBootstrap & backen
     out_buffer->bindMemory(*out_memory, 0);
 }
 
+// Uncached sampler construction: used by the bootstrap/standalone path when no
+// SamplerCache is supplied (device-free tests and the fallback upload). The
+// clamp logic is shared with the cache so both produce identical samplers.
 vk::raii::Sampler CreateSampler(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                 const VulkanEngine::Textures::SamplerDesc& desc,
                                 std::uint32_t mip_levels) {
     const auto& caps = backend.GetCapabilities();
     const bool anisotropy_supported = caps.IsFeatureEnabled(VulkanBackend::Vulkan::Feature::SamplerAnisotropy);
-
-    VulkanEngine::Textures::SamplerDesc clamped = desc;
-    if (!anisotropy_supported || !clamped.anisotropy) {
-        clamped.anisotropy = false;
-        clamped.max_anisotropy = 1;
-    } else {
-        const auto device_max = static_cast<std::uint32_t>(caps.GetMaxSamplerAnisotropy());
-        clamped.max_anisotropy = std::max(1U, std::min(clamped.max_anisotropy, device_max));
-    }
-    // Never advertise lod levels the chain does not have.
-    const float chain_max_lod = mip_levels > 1U ? static_cast<float>(mip_levels - 1U) : 0.0f;
-    clamped.max_lod = mip_levels > 1U ? std::min(clamped.max_lod, chain_max_lod) : 0.0f;
-
-    vk::SamplerCreateInfo info{};
-    info.minFilter = clamped.min_filter;
-    info.magFilter = clamped.mag_filter;
-    info.mipmapMode = clamped.mip_mode;
-    info.addressModeU = clamped.address_u;
-    info.addressModeV = clamped.address_v;
-    info.addressModeW = clamped.address_w;
-    info.mipLodBias = clamped.mip_lod_bias;
-    info.minLod = clamped.min_lod;
-    info.maxLod = clamped.max_lod;
-    info.anisotropyEnable = clamped.anisotropy ? vk::True : vk::False;
-    info.maxAnisotropy = static_cast<float>(clamped.max_anisotropy);
-    info.compareEnable = clamped.compare != vk::CompareOp::eNever ? vk::True : vk::False;
-    info.compareOp = clamped.compare;
-    info.borderColor = clamped.border;
-    return vk::raii::Sampler(backend.GetDevice(), info);
+    const auto device_max = static_cast<std::uint32_t>(caps.GetMaxSamplerAnisotropy());
+    const auto clamped =
+        VulkanEngine::Textures::ClampSamplerDesc(desc, anisotropy_supported, device_max, mip_levels);
+    return vk::raii::Sampler(backend.GetDevice(),
+                             VulkanEngine::Textures::MakeSamplerCreateInfo(clamped));
 }
 
 // Upload barriers: uploads are consumed by fragment and possibly compute
@@ -119,13 +99,15 @@ void RecordUploadBarriers(vk::raii::CommandBuffer& cmd,
 GpuTexture::GpuTexture(GpuTexture&& other) noexcept
     : heap_(other.heap_),
       image_(other.image_),
-      sampler_(std::move(other.sampler_)),
+      sampler_(other.sampler_),
+      owned_sampler_(std::move(other.owned_sampler_)),
       width_(other.width_),
       height_(other.height_),
       mip_levels_(other.mip_levels_),
       array_layers_(other.array_layers_) {
     other.heap_ = nullptr;
     other.image_ = {};
+    other.sampler_ = vk::Sampler{nullptr};
 }
 
 GpuTexture& GpuTexture::operator=(GpuTexture&& other) noexcept {
@@ -135,13 +117,15 @@ GpuTexture& GpuTexture::operator=(GpuTexture&& other) noexcept {
         }
         heap_ = other.heap_;
         image_ = other.image_;
-        sampler_ = std::move(other.sampler_);
+        sampler_ = other.sampler_;
+        owned_sampler_ = std::move(other.owned_sampler_);
         width_ = other.width_;
         height_ = other.height_;
         mip_levels_ = other.mip_levels_;
         array_layers_ = other.array_layers_;
         other.heap_ = nullptr;
         other.image_ = {};
+        other.sampler_ = vk::Sampler{nullptr};
     }
     return *this;
 }
@@ -161,10 +145,29 @@ void GpuTexture::Retire(std::uint32_t recording_frame) {
     if (!IsValid()) {
         return;
     }
-    sampler_.reset();
+    // A cache-owned sampler is shared and must live on; only an owned sampler
+    // is released here.
+    owned_sampler_.reset();
+    sampler_ = vk::Sampler{nullptr};
     heap_->Retire(image_, recording_frame);
     image_ = {};
     heap_ = nullptr;
+}
+
+void GpuTexture::AssignSampler(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                               GpuTexture& texture,
+                               const VulkanEngine::Textures::SamplerDesc& sampler_desc,
+                               std::uint32_t mip_levels,
+                               SamplerCache* sampler_cache) {
+    if (sampler_cache != nullptr && sampler_cache->IsValid()) {
+        texture.sampler_ = sampler_cache->Get(sampler_desc, mip_levels);
+        return;
+    }
+    texture.owned_sampler_ =
+        std::make_unique<vk::raii::Sampler>(CreateSampler(backend, sampler_desc, mip_levels));
+    texture.sampler_ = static_cast<vk::Sampler>(**texture.owned_sampler_);
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.owned_sampler_,
+                                               "gpu-texture-sampler");
 }
 
 vk::Image GpuTexture::GetImage() const {
@@ -176,14 +179,15 @@ vk::ImageView GpuTexture::GetImageView() const {
 }
 
 vk::Sampler GpuTexture::GetSampler() const {
-    return sampler_ != nullptr ? static_cast<vk::Sampler>(**sampler_) : vk::Sampler{nullptr};
+    return sampler_;
 }
 
 GpuTexture GpuTexture::CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                                      GpuImageHeap& heap,
                                      const VulkanEngine::Textures::TextureData& data,
                                      vk::Format resolved,
-                                     const VulkanEngine::Textures::SamplerDesc& sampler_desc) {
+                                     const VulkanEngine::Textures::SamplerDesc& sampler_desc,
+                                     SamplerCache* sampler_cache) {
     GpuTexture texture{};
     if (!heap.IsValid() || resolved == vk::Format::eUndefined || data.subresources.empty()) {
         return texture;
@@ -223,9 +227,7 @@ GpuTexture GpuTexture::CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& ba
         return texture;
     }
 
-    texture.sampler_ = std::make_unique<vk::raii::Sampler>(
-        CreateSampler(backend, sampler_desc, data.mip_levels));
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.sampler_, "gpu-texture-sampler");
+    AssignSampler(backend, texture, sampler_desc, data.mip_levels, sampler_cache);
     return texture;
 }
 
@@ -233,8 +235,9 @@ GpuTexture GpuTexture::CreateFromTextureData(VulkanBackend::Vulkan::IVulkanBoots
                                              GpuImageHeap& heap,
                                              const VulkanEngine::Textures::TextureData& data,
                                              vk::Format resolved,
-                                             const VulkanEngine::Textures::SamplerDesc& sampler_desc) {
-    GpuTexture texture = CreatePending(backend, heap, data, resolved, sampler_desc);
+                                             const VulkanEngine::Textures::SamplerDesc& sampler_desc,
+                                             SamplerCache* sampler_cache) {
+    GpuTexture texture = CreatePending(backend, heap, data, resolved, sampler_desc, sampler_cache);
     if (!texture.IsValid()) {
         return texture;
     }
@@ -304,9 +307,7 @@ GpuTexture GpuTexture::CreateFromTextureData(VulkanBackend::Vulkan::IVulkanBoots
         backend.GetGraphicsQueue().waitIdle();
     }
 
-    texture.sampler_ = std::make_unique<vk::raii::Sampler>(
-        CreateSampler(backend, sampler_desc, data.mip_levels));
-    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.sampler_, "gpu-texture-sampler");
+    AssignSampler(backend, texture, sampler_desc, data.mip_levels, sampler_cache);
 
     return texture;
 }
@@ -316,7 +317,8 @@ GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap&
                                         const uint8_t* pixels,
                                         std::uint32_t width,
                                         std::uint32_t height,
-                                        vk::Format format) {
+                                        vk::Format format,
+                                        SamplerCache* sampler_cache) {
     VulkanEngine::Textures::TextureData data{};
     data.width = width;
     data.height = height;
@@ -332,7 +334,7 @@ GpuTexture GpuTexture::CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap&
     if (pixels != nullptr) {
         std::memcpy(data.blob.data(), pixels, byte_count);
     }
-    return CreateFromTextureData(backend, heap, data, format);
+    return CreateFromTextureData(backend, heap, data, format, {}, sampler_cache);
 }
 
 GpuTexture GpuTexture::CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
@@ -340,7 +342,8 @@ GpuTexture GpuTexture::CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& bac
                                     std::uint32_t width,
                                     std::uint32_t height,
                                     vk::Format format,
-                                    bool linear_filter) {
+                                    bool linear_filter,
+                                    SamplerCache* sampler_cache) {
     GpuTexture texture{};
     if (!heap.IsValid()) {
         return texture;
@@ -373,7 +376,7 @@ GpuTexture GpuTexture::CreateStream(VulkanBackend::Vulkan::IVulkanBootstrap& bac
     sampler_desc.address_u = vk::SamplerAddressMode::eClampToEdge;
     sampler_desc.address_v = vk::SamplerAddressMode::eClampToEdge;
     sampler_desc.address_w = vk::SamplerAddressMode::eClampToEdge;
-    texture.sampler_ = std::make_unique<vk::raii::Sampler>(CreateSampler(backend, sampler_desc, 1));
+    AssignSampler(backend, texture, sampler_desc, 1, sampler_cache);
     return texture;
 }
 
@@ -381,7 +384,8 @@ GpuTexture GpuTexture::CreateColorTarget(VulkanBackend::Vulkan::IVulkanBootstrap
                                          GpuImageHeap& heap,
                                          std::uint32_t width,
                                          std::uint32_t height,
-                                         vk::Format format) {
+                                         vk::Format format,
+                                         SamplerCache* sampler_cache) {
     GpuTexture texture{};
     if (!heap.IsValid()) {
         return texture;
@@ -410,7 +414,7 @@ GpuTexture GpuTexture::CreateColorTarget(VulkanBackend::Vulkan::IVulkanBootstrap
     sampler_desc.address_u = vk::SamplerAddressMode::eClampToEdge;
     sampler_desc.address_v = vk::SamplerAddressMode::eClampToEdge;
     sampler_desc.address_w = vk::SamplerAddressMode::eClampToEdge;
-    texture.sampler_ = std::make_unique<vk::raii::Sampler>(CreateSampler(backend, sampler_desc, 1));
+    AssignSampler(backend, texture, sampler_desc, 1, sampler_cache);
     return texture;
 }
 

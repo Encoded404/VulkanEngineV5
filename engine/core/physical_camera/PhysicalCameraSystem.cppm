@@ -40,6 +40,7 @@ public:
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::BindlessManager::BindlessManager& bindless,
                     VulkanEngine::GpuResources::GpuImageHeap& image_heap,
+                    VulkanEngine::GpuResources::SamplerCache& sampler_cache,
                     ShaderSystem::ShaderManager& shader_manager,
                     ShaderSystem::PipelineFactory& pipeline_factory,
                     ShaderSystem::ShaderId composite_vert_id,

@@ -60,6 +60,124 @@ struct SamplerDesc {
     bool operator==(const SamplerDesc&) const = default;
 };
 
+// ── Sampler cache policy (pure; device-free testable) ─────────────────
+//
+// A SamplerDesc is clamped to the device's limits before it is hashed or
+// turned into a VkSampler, so equal requests collapse to one cache entry and
+// two devices with different limits never collide on the same key. The
+// clamped value is the cache key.
+[[nodiscard]] inline SamplerDesc ClampSamplerDesc(const SamplerDesc& desired,
+                                                  bool anisotropy_supported,
+                                                  std::uint32_t device_max_anisotropy,
+                                                  std::uint32_t mip_levels) {
+    SamplerDesc clamped = desired;
+    if (!anisotropy_supported || !clamped.anisotropy) {
+        clamped.anisotropy = false;
+        clamped.max_anisotropy = 1;
+    } else {
+        const std::uint32_t device_max = std::max(1U, device_max_anisotropy);
+        clamped.max_anisotropy = std::max(1U, std::min(clamped.max_anisotropy, device_max));
+    }
+    // Never advertise lod levels the chain does not have.
+    const float chain_max_lod = mip_levels > 1U ? static_cast<float>(mip_levels - 1U) : 0.0f;
+    clamped.max_lod = mip_levels > 1U ? std::min(clamped.max_lod, chain_max_lod) : 0.0f;
+    return clamped;
+}
+
+[[nodiscard]] inline std::size_t HashSamplerDesc(const SamplerDesc& desc) noexcept {
+    std::size_t seed = 0;
+    const auto mix = [&seed](std::size_t value) {
+        // Boost-style combine: stable and dependency-free.
+        seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+    };
+    mix(static_cast<std::size_t>(desc.min_filter));
+    mix(static_cast<std::size_t>(desc.mag_filter));
+    mix(static_cast<std::size_t>(desc.mip_mode));
+    mix(static_cast<std::size_t>(desc.address_u));
+    mix(static_cast<std::size_t>(desc.address_v));
+    mix(static_cast<std::size_t>(desc.address_w));
+    mix(static_cast<std::size_t>(desc.compare));
+    mix(static_cast<std::size_t>(desc.border));
+    mix(desc.anisotropy ? 1U : 0U);
+    mix(static_cast<std::size_t>(desc.max_anisotropy));
+    mix(static_cast<std::size_t>(std::bit_cast<std::uint32_t>(desc.mip_lod_bias)));
+    mix(static_cast<std::size_t>(std::bit_cast<std::uint32_t>(desc.min_lod)));
+    mix(static_cast<std::size_t>(std::bit_cast<std::uint32_t>(desc.max_lod)));
+    return seed;
+}
+
+struct SamplerDescHash {
+    [[nodiscard]] std::size_t operator()(const SamplerDesc& desc) const noexcept {
+        return HashSamplerDesc(desc);
+    }
+};
+
+// Distance between two clamped sampler descriptions. Used only when the cache
+// is at capacity: the closest existing entry is substituted so a draw never
+// fails for want of a sampler. Discrete state dominates; lod bias is a weak
+// tiebreak so two samplers differing only in bias still rank apart.
+[[nodiscard]] inline std::uint64_t SamplerDescDistance(const SamplerDesc& a, const SamplerDesc& b) noexcept {
+    std::uint64_t distance = 0;
+    const auto weigh = [&distance](bool differs, std::uint64_t weight) {
+        if (differs) {
+            distance += weight;
+        }
+    };
+    weigh(a.min_filter != b.min_filter, 8);
+    weigh(a.mag_filter != b.mag_filter, 4);
+    weigh(a.mip_mode != b.mip_mode, 2);
+    weigh(a.address_u != b.address_u, 2);
+    weigh(a.address_v != b.address_v, 2);
+    weigh(a.address_w != b.address_w, 2);
+    weigh(a.compare != b.compare, 4);
+    weigh(a.border != b.border, 1);
+    weigh(a.anisotropy != b.anisotropy, 16);
+    if (a.anisotropy && b.anisotropy) {
+        weigh(a.max_anisotropy != b.max_anisotropy, 1);
+    }
+    weigh(a.mip_lod_bias != b.mip_lod_bias, 1);
+    weigh(a.min_lod != b.min_lod, 1);
+    weigh(a.max_lod != b.max_lod, 1);
+    return distance;
+}
+
+// Translates an already-clamped description into a VkSamplerCreateInfo. Single
+// source shared by the sampler cache and the uncached bootstrap path so both
+// build identical samplers.
+[[nodiscard]] inline vk::SamplerCreateInfo MakeSamplerCreateInfo(const SamplerDesc& clamped) {
+    vk::SamplerCreateInfo info{};
+    info.minFilter = clamped.min_filter;
+    info.magFilter = clamped.mag_filter;
+    info.mipmapMode = clamped.mip_mode;
+    info.addressModeU = clamped.address_u;
+    info.addressModeV = clamped.address_v;
+    info.addressModeW = clamped.address_w;
+    info.mipLodBias = clamped.mip_lod_bias;
+    info.minLod = clamped.min_lod;
+    info.maxLod = clamped.max_lod;
+    info.anisotropyEnable = clamped.anisotropy ? vk::True : vk::False;
+    info.maxAnisotropy = static_cast<float>(clamped.max_anisotropy);
+    info.compareEnable = clamped.compare != vk::CompareOp::eNever ? vk::True : vk::False;
+    info.compareOp = clamped.compare;
+    info.borderColor = clamped.border;
+    return info;
+}
+
+// Index of the entry nearest to `desired`; 0 when `candidates` is empty.
+[[nodiscard]] inline std::size_t FindNearestSamplerIndex(std::span<const SamplerDesc> candidates,
+                                                         const SamplerDesc& desired) noexcept {
+    std::size_t best = 0;
+    std::uint64_t best_distance = std::numeric_limits<std::uint64_t>::max();
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const std::uint64_t distance = SamplerDescDistance(candidates[i], desired);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
 // ── Alpha analysis (moved from the loader-local type; used by material
 //    validation and by callers deciding fallbacks) ──────────────────────
 

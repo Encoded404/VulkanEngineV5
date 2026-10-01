@@ -77,12 +77,18 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
     if (!ctx.image_heap.Initialize(vk_backend, {}, "image")) return false;
     if (!ctx.staging_pool.Initialize(vk_backend)) return false;
+    if (!ctx.sampler_cache.Initialize(vk_backend,
+                                      vk_backend.GetCapabilities().GetMaxSamplerAllocationCount())) {
+        return false;
+    }
 
     // Async texture uploader: needs the image heap, staging pool, bindless
-    // manager and the device capability snapshot, so it is created last.
+    // manager, sampler cache and the device capability snapshot, so it is
+    // created last.
     ctx.texture_uploader = std::make_unique<Textures::TextureUploader>();
     if (!ctx.texture_uploader->Initialize(vk_backend, ctx.image_heap, ctx.staging_pool,
-                                          *ctx.bindless_mgr, vk_backend.GetCapabilities())) {
+                                          *ctx.bindless_mgr, vk_backend.GetCapabilities(),
+                                          &ctx.sampler_cache)) {
         return false;
     }
 
@@ -128,6 +134,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     if (config.enable_physical_camera) {
         ctx.physical_camera = std::make_unique<PhysicalCamera::PhysicalCameraSystem>();
         if (!ctx.physical_camera->Initialize(vk_backend, *ctx.bindless_mgr, ctx.image_heap,
+                                              ctx.sampler_cache,
                                               *ctx.shader_manager, *ctx.pipeline_factory,
                                               ctx.shader_ids.physical_camera_composite_vert,
                                               ctx.shader_ids.physical_camera_composite_frag)) {

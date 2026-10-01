@@ -219,7 +219,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     ctx_.bindless_mgr->SetFallback(
         GpuResources::GpuTexture::CreateFromTextureData(
             backend, ctx_.image_heap, ctx_.missing_texture->GetData(),
-            vk::Format::eR8G8B8A8Unorm, SamplerDesc{}),
+            vk::Format::eR8G8B8A8Unorm, SamplerDesc{}, &ctx_.sampler_cache),
         ctx_.missing_texture->GetId());
     const std::uint32_t fallback_slot = BindlessManager::kFallbackSlot;
     [[maybe_unused]] auto fallback_handle = ctx_.material_mgr.Register<TechniqueManager::DefaultMeshTechnique>(

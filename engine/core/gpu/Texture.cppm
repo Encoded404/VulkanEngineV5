@@ -11,6 +11,7 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 
 import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.GpuImageHeap;
+import VulkanEngine.GpuResources.SamplerCache;
 
 export namespace VulkanEngine::GpuResources {
 
@@ -34,7 +35,8 @@ public:
                                             GpuImageHeap& heap,
                                             const VulkanEngine::Textures::TextureData& data,
                                             vk::Format resolved,
-                                            const VulkanEngine::Textures::SamplerDesc& sampler_desc = {});
+                                            const VulkanEngine::Textures::SamplerDesc& sampler_desc = {},
+                                            SamplerCache* sampler_cache = nullptr);
 
     // Allocates the image, view and sampler for a subresource-complete texture
     // WITHOUT uploading: the image starts in eUndefined and must be filled by a
@@ -45,7 +47,8 @@ public:
                                     GpuImageHeap& heap,
                                     const VulkanEngine::Textures::TextureData& data,
                                     vk::Format resolved,
-                                    const VulkanEngine::Textures::SamplerDesc& sampler_desc = {});
+                                    const VulkanEngine::Textures::SamplerDesc& sampler_desc = {},
+                                    SamplerCache* sampler_cache = nullptr);
 
     // Convenience path for in-memory RGBA8 (fallback checkerboard, solid
     // colors): a single-subresource TextureData upload.
@@ -54,7 +57,8 @@ public:
                                        const std::uint8_t* pixels,
                                        std::uint32_t width,
                                        std::uint32_t height,
-                                       vk::Format format = vk::Format::eR8G8B8A8Unorm);
+                                       vk::Format format = vk::Format::eR8G8B8A8Unorm,
+                                       SamplerCache* sampler_cache = nullptr);
 
     // Persistent, GPU-resident image with no initial content; suitable as a
     // camera stream upload target (eTransferDst | eSampled, nearest sampler,
@@ -64,7 +68,8 @@ public:
                                    std::uint32_t width,
                                    std::uint32_t height,
                                    vk::Format format,
-                                   bool linear_filter = false);
+                                   bool linear_filter = false,
+                                   SamplerCache* sampler_cache = nullptr);
 
     // Render target that can also be sampled by materials/shaders
     // (eColorAttachment | eSampled, linear sampler, no mips).
@@ -72,7 +77,8 @@ public:
                                         GpuImageHeap& heap,
                                         std::uint32_t width,
                                         std::uint32_t height,
-                                        vk::Format format = vk::Format::eR8G8B8A8Unorm);
+                                        vk::Format format = vk::Format::eR8G8B8A8Unorm,
+                                        SamplerCache* sampler_cache = nullptr);
 
     [[nodiscard]] vk::Image GetImage() const;
     [[nodiscard]] vk::ImageView GetImageView() const;
@@ -89,9 +95,20 @@ public:
     void Retire(std::uint32_t recording_frame);
 
 private:
+    // Assigns the sampler for a texture: the cache's shared sampler when one is
+    // supplied (deduplicated across textures), otherwise a sampler owned by
+    // this texture (the bootstrap/uncached path).
+    static void AssignSampler(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                              GpuTexture& texture,
+                              const VulkanEngine::Textures::SamplerDesc& sampler_desc,
+                              std::uint32_t mip_levels,
+                              SamplerCache* sampler_cache);
+
     GpuImageHeap* heap_ = nullptr;
     HeapImage image_{};
-    std::unique_ptr<vk::raii::Sampler> sampler_{};
+    // Non-owning when the sampler came from a SamplerCache; owning otherwise.
+    vk::Sampler sampler_{nullptr};
+    std::unique_ptr<vk::raii::Sampler> owned_sampler_{};
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
     std::uint32_t mip_levels_ = 1;

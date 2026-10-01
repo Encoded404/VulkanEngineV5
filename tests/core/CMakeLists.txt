@@ -4,6 +4,7 @@ add_executable(engine_tests
   texture_format_tests.cpp
   texture_upload_scheduler_tests.cpp
   bindless_capacity_tests.cpp
+  sampler_cache_tests.cpp
   texture_mip_chain_tests.cpp
   texture_loader_subresource_tests.cpp
   normal_encoding_material_tests.cpp

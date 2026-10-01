@@ -18,6 +18,7 @@ import VulkanEngine.TextureFormat;
 import VulkanEngine.TextureUploadScheduler;
 import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.GpuResources.GpuImageHeap;
+import VulkanEngine.GpuResources.SamplerCache;
 import VulkanEngine.ResourceSystem;
 
 export namespace VulkanEngine::Textures {
@@ -64,11 +65,15 @@ public:
     TextureUploader(const TextureUploader&) = delete;
     TextureUploader& operator=(const TextureUploader&) = delete;
 
+    // `sampler_cache` deduplicates the VkSampler objects the uploaded textures
+    // share. It may be null (the device-free tests own their samplers), in
+    // which case each texture owns a private sampler.
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     GpuResources::GpuImageHeap& image_heap,
                     GpuResources::StagingPool& staging_pool,
                     BindlessManager::BindlessManager& bindless,
                     const VulkanBackend::Vulkan::VulkanCapabilities& capabilities,
+                    GpuResources::SamplerCache* sampler_cache = nullptr,
                     std::size_t worker_count = 2);
     void Shutdown();
 
@@ -140,6 +145,7 @@ private:
     GpuResources::StagingPool* staging_pool_ = nullptr;
     BindlessManager::BindlessManager* bindless_ = nullptr;
     const VulkanBackend::Vulkan::VulkanCapabilities* capabilities_ = nullptr;
+    GpuResources::SamplerCache* sampler_cache_ = nullptr;
 
     // Dedicated decode/transcode worker pool (never ThreadPool::Global()).
     std::vector<std::jthread> workers_{};

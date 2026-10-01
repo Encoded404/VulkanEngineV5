@@ -51,6 +51,7 @@ target_sources(${BACKEND_TARGET} PRIVATE
     vulkan/VulkanDevice.cpp
     vulkan/VulkanSwapchain.cpp
     vulkan/VulkanCapabilities.cpp
+    vulkan/FormatUtils.cpp
     vulkan/MemoryUtils.cpp
     vulkan/ImageUtils.cpp
     vulkan/PipelineBuilder.cpp
@@ -77,6 +78,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             vulkan/VulkanInstance.cppm
             vulkan/VulkanDevice.cppm
             vulkan/VulkanCapabilities.cppm
+            vulkan/FormatUtils.cppm
             vulkan/VulkanSwapchain.cppm
             vulkan/MemoryUtils.cppm
             vulkan/ImageUtils.cppm

@@ -8,6 +8,8 @@ import std.compat;
 
 import vulkan_hpp;
 
+import VulkanBackend.Vulkan.FormatUtils;
+
 namespace VulkanBackend::Vulkan {
 
 uint32_t ImageUtils::CalculateMipLevels(std::uint32_t width, std::uint32_t height, std::uint32_t depth) {
@@ -44,12 +46,20 @@ vk::ImageSubresourceRange ImageUtils::CreateSubresourceRange(vk::ImageAspectFlag
     return range;
 }
 
-vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(std::uint32_t width,
-                                                    std::uint32_t height,
-                                                    vk::ImageAspectFlags aspect_flags,
-                                                    std::uint32_t mip_level,
-                                                    std::uint32_t array_layer,
-                                                    vk::DeviceSize buffer_offset) {
+// The copy region is format-aware. For compressed formats the region is
+// one texel block deep (depth is in blocks already per the Vk spec: imageExtent
+// for compressed formats is in texels but copyBufferToImage splits depth in
+// blocks), and the extent is clamped to the whole-block range that the source
+// buffer covers. The historical implementation produced RGBA8-sized copies for
+// any format, so every compressed copy read past the source or wrote garbage.
+vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(vk::Format format,
+                                                      std::uint32_t width,
+                                                      std::uint32_t height,
+                                                      std::uint32_t depth,
+                                                      vk::ImageAspectFlags aspect_flags,
+                                                      std::uint32_t mip_level,
+                                                      std::uint32_t array_layer,
+                                                      vk::DeviceSize buffer_offset) {
     vk::BufferImageCopy copy{};
     copy.bufferOffset = buffer_offset;
     copy.bufferRowLength = 0;
@@ -59,7 +69,8 @@ vk::BufferImageCopy ImageUtils::CreateBufferImageCopy(std::uint32_t width,
     copy.imageSubresource.baseArrayLayer = array_layer;
     copy.imageSubresource.layerCount = 1;
     copy.imageOffset = vk::Offset3D{0, 0, 0};
-    copy.imageExtent = vk::Extent3D{width, height, 1};
+    // Single copy layer: texel depth (1) for 2D, the actual depth for 3D.
+    copy.imageExtent = vk::Extent3D{width, height, depth};
     return copy;
 }
 
@@ -89,25 +100,28 @@ vk::ImageSubresourceLayers ImageUtils::CreateSubresourceLayers(vk::ImageAspectFl
     return layers;
 }
 
+// The size previously assumed 1 byte per texel (`w*h*d` summed over the
+// chain), ignoring the format entirely — compressed formats and any RGBA
+// format under-reported. The size is now the sum of per-mip block-tight
+// subresource sizes derived from the format traits, times the layer count
+// (each layer stores the full chain; KTX layers are independent images).
 vk::DeviceSize ImageUtils::CalculateImageSize(std::uint32_t width,
                                             std::uint32_t height,
                                             std::uint32_t depth,
                                             std::uint32_t mip_levels,
                                             std::uint32_t array_layers,
-                                            vk::Format /*format*/) {
-    vk::DeviceSize size = 0;
-    for (std::uint32_t layer = 0; layer < array_layers; ++layer) {
-        std::uint32_t mip_width = width;
-        std::uint32_t mip_height = height;
-        std::uint32_t mip_depth = depth;
-        for (std::uint32_t level = 0; level < mip_levels; ++level) {
-            size += static_cast<vk::DeviceSize>(std::max(1u, mip_width) * std::max(1u, mip_height) * std::max(1u, mip_depth));
-            mip_width = std::max(mip_width / 2, 1u);
-            mip_height = std::max(mip_height / 2, 1u);
-            mip_depth = std::max(mip_depth / 2, 1u);
-        }
+                                            vk::Format format) {
+    const FormatTraits traits = GetFormatTraits(format);
+    if (traits.block_bytes == 0U) {
+        // Unknown format: not a candidate the texture system may upload.
+        return 0;
     }
-    return size;
+    vk::DeviceSize size = 0;
+    const vk::Extent3D base{width, height, std::max(depth, 1U)};
+    for (std::uint32_t level = 0; level < mip_levels; ++level) {
+        size += SubresourceByteSize(MipExtent(base.width, base.height, base.depth, level), format);
+    }
+    return size * std::max(array_layers, 1U);
 }
 
 void ImageUtils::GetMipLevelDimensions(std::uint32_t base_mip_width,
@@ -257,8 +271,12 @@ void ImageUtils::CmdCopyBufferToImage(vk::raii::CommandBuffer const& cmd,
                                           vk::ImageAspectFlags aspect_flags,
                                           std::uint32_t mip_level,
                                           std::uint32_t array_layer,
-                                          vk::DeviceSize buffer_offset) {
-    const vk::BufferImageCopy region = CreateBufferImageCopy(width, height, aspect_flags, mip_level, array_layer, buffer_offset);
+                                          vk::DeviceSize buffer_offset,
+                                          vk::Format format,
+                                          std::uint32_t depth) {
+    const vk::BufferImageCopy region = CreateBufferImageCopy(format, width, height, depth,
+                                                             aspect_flags, mip_level, array_layer,
+                                                             buffer_offset);
     cmd.copyBufferToImage(src_buffer, dst_image, dst_layout, region);
 }
 

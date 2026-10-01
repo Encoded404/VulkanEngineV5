@@ -18,9 +18,11 @@ public:
                                                           std::uint32_t level_count = vk::RemainingMipLevels,
                                                           std::uint32_t base_array_layer = 0,
                                                           std::uint32_t layer_count = vk::RemainingArrayLayers);
-    static vk::BufferImageCopy CreateBufferImageCopy(std::uint32_t width,
+    static vk::BufferImageCopy CreateBufferImageCopy(vk::Format format,
+                                                   std::uint32_t width,
                                                    std::uint32_t height,
-                                                   vk::ImageAspectFlags aspect_flags,
+                                                   std::uint32_t depth = 1,
+                                                   vk::ImageAspectFlags aspect_flags = vk::ImageAspectFlagBits::eColor,
                                                    std::uint32_t mip_level = 0,
                                                    std::uint32_t array_layer = 0,
                                                    vk::DeviceSize buffer_offset = 0);
@@ -89,7 +91,9 @@ public:
                                      vk::ImageAspectFlags aspect_flags = vk::ImageAspectFlagBits::eColor,
                                      std::uint32_t mip_level = 0,
                                      std::uint32_t array_layer = 0,
-                                     vk::DeviceSize buffer_offset = 0);
+                                     vk::DeviceSize buffer_offset = 0,
+                                     vk::Format format = vk::Format::eR8G8B8A8Unorm,
+                                     std::uint32_t depth = 1);
 };
 
 } // namespace VulkanBackend::Vulkan

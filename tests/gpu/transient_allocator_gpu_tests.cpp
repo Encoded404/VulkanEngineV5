@@ -64,6 +64,7 @@ public:
     [[nodiscard]] bool AcquireNextImage(std::uint32_t, std::uint32_t&) override { throw std::runtime_error("n/a"); }
     [[nodiscard]] bool SubmitFrame(std::uint32_t, std::uint32_t, bool) override { throw std::runtime_error("n/a"); }
     [[nodiscard]] bool Present(std::uint32_t) override { throw std::runtime_error("n/a"); }
+    void WaitDeviceIdle() override { device_->waitIdle(); }
     void Shutdown() override {}
 
 private:

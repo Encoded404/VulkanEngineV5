@@ -116,16 +116,14 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 
 void EngineBootstrap::Shutdown(EngineContext& ctx,
                                 VulkanBackend::Vulkan::VulkanBootstrap& backend) {
-    {
-        auto s = DebugSection("engineshutdown.wait_idle");
-        try {
-            backend.GetBackend().GetDevice().waitIdle();
-        } catch (...) {
-            LOGIFACE_LOG(warn, "Exception during GPU wait idle in EngineBootstrap shutdown");
-        }
-    }
-
-    // Everything below owns GPU resources (safe to destroy now that the device is
+    // Device idle is the first teardown task, not a serial step before the
+    // scheduler: it is the single point where the device goes quiescent for
+    // teardown, and every GPU-owning task depends on it. Tasks that reach a
+    // device-scope call (several destructors, PhysicalCameraSystem) are also
+    // serialized by the device scope inside WaitDeviceIdle, so parallel
+    // destruction of disjoint state cannot race the VkQueue.
+    //
+    // Everything below owns GPU resources (safe to destroy once the device is
     // idle) and, except for the two edges noted below, destroys disjoint state,
     // so subsystems are torn down in parallel on a small worker pool.
     //
@@ -136,6 +134,13 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     const std::size_t worker_count =
         std::min<std::size_t>(4, std::max<std::size_t>(2, std::thread::hardware_concurrency()));
     VulkanShared::TeardownScheduler teardown{worker_count};
+
+    // Idle barrier. Every task below that may touch the device or queue declares
+    // this as a dependency, so the idle completes before any destruction starts.
+    const VulkanShared::TeardownId idle_id = teardown.Add("engineshutdown.wait_idle", [&backend] {
+        auto s = DebugSection("engineshutdown.wait_idle");
+        backend.GetBackend().WaitDeviceIdle();
+    });
 
     std::optional<VulkanShared::TeardownId> shader_watcher_id;
     if (ctx.shader_watcher) {
@@ -158,7 +163,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             auto s = DebugSection("engineshutdown.renderer");
             ctx.renderer->Shutdown();
             ctx.renderer.reset();
-        });
+        }, {idle_id});
     }
 
     std::optional<VulkanShared::TeardownId> imgui_system_id;
@@ -167,10 +172,10 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             auto s = DebugSection("engineshutdown.imgui_system");
             ctx.imgui_system->Shutdown();
             ctx.imgui_system.reset();
-        });
+        }, {idle_id});
     }
     if (ctx.imgui_backend) {
-        std::vector<VulkanShared::TeardownId> deps;
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
         if (imgui_system_id) {
             deps.push_back(*imgui_system_id);
         }
@@ -187,7 +192,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             auto s = DebugSection("engineshutdown.scene_renderer");
             ctx.scene_renderer->Shutdown();
             ctx.scene_renderer.reset();
-        });
+        }, {idle_id});
     }
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -196,7 +201,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             auto s = DebugSection("engineshutdown.physical_camera");
             ctx.physical_camera->Shutdown();
             ctx.physical_camera.reset();
-        });
+        }, {idle_id});
     }
 #endif
 
@@ -261,7 +266,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             auto s = DebugSection("engineshutdown.technique_manager");
             ctx.technique_mgr->Shutdown();
             ctx.technique_mgr.reset();
-        });
+        }, {idle_id});
     }
 
     try {

@@ -96,6 +96,8 @@ public:
     [[nodiscard]] bool Present(std::uint32_t) override { return true; }
     [[nodiscard]] bool IsFrameComplete(std::uint32_t) override { return true; }
 
+    void WaitDeviceIdle() override {}
+
     void Shutdown() override { shutdown_called = true; }
 };
 

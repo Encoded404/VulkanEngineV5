@@ -14,6 +14,7 @@ import VulkanBackend.Vulkan.VulkanInstance;
 import VulkanBackend.Vulkan.VulkanDevice;
 import VulkanBackend.Vulkan.VulkanSwapchain;
 import VulkanBackend.Vulkan.FrameSubmissionRecord;
+import VulkanShared.DeviceScope;
 import VulkanShared.ScopedSection;
 
 namespace VulkanBackend::Vulkan {
@@ -334,12 +335,19 @@ public:
         }
     }
 
+    void WaitDeviceIdle() override {
+        if (!device_ || !device_->IsValid()) return;
+        // Serialize with every other device-scope waiter: vkDeviceWaitIdle
+        // touches all queues, which the API requires to be externally
+        // synchronized. See VulkanShared.DeviceScope.
+        VulkanShared::DeviceScopeGuard guard;
+        device_->GetDevice().waitIdle();
+    }
+
     void Shutdown() override {
         {
             auto s = DebugSection("wait for device idle before destroying resources in VulkanBootstrapBackend::Shutdown");
-            if (device_ && device_->IsValid()) {
-                device_->GetDevice().waitIdle();
-            }
+            WaitDeviceIdle();
         }
 
         {

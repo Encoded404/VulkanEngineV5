@@ -15,6 +15,7 @@ import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuBuffer;
 import VulkanEngine.GpuTexture;
+import VulkanShared.DeviceScope;
 
 namespace VulkanEngine::GpuResources {
 
@@ -37,6 +38,7 @@ std::shared_ptr<DescriptorPool> DescriptorPool::Create(
 DescriptorPool::~DescriptorPool() {
     if (pool_ && backend_) {
         try {
+            VulkanShared::DeviceScopeGuard guard;
             backend_->GetDevice().waitIdle();
         } catch (...) { // NOLINT(bugprone-empty-catch)
         }
@@ -134,6 +136,7 @@ GpuDescriptorSet& GpuDescriptorSet::operator=(GpuDescriptorSet&& other) noexcept
     if (this != &other) {
         if (backend_) {
             try {
+                VulkanShared::DeviceScopeGuard guard;
                 backend_->GetDevice().waitIdle();
             } catch (...) { // NOLINT(bugprone-empty-catch)
             }
@@ -171,6 +174,7 @@ void GpuDescriptorSet::Destroy() {
 
     if (backend_) {
         try {
+            VulkanShared::DeviceScopeGuard guard;
             backend_->GetDevice().waitIdle();
         } catch (...) { // NOLINT(bugprone-empty-catch)
         }

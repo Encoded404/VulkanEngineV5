@@ -45,7 +45,7 @@ void GraphicsPipeline::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootst
 
 void GraphicsPipeline::Shutdown() {
     if (bootstrap_) {
-        bootstrap_->GetBackend().GetDevice().waitIdle();
+        bootstrap_->GetBackend().WaitDeviceIdle();
     }
     pipeline_.reset();
     pipeline_layout_.reset();

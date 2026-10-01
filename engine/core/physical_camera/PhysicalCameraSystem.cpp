@@ -27,6 +27,7 @@ import VulkanEngine.ResourceSystem;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.PhysicalCameraTypes;
+import VulkanShared.DeviceScope;
 
 namespace VulkanEngine::PhysicalCamera {
 
@@ -449,6 +450,7 @@ void PhysicalCameraSystem::Shutdown() {
 
     if (impl_->backend) {
         try {
+            VulkanShared::DeviceScopeGuard guard;
             impl_->backend->GetDevice().waitIdle();
         } catch (const std::exception& err) {
             LOGIFACE_LOG(warn, std::string("PhysicalCameraSystem: waitIdle during shutdown: ") + err.what());

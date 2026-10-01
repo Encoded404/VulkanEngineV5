@@ -101,6 +101,12 @@ public:
     // Non-blocking query: has all command work of frame frame_idx completed?
     [[nodiscard]] virtual bool IsFrameComplete(std::uint32_t frame_idx) = 0;
 
+    // Device-scope idle. Takes the process-wide device scope so concurrent
+    // callers (parallel teardown tasks, resource destructors) serialize on the
+    // VkQueue objects, which vkDeviceWaitIdle accesses and the API requires to
+    // be externally synchronized. No-op when the device is not valid.
+    virtual void WaitDeviceIdle() = 0;
+
     virtual void Shutdown() = 0;
 };
 

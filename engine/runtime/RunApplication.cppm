@@ -68,7 +68,7 @@ export namespace VulkanEngine::Application {
                 [](const std::string& section, double ms) {
                     LOGIFACE_LOG(debug, section + ": " + std::to_string(ms) + " ms");
                 }};
-            bootstrap->GetBackend().GetDevice().waitIdle();
+            bootstrap->GetBackend().WaitDeviceIdle();
             prev = t.ElapsedMs();
         }
         if (setup_completed) {

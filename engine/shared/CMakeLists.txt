@@ -23,6 +23,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
             CallbackList.cppm
+            DeviceScope.cppm
             FileIO.cppm
             ScopedTimer.cppm
             Storage.cppm

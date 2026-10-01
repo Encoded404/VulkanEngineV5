@@ -12,14 +12,11 @@
 Sampler2D<float4> allTextures[];
 
 // Per-material data (set 5, binding 0) — must match
-// TechniqueManager::DefaultMeshPerMaterialData. C layout: 28 bytes.
+// TechniqueManager::UnlitPerMaterialData. C layout: 24 bytes.
 struct MaterialData {
     uint albedo_texture;
-    uint normal_texture;
-    uint orm_texture;
-    float roughness_factor;
-    float metallic_factor;
-    float ao_factor;
+    float4 albedo_factor;
+    float alpha_cutoff;
 };
 
 [[vk::binding(0, 5)]]
@@ -39,7 +36,10 @@ float4 main(PSInput input) : SV_TARGET {
     MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
 
     float4 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
-        .Sample(input.texCoord);
+        .Sample(input.texCoord) * mat.albedo_factor;
+    if (albedo.a < mat.alpha_cutoff) {
+        discard;
+    }
     //albedo.x = 1.0;
     //albedo.z = 1.0;
     //albedo = float4(1.0, 0.0, 0.5, 1.0);

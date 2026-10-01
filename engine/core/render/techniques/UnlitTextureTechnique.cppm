@@ -15,15 +15,23 @@ import VulkanEngine.PipelineFactory;
 
 export namespace VulkanEngine::TechniqueManager {
 
+// Unlit technique contract: only what unlit consumes. C layout,
+// std430-safe, 24 bytes. `unlit.slang` must be changed in lockstep.
+struct UnlitPerMaterialData {
+    std::uint32_t albedo_texture{0};
+    float albedo_factor[4]{1.0f, 1.0f, 1.0f, 1.0f}; // glTF baseColorFactor
+    float alpha_cutoff{0.5f};                       // MASK discard
+};
+
 // UnlitTextureTechnique — renders meshes without lighting by sampling the
-// per-material albedo texture directly. It shares the per-material data layout
-// with DefaultMeshTechnique (DefaultMeshPerMaterialData at set 5, binding 0)
-// but is a distinct type so the TechniqueManager compiles it into a separate
-// pipeline (e.g. paired with the unlit fragment shader).
+// per-material albedo texture directly. It has its own trimmed material
+// contract (UnlitPerMaterialData at set 5, binding 0), separate from the lit
+// technique's DefaultMeshPerMaterialData, so the TechniqueManager compiles it
+// into a separate pipeline (paired with the unlit fragment shader).
 class UnlitTextureTechnique final : public BaseTechnique {
 public:
     UnlitTextureTechnique() {
-        DeclarePerMaterial<DefaultMeshPerMaterialData>(5, 0);
+        DeclarePerMaterial<UnlitPerMaterialData>(5, 0);
     }
 
     // ── MaterialHandle<Tech> requires these static helpers ──
@@ -35,15 +43,15 @@ public:
 
     template<typename T>
     static constexpr std::size_t GetOffset() {
-        static_assert(std::is_same_v<T, DefaultMeshPerMaterialData>,
-                      "UnlitTextureTechnique only has DefaultMeshPerMaterialData");
+        static_assert(std::is_same_v<T, UnlitPerMaterialData>,
+                      "UnlitTextureTechnique only has UnlitPerMaterialData");
         return 0;  // only one PerMaterial type, at offset 0 in cpu_data
     }
 
     template<typename T>
     static constexpr std::uint32_t GetBindingIndex() {
-        static_assert(std::is_same_v<T, DefaultMeshPerMaterialData>,
-                      "UnlitTextureTechnique only has DefaultMeshPerMaterialData");
+        static_assert(std::is_same_v<T, UnlitPerMaterialData>,
+                      "UnlitTextureTechnique only has UnlitPerMaterialData");
         return 0;  // first (only) PerMaterial binding
     }
 
@@ -69,7 +77,7 @@ public:
     // PackMaterialData uses the BaseTechnique default (TechniquePacking::Pack).
 
     [[nodiscard]] VulkanEngine::GpuResources::BlockArray* GetMaterialBlockArray() {
-        return GetBlockArrayForType<DefaultMeshPerMaterialData>();
+        return GetBlockArrayForType<UnlitPerMaterialData>();
     }
 };
 

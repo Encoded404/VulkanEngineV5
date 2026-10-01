@@ -268,6 +268,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             gpu/StagingRing.cppm
             gpu/BufferHeap.cppm
             gpu/ImageHeap.cppm
+            gpu/FrameRing.cppm
             gpu/TlsfAllocator.cppm
             gpu/TransientAllocator.cppm
             gpu/MeshData.cppm

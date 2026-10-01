@@ -1,6 +1,7 @@
 add_executable(engine_tests
   input_system_tests.cpp
   resource_system_texture_tests.cpp
+  frame_ring_tests.cpp
   gpl_resolution_tests.cpp
   tlsf_allocator_tests.cpp
   transient_allocator_tests.cpp

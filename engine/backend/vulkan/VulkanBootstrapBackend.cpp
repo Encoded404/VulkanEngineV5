@@ -13,6 +13,7 @@ import vulkan_hpp;
 import VulkanBackend.Vulkan.VulkanInstance;
 import VulkanBackend.Vulkan.VulkanDevice;
 import VulkanBackend.Vulkan.VulkanSwapchain;
+import VulkanBackend.Vulkan.FrameSubmissionRecord;
 import VulkanShared.ScopedSection;
 
 namespace VulkanBackend::Vulkan {
@@ -41,7 +42,7 @@ public:
     [[nodiscard]] bool SelectPhysicalDevice() override {
         if (!instance_) return false; // Ensure instance is initialized
         device_ = std::make_unique<VulkanDevice>();
-        // Phase 1: Select the physical device (hard-floor check + one-time capability query).
+        // Select the physical device (hard-floor check + one-time capability query).
         if (!device_->SelectPhysicalDevice(*instance_)) {
             error_message_ = device_->GetCapabilities().GetErrorMessage();
             requirements_unmet_ = device_->GetCapabilities().HasUnmetRequirements();
@@ -52,12 +53,15 @@ public:
 
     [[nodiscard]] bool CreateLogicalDevice(std::uint32_t frames_in_flight) override {
         if (!device_ || !instance_) return false; // Ensure device and instance are initialized
-        // Phase 2: Create the logical device and all associated resources using the correct frame count.
+        // Create the logical device and all associated resources using the correct frame count.
         if (!device_->CreateLogicalDeviceAndResources(frames_in_flight, config_)) {
             error_message_ = device_->GetCapabilities().GetErrorMessage();
             requirements_unmet_ = device_->GetCapabilities().HasUnmetRequirements();
             return false;
         }
+        // Per-FIF submission record: a slot's initial state claims nothing;
+        // the first entry for each slot comes from the first real submit into it.
+        submission_record_.Initialize(frames_in_flight);
         LOGIFACE_LOG(info, device_->GetCapabilities().Summarize(instance_->GetCapabilities()));
         return true;
     }
@@ -241,6 +245,9 @@ public:
                 const vk::raii::Queue& queue = runs[i].compute ? vk_compute_queue : vk_graphics_queue;
                 queue.submit({submit_info}, is_last ? *vk_in_flight_fence : nullptr);
             }
+            // Real runs were submitted into this FIF slot; the record advances
+            // only here, never for a frame whose runs were dropped.
+            submission_record_.MarkSubmitted(frame_idx);
             return true;
         }
         if (!runs.empty()) {
@@ -259,6 +266,8 @@ public:
             submit_info.pCommandBuffers = &*vk_command_buffer;
             submit_info.signalSemaphoreCount = 1;
             submit_info.pSignalSemaphores = &*vk_render_finished_semaphore;
+            // Real work submitted: record this frame for slot frame_idx % FIF.
+            submission_record_.MarkSubmitted(frame_idx);
         } else {
             // If rendering didn't succeed, we still need to consume the
             // image_available_semaphore but we don't signal render_finished_semaphore.
@@ -303,8 +312,19 @@ public:
         return true;
     }
 
+    // Corrected lifetime primitive: frame N is complete when the frame has
+    // actually been submitted into slot N % FIF (submission record) AND that
+    // slot's fence is signaled. The old residue-only query was false forever at
+    // FIF == 1 because SubmitFrame resets the just-waited fence, and true for a
+    // recorded-but-dropped frame whose runs were never submitted.
     [[nodiscard]] bool IsFrameComplete(std::uint32_t frame_idx) override {
         if (!device_ || !swapchain_) return false;
+        // The record for this slot must name this frame (or a later frame that
+        // reused the slot, which proves this frame's submit happened); a
+        // stale/never-submitted slot fails first.
+        if (!submission_record_.IsRecorded(frame_idx)) {
+            return false;
+        }
         try {
             const auto status = device_->GetDevice().waitForFences(
                 *device_->GetInFlightFence(frame_idx), vk::True, 0);
@@ -343,9 +363,12 @@ public:
 private:
     std::unique_ptr<VulkanInstance> instance_{};
     std::unique_ptr<VulkanDevice> device_{};
+
     std::unique_ptr<VulkanSwapchain> swapchain_{};
     std::vector<std::unique_ptr<vk::raii::Semaphore>> render_finished_semaphores_{};
     std::vector<IVulkanBootstrap::QueueRunSubmit> frame_runs_{};
+    // Per-FIF submission record, see FrameSubmissionRecord.cppm.
+    FrameSubmissionRecord submission_record_{};
     std::uint32_t current_image_index_ = 0;
     VulkanBootstrapConfig config_{};
     std::string error_message_{};

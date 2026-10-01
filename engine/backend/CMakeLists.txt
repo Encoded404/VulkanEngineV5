@@ -71,6 +71,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             vulkan/RenderGraphContext.cppm
             vulkan/FramePacer.cppm
             vulkan/CommonTypes.cppm
+            vulkan/FrameSubmissionRecord.cppm
             vulkan/VulkanBootstrap.cppm
             vulkan/VulkanBootstrapBackend.cppm
             vulkan/VulkanInstance.cppm

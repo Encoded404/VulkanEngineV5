@@ -7,6 +7,7 @@ import vulkan_hpp;
 
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.BindlessManager;
+import VulkanEngine.TextureUploader;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.Renderer;
@@ -78,6 +79,9 @@ struct EngineContext {
 
     // Rendering subsystems
     std::unique_ptr<BindlessManager::BindlessManager> bindless_mgr;
+    // Async texture uploader (render/bindless); constructed after bindless and
+    // the staging pool, before anything that uploads a texture.
+    std::unique_ptr<Textures::TextureUploader> texture_uploader;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer;
     std::unique_ptr<TechniqueManager::TechniqueManager> technique_mgr;
     std::unique_ptr<Renderer::Renderer> renderer;

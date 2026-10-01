@@ -8,6 +8,7 @@ add_executable(gpu_tests
   normal_mapping_gpu_tests.cpp
   bindless_slot_gpu_tests.cpp
   staging_pool_gpu_tests.cpp
+  texture_uploader_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE

@@ -36,6 +36,17 @@ public:
                                             vk::Format resolved,
                                             const VulkanEngine::Textures::SamplerDesc& sampler_desc = {});
 
+    // Allocates the image, view and sampler for a subresource-complete texture
+    // WITHOUT uploading: the image starts in eUndefined and must be filled by a
+    // recorded copy (see the async uploader, which records into the frame
+    // command buffer). `resolved` is the device format, `data` supplies the
+    // extent/mip/layer/swizzle metadata.
+    static GpuTexture CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                    GpuImageHeap& heap,
+                                    const VulkanEngine::Textures::TextureData& data,
+                                    vk::Format resolved,
+                                    const VulkanEngine::Textures::SamplerDesc& sampler_desc = {});
+
     // Convenience path for in-memory RGBA8 (fallback checkerboard, solid
     // colors): a single-subresource TextureData upload.
     static GpuTexture CreateFromPixels(VulkanBackend::Vulkan::IVulkanBootstrap& backend,

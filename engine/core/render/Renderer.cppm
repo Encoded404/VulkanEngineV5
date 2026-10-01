@@ -16,6 +16,7 @@ export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;
+export import VulkanEngine.TextureUploader;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.ImGui;
@@ -73,7 +74,8 @@ public:
                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                      VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                      VulkanEngine::ImGui::ImGuiSystem* imgui,
-                     std::uint32_t image_index
+                     std::uint32_t image_index,
+                     VulkanEngine::Textures::TextureUploader* texture_uploader = nullptr
 #ifdef VKENGINE_PHYSICAL_CAMERA
                      , VulkanEngine::PhysicalCamera::PhysicalCameraSystem* physical_cameras = nullptr
 #endif

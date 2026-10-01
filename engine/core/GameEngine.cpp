@@ -18,30 +18,11 @@ import VulkanShared.Storage;
 import VulkanShared.UserPaths;
 import VulkanEngine.TextureTypes;
 import VulkanEngine.TextureFormat;
+import VulkanEngine.TextureUploader;
 import VulkanEngine.FileLoaders.TextureLoaders;
 import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace VulkanEngine {
-
-namespace {
-
-// Adapter: the pure resolver consults the backend's immutable capability
-// snapshot through this interface; no device handle is exposed to assets.
-class BackendFormatSupportQuery final : public VulkanEngine::Textures::FormatSupportQuery {
-public:
-    explicit BackendFormatSupportQuery(const VulkanBackend::Vulkan::VulkanCapabilities& caps)
-        : caps_(caps.GetFormatCapabilities()) {}
-
-    [[nodiscard]] bool sampled(vk::Format format) const override { return caps_.sampled(format); }
-    [[nodiscard]] bool transfer_dst(vk::Format format) const override { return caps_.transfer_dst(format); }
-    [[nodiscard]] bool linear_filter(vk::Format format) const override { return caps_.linear_filter(format); }
-    [[nodiscard]] bool color_attachment(vk::Format format) const override { return caps_.color_attachment(format); }
-
-private:
-    const VulkanBackend::Vulkan::FormatCapabilities& caps_;
-};
-
-} // namespace
 
 GameEngine::~GameEngine() {
     if (initialized_) {
@@ -95,7 +76,7 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     return true;
 }
 
-uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx,
+uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& /*ctx*/,
                                              TextureResource* tex,
                                              TextureSemantic semantic,
                                              TextureNormalEncoding normal_encoding,
@@ -104,38 +85,24 @@ uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::Applicat
     if (!tex || !tex->HasData() || tex->GetId().value == ctx_.fallback_handle.GetId().value) {
         return BindlessManager::kFallbackSlot;
     }
-    const auto& data = tex->GetData();
 
-    const BackendFormatSupportQuery query(ctx.bootstrap->GetBackend().GetCapabilities());
-    const auto resolved = VulkanEngine::Textures::ResolveUploadFormat(
-        semantic, normal_encoding, data.source_format, data.needs_transcode,
-        data.source_channels, data.source_alpha != 0, data.is_hdr_source, query);
-    if (resolved.format == vk::Format::eUndefined) {
-        LOGIFACE_LOG(warn, "Texture '" + tex->GetId().value + "': no legal upload format "
-                           "(resource id + source format " + std::to_string(static_cast<int>(data.source_format)) +
-                           "); using fallback");
-        return BindlessManager::kFallbackSlot;
-    }
-
-    // Synchronous Basis transcode on the load path; a future async uploader
-    // moves this onto its decode worker.
-    VulkanEngine::Textures::TextureData upload_data = data;
-    if (data.needs_transcode) {
-        std::string error;
-        if (!VulkanEngine::FileLoaders::Textures::TranscodeBasisToTarget(upload_data, resolved.format, &error)) {
-            LOGIFACE_LOG(warn, "Texture '" + tex->GetId().value + "': Basis transcode failed: " + error);
+    // Asynchronous upload: reserve a slot pre-bound to the fallback (safe to
+    // sample immediately), hand the canonical data to the decode/transcode
+    // worker pool, and return the slot now. No wait, no frame-0 command buffer.
+    // The binding publishes one FIF cycle after the frame that records its
+    // copies; an exhausted capacity maps to the fallback.
+    if (ctx_.texture_uploader) {
+        auto reservation = ctx_.texture_uploader->Reserve(semantic, normal_encoding, sampler, tex->GetId());
+        if (!reservation.has_value()) {
+            LOGIFACE_LOG(warn, "Texture '" + tex->GetId().value +
+                                   "': bindless capacity exhausted; using fallback");
             return BindlessManager::kFallbackSlot;
         }
+        auto data = std::make_shared<VulkanEngine::Textures::TextureData>(tex->GetData());
+        (void)ctx_.texture_uploader->Submit(*reservation, std::move(data));
+        return reservation->handle.slot;
     }
 
-    auto gpu_tex = GpuResources::GpuTexture::CreateFromTextureData(
-        ctx.bootstrap->GetBackend(), ctx_.image_heap, upload_data, resolved.format, sampler);
-    if (gpu_tex.IsValid()) {
-        // Synchronous dev path: no frame is recording, so commit immediately.
-        if (auto handle = ctx_.bindless_mgr->AllocateTextureSlot(std::move(gpu_tex), tex->GetId())) {
-            return handle->slot;
-        }
-    }
     LOGIFACE_LOG(debug, "Failed to create GPU texture for: " + tex->GetId().value + ", using fallback");
     return BindlessManager::kFallbackSlot;
 }
@@ -512,6 +479,15 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
         ctx_.mesh_manager->EndFrame(ctx.frame.frame_counter % fif);
     }
 
+    // Pump finished async uploads into staged images before the frame records.
+    if (ctx_.texture_uploader) {
+        ctx_.texture_uploader->BeginFrame(
+            ctx.frame.frame_counter,
+            [&ctx](std::uint32_t recording_frame) {
+                return ctx.bootstrap->IsFrameComplete(recording_frame);
+            });
+    }
+
     // Drain deferred bindless descriptor ops (uploads published, released slots
     // returned to the free list, retired bindings destroyed). This runs after
     // AcquireNextImage has waited the ring's in-flight fence for this slot, so
@@ -548,7 +524,8 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
                                *ctx_.bindless_mgr,
                                *ctx_.scene_renderer,
                                ctx_.imgui_system.get(),
-                               ctx.frame.image_index
+                               ctx.frame.image_index,
+                               ctx_.texture_uploader.get()
 #ifdef VKENGINE_PHYSICAL_CAMERA
                                , ctx_.physical_camera.get()
 #endif

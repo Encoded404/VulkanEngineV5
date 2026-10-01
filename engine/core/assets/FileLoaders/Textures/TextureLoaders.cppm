@@ -46,4 +46,10 @@ using VulkanEngine::Textures::TextureData;
                                            vk::Format target_format,
                                            std::string* error_message = nullptr);
 
+// Emits a full CPU mip chain (2x2 box filter) below the base level for an
+// uncompressed, single-subresource, RGBA8 source that has none. Returns false
+// when the source already has a chain or is not eligible (compressed/HDR/
+// multi-layer/3D); callers treat false as "keep as-is", never as an error.
+[[nodiscard]] bool GenerateCpuMipChain(TextureData& data);
+
 }  // namespace VulkanEngine::FileLoaders::Textures

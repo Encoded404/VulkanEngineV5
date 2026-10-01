@@ -13,6 +13,7 @@ import VulkanShared.ScopedSection;
 import VulkanShared.Teardown;
 
 import VulkanEngine.BindlessManager;
+import VulkanEngine.TextureUploader;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.MeshManager;
@@ -76,6 +77,14 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
     if (!ctx.image_heap.Initialize(vk_backend, {}, "image")) return false;
     if (!ctx.staging_pool.Initialize(vk_backend)) return false;
+
+    // Async texture uploader: needs the image heap, staging pool, bindless
+    // manager and the device capability snapshot, so it is created last.
+    ctx.texture_uploader = std::make_unique<Textures::TextureUploader>();
+    if (!ctx.texture_uploader->Initialize(vk_backend, ctx.image_heap, ctx.staging_pool,
+                                          *ctx.bindless_mgr, vk_backend.GetCapabilities())) {
+        return false;
+    }
 
     {
         GpuResources::HeapConfig dynamic_heap_config{};
@@ -220,6 +229,16 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         }, {idle_id});
     }
 #endif
+
+    // The uploader owns worker threads and staged images; stop it (and return
+    // any staging ranges) before the staging pool and image heap are torn down.
+    if (ctx.texture_uploader) {
+        teardown.Add("engineshutdown.texture_uploader", [&ctx] {
+            auto s = DebugSection("engineshutdown.texture_uploader");
+            ctx.texture_uploader->Shutdown();
+            ctx.texture_uploader.reset();
+        }, {idle_id});
+    }
 
     if (ctx.shader_manager) {
         std::vector<VulkanShared::TeardownId> deps;

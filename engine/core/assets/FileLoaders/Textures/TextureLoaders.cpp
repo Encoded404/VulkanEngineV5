@@ -498,6 +498,43 @@ void AppendCpuMipChain(std::uint32_t width, std::uint32_t height, TextureData& o
 
 }  // namespace
 
+// Emits a full CPU mip chain for an uncompressed, single-subresource RGBA8
+// source that has none. Same 2x2 box filter the loader uses; exposed so the
+// async upload worker can complete a chain for sources that arrive without one.
+[[nodiscard]] bool GenerateCpuMipChain(TextureData& data) {
+    if (data.needs_transcode || data.is_hdr_source) {
+        return false;  // compressed/HDR chains come from assets, never generated
+    }
+    if (data.source_format != vk::Format::eR8G8B8A8Unorm &&
+        data.source_format != vk::Format::eR8G8B8A8Srgb) {
+        return false;
+    }
+    if (data.mip_levels > 1U || data.array_layers > 1U || data.face_count > 1U || data.depth > 1U) {
+        return false;
+    }
+    if (data.width == 0 || data.height == 0) {
+        return false;
+    }
+    const std::uint32_t levels = std::max(
+        1U, static_cast<std::uint32_t>(std::bit_width(std::max(data.width, data.height))));
+    if (levels <= 1U) {
+        return false;
+    }
+    // Copy the base level out before the subresource table is rebuilt.
+    const std::vector<std::byte> base = data.blob;
+    AppendCpuMipChain(data.width, data.height, data);
+    std::memcpy(data.blob.data(), base.data(),
+                std::min(base.size(), static_cast<std::size_t>(data.width) * data.height * 4U));
+    for (std::uint32_t level = 1; level < data.mip_levels; ++level) {
+        const auto& src = data.subresources[level - 1];
+        auto& dst = data.subresources[level];
+        BoxDownsampleRgba8(data.blob.data() + src.offset, src.width, src.height,
+                           data.blob.data() + dst.offset, dst.width, dst.height);
+    }
+    data.mip_levels = levels;
+    return true;
+}
+
 AlphaAnalysis AnalyzeAlpha(const std::vector<std::byte>& pixels) {
     AlphaAnalysis result{};
     if (pixels.empty() || pixels.size() < 4) return result;

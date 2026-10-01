@@ -158,6 +158,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/PipelineFactory.cpp
     render/ShaderWatcher.cpp
     render/bindless/BindlessManager.cpp
+    render/bindless/TextureUploader.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -296,6 +297,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/DrawMode.cppm
             render/bindless/BindlessManager.cppm
             render/bindless/TextureSlot.cppm
+            render/bindless/TextureUploader.cppm
             render/ShaderManager.cppm
             render/CompilerEngine.cppm
             render/GplPolicy.cppm

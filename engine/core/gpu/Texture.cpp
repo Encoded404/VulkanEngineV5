@@ -179,11 +179,11 @@ vk::Sampler GpuTexture::GetSampler() const {
     return sampler_ != nullptr ? static_cast<vk::Sampler>(**sampler_) : vk::Sampler{nullptr};
 }
 
-GpuTexture GpuTexture::CreateFromTextureData(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
-                                             GpuImageHeap& heap,
-                                             const VulkanEngine::Textures::TextureData& data,
-                                             vk::Format resolved,
-                                             const VulkanEngine::Textures::SamplerDesc& sampler_desc) {
+GpuTexture GpuTexture::CreatePending(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                     GpuImageHeap& heap,
+                                     const VulkanEngine::Textures::TextureData& data,
+                                     vk::Format resolved,
+                                     const VulkanEngine::Textures::SamplerDesc& sampler_desc) {
     GpuTexture texture{};
     if (!heap.IsValid() || resolved == vk::Format::eUndefined || data.subresources.empty()) {
         return texture;
@@ -220,6 +220,22 @@ GpuTexture GpuTexture::CreateFromTextureData(VulkanBackend::Vulkan::IVulkanBoots
     texture.image_ = heap.Allocate(image_info, view_desc);
     if (!texture.image_.IsValid()) {
         texture.heap_ = nullptr;
+        return texture;
+    }
+
+    texture.sampler_ = std::make_unique<vk::raii::Sampler>(
+        CreateSampler(backend, sampler_desc, data.mip_levels));
+    VulkanBackend::Vulkan::SetVulkanObjectName(backend.GetDevice(), *texture.sampler_, "gpu-texture-sampler");
+    return texture;
+}
+
+GpuTexture GpuTexture::CreateFromTextureData(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
+                                             GpuImageHeap& heap,
+                                             const VulkanEngine::Textures::TextureData& data,
+                                             vk::Format resolved,
+                                             const VulkanEngine::Textures::SamplerDesc& sampler_desc) {
+    GpuTexture texture = CreatePending(backend, heap, data, resolved, sampler_desc);
+    if (!texture.IsValid()) {
         return texture;
     }
 

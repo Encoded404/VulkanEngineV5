@@ -243,7 +243,8 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                    VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
                                    VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                                    VulkanEngine::ImGui::ImGuiSystem* imgui,
-                                   std::uint32_t image_index
+                                   std::uint32_t image_index,
+                                   VulkanEngine::Textures::TextureUploader* texture_uploader
 #ifdef VKENGINE_PHYSICAL_CAMERA
                                    , VulkanEngine::PhysicalCamera::PhysicalCameraSystem* physical_cameras
 #endif
@@ -348,6 +349,14 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // Upload technique PipelineFlags and enable/disable the depth filter
         // pass before PrepareCompute retargets the depth indirection set.
         scene_renderer.UpdateTechniqueFlags(technique_mgr);
+
+        // Record this frame's staged async texture uploads (no wait, no frame-0
+        // command buffer): per-subresource copies plus the bindless commit,
+        // which publishes one FIF cycle later.
+        if (texture_uploader != nullptr) {
+            (void)texture_uploader->RecordUploads(
+                target, frame_counter_, VulkanEngine::Textures::TextureUploader::kRecordBudget());
+        }
 
         // CPU gather + upload + descriptor writes for all passes
         scene_renderer.PrepareCompute(target, registry, view, proj, width, height, frame_counter_);

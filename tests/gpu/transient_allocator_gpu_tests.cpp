@@ -133,8 +133,8 @@ TEST(GpuTransientAllocatorTest, ImageHeapBindsSuballocatedImages) {
     ASSERT_TRUE(heap.Initialize(bootstrap, VulkanEngine::GpuResources::ImageHeapConfig{}, "test-image-heap"));
     EXPECT_GE(heap.GetBufferImageGranularity(), 1u);
 
-    const auto a = heap.Allocate(ColorImageInfo(64, 64, /*aliasable=*/true), vk::ImageAspectFlagBits::eColor);
-    const auto b = heap.Allocate(ColorImageInfo(64, 64, /*aliasable=*/true), vk::ImageAspectFlagBits::eColor);
+    const auto a = heap.Allocate(ColorImageInfo(64, 64, /*aliasable=*/true), vk::ImageAspectFlags{vk::ImageAspectFlagBits::eColor});
+    const auto b = heap.Allocate(ColorImageInfo(64, 64, /*aliasable=*/true), vk::ImageAspectFlags{vk::ImageAspectFlagBits::eColor});
     ASSERT_TRUE(a.IsValid());
     ASSERT_TRUE(b.IsValid());
     EXPECT_FALSE(heap.IsDedicated(a.image_index));

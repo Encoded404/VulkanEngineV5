@@ -16,6 +16,9 @@ import vulkan_hpp;
 
 import VulkanBackend.Vulkan.VulkanBootstrap;
 
+import VulkanEngine.GpuResources.TlsfAllocator;
+import VulkanEngine.GpuResources.FrameRing;
+
 namespace VulkanEngine::GpuResources {
 
 namespace {
@@ -39,6 +42,8 @@ bool GpuImageHeap::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
     const auto properties = backend.GetPhysicalDevice().getProperties();
     buffer_image_granularity_ = std::max<vk::DeviceSize>(properties.limits.bufferImageGranularity, 1);
 
+    retire_ring_.Initialize(backend.GetFramesInFlight());
+
     LOGIFACE_LOG(debug, "GpuImageHeap '" + debug_name_ + "' initialized: block_size=" +
                             std::to_string(config_.block_size / (1024ULL * 1024ULL)) +
                             " MB, bufferImageGranularity=" + std::to_string(buffer_image_granularity_));
@@ -46,7 +51,13 @@ bool GpuImageHeap::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
 }
 
 void GpuImageHeap::Shutdown() {
+    retire_ring_.Flush([this](HeapImage& image, std::uint32_t) {
+        if (image.IsValid() && image.image_index < images_.size()) {
+            FreeRecord(images_[image.image_index]);
+        }
+    });
     images_.clear();
+    free_image_indices_.clear();
     blocks_.clear();
     backend_ = nullptr;
 }
@@ -80,7 +91,26 @@ std::uint32_t GpuImageHeap::CreateBlock(std::uint32_t memory_type_index, std::ui
     return index;
 }
 
-HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, vk::ImageAspectFlags aspect) {
+namespace {
+
+vk::ImageViewType DeriveViewType(const vk::ImageCreateInfo& info) {
+    if (info.imageType == vk::ImageType::e3D) {
+        return vk::ImageViewType::e3D;
+    }
+    const bool cube_compatible =
+        (info.flags & vk::ImageCreateFlagBits::eCubeCompatible) != vk::ImageCreateFlags{};
+    if (cube_compatible && info.arrayLayers >= 6U && info.arrayLayers % 6U == 0U) {
+        return info.arrayLayers == 6U ? vk::ImageViewType::eCube : vk::ImageViewType::eCubeArray;
+    }
+    if (info.imageType == vk::ImageType::e1D) {
+        return info.arrayLayers > 1U ? vk::ImageViewType::e1DArray : vk::ImageViewType::e1D;
+    }
+    return info.arrayLayers > 1U ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
+}
+
+}  // namespace
+
+HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewDesc& view_desc) {
     if (!backend_) {
         return {};
     }
@@ -177,18 +207,43 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, vk::ImageAspect
         }
     }
 
+    const vk::ImageViewType view_type = view_desc.view_type.value_or(DeriveViewType(image_info));
     vk::ImageViewCreateInfo view_info{};
     view_info.image = static_cast<vk::Image>(**image);
-    view_info.viewType = vk::ImageViewType::e2D;
+    view_info.viewType = view_type;
     view_info.format = image_info.format;
-    view_info.subresourceRange = {aspect, 0, image_info.mipLevels, 0, image_info.arrayLayers};
+    view_info.components = view_desc.components;
+    view_info.subresourceRange = {view_desc.aspect, view_desc.base_mip_level, view_desc.level_count,
+                                   view_desc.base_array_layer, view_desc.layer_count};
     record.view = std::make_unique<vk::raii::ImageView>(device, view_info);
 
     record.image = std::move(image);
-    const std::uint32_t image_index = static_cast<std::uint32_t>(images_.size());
-    images_.push_back(std::move(record));
+    record.generation = ++generation_counter_;
 
-    return HeapImage{.image_index = image_index, .dedicated = images_.back().dedicated};
+    std::uint32_t image_index = kInvalidIndex;
+    if (!free_image_indices_.empty()) {
+        image_index = free_image_indices_.back();
+        free_image_indices_.pop_back();
+        images_[image_index] = std::move(record);
+    } else {
+        image_index = static_cast<std::uint32_t>(images_.size());
+        images_.push_back(std::move(record));
+    }
+
+    return HeapImage{.image_index = image_index,
+                     .generation = images_[image_index].generation,
+                     .dedicated = images_[image_index].dedicated};
+}
+
+void GpuImageHeap::FreeRecord(ImageRecord& record) {
+    if (!record.dedicated && record.block_index < blocks_.size()) {
+        blocks_[record.block_index].allocator.Free(record.offset, record.size);
+    }
+    record.image.reset();
+    record.view.reset();
+    record.dedicated_memory.reset();
+    record.block_index = kInvalidIndex;
+    record.generation = 0;
 }
 
 void GpuImageHeap::Free(HeapImage& image) {
@@ -198,13 +253,32 @@ void GpuImageHeap::Free(HeapImage& image) {
     }
 
     auto& record = images_[image.image_index];
-    if (!record.dedicated && record.block_index < blocks_.size()) {
-        blocks_[record.block_index].allocator.Free(record.offset, record.size);
+    if (record.generation != image.generation) {
+        // Stale handle: the slot was already freed and recycled.
+        image = {};
+        return;
     }
-    record.image.reset();
-    record.view.reset();
-    record.dedicated_memory.reset();
+
+    FreeRecord(record);
+    free_image_indices_.push_back(image.image_index);
     image = {};
+}
+
+void GpuImageHeap::Retire(HeapImage image, std::uint32_t recording_frame) {
+    if (!image.IsValid()) {
+        return;
+    }
+    retire_ring_.Enqueue(image, recording_frame, /*gated=*/false);
+}
+
+void GpuImageHeap::BeginFrame(std::uint32_t frame_index) {
+    retire_ring_.BeginFrame(
+        frame_index,
+        [this](HeapImage& image, std::uint32_t) {
+            Free(image);
+        },
+        [](std::uint32_t) { return true; },
+        [](const HeapImage&, std::uint32_t) {});
 }
 
 vk::Image GpuImageHeap::GetImage(std::uint32_t image_index) const {
@@ -223,6 +297,22 @@ vk::ImageView GpuImageHeap::GetImageView(std::uint32_t image_index) const {
 
 bool GpuImageHeap::IsDedicated(std::uint32_t image_index) const {
     return image_index < images_.size() && images_[image_index].dedicated;
+}
+
+vk::Image GpuImageHeap::GetImage(const HeapImage& image) const {
+    if (!image.IsValid() || image.image_index >= images_.size() ||
+        images_[image.image_index].generation != image.generation) {
+        return nullptr;
+    }
+    return GetImage(image.image_index);
+}
+
+vk::ImageView GpuImageHeap::GetImageView(const HeapImage& image) const {
+    if (!image.IsValid() || image.image_index >= images_.size() ||
+        images_[image.image_index].generation != image.generation) {
+        return nullptr;
+    }
+    return GetImageView(image.image_index);
 }
 
 } // namespace VulkanEngine::GpuResources

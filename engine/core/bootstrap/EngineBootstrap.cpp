@@ -59,6 +59,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     heap_config.block_size = config.geometry_buffer_size_mb << 20;
     if (!ctx.vertex_heap.Initialize(vk_backend, heap_config, "vertex")) return false;
     if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
+    if (!ctx.image_heap.Initialize(vk_backend, {}, "image")) return false;
     if (!ctx.staging_mgr.Initialize(vk_backend)) return false;
 
     {
@@ -221,39 +222,53 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     teardown.Add("engineshutdown.mesh_registry", [&ctx] {
         auto s = DebugSection("engineshutdown.mesh_registry");
         ctx.mesh_registry.Shutdown();
-    });
+    }, {idle_id});
 
     if (ctx.mesh_manager) {
         teardown.Add("engineshutdown.mesh_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.mesh_manager");
             ctx.mesh_manager->Shutdown();
             ctx.mesh_manager.reset();
-        });
+        }, {idle_id});
     }
 
     teardown.Add("engineshutdown.dynamic_heaps", [&ctx] {
         auto s = DebugSection("engineshutdown.dynamic_heaps");
         for (auto& heap : ctx.dynamic_vertex_heaps) heap.Shutdown();
         for (auto& heap : ctx.dynamic_index_heaps) heap.Shutdown();
-    });
+    }, {idle_id});
 
     teardown.Add("engineshutdown.staging_manager", [&ctx] {
         auto s = DebugSection("engineshutdown.staging_manager");
         ctx.staging_mgr.Shutdown();
-    });
+    }, {idle_id});
 
     teardown.Add("engineshutdown.static_heaps", [&ctx] {
         auto s = DebugSection("engineshutdown.static_heaps");
         ctx.vertex_heap.Shutdown();
         ctx.index_heap.Shutdown();
-    });
+    }, {idle_id});
 
+    std::optional<VulkanShared::TeardownId> bindless_id;
     if (ctx.bindless_mgr) {
-        teardown.Add("engineshutdown.bindless_manager", [&ctx] {
+        bindless_id = teardown.Add("engineshutdown.bindless_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.bindless_manager");
             ctx.bindless_mgr->Shutdown();
             ctx.bindless_mgr.reset();
-        });
+        }, {idle_id});
+    }
+
+    // The image heap must outlive the bindless manager: bindless slots own
+    // heap-backed textures whose destructors free heap records.
+    {
+        std::vector<VulkanShared::TeardownId> image_heap_deps{idle_id};
+        if (bindless_id) {
+            image_heap_deps.push_back(*bindless_id);
+        }
+        teardown.Add("engineshutdown.image_heap", [&ctx] {
+            auto s = DebugSection("engineshutdown.image_heap");
+            ctx.image_heap.Shutdown();
+        }, std::move(image_heap_deps));
     }
 
     teardown.Add("engineshutdown.material_manager", [&ctx] {

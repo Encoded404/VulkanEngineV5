@@ -67,6 +67,9 @@ struct EngineContext {
     GpuResources::StagingManager staging_mgr;
     GpuResources::DeviceBufferHeap vertex_heap;
     GpuResources::DeviceBufferHeap index_heap;
+    // Sub-allocated images (asset textures, camera streams/targets). Must
+    // outlive bindless_mgr in shutdown (textures free their heap images).
+    GpuResources::GpuImageHeap image_heap;
     std::vector<GpuResources::DeviceBufferHeap> dynamic_vertex_heaps;
     std::vector<GpuResources::DeviceBufferHeap> dynamic_index_heaps;
 
@@ -120,6 +123,7 @@ struct EngineContext {
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }
+    GpuResources::GpuImageHeap& GetImageHeap() { return image_heap; }
     GpuResources::StagingManager& GetStagingManager() { return staging_mgr; }
     auto& GetDynamicVertexHeaps() { return dynamic_vertex_heaps; }
     auto& GetDynamicIndexHeaps() { return dynamic_index_heaps; }

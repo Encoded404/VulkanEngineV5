@@ -15,8 +15,10 @@ import Shaders.Engine.HizGenComp;
 import Shaders.Engine.CollectCountCompactComp;
 import Shaders.Engine.CollectWriteComp;
 import Shaders.Engine.MainIndirVert;
+import Shaders.Engine.MainIndirVertUV1;
 import Shaders.Engine.DepthIndirVert;
 import Shaders.Engine.StandardMeshFrag;
+import Shaders.Engine.StandardMeshFragUV1;
 import Shaders.Engine.DepthPrepassFrag;
 import Shaders.Engine.UnlitFrag;
 
@@ -37,8 +39,11 @@ struct EngineShaderIds {
     ShaderSystem::ShaderId collect_count_compact_comp;
     ShaderSystem::ShaderId collect_write_comp;
     ShaderSystem::ShaderId main_indir_vert;
+    // Out-of-line UV1 interface variant rows (named entry point main_uv1).
+    ShaderSystem::ShaderId main_indir_vert_uv1;
     ShaderSystem::ShaderId depth_indir_vert;
     ShaderSystem::ShaderId standard_mesh_frag;
+    ShaderSystem::ShaderId standard_mesh_frag_uv1;
     ShaderSystem::ShaderId depth_prepass_frag;
     ShaderSystem::ShaderId unlit_frag;
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -56,8 +61,10 @@ struct EngineShaderIds {
         collect_count_compact_comp = Shaders::Engine::CollectCountCompactComp::Register(mgr, data_dir);
         collect_write_comp       = Shaders::Engine::CollectWriteComp::Register(mgr, data_dir);
         main_indir_vert          = Shaders::Engine::MainIndirVert::Register(mgr, data_dir);
+        main_indir_vert_uv1      = Shaders::Engine::MainIndirVertUV1::Register(mgr, data_dir);
         depth_indir_vert         = Shaders::Engine::DepthIndirVert::Register(mgr, data_dir);
         standard_mesh_frag       = Shaders::Engine::StandardMeshFrag::Register(mgr, data_dir);
+        standard_mesh_frag_uv1   = Shaders::Engine::StandardMeshFragUV1::Register(mgr, data_dir);
         depth_prepass_frag       = Shaders::Engine::DepthPrepassFrag::Register(mgr, data_dir);
         unlit_frag               = Shaders::Engine::UnlitFrag::Register(mgr, data_dir);
 #ifdef VKENGINE_PHYSICAL_CAMERA

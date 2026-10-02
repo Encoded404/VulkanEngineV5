@@ -281,7 +281,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
         variants_.clear();
         TechniqueVariant base_variant{};
-        base_variant.render_state_key = 0;
+        base_variant.draw_key = 0;
         base_variant.vert = vert_id;
         base_variant.frag = frag_id;
         base_variant.desc = std::move(base);
@@ -454,11 +454,25 @@ DrawKeyPipelineState DeriveDrawKeyPipelineState(std::uint32_t render_state_key,
 }
 
 ShaderSystem::GraphicsPipelineDesc BaseTechnique::MakeVariantDesc(
-    const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t render_state_key,
+    const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t draw_key,
     const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const {
     ShaderSystem::GraphicsPipelineDesc desc = base;
+    const std::uint32_t render_state_key = DrawKeyState::RenderStateOf(draw_key);
+    const std::uint32_t variant_slot = DrawKeyState::VariantOf(draw_key);
     const DrawKeyPipelineState state = DeriveDrawKeyPipelineState(
         render_state_key, config.cull_mode);
+
+    // Interface variant: rebind the shader rows. Each row is a distinct module
+    // whose SPIR-V entry point is "main" (Slang emits "main" regardless of the
+    // Slang wrapper name), so the entry points stay "main"; the desc's
+    // entry-point fields exist for hand-authored modules and are not changed
+    // here.
+    ShaderSystem::ShaderId v_id{};
+    ShaderSystem::ShaderId f_id{};
+    if (GetVariantShaders(variant_slot, v_id, f_id)) {
+        desc.vertex_shader = v_id;
+        desc.fragment_shader = f_id;
+    }
 
     // Color blend: the attachment's enable and factors come from the config for
     // the base variant; a blending key overrides them with standard
@@ -491,30 +505,36 @@ ShaderSystem::GraphicsPipelineDesc BaseTechnique::MakeVariantDesc(
     return desc;
 }
 
-bool BaseTechnique::EnsureVariant(std::uint32_t render_state_key,
+bool BaseTechnique::EnsureVariant(std::uint32_t draw_key,
                                   ShaderSystem::ShaderManager& shaders,
                                   ShaderSystem::PipelineFactory& factory) {
     if (!compiled_) return false;
-    if (HasVariant(render_state_key)) return true;
+    if (HasVariant(draw_key)) return true;
     if (variants_.empty()) return false;
 
+    // The interface variant must be one this technique owns; render state is
+    // always buildable. Unknown interface slots fall back to the base pipeline.
+    const std::uint32_t variant_slot = DrawKeyState::VariantOf(draw_key);
+    if (variant_slot >= VariantCount()) return false;
+
     TechniqueVariant variant{};
-    variant.render_state_key = render_state_key;
-    variant.vert = variants_[0].vert;
-    variant.frag = variants_[0].frag;
-    variant.desc = MakeVariantDesc(variants_[0].desc, render_state_key, pipeline_config_);
+    variant.draw_key = draw_key;
+    if (!GetVariantShaders(variant_slot, variant.vert, variant.frag)) {
+        return false;
+    }
+    variant.desc = MakeVariantDesc(variants_[0].desc, draw_key, pipeline_config_);
     variant.slot.SetFramesInFlight(variants_[0].slot.FramesInFlight());
 
     auto result = factory.CreateGraphics(variant.desc, shaders);
     if (!result.has_value()) {
         LOGIFACE_LOG(error, std::format(
             "BaseTechnique {}: variant 0x{:x} pipeline creation failed: {}",
-            id_.value, render_state_key, result.error().message));
+            id_.value, draw_key, result.error().message));
         return false;
     }
     variant.slot.Swap(std::move(result.value()), 0);
-    LOGIFACE_LOG(debug, std::format("BaseTechnique {}: materialized variant 0x{:x}",
-                                    id_.value, render_state_key));
+    LOGIFACE_LOG(debug, std::format("BaseTechnique {}: materialized variant 0x{:x} (uv slot {})",
+                                    id_.value, draw_key, variant_slot));
     variants_.push_back(std::move(variant));
     return true;
 }
@@ -551,7 +571,7 @@ bool BaseTechnique::RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
         if (!result.has_value()) {
             LOGIFACE_LOG(error, std::format(
                 "BaseTechnique {}: draw-mode pipeline rebuild failed for variant 0x{:x}: {}",
-                id_.value, variant.render_state_key, result.error().message));
+                id_.value, variant.draw_key, result.error().message));
             ok = false;
             continue;
         }

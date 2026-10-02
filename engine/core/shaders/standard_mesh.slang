@@ -64,6 +64,26 @@ struct PSInput {
     [[vk::location(6)]] float handedness : TEXCOORD6;  // bitangent handedness, +1/-1
 };
 
+// UV1 variant input: the same interpolants plus the out-of-line UV1 at
+// location 7. Only the UV1 pipeline declares this.
+struct PSInputUV1 {
+    [[vk::location(0)]] float3 normal : TEXCOORD0;
+    [[vk::location(1)]] float2 texCoord : TEXCOORD1;
+    [[vk::location(2)]] uint materialId : TEXCOORD2;
+    [[vk::location(3)]] float3 worldPos : TEXCOORD3;
+    [[vk::location(4)]] uint ormPacked : TEXCOORD4;
+    [[vk::location(5)]] float3 tangent : TEXCOORD5;
+    [[vk::location(6)]] float handedness : TEXCOORD6;
+    [[vk::location(7)]] float2 uv1 : TEXCOORD7;
+};
+
+// Resolves a texture slot's UV from its 2-bit set selector: set 0 uses the
+// inline UV0, set 1 uses the out-of-line UV1. `slot` is the selector index
+// (0=albedo, 1=normal, 2=orm, 3=emissive).
+float2 SlotUV(uint uv_sets, uint slot, float2 uv0, float2 uv1) {
+    return ((uv_sets >> (slot * 2u)) & 0x3u) == 1u ? uv1 : uv0;
+}
+
 // Cook-Torrance BRDF
 
 static const float PI = 3.14159265359;
@@ -89,15 +109,21 @@ float3 F_Schlick(float3 F0, float cosTheta) {
     return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-[shader("fragment")]
-float4 main(PSInput input) : SV_TARGET {
+// Shared shading body. `uv0`/`uv1` are the two UV sets; each texture slot
+// selects between them through MaterialData.uv_sets.
+float4 Shade(PSInput input, float2 uv0, float2 uv1) {
     uint block = input.materialId / 256u;
     uint elem  = input.materialId % 256u;
     MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
 
+    // Per-slot UV selection (0=albedo, 1=normal, 2=orm, 3=emissive).
+    float2 uv_albedo = SlotUV(mat.uv_sets, 0u, uv0, uv1);
+    float2 uv_normal = SlotUV(mat.uv_sets, 1u, uv0, uv1);
+    float2 uv_orm    = SlotUV(mat.uv_sets, 2u, uv0, uv1);
+
     // Sample textures
     float3 albedo = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
-        .Sample(input.texCoord).rgb;
+        .Sample(uv_albedo).rgb;
 
     // Effective ORM factor layer, packed unorm8 by the CPU gather pass: the
     // object's OrmOverride if present, else the material's own factors.
@@ -110,7 +136,7 @@ float4 main(PSInput input) : SV_TARGET {
     float3 orm = orm_factors;
     if (mat.orm_texture != 0) {
         orm *= allTextures[NonUniformResourceIndex(mat.orm_texture)]
-            .Sample(input.texCoord).rgb;
+            .Sample(uv_orm).rgb;
     }
 
     float ao = orm.r;
@@ -134,7 +160,7 @@ float4 main(PSInput input) : SV_TARGET {
         float3 b = cross(N, t) * input.handedness;
         float3x3 TBN = float3x3(t, b, N);
         float3 sampled = allTextures[NonUniformResourceIndex(mat.normal_texture)]
-            .Sample(input.texCoord).xyz;
+            .Sample(uv_normal).xyz;
         float3 n_ts;
         const uint encoding = mat.flags & 0x3u;
         if (encoding == kNormalEncodingStandard) {
@@ -184,4 +210,24 @@ float4 main(PSInput input) : SV_TARGET {
 
     float3 color = ambient + combined_direct;
     return float4(color, 1.0);
+}
+
+[shader("fragment")]
+float4 main(PSInput input) : SV_TARGET {
+    return Shade(input, input.texCoord, input.texCoord);
+}
+
+// UV1 variant: samples the per-slot selected set (UV0 or UV1) through the
+// interpolated out-of-line UV1.
+[shader("fragment")]
+float4 main_uv1(PSInputUV1 input) : SV_TARGET {
+    PSInput base;
+    base.normal = input.normal;
+    base.texCoord = input.texCoord;
+    base.materialId = input.materialId;
+    base.worldPos = input.worldPos;
+    base.ormPacked = input.ormPacked;
+    base.tangent = input.tangent;
+    base.handedness = input.handedness;
+    return Shade(base, input.texCoord, input.uv1);
 }

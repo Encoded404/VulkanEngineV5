@@ -81,6 +81,10 @@ public:
     static constexpr std::uint32_t HIZ_BATCH = 2;
     static constexpr std::uint32_t MAX_VERTEX_BUFFERS = 64;
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
+    // Out-of-line UV buffer table (engine set 2, binding 1). Same block-growth
+    // model as the vertex table; a mesh without out-of-line UVs stores a
+    // sentinel in its vertex entry and never indexes this table.
+    static constexpr std::uint32_t MAX_UV_BUFFERS = 64;
     static constexpr std::uint32_t BLOCK_ENTRIES = 256;
     static constexpr std::uint32_t MAX_BLOCKS = 1024;
     // Draw-key table capacity: the full technique/draw-group bit width, owned
@@ -164,7 +168,10 @@ public:
 
     void UpdateVertexBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
     void UpdateIndexBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    // Out-of-line UV table (set 2, binding 1).
+    void UpdateUvBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
     void UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    void UpdateAllFrameUvBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
     void UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
 
     void PrepareCompute(vk::CommandBuffer cmd,

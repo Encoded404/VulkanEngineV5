@@ -34,6 +34,24 @@ struct DrawKeyPipelineState {
 [[nodiscard]] DrawKeyPipelineState DeriveDrawKeyPipelineState(
     std::uint32_t render_state_key, vk::CullModeFlags base_cull_mode);
 
+// A technique that owns named entry-point rows (the UV variants) maps a dense
+// interface-variant slot to its (vert, frag) shader rows. Pure, so the slot
+// mapping is unit-testable without a device. `rows` holds the slot 0 pair
+// followed by one pair per out-of-line UV set.
+struct VariantShaderPair {
+    ShaderSystem::ShaderId vert{};
+    ShaderSystem::ShaderId frag{};
+};
+
+[[nodiscard]] inline bool GetVariantShaderRow(
+    std::span<const VariantShaderPair> rows, std::uint32_t variant_slot,
+    ShaderSystem::ShaderId& out_vert, ShaderSystem::ShaderId& out_frag) {
+    if (variant_slot >= rows.size()) return false;
+    out_vert = rows[variant_slot].vert;
+    out_frag = rows[variant_slot].frag;
+    return true;
+}
+
 // The 32-bit field is split into a technique id (low bits) and a material id
 // (high bits). Change TECHNIQUE_BITS to redistribute the budget; keep
 // kTechniqueBits in expand.slang in sync.
@@ -78,6 +96,27 @@ namespace DrawKeyState {
     }
     [[nodiscard]] constexpr bool AlphaMask(std::uint32_t key) {
         return (key & ALPHA_MASK) != 0;
+    }
+
+    // A draw key is a composite of an interface variant (the entry-point/UV
+    // set) in the high bits and render state in the low bits. The variant
+    // selects the shader entry-point pair; render state selects blend/cull/
+    // depth. Kept as one integer so it intern and pipeline-variant lookup use
+    // the same key.
+    inline constexpr std::uint32_t VARIANT_SHIFT = 16;
+    inline constexpr std::uint32_t VARIANT_MASK  = 0xFFFFu;
+    inline constexpr std::uint32_t RENDER_MASK   = 0xFFFFu;
+
+    [[nodiscard]] constexpr std::uint32_t PackDrawKey(std::uint32_t variant_slot,
+                                                       std::uint32_t render_state) {
+        return ((variant_slot & VARIANT_MASK) << VARIANT_SHIFT) |
+               (render_state & RENDER_MASK);
+    }
+    [[nodiscard]] constexpr std::uint32_t VariantOf(std::uint32_t draw_key) {
+        return (draw_key >> VARIANT_SHIFT) & VARIANT_MASK;
+    }
+    [[nodiscard]] constexpr std::uint32_t RenderStateOf(std::uint32_t draw_key) {
+        return draw_key & RENDER_MASK;
     }
 }
 
@@ -229,32 +268,64 @@ public:
     [[nodiscard]] vk::Pipeline GetPipeline() const {
         return variants_.empty() ? nullptr : variants_[0].slot.Get();
     }
-    [[nodiscard]] vk::Pipeline GetPipeline(std::uint32_t render_state_key) const {
+    [[nodiscard]] vk::Pipeline GetPipeline(std::uint32_t draw_key) const {
         for (const auto& v : variants_) {
-            if (v.render_state_key == render_state_key) return v.slot.Get();
+            if (v.draw_key == draw_key) return v.slot.Get();
         }
         return GetPipeline();
     }
     [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return *pipeline_layout_; }
 
-    // True when a variant for this render-state key exists. The main pass uses
+    // True when a variant for this composite draw key exists. The main pass uses
     // this to decide whether to materialize one before binding.
-    [[nodiscard]] bool HasVariant(std::uint32_t render_state_key) const {
+    [[nodiscard]] bool HasVariant(std::uint32_t draw_key) const {
         return std::any_of(variants_.begin(), variants_.end(),
-            [render_state_key](const TechniqueVariant& v) {
-                return v.render_state_key == render_state_key;
+            [draw_key](const TechniqueVariant& v) {
+                return v.draw_key == draw_key;
             });
     }
 
-    // Materialize a pipeline variant for `render_state_key` if it does not
-    // exist, then return whether the technique has a usable pipeline for it.
-    // Requires a prior successful Compile. Safe to call while frames are in
-    // flight: a brand-new pipeline is created, no in-flight pipeline is
-    // destroyed. Returns the base pipeline's usability when variant creation
-    // fails, so the caller still has a pipeline to bind.
-    [[nodiscard]] bool EnsureVariant(std::uint32_t render_state_key,
+    // Materialize a pipeline variant for `draw_key` (interface variant +
+    // render state) if it does not exist, then return whether the technique has
+    // a usable pipeline for it. Requires a prior successful Compile. Safe to
+    // call while frames are in flight: a brand-new pipeline is created, no
+    // in-flight pipeline is destroyed. Returns the base pipeline's usability
+    // when variant creation fails, so the caller still has a pipeline to bind.
+    [[nodiscard]] bool EnsureVariant(std::uint32_t draw_key,
                                      ShaderSystem::ShaderManager& shaders,
                                      ShaderSystem::PipelineFactory& factory);
+
+    // Dense interface-variant rows: [0] = default (UV0), [k] = out-of-line UV
+    // set k. A technique that owns entry-point rows fills this; a technique
+    // that does not leaves it empty and has only slot 0.
+    void SetVariantShaderRows(std::span<const VariantShaderPair> rows) {
+        variant_shader_rows_.assign(rows.begin(), rows.end());
+    }
+    [[nodiscard]] std::uint32_t VariantCount() const {
+        return variant_shader_rows_.empty() ? 1u
+                                            : static_cast<std::uint32_t>(variant_shader_rows_.size());
+    }
+    [[nodiscard]] bool GetVariantShaders(std::uint32_t variant_slot,
+                                         ShaderSystem::ShaderId& out_vert,
+                                         ShaderSystem::ShaderId& out_frag) const {
+        if (variant_shader_rows_.empty()) {
+            if (variant_slot != 0 || variants_.empty()) return false;
+            out_vert = variants_[0].vert;
+            out_frag = variants_[0].frag;
+            return true;
+        }
+        return GetVariantShaderRow(variant_shader_rows_, variant_slot, out_vert, out_frag);
+    }
+
+    // Interface variant a material needs, derived from its serialized
+    // PerMaterial payload. The base technique has no interface variants and
+    // returns 0; a technique with UV entry-point rows reads its own struct's
+    // uv_sets and returns the highest referenced set. Pure and device-free.
+    [[nodiscard]] virtual std::uint32_t InterfaceVariantForMaterial(
+        std::span<const std::byte> cpu_data) const {
+        (void)cpu_data;
+        return 0;
+    }
 
     // ── Custom descriptor sets (technique-owned BlockArray/Shared bindings at sets 4+) ──
     [[nodiscard]] std::span<const vk::DescriptorSet> GetCustomDescriptorSets() const {
@@ -387,13 +458,16 @@ private:
     // differs. Each variant owns its own PipelineSlot so hot reload retires
     // only the pipeline it is rebuilding.
     struct TechniqueVariant {
-        std::uint32_t render_state_key = 0;
+        std::uint32_t draw_key = 0;   // composite: interface variant << 16 | render state
         ShaderSystem::ShaderId vert{};
         ShaderSystem::ShaderId frag{};
         ShaderSystem::GraphicsPipelineDesc desc{};
         ShaderSystem::PipelineSlot slot;
     };
     std::vector<TechniqueVariant> variants_;  // [0] is the base pipeline
+    // Interface-variant shader rows (empty when the technique has only the
+    // default pipeline). Set before Compile.
+    std::vector<VariantShaderPair> variant_shader_rows_;
     bool compiled_ = false;
 
     // Base pipeline config, kept to build a new variant's desc on demand (the
@@ -401,10 +475,12 @@ private:
     // specialization constant).
     VulkanEngine::StandardMeshPipeline::PipelineConfig pipeline_config_{};
 
-    // Builds a variant's pipeline desc from the base desc + this key's render
-    // state. Pure; the desc owns its color-blend attachments.
+    // Builds a variant's pipeline desc from the base desc + this draw key's
+    // render state and interface variant. Pure; the desc owns its color-blend
+    // attachments. `vert`/`frag` are the variant's shader rows and their entry
+    // points are set from the slot.
     ShaderSystem::GraphicsPipelineDesc MakeVariantDesc(
-        const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t render_state_key,
+        const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t draw_key,
         const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const;
 
     // Descriptor pool + sets for custom bindings (sets 4+)

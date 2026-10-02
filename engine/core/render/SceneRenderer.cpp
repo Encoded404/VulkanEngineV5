@@ -99,29 +99,41 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
     }
 
-    // Set 2: Vertex buffer table (bindless, update-after-bind) - per-frame
+    // Set 2: Vertex buffer table (binding 0) and out-of-line UV table
+    // (binding 1). Both are fixed-count: the spec allows the variable-count
+    // flag only on the highest binding, and neither array's runtime length is
+    // ever queried, so the flag is dropped and both bindings are allocated at
+    // their full fixed count (partially bound, update-after-bind).
     {
-        std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[0].descriptorCount = MAX_VERTEX_BUFFERS;
         bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
-        auto flags = vk::DescriptorBindingFlagBits::ePartiallyBound |
-                     vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-                     vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+        bs[1].binding = 1;
+        bs[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bs[1].descriptorCount = MAX_UV_BUFFERS;
+        bs[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
+        const std::array<vk::DescriptorBindingFlags, 2> flags = {
+            vk::DescriptorBindingFlagBits::ePartiallyBound |
+                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+            vk::DescriptorBindingFlagBits::ePartiallyBound |
+                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+        };
         vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
-        bind_flags.bindingCount = 1;
-        bind_flags.pBindingFlags = &flags;
+        bind_flags.bindingCount = static_cast<std::uint32_t>(flags.size());
+        bind_flags.pBindingFlags = flags.data();
         vk::DescriptorSetLayoutCreateInfo layout_ci{};
         layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
         layout_ci.pNext = &bind_flags;
-        layout_ci.bindingCount = 1;
+        layout_ci.bindingCount = static_cast<std::uint32_t>(bs.size());
         layout_ci.pBindings = bs.data();
         vertex_buffers_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *vertex_buffers_layout_, "vertex-buffers-layout");
 
         const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * MAX_VERTEX_BUFFERS
+            vk::DescriptorType::eStorageBuffer,
+            frames_in_flight_ * (MAX_VERTEX_BUFFERS + MAX_UV_BUFFERS)
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
@@ -133,12 +145,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *vertex_buffers_pool_, "vertex-buffers-pool");
 
         for (auto& fr : frames_) {
-            const std::uint32_t var_desc_count = MAX_VERTEX_BUFFERS;
-            vk::DescriptorSetVariableDescriptorCountAllocateInfo var_desc{};
-            var_desc.descriptorSetCount = 1;
-            var_desc.pDescriptorCounts = &var_desc_count;
             vk::DescriptorSetAllocateInfo alloc_ci{};
-            alloc_ci.pNext = &var_desc;
             alloc_ci.descriptorPool = **vertex_buffers_pool_;
             alloc_ci.descriptorSetCount = 1;
             alloc_ci.pSetLayouts = &**vertex_buffers_layout_;
@@ -164,6 +171,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 w.pBufferInfo = &bii;
                 dev.updateDescriptorSets(w, nullptr);
             }
+            // UV table (binding 1) blocks are written as they are allocated, by
+            // the caller that uploads the mesh, exactly like vertex blocks.
         }
     }
 
@@ -459,7 +468,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.static_entries.Initialize(be,
-                make_block_config(28, BLOCK_ENTRIES, {},   // StaticEntry: 7 u32 total
+                make_block_config(36, BLOCK_ENTRIES, {},   // StaticEntry: 9 u32 total (incl. uvSlot/uvBias)
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.bounding_spheres.Initialize(be,
@@ -471,13 +480,13 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.submesh_vertex_entries.Initialize(be,
-                make_block_config(180, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 180, Slang CDataLayout
+                make_block_config(188, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 188, Slang CDataLayout
                                                         // (scalar block layout): 64 mvp + 12 (maxScale/mat/orm)
-                                                        // + 64 modelMatrix + 36 normalMatrix + 4 slot. No
-                                                        // padding — matrices are 4B-aligned. Byte-identical to
-                                                        // the VertexEntry mirror + static_assert in
-                                                        // MeshGatherSystem.cpp. MUST match the VertexEntry
-                                                        // definition in scene_entries.slang.
+                                                        // + 64 modelMatrix + 36 normalMatrix + 4 slot + 4 uvSlot
+                                                        // + 4 uvBias. No padding — matrices are 4B-aligned.
+                                                        // Byte-identical to the VertexEntry mirror +
+                                                        // static_assert in MeshGatherSystem.cpp. MUST match the
+                                                        // VertexEntry definition in scene_entries.slang.
                     vk::BufferUsageFlagBits::eTransferSrc,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
             fr.cull_entries.Initialize(be,
@@ -1167,6 +1176,35 @@ void SceneRenderer::UpdateIndexBufferArrayElement(std::uint32_t frame_index,
     w.descriptorType = vk::DescriptorType::eStorageBuffer;
     w.pBufferInfo = &bii;
     backend_->GetDevice().updateDescriptorSets(w, nullptr);
+}
+
+void SceneRenderer::UpdateUvBufferArrayElement(std::uint32_t frame_index,
+                                                std::uint32_t buffer_index,
+                                                vk::Buffer buffer,
+                                                std::uint64_t size) {
+    const auto& fr = frames_[frame_index % frames_in_flight_];
+    if (!buffer) {
+        LOGIFACE_LOG(warn, "UpdateUvBufferArrayElement: null buffer for slot " +
+                     std::to_string(buffer_index));
+        return;
+    }
+    const vk::DescriptorBufferInfo bii(buffer, 0, size);
+    vk::WriteDescriptorSet w{};
+    w.dstSet = *fr.vertex_buffers_set;
+    w.dstBinding = 1;
+    w.dstArrayElement = buffer_index;
+    w.descriptorCount = 1;
+    w.descriptorType = vk::DescriptorType::eStorageBuffer;
+    w.pBufferInfo = &bii;
+    backend_->GetDevice().updateDescriptorSets(w, nullptr);
+}
+
+void SceneRenderer::UpdateAllFrameUvBufferArrayElements(std::uint32_t buffer_index,
+                                                         vk::Buffer buffer,
+                                                         std::uint64_t size) {
+    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
+        UpdateUvBufferArrayElement(fi, buffer_index, buffer, size);
+    }
 }
 
 void SceneRenderer::UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index,

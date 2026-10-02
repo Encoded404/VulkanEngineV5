@@ -200,8 +200,10 @@ set(_engine_shaders
     CollectCountCompactComp collect_count_compact.slang compute  main
     CollectWriteComp        collect_write.slang        compute  main
     MainIndirVert           main_indir.slang           vertex   main
+    MainIndirVertUV1        main_indir.slang           vertex   main_uv1
     DepthIndirVert          depth_indir.slang          vertex   main
     StandardMeshFrag        standard_mesh.slang        fragment main
+    StandardMeshFragUV1     standard_mesh.slang        fragment main_uv1
     DepthPrepassFrag        depth_prepass.slang        fragment main
     UnlitFrag               unlit.slang                fragment main
 )

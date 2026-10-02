@@ -155,6 +155,14 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         static_cast<std::uint32_t>(ctx_.scene_renderer->GetDrawMode());
     {
         auto mesh_tech = std::make_unique<TechniqueManager::DefaultMeshTechnique>();
+        // Interface-variant rows: slot 0 is the base pipeline; slot 1 is the
+        // out-of-line UV1 entry-point pair. Both stages must be named main_uv1
+        // to link on the shared descriptor layout.
+        const std::array<TechniqueManager::VariantShaderPair, 2> rows = {{
+            {vert_id, frag_id},
+            {ctx_.shader_ids.main_indir_vert_uv1, ctx_.shader_ids.standard_mesh_frag_uv1},
+        }};
+        mesh_tech->SetVariantShaderRows(rows);
         if (!mesh_tech->CompileDefaultMesh(
                 *ctx.bootstrap, *shader_mgr, *ctx_.pipeline_factory,
                 vert_id, frag_id, config_.pipeline_config,
@@ -348,6 +356,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
     std::vector<VulkanEngine::SubMesh> all_submeshes;
     std::unordered_set<std::uint32_t> vertex_buffers_updated;
     std::unordered_set<std::uint32_t> index_buffers_updated;
+    std::unordered_set<std::uint32_t> uv_buffers_updated;
 
     for (const auto& mesh_data : meshes) {
         auto handle = ctx_.mesh_manager->UploadPersistent(mesh_data);
@@ -401,6 +410,15 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
                     info->index_allocation.buffer_index,
                     ctx_.index_heap.GetBuffer(info->index_allocation.buffer_index),
                     ctx_.index_heap.GetConfig().block_size);
+            }
+        }
+        if (info->has_uv1 &&
+            uv_buffers_updated.insert(info->uv_allocation.buffer_index).second) {
+            if (info->uv_allocation.buffer_index < ctx_.uv_heap.GetBufferCount()) {
+                ctx_.scene_renderer->UpdateAllFrameUvBufferArrayElements(
+                    info->uv_allocation.buffer_index,
+                    ctx_.uv_heap.GetBuffer(info->uv_allocation.buffer_index),
+                    ctx_.uv_heap.GetConfig().block_size);
             }
         }
     }

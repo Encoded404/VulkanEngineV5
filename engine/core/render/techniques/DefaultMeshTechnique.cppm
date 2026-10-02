@@ -102,6 +102,23 @@ public:
 
     // PackMaterialData uses the BaseTechnique default (TechniquePacking::Pack).
 
+    // The material samples an out-of-line UV set when any texture slot selects
+    // one. uv_sets packs 2 bits per slot; the highest selected set is the
+    // interface variant slot (0 = UV0 only, 1 = UV1). This is what keeps the
+    // material's pipeline consistent with the UV sets its textures read.
+    [[nodiscard]] std::uint32_t InterfaceVariantForMaterial(
+        std::span<const std::byte> cpu_data) const override {
+        if (cpu_data.size() < sizeof(DefaultMeshPerMaterialData)) return 0;
+        DefaultMeshPerMaterialData data{};
+        std::memcpy(&data, cpu_data.data(), sizeof(data));
+        std::uint32_t highest = 0;
+        for (std::uint32_t slot = 0; slot < 4; ++slot) {
+            const std::uint32_t set = (data.uv_sets >> (slot * 2u)) & 0x3u;
+            highest = std::max(highest, set);
+        }
+        return highest;
+    }
+
     [[nodiscard]] VulkanEngine::GpuResources::BlockArray* GetMaterialBlockArray() {
         return GetBlockArrayForType<DefaultMeshPerMaterialData>();
     }

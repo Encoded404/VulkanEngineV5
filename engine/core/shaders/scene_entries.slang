@@ -24,13 +24,20 @@ struct StaticEntry {
     uint ormPacked;        // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
     uint vertexWindowBase; // min mesh-local index referenced by the submesh (indexed-drawing window)
     uint vertexSpan;       // tight vertex-window size: max-min+1 (indexed-drawing pipeline)
+    uint uvSlot;           // out-of-line UV1 buffer table slot (kNoUvSlot when absent)
+    int  uvBias;           // uvRegionBase - meshVtxBase, signed re-base into the UV region
 };
 
 // C layout (scalar block layout feature): float3x3 is 3 tightly-packed rows
 // of 12 bytes (stride 12), float4x4 members are NOT 16-byte aligned —
 // byte-identical to the C++ mirror struct in MeshGatherSystem.cpp:
 //   mvp@0 (64B) maxScale@64 materialId@68 ormPacked@72 modelMatrix@76 (64B)
-//   normalMatrix@140 (36B) vertexBufferSlot@176 -> sizeof 180.
+//   normalMatrix@140 (36B) vertexBufferSlot@176 uvSlot@180 uvBias@184 -> 188.
+// uvSlot/uvBias address the out-of-line UV1 stream: the UV buffer's block and
+// the signed re-base of the absolute vertex index into that region. A sentinel
+// uvSlot (kNoUvSlot) means UV1 is absent and the shader emits UV0 for it.
+static const uint kNoUvSlot = 0xFFFFFFFFu;
+
 struct VertexEntry {
     float4x4 mvp;
     float maxScale;
@@ -39,6 +46,8 @@ struct VertexEntry {
     float4x4 modelMatrix;   // world matrix for per-vertex world-space position computation
     float3x3 normalMatrix;  // inverse-transpose of the 3x3 of modelMatrix
     uint vertexBufferSlot;  // vertex buffer table slot for this mesh; read by the MID vertex shaders
+    uint uvSlot;            // out-of-line UV1 buffer table slot (kNoUvSlot when absent)
+    int  uvBias;            // uvRegionBase - meshVtxBase, signed re-base into the UV region
 };
 
 struct CullEntry {

@@ -26,17 +26,19 @@ MeshManager::~MeshManager() {
 bool MeshManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
+                              VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap,
                               VulkanEngine::GpuResources::StagingPool* staging_mgr,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
                               std::uint32_t frames_in_flight) {
-    if (!vertex_heap || !index_heap || !staging_mgr || !dynamic_vertex_heaps || !dynamic_index_heaps) {
+    if (!vertex_heap || !index_heap || !uv_heap || !staging_mgr || !dynamic_vertex_heaps || !dynamic_index_heaps) {
         LOGIFACE_LOG(error, "MeshManager: null dependencies");
         return false;
     }
     backend_ = &backend;
     vertex_heap_ = vertex_heap;
     index_heap_ = index_heap;
+    uv_heap_ = uv_heap;
     staging_mgr_ = staging_mgr;
     dynamic_vertex_heaps_ = dynamic_vertex_heaps;
     dynamic_index_heaps_ = dynamic_index_heaps;
@@ -86,11 +88,30 @@ MeshManager::Handle MeshManager::UploadPersistent(
         return handle;
     }
 
+    // Optional out-of-line UV1. Allocated from the UV heap in its own element
+    // space; the region base re-bases absolute vertex indices.
+    const bool has_uv1 = !data.uv_extra[0].empty() &&
+                         data.uv_extra[0].size() >= data.vertices.size();
+    VulkanEngine::GpuResources::HeapAllocation uv_alloc{};
+    std::uint32_t uv_region_base = 0;
+    if (has_uv1) {
+        const std::uint64_t uv_bytes = data.uv_extra[0].size() * sizeof(MeshVertexVec2);
+        uv_alloc = uv_heap_->Allocate(uv_bytes, 16ULL);
+        if (!uv_alloc.IsValid()) {
+            vertex_heap_->Free(vertex_alloc);
+            index_heap_->Free(index_alloc);
+            LOGIFACE_LOG(error, "MeshManager::UploadPersistent: UV heap allocation failed");
+            return handle;
+        }
+        uv_region_base = static_cast<std::uint32_t>(uv_alloc.offset / sizeof(MeshVertexVec2));
+    }
+
     {
         auto slice = staging_mgr_->Allocate(vertex_data_size);
         if (!slice.has_value()) {
             vertex_heap_->Free(vertex_alloc);
             index_heap_->Free(index_alloc);
+            if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex staging allocation failed");
             return handle;
         }
@@ -104,12 +125,28 @@ MeshManager::Handle MeshManager::UploadPersistent(
         if (!slice.has_value()) {
             vertex_heap_->Free(vertex_alloc);
             index_heap_->Free(index_alloc);
+            if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: index staging allocation failed");
             return handle;
         }
         std::memcpy(slice->mapped_ptr, data.indices.data(), index_data_size);
         staging_mgr_->RecordBufferCopy(*slice,
             index_heap_->GetBuffer(index_alloc.buffer_index), index_alloc.offset);
+    }
+
+    if (uv_alloc.IsValid()) {
+        const std::uint64_t uv_bytes = data.uv_extra[0].size() * sizeof(MeshVertexVec2);
+        auto slice = staging_mgr_->Allocate(uv_bytes);
+        if (!slice.has_value()) {
+            vertex_heap_->Free(vertex_alloc);
+            index_heap_->Free(index_alloc);
+            uv_heap_->Free(uv_alloc);
+            LOGIFACE_LOG(error, "MeshManager::UploadPersistent: UV staging allocation failed");
+            return handle;
+        }
+        std::memcpy(slice->mapped_ptr, data.uv_extra[0].data(), uv_bytes);
+        staging_mgr_->RecordBufferCopy(*slice,
+            uv_heap_->GetBuffer(uv_alloc.buffer_index), uv_alloc.offset);
     }
 
     staging_mgr_->FlushImmediate();
@@ -130,8 +167,12 @@ MeshManager::Handle MeshManager::UploadPersistent(
     entry.info.streamed_index_alloc.resize(frames_in_flight_);
     entry.info.vertex_allocation = vertex_alloc;
     entry.info.index_allocation = index_alloc;
+    entry.info.uv_allocation = uv_alloc;
     entry.info.vertex_buffer_index = vertex_alloc.buffer_index;
     entry.info.index_buffer_index = index_alloc.buffer_index;
+    entry.info.uv_buffer_index = uv_alloc.buffer_index;
+    entry.info.uv_region_base = uv_region_base;
+    entry.info.has_uv1 = has_uv1;
     auto normalized = data;
     VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
     entry.info.sub_meshes = std::move(normalized.sub_meshes);
@@ -317,6 +358,11 @@ void MeshManager::Remove(Handle handle) {
                 entry.info.index_allocation, index_heap_, frames_wait
             });
         }
+        if (entry.info.uv_allocation.IsValid()) {
+            deferred_free_queue_.push_back({
+                entry.info.uv_allocation, uv_heap_, frames_wait
+            });
+        }
     } else if (entry.strategy == Strategy::Streamed) {
         for (std::uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
             auto& valloc = entry.info.streamed_vertex_alloc[fif];
@@ -357,6 +403,11 @@ void MeshManager::EndFrame(std::uint32_t) {
 const MeshManager::GpuMeshInfo* MeshManager::GetMeshInfo(Handle handle) const {
     if (!handle.IsValid() || handle.id >= entries_.size()) return nullptr;
     return &entries_[handle.id].info;
+}
+
+vk::Buffer MeshManager::GetUvBuffer(std::uint32_t buffer_index) const {
+    if (!uv_heap_) return nullptr;
+    return uv_heap_->GetBuffer(buffer_index);
 }
 
 vk::Buffer MeshManager::GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const {

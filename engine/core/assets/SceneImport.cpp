@@ -383,6 +383,18 @@ VulkanEngine::GpuResources::MeshData ToMeshData(
     result.vertices = ConvertToVertices(loaded);
     result.indices = loaded.indices;
     result.sub_meshes = loaded.submeshes;
+    // UV1 is parallel to the vertices (one float2 per vertex), flipped the same
+    // way as UV0 so both sets share the importer's orientation.
+    if (loaded.uv1.size() >= loaded.positions.size() / 3U * 2U &&
+        !loaded.uv1.empty()) {
+        const std::size_t n = loaded.positions.size() / 3U;
+        auto& dst = result.uv_extra[0];
+        dst.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            dst[i].u = loaded.uv1[i * 2U + 0U];
+            dst[i].v = 1.0f - loaded.uv1[i * 2U + 1U];
+        }
+    }
     return result;
 }
 

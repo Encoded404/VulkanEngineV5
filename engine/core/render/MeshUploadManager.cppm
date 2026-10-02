@@ -26,8 +26,16 @@ public:
     struct GpuMeshInfo {
         VulkanEngine::GpuResources::HeapAllocation vertex_allocation{};
         VulkanEngine::GpuResources::HeapAllocation index_allocation{};
+        // Out-of-line UV set 1 allocation (invalid when the mesh has no UV1).
+        VulkanEngine::GpuResources::HeapAllocation uv_allocation{};
         std::uint32_t vertex_buffer_index = 0;
         std::uint32_t index_buffer_index = 0;
+        std::uint32_t uv_buffer_index = 0;
+        // Element offset of the mesh's UV1 region in its heap block. The UV
+        // heap is a separate element space, so this re-bases an absolute vertex
+        // index: uv = uvBuffers[uv_buffer_index][uv_region_base + local].
+        std::uint32_t uv_region_base = 0;
+        bool has_uv1 = false;
         // Sized to the runtime frames in flight (see Initialize/RegisterStreamed);
         // one mirrored allocation per FIF slot so each in-flight frame writes and
         // reads an independent copy of the streamed geometry.
@@ -54,6 +62,7 @@ public:
     bool Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
+                    VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap,
                     VulkanEngine::GpuResources::StagingPool* staging_mgr,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
@@ -72,6 +81,8 @@ public:
     void EndFrame(std::uint32_t frame_index);
 
     [[nodiscard]] const GpuMeshInfo* GetMeshInfo(Handle handle) const;
+
+    [[nodiscard]] vk::Buffer GetUvBuffer(std::uint32_t buffer_index) const;
 
     [[nodiscard]] vk::Buffer GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
     [[nodiscard]] vk::Buffer GetDynamicIndexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
@@ -99,6 +110,7 @@ private:
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
+    VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap_ = nullptr;
     VulkanEngine::GpuResources::StagingPool* staging_mgr_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps_ = nullptr;

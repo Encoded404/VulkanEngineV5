@@ -75,6 +75,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     heap_config.block_size = config.geometry_buffer_size_mb << 20;
     if (!ctx.vertex_heap.Initialize(vk_backend, heap_config, "vertex")) return false;
     if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
+    if (!ctx.uv_heap.Initialize(vk_backend, heap_config, "uv")) return false;
     if (!ctx.image_heap.Initialize(vk_backend, {}, "image")) return false;
     if (!ctx.staging_pool.Initialize(vk_backend)) return false;
     if (!ctx.sampler_cache.Initialize(vk_backend,
@@ -112,6 +113,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
 
     ctx.mesh_manager = std::make_unique<MeshManager>();
     if (!ctx.mesh_manager->Initialize(vk_backend, &ctx.vertex_heap, &ctx.index_heap,
+                                       &ctx.uv_heap,
                                        &ctx.staging_pool,
                                        ctx.dynamic_vertex_heaps.data(),
                                        ctx.dynamic_index_heaps.data(),
@@ -288,6 +290,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         auto s = DebugSection("engineshutdown.static_heaps");
         ctx.vertex_heap.Shutdown();
         ctx.index_heap.Shutdown();
+        ctx.uv_heap.Shutdown();
     }, {idle_id});
 
     std::optional<VulkanShared::TeardownId> bindless_id;

@@ -129,8 +129,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint indexBase;
     InterlockedAdd(expandCounter[1], indexRange, indexBase);
 
-    // Both modes publish the vertex buffer slot for the MID vertex shaders.
+    // Both modes publish the vertex buffer slot for the MID vertex shaders,
+    // and the out-of-line UV1 addressing (block + signed index re-base) for the
+    // main pass. kNoUvSlot means the set is absent and the shader emits UV0.
     submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot = vertexBufferSlot;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].uvSlot =
+        staticEntries[NonUniformResourceIndex(block)][elementIndex].uvSlot;
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].uvBias =
+        staticEntries[NonUniformResourceIndex(block)][elementIndex].uvBias;
 
     if (kCompactionMode == 0) {
         // CID: one entry per vertex slot; no per-occurrence duplication.

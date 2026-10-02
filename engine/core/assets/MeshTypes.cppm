@@ -12,6 +12,13 @@ export namespace VulkanEngine
 {
     using MaterialManager::MaterialId;
 
+    // UV0 is inline in the vertex struct; the sets above it are optional
+    // out-of-line streams. Each material texture slot selects its set with 2
+    // bits, so the count must be a power of two. One out-of-line set is carried
+    // end to end today; widening the count adds the further sets, since every
+    // consumer is an array over MAX_UV_SETS.
+    inline constexpr std::uint32_t MAX_UV_SETS = 2;
+
     class MeshVertexVec3
     {
     public:
@@ -93,7 +100,11 @@ export namespace VulkanEngine
     public:
         std::vector<MeshVertexVec3> vertices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<MeshVertexVec3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
+        // UV0, inline into the vertex struct at upload. Parallel to `vertices`.
         std::vector<MeshVertexVec2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Out-of-line UV sets 1..MAX_UV_SETS-1, indexed uv_extra[k-1], parallel
+        // to `vertices` when present. Empty when the source does not author it.
+        std::array<std::vector<MeshVertexVec2>, MAX_UV_SETS - 1> uv_extra{}; //NOLINT(misc-non-private-member-variables-in-classes)
         // MikkTSpace tangents + bitangent handedness (+1/-1), per-vertex,
         // parallel to `normals`. Empty when the mesh has no UVs (tangent space
         // is undefined without a texture domain) or generation failed.

@@ -6,6 +6,7 @@ add_executable(gpu_tests
   texture_subresource_gpu_tests.cpp
   texture_render_gpu_tests.cpp
   normal_mapping_gpu_tests.cpp
+  uv_variant_gpu_tests.cpp
   bindless_slot_gpu_tests.cpp
   staging_pool_gpu_tests.cpp
   texture_uploader_gpu_tests.cpp
@@ -54,6 +55,7 @@ add_slang_shaders(
   OPT_LEVEL ${_gpu_test_shader_opt}
   SHADERS
     test_fullscreen_vs test_fullscreen_vs.slang vertex main
+    test_fullscreen_vs_uv1 test_fullscreen_vs.slang vertex main_uv1
     test_sample_frag   test_sample_frag.slang   fragment main
     test_texture_info  test_texture_info.cs.slang compute main
 )

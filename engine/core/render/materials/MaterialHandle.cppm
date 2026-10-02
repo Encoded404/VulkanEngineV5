@@ -86,9 +86,10 @@ struct MaterialEntry {
     TechniqueManager::TechniqueId technique_id{0};
     BlendMode blend_mode{BlendMode::Opaque};
     MaterialRenderState render_state{};
-    // Resolved draw key for this material, interned from
+    // Resolved draw group for this material, interned from
     // (technique_id, variant_slot, render_state). Written into the low bits of
-    // StaticEntry.technique_material by the gather pass.
+    // StaticEntry.technique_material by the gather pass; the group carries the
+    // interface variant and render state for pipeline selection.
     std::uint32_t group_id{0};
     bool dirty = false;
     std::uint32_t dirty_bindings = 0;

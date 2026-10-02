@@ -437,14 +437,17 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         if (!tech) continue;
         if (!tech->pipeline_flags.participates_in_collect) continue;
 
-        // Materialize this group's render-state variant on first use. A
-        // technique with no blend/cull content never creates one. The layout is
-        // shared across variants, so the descriptor sets stay valid.
-        const std::uint32_t render_state_key = tm.GetDrawGroupRenderState(g);
-        if (!tech->HasVariant(render_state_key)) {
-            (void)tech->EnsureVariant(render_state_key, *shader_mgr_, *pipeline_factory_);
+        // Materialize this group's pipeline variant on first use. The group
+        // stores interface variant and render state separately; the composite
+        // draw key rebuilds from them. A group with no matching variant (or the
+        // base key 0) falls back to the base pipeline. The layout is shared
+        // across variants, so the descriptor sets stay valid.
+        const std::uint32_t draw_key = TechniqueManager::DrawKeyState::PackDrawKey(
+            tm.GetDrawGroupVariant(g), tm.GetDrawGroupRenderState(g));
+        if (!tech->HasVariant(draw_key)) {
+            (void)tech->EnsureVariant(draw_key, *shader_mgr_, *pipeline_factory_);
         }
-        auto pipeline = tech->GetPipeline(render_state_key);
+        auto pipeline = tech->GetPipeline(draw_key);
         auto layout = tech->GetPipelineLayout();
         if (!pipeline || !layout) {
             LOGIFACE_LOG(trace, std::format("RenderMain: group {} missing pipeline or layout, skipping", g));

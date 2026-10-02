@@ -288,6 +288,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // No alignas on these: the engine's BlockArray packs entries back-to-back
     // at the exact stride, and scalar block layout requires no 16B struct
     // alignment on the GPU side. Natural alignment only.
+    // Sentinel UV block slot: no out-of-line UV1 for this submesh. Mirrors
+    // kNoUvSlot in scene_entries.slang.
+    constexpr std::uint32_t kNoUvSlot = 0xFFFFFFFFu;
+
     struct DynamicEntry {
         float px, py, pz, pad0;
         float sx, sy, sz, pad1;
@@ -305,8 +309,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::uint32_t orm_packed;          // unorm8: [7:0]=AO, [15:8]=roughness, [23:16]=metallic, [31:24]=spare
         std::uint32_t vertex_window_base;  // min mesh-local index referenced by the submesh
         std::uint32_t vertex_span;         // number of distinct slots in the tight vertex window
+        std::uint32_t uv_slot;             // out-of-line UV1 buffer block (kNoUvSlot when absent)
+        std::int32_t uv_bias;              // uvRegionBase - meshVtxBase (signed re-base)
     };
-    static_assert(sizeof(StaticEntry) == 28, "StaticEntry must match Slang StaticEntry (CDataLayout)");
+    static_assert(sizeof(StaticEntry) == 36, "StaticEntry must match Slang StaticEntry (CDataLayout)");
 
     struct ObbEntry {
         float cx, cy, cz, pad0;
@@ -319,9 +325,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // VertexEntry mirror (written by the GPU expand pass, only sized here).
     // Slang C layout: mvp@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
     // + modelMatrix@76 (64B) + normalMatrix@140 (3 tightly packed float3 rows,
-    // 36B) + vertexBufferSlot@176 = 180 bytes. No alignment padding — matrices
-    // sit on 4-byte boundaries, which is exactly what scalar block layout
-    // permits.
+    // 36B) + vertexBufferSlot@176 + uvSlot@180 + uvBias@184 = 188 bytes. No
+    // alignment padding — matrices sit on 4-byte boundaries, which is exactly
+    // what scalar block layout permits.
     struct VertexEntry {
         std::array<float, 16> mvp;           // 0
         float max_scale;                     // 64
@@ -330,8 +336,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         std::array<float, 16> model_matrix;  // 76
         std::array<float, 9> normal_matrix;  // 140 (row-major, 12B row stride)
         std::uint32_t vertex_buffer_slot;    // 176 (read by the MID vertex shaders)
+        std::uint32_t uv_slot;               // 180 (out-of-line UV1 block; kNoUvSlot when absent)
+        std::int32_t uv_bias;                // 184 (uvRegionBase - meshVtxBase)
     };
-    static_assert(sizeof(VertexEntry) == 180, "VertexEntry must match Slang VertexEntry (CDataLayout)");
+    static_assert(sizeof(VertexEntry) == 188, "VertexEntry must match Slang VertexEntry (CDataLayout)");
 
     std::uint32_t ci = 0;
 
@@ -445,6 +453,16 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 s2->orm_packed = PackOrm8(orm_ao, orm_roughness, orm_metallic);
                 s2->vertex_window_base = sm.vertex_window_base;
                 s2->vertex_span = sm.vertex_span;
+                // Out-of-line UV1: the mesh's UV region re-bases the absolute
+                // vertex index. Absent -> sentinel, and the shader emits UV0.
+                if (gpu_info->has_uv1) {
+                    s2->uv_slot = gpu_info->uv_buffer_index;
+                    s2->uv_bias = static_cast<std::int32_t>(gpu_info->uv_region_base) -
+                                  static_cast<std::int32_t>(base_vertex);
+                } else {
+                    s2->uv_slot = kNoUvSlot;
+                    s2->uv_bias = 0;
+                }
                 check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);
                 accumulate(sm, s2->technique_material);
             }
@@ -593,6 +611,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->vertex_info_packed = packed_vertex;
                     s2->vertex_window_base = sm.vertex_window_base;
                     s2->vertex_span = sm.vertex_span;
+                    // Streamed meshes have no out-of-line UV stream; they
+                    // always sample UV0.
+                    s2->uv_slot = kNoUvSlot;
+                    s2->uv_bias = 0;
                     check_vertex_pack(base_vertex + sm.vertex_window_base + sm.vertex_span);
                     accumulate(sm, s2->technique_material);
                 } else {

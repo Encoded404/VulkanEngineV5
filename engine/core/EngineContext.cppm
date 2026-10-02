@@ -71,6 +71,9 @@ struct EngineContext {
     GpuResources::StagingPool staging_pool;
     GpuResources::DeviceBufferHeap vertex_heap;
     GpuResources::DeviceBufferHeap index_heap;
+    // Out-of-line UV set 1 (optional). Same block-growth model as the vertex
+    // heap; a mesh that authors no out-of-line set allocates nothing here.
+    GpuResources::DeviceBufferHeap uv_heap;
     // Sub-allocated images (asset textures, camera streams/targets). Must
     // outlive bindless_mgr in shutdown (textures free their heap images).
     GpuResources::GpuImageHeap image_heap;
@@ -133,6 +136,7 @@ struct EngineContext {
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }
+    GpuResources::DeviceBufferHeap& GetUvHeap() { return uv_heap; }
     GpuResources::GpuImageHeap& GetImageHeap() { return image_heap; }
     GpuResources::SamplerCache& GetSamplerCache() { return sampler_cache; }
     GpuResources::StagingPool& GetStagingPool() { return staging_pool; }

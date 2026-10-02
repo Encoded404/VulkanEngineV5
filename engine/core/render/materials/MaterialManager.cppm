@@ -76,28 +76,34 @@ public:
         generations_[id.value] = generation;
 
         // ── Resolve the material's draw key ──
-        // Render state is stored on the material (not the technique payload)
-        // and folded into a group key so the technique's pipeline-variant cache
-        // can select the pipeline. alpha_mask is derived from the blend mode.
+        // Render state is stored on the material (not the technique payload).
+        // The interface variant (the out-of-line UV set the material samples)
+        // is derived from the serialized material payload, so a material whose
+        // slots select UV1 gets the technique's UV1 entry-point pipeline. Both
+        // fold into one composite key interned by the technique manager.
         const MaterialRenderState render_state = DeriveRenderState(desc);
-
-        // Variant slot is derived later (render-state variant work); today the
-        // base group (variant 0) is used, so the group key is the state bits.
-        const std::uint16_t group_id =
-            technique_mgr->InternDrawGroup(tech_id.value, 0, RenderStateKey(desc));
 
         // ── Serialize PerMaterial binding data into flat cpu_data buffer ──
         auto entry = std::make_unique<MaterialEntry>();
         entry->technique_id = tech_id;
         entry->blend_mode = desc.blend;
         entry->render_state = render_state;
-        entry->group_id = group_id;
         entry->cpu_data.clear();
         auto write_one = [&]<typename U>(const U& d) {
             const auto* bytes = reinterpret_cast<const std::byte*>(&d);
             entry->cpu_data.insert(entry->cpu_data.end(), bytes, bytes + sizeof(U));
         };
         (write_one(data), ...);
+
+        const std::uint32_t variant_slot =
+            tech_ptr->InterfaceVariantForMaterial(entry->cpu_data);
+        // The intern stores the interface variant and the 16-bit render state
+        // separately; the main pass reconstructs the composite draw key with
+        // PackDrawKey(variant, render state).
+        const std::uint16_t group_id =
+            technique_mgr->InternDrawGroup(tech_id.value, static_cast<std::uint16_t>(variant_slot),
+                                           RenderStateKey(desc));
+        entry->group_id = group_id;
 
         // ── Immediate first upload via staging → device-local ──
         if (staging_pool && !entry->cpu_data.empty()) {

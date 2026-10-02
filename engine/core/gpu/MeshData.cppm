@@ -11,8 +11,23 @@ export namespace VulkanEngine::GpuResources {
 
 struct MeshData {
     std::vector<StandardMeshPipeline::Vertex> vertices;
+    // Out-of-line UV sets 1..MAX_UV_SETS-1, indexed uv_extra[k-1], parallel to
+    // `vertices`. Empty when that set is absent. UV0 is inline in `vertices`.
+    std::array<std::vector<MeshVertexVec2>, MAX_UV_SETS - 1> uv_extra{};
     std::vector<std::uint32_t> indices;
     std::vector<SubMesh> sub_meshes;
+
+    // Highest out-of-line set index present (0 when every slot uses UV0). This
+    // is the mesh's variant slot: the technique pipeline that carries that UV
+    // interpolant.
+    [[nodiscard]] std::uint32_t HighestOutOfLineSet() const {
+        for (std::uint32_t k = MAX_UV_SETS - 1; k >= 1; --k) {
+            if (!uv_extra[k - 1].empty()) return k;
+        }
+        return 0;
+    }
+
+    [[nodiscard]] bool HasOutOfLineUvs() const { return HighestOutOfLineSet() > 0; }
 };
 
 // Ensures every submesh carries a valid bounding volume (sphere + OBB) in

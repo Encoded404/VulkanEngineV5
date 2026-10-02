@@ -118,8 +118,9 @@ public:
         return group < group_variant_.size() ? group_variant_[group] : 0u;
     }
 
-    // Render-state key of a draw group: the bits a technique turns into
-    // pipeline state (blend/cull/depth). 0 for an unknown group.
+    // Composite draw key (interface variant + render state) of a draw group.
+    // This is what the main pass passes to BaseTechnique::EnsureVariant. 0 for
+    // an unknown group.
     [[nodiscard]] std::uint32_t GetDrawGroupRenderState(std::uint16_t group) const {
         return group < group_render_state_.size() ? group_render_state_[group] : 0u;
     }

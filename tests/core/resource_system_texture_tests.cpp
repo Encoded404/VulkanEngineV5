@@ -162,6 +162,45 @@ TEST_F(TextureResourceTest, LoadsTinyRgbaKtx2) {
     manager.Release(handle.GetId());
 }
 
+// ReloadFromPath replaces the payload and bumps the version; the reloaded
+// pixels match the file.
+TEST_F(TextureResourceTest, ReloadFromPathUpdatesPayloadAndVersion) {
+    const TempTextureFile temp(".png");
+    WriteTinyPngTextureToTempFile(temp);
+
+    VulkanEngine::ResourceManager manager;
+    auto handle = manager.LoadFromFile<VulkanEngine::TextureResource>(
+        temp.Path(), VulkanEngine::ResourceManager::LoadSpeed::Instant);
+    ASSERT_TRUE(handle.IsValid());
+    const std::uint32_t version_before = handle->GetVersion();
+    ASSERT_TRUE(handle->ReloadFromPath(temp.Path()));
+    EXPECT_EQ(handle->GetVersion(), version_before + 1u);
+    const auto expected = Make2x2RgbaPixels();
+    ExpectPixelsNear(handle->GetData().blob, expected, 0);
+    manager.Release(handle.GetId());
+}
+
+// A bad edit fails the reload and leaves the live payload untouched.
+TEST_F(TextureResourceTest, ReloadFromPathRejectsBadFile) {
+    const TempTextureFile temp(".png");
+    WriteTinyPngTextureToTempFile(temp);
+    VulkanEngine::ResourceManager manager;
+    auto handle = manager.LoadFromFile<VulkanEngine::TextureResource>(
+        temp.Path(), VulkanEngine::ResourceManager::LoadSpeed::Instant);
+    ASSERT_TRUE(handle.IsValid());
+    const std::uint32_t version_before = handle->GetVersion();
+    const auto blob_before = handle->GetData().blob;
+
+    {
+        std::ofstream out(temp.Path(), std::ios::binary | std::ios::trunc);
+        out << "not an image";
+    }
+    EXPECT_FALSE(handle->ReloadFromPath(temp.Path()));
+    EXPECT_EQ(handle->GetVersion(), version_before);
+    EXPECT_EQ(handle->GetData().blob, blob_before);
+    manager.Release(handle.GetId());
+}
+
 TEST_F(TextureResourceTest, LoadsTinyRgbaPng) {
     const TempTextureFile temp(".png");
     WriteTinyPngTextureToTempFile(temp);

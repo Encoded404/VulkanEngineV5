@@ -119,7 +119,15 @@ uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& 
     // re-uploading it per failed load.
     if (tex_handle.IsValid() && tex_handle->HasData()
         && tex_handle.GetId().value != ctx_.fallback_handle.GetId().value) {
-        return UploadTextureToBindless(ctx, tex_handle.Get(), semantic, normal_encoding, sampler);
+        const std::uint32_t slot =
+            UploadTextureToBindless(ctx, tex_handle.Get(), semantic, normal_encoding, sampler);
+#ifdef VKENGINE_HOT_RELOAD
+        if (ctx_.texture_reloader && slot != BindlessManager::kFallbackSlot) {
+            ctx_.texture_reloader->WatchResource(tex_handle.GetId(), path, semantic,
+                                                 normal_encoding, sampler);
+        }
+#endif
+        return slot;
     }
     LOGIFACE_LOG(debug, "Failed to load texture from path: " + path.string() + ", using fallback");
     return BindlessManager::kFallbackSlot;
@@ -523,6 +531,15 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
             LOGIFACE_LOG(warn, "BindlessManager: dropped a publish for slot " +
                                    std::to_string(handle.slot) + " (recording frame not submitted)");
         });
+
+#ifdef VKENGINE_HOT_RELOAD
+    // Texture hot reload: apply completed slot swaps and reload changed files.
+    // Runs after the bindless drain so a published new binding is visible, and
+    // before materials flush so the rewritten slots reach the GPU this frame.
+    if (ctx_.texture_reloader) {
+        (void)ctx_.texture_reloader->Pump(ctx.frame.frame_counter);
+    }
+#endif
 
     // Whole-texture residency: evict least-recently-used textures when the
     // resident set exceeds the device memory budget. Inert when no budget is

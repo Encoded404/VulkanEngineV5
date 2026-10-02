@@ -162,6 +162,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/bindless/BindlessManager.cpp
     render/bindless/TextureUploader.cpp
     render/bindless/TextureResidency.cpp
+    render/bindless/TextureReloader.cpp
+    render/TextureWatcher.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -306,6 +308,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/bindless/TextureSlot.cppm
             render/bindless/TextureUploader.cppm
             render/bindless/TextureResidency.cppm
+            render/bindless/TextureReloader.cppm
+            render/TextureWatcher.cppm
             render/ResidencyPolicy.cppm
             render/ShaderManager.cppm
             render/CompilerEngine.cppm

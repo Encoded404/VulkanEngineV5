@@ -47,6 +47,13 @@ public:
     [[nodiscard]] bool HasData() const noexcept { return !data_.blob.empty(); }
     [[nodiscard]] std::uint32_t GetVersion() const noexcept { return version_; }
 
+    // Re-reads the source file at `path` and replaces the payload in place,
+    // bumping the version. Returns false and leaves the payload untouched when
+    // the read or decode fails, so a bad edit never destroys a working texture.
+    // Main-thread; the resource system does not track the path, so the caller
+    // (the texture watcher) supplies it.
+    bool ReloadFromPath(const std::filesystem::path& path);
+
 protected:
     bool DoLoad() override;
     bool DoUnload() override;

@@ -14,6 +14,7 @@ add_executable(gpu_tests
   sampler_cache_gpu_tests.cpp
   texture_info_gpu_tests.cpp
   texture_residency_gpu_tests.cpp
+  texture_hot_reload_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE

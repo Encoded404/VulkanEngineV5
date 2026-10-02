@@ -15,6 +15,8 @@ import VulkanShared.Teardown;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.TextureUploader;
 import VulkanEngine.TextureResidency;
+import VulkanEngine.TextureReloader;
+import VulkanEngine.TextureWatcher;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.MeshManager;
@@ -112,6 +114,18 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
                 ctx.texture_residency->MarkResident(handle, bytes, frame);
             }
         });
+
+#ifdef VKENGINE_HOT_RELOAD
+    // Texture hot reload. The watcher starts empty; GameEngine::LoadTexture
+    // registers each source file it uploads. Without hot reload the members stay
+    // null and the per-frame pump is skipped.
+    ctx.texture_watcher = std::make_unique<TextureSystem::TextureWatcher>();
+    ctx.texture_reloader = std::make_unique<Textures::TextureReloader>();
+    ctx.texture_reloader->Initialize(*ctx.texture_watcher, ctx.resource_manager,
+                                     *ctx.bindless_mgr, *ctx.texture_uploader,
+                                     *ctx.texture_residency, ctx.material_mgr);
+    ctx.texture_watcher->Start();
+#endif
 
     {
         GpuResources::HeapConfig dynamic_heap_config{};
@@ -277,7 +291,22 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         }, {idle_id});
     }
 
-
+    // The reloader references the watcher, uploader and residency; stop the
+    // watcher first so no listener thread can enqueue a change mid-teardown.
+    if (ctx.texture_watcher) {
+        teardown.Add("engineshutdown.texture_watcher", [&ctx] {
+            auto s = DebugSection("engineshutdown.texture_watcher");
+            ctx.texture_watcher->Stop();
+            ctx.texture_watcher.reset();
+        });
+    }
+    if (ctx.texture_reloader) {
+        teardown.Add("engineshutdown.texture_reloader", [&ctx] {
+            auto s = DebugSection("engineshutdown.texture_reloader");
+            ctx.texture_reloader->Shutdown();
+            ctx.texture_reloader.reset();
+        });
+    }
 
     if (ctx.shader_manager) {
         std::vector<VulkanShared::TeardownId> deps;

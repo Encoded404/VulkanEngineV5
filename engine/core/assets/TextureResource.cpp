@@ -1,5 +1,6 @@
 module;
 
+#include <fstream>
 #include <logging/logging_macros.hpp>
 
 module VulkanEngine.ResourceSystem.TextureResource;
@@ -64,6 +65,40 @@ bool TextureResource::DoUnload() {
 
 void TextureResource::Reset() noexcept {
     data_.Reset();
+}
+
+bool TextureResource::ReloadFromPath(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        LOGIFACE_LOG(warn, "TextureResource: reload failed, cannot open '" + path.string() + "'");
+        return false;
+    }
+    const std::streamsize size = file.tellg();
+    if (size <= 0) {
+        LOGIFACE_LOG(warn, "TextureResource: reload failed, empty file '" + path.string() + "'");
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
+    FileLoader::ByteBuffer buffer(static_cast<std::size_t>(size));
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        LOGIFACE_LOG(warn, "TextureResource: reload failed, short read '" + path.string() + "'");
+        return false;
+    }
+
+    // Decode into a temporary first: a failed decode must not clobber the live
+    // payload.
+    VulkanEngine::Textures::TextureData reloaded{};
+    std::string error_message{};
+    if (!VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer(GetId().value, buffer,
+                                                                    reloaded, &error_message)) {
+        LOGIFACE_LOG(warn, "TextureResource: reload decode failed for '" + GetId().value + "'" +
+                               (error_message.empty() ? std::string{} : ": " + error_message));
+        return false;
+    }
+    data_ = std::move(reloaded);
+    ++version_;
+    loaded_ = true;
+    return true;
 }
 
 bool TextureResource::DoLoadFromBuffer(const FileLoader::ByteBuffer& buf) {

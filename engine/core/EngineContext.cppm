@@ -9,6 +9,8 @@ import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.TextureUploader;
 import VulkanEngine.TextureResidency;
+import VulkanEngine.TextureReloader;
+import VulkanEngine.TextureWatcher;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.Renderer;
@@ -97,6 +99,10 @@ struct EngineContext {
     // VK_EXT_memory_budget). Constructed after the uploader and material
     // manager; inert when no budget is available.
     std::unique_ptr<Textures::TextureResidency> texture_residency;
+    // Texture hot reload: watches source image directories and swaps bindings
+    // frame-safely. Gated by VKENGINE_HOT_RELOAD.
+    std::unique_ptr<TextureSystem::TextureWatcher> texture_watcher;
+    std::unique_ptr<Textures::TextureReloader> texture_reloader;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer;
     std::unique_ptr<TechniqueManager::TechniqueManager> technique_mgr;
     std::unique_ptr<Renderer::Renderer> renderer;

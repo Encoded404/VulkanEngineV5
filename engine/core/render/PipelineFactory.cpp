@@ -210,7 +210,8 @@ namespace {
         vk::PipelineLayout layout,
         const std::vector<vk::DynamicState>& dynamic_states,
         std::span<const vk::SpecializationMapEntry> spec_entries,
-        std::span<const std::byte> spec_data) {
+        std::span<const std::byte> spec_data,
+        const std::string& entry_point) {
         vk::SpecializationInfo spec{};
         if (!spec_entries.empty()) {
             spec.mapEntryCount = static_cast<std::uint32_t>(spec_entries.size());
@@ -218,7 +219,7 @@ namespace {
             spec.dataSize = spec_data.size();
             spec.pData = spec_data.data();
         }
-        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eVertex, vert_module, "main");
+        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eVertex, vert_module, entry_point.c_str());
         if (!spec_entries.empty()) {
             ss.pSpecializationInfo = &spec;
         }
@@ -258,8 +259,9 @@ namespace {
         const vk::raii::Device& device, const vk::raii::PipelineCache& cache,
         vk::ShaderModule frag_module,
         const vk::PipelineDepthStencilStateCreateInfo& ds,
-        vk::PipelineLayout layout) {
-        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eFragment, frag_module, "main");
+        vk::PipelineLayout layout,
+        const std::string& entry_point) {
+        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eFragment, frag_module, entry_point.c_str());
         vk::PipelineRenderingCreateInfo ri{};
         vk::GraphicsPipelineLibraryCreateInfoEXT lib{};
         lib.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader;
@@ -323,8 +325,9 @@ namespace {
         std::span<const vk::Format> color_formats,
         vk::Format depth_fmt,
         vk::Format stencil_fmt,
-        vk::PipelineLayout layout) {
-        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eFragment, frag_module, "main");
+        vk::PipelineLayout layout,
+        const std::string& entry_point) {
+        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eFragment, frag_module, entry_point.c_str());
         vk::PipelineRenderingCreateInfo ri{};
         ri.colorAttachmentCount = static_cast<std::uint32_t>(color_formats.size());
         ri.pColorAttachmentFormats = color_formats.data();
@@ -435,7 +438,7 @@ PipelineFactory::CreateCompute(const ComputePipelineDesc& desc,
                                  ShaderManager& shaders) const {
     try {
         vk::ShaderModule module = FetchModule(shaders, desc.shader);
-        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, module, "main");
+        vk::PipelineShaderStageCreateInfo ss({}, vk::ShaderStageFlagBits::eCompute, module, desc.entry_point.c_str());
         vk::SpecializationInfo spec{};
         if (!desc.spec_entries.empty()) {
             spec.mapEntryCount = static_cast<std::uint32_t>(desc.spec_entries.size());
@@ -477,13 +480,13 @@ PipelineFactory::CreateGraphicsMonolithic(const GraphicsPipelineDesc& desc,
         vs_spec.pData = desc.spec_data.data();
     }
 
-    vk::PipelineShaderStageCreateInfo vs({}, vk::ShaderStageFlagBits::eVertex, vert_mod, "main");
+    vk::PipelineShaderStageCreateInfo vs({}, vk::ShaderStageFlagBits::eVertex, vert_mod, desc.vertex_entry_point.c_str());
     if (!desc.spec_entries.empty()) {
         vs.pSpecializationInfo = &vs_spec;
     }
     std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {
         vs,
-        vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, frag_mod, "main"}
+        vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, frag_mod, desc.fragment_entry_point.c_str()}
     };
 
     vk::PipelineDynamicStateCreateInfo dyn_state({}, desc.dynamic_states);
@@ -581,7 +584,8 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
                           [&]() { return createPreRasterLibrary(device_, cache_, vert_mod, desc.viewport,
                                                                  desc.rasterization, desc.multisample,
                                                                  desc.layout, desc.dynamic_states,
-                                                                 desc.spec_entries, desc.spec_data); });
+                                                                 desc.spec_entries, desc.spec_data,
+                                                                 desc.vertex_entry_point); });
         LOGIFACE_LOG(debug, std::format("GPL: pre-raster library {}: 0x{:x}",
                                         pr_created ? "created" : "reused", HandleToU64(**pr_lib)));
 
@@ -596,7 +600,8 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
             const auto [fs_lib, fs_created] =
                 get_or_create(shared_->fragment_shader, key, desc.fragment_shader, shaders.GetVersion(desc.fragment_shader),
                               [&]() { return createFragmentShaderLibrary(device_, cache_, frag_mod,
-                                                                         desc.depth_stencil, desc.layout); });
+                                                                         desc.depth_stencil, desc.layout,
+                                                                         desc.fragment_entry_point); });
             LOGIFACE_LOG(debug, std::format("GPL: fragment-shader library {}: 0x{:x}",
                                             fs_created ? "created" : "reused", HandleToU64(**fs_lib)));
             const auto [foi_lib, foi_created] =
@@ -621,8 +626,8 @@ PipelineFactory::CreateGraphicsGPL(const GraphicsPipelineDesc& desc,
                               [&]() { return createFragmentLibrary(device_, cache_, frag_mod,
                                                                    desc.depth_stencil, desc.multisample,
                                                                    desc.color_blend, desc.color_formats,
-                                                                   desc.depth_format, desc.stencil_format,
-                                                                   desc.layout); });
+                                                                    desc.depth_format, desc.stencil_format,
+                                                                    desc.layout, desc.fragment_entry_point); });
             LOGIFACE_LOG(debug, std::format("GPL: combined fragment library {}: 0x{:x}",
                                             frag_created ? "created" : "reused", HandleToU64(**frag_lib)));
             fragment_shader_lib = frag_lib;

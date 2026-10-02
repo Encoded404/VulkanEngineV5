@@ -69,11 +69,12 @@ ShaderManager::~ShaderManager() {
 
 ShaderId ShaderManager::Register(std::string spv_path, std::string slang_path,
                                    ShaderStage stage, std::span<const Binding> bindings,
-                                   std::uint64_t binding_hash) {
+                                   std::uint64_t binding_hash, std::string entry_point) {
     std::unique_lock lock(slots_mutex_);
     auto slot = std::make_unique<ShaderModuleSlot>();
     slot->spv_path = std::move(spv_path);
     slot->slang_path = std::move(slang_path);
+    slot->entry_point = std::move(entry_point);
     slot->stage = stage;
     slot->bindings.assign(bindings.begin(), bindings.end());
     slot->binding_hash = binding_hash;
@@ -84,11 +85,12 @@ ShaderId ShaderManager::Register(std::string spv_path, std::string slang_path,
 }
 
 ShaderId ShaderManager::RegisterManual(std::string spv_path, std::string slang_path,
-                                         ShaderStage stage) {
+                                         ShaderStage stage, std::string entry_point) {
     std::unique_lock lock(slots_mutex_);
     auto slot = std::make_unique<ShaderModuleSlot>();
     slot->spv_path = std::move(spv_path);
     slot->slang_path = std::move(slang_path);
+    slot->entry_point = std::move(entry_point);
     slot->stage = stage;
     slot->binding_hash = 0;
     slot->manual = true;
@@ -131,6 +133,24 @@ ShaderId ShaderManager::FindBySlangFilename(std::string_view filename) const {
     return static_cast<ShaderId>(-1);
 }
 
+std::vector<ShaderId> ShaderManager::FindAllBySlangPath(std::string_view path) const {
+    std::shared_lock lock(slots_mutex_);
+    std::vector<ShaderId> ids;
+    for (ShaderId i = 0; i < static_cast<ShaderId>(slots_.size()); ++i) {
+        if (slots_[i]->slang_path == path) ids.push_back(i);
+    }
+    return ids;
+}
+
+std::vector<ShaderId> ShaderManager::FindAllBySlangFilename(std::string_view filename) const {
+    std::shared_lock lock(slots_mutex_);
+    std::vector<ShaderId> ids;
+    for (ShaderId i = 0; i < static_cast<ShaderId>(slots_.size()); ++i) {
+        if (std::filesystem::path(slots_[i]->slang_path).filename() == filename) ids.push_back(i);
+    }
+    return ids;
+}
+
 std::vector<std::string> ShaderManager::GetSlangDirectories() const {
     std::shared_lock lock(slots_mutex_);
     std::vector<std::string> dirs;
@@ -159,7 +179,9 @@ std::future<bool> ShaderManager::RequestReload(ShaderId id) {
 #if VKENGINE_HOT_RELOAD
         VulkanEngine::ShaderSystem::CompileRequest req{};
         req.source_path = slot->slang_path;
-        req.entry_point = "main";
+        // The slot's own entry point: a variant row recompiles its wrapper, not
+        // "main" (which would clobber the variant's module).
+        req.entry_point = slot->entry_point;
         req.stage = slot->stage;
         req.optimization_level = 0;
 
@@ -211,13 +233,29 @@ std::future<bool> ShaderManager::RequestReload(ShaderId id) {
 }
 
 std::future<bool> ShaderManager::RequestReloadByPath(std::string_view slang_path) {
-    auto id = FindBySlangPath(slang_path);
-    if (id == static_cast<ShaderId>(-1)) {
+    const auto ids = FindAllBySlangPath(slang_path);
+    if (ids.empty()) {
         std::promise<bool> p;
         p.set_value(false);
         return p.get_future();
     }
-    return RequestReload(id);
+    if (ids.size() == 1) {
+        return RequestReload(ids.front());
+    }
+    // Several variants share this source: reload them all and aggregate.
+    std::vector<std::future<bool>> futures;
+    futures.reserve(ids.size());
+    for (const ShaderId id : ids) {
+        futures.push_back(RequestReload(id));
+    }
+    return VulkanShared::ThreadPool::Global().Enqueue(
+        [futures = std::move(futures)]() mutable -> bool {
+            bool ok = true;
+            for (auto& f : futures) {
+                ok = f.get() && ok;
+            }
+            return ok;
+        });
 }
 
 vk::PipelineCache ShaderManager::GetPipelineCache() const {

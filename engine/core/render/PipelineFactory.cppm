@@ -14,6 +14,12 @@ export namespace VulkanEngine::ShaderSystem {
 struct GraphicsPipelineDesc {
     ShaderId vertex_shader;
     ShaderId fragment_shader;
+    // Named entry point compiled into each stage. Defaults to "main"; a
+    // multi-variant shader (one source, several entry-point wrappers, one row
+    // each) names each wrapper's entry point here. Both stages share this name
+    // only when it is "main"; a variant pair sets them per stage.
+    std::string vertex_entry_point{"main"};
+    std::string fragment_entry_point{"main"};
 
     vk::PipelineVertexInputStateCreateInfo vertex_input;
     vk::PipelineInputAssemblyStateCreateInfo input_assembly;
@@ -51,6 +57,8 @@ struct GraphicsPipelineDesc {
 struct ComputePipelineDesc {
     ShaderId shader;
     vk::PipelineLayout layout;
+    // Named entry point compiled into the module. Defaults to "main".
+    std::string entry_point{"main"};
     // Optional specialization constants. The desc owns the data; the vectors
     // must not be reallocated between storing the desc and pipeline creation
     // (hot-reload passes the same desc to CreateCompute).

@@ -103,4 +103,45 @@ TEST(GpuShaderWatcherTest, RegistersAndDeduplicatesDirectories) {
     std::filesystem::remove_all(root, error);
 }
 
+// One source may back several entry-point variant modules. A reload of the path
+// must enumerate every module, and a slot must keep its own entry point so a
+// reload recompiles the right wrapper instead of clobbering it with "main".
+TEST(GpuShaderWatcherTest, OneSourceEnumeratesEveryVariantModule) {
+    if (!TestSupport::IsGpuDeviceAvailable()) {
+        GTEST_SKIP() << "no Vulkan device available";
+    }
+
+    BareDevice bare = CreateBareDevice();
+    ASSERT_NE(*bare.device, nullptr);
+
+    const auto root = std::filesystem::temp_directory_path() / "vkengine-shader-variant-test";
+    const auto cache_dir = root / "cache";
+    std::filesystem::create_directories(cache_dir);
+    const auto slang_path = (root / "multi.slang").string();
+
+    const VulkanBackend::Vulkan::VulkanCapabilities capabilities{};
+    VulkanEngine::ShaderSystem::ShaderManager shaders(bare.device, capabilities, cache_dir.string());
+
+    // Two modules from one source, distinct entry points and fake .spv paths
+    // (registration never loads the module).
+    const auto main_id = shaders.RegisterManual(
+        (root / "multi_main.spv").string(), slang_path, ShaderStage::eVertex, "main");
+    const auto uv1_id = shaders.RegisterManual(
+        (root / "multi_uv1.spv").string(), slang_path, ShaderStage::eVertex, "main_uv1");
+
+    EXPECT_EQ(shaders.GetSlot(uv1_id).entry_point, "main_uv1");
+    EXPECT_EQ(shaders.GetSlot(main_id).entry_point, "main");
+
+    const auto all = shaders.FindAllBySlangPath(slang_path);
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_NE(std::ranges::find(all, main_id), all.end());
+    EXPECT_NE(std::ranges::find(all, uv1_id), all.end());
+
+    const auto by_name = shaders.FindAllBySlangFilename("multi.slang");
+    EXPECT_EQ(by_name.size(), 2u);
+
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+}
+
 }  // namespace

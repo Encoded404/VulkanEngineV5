@@ -152,12 +152,13 @@ void ShaderWatcher::OnFileChanged(const std::string& filename) {
     std::unique_lock lock(mutex_);
     if (stop_.load(std::memory_order_acquire)) return;
 
-    const auto id = shaders_.FindBySlangFilename(filename);
-    if (id == static_cast<ShaderId>(-1)) return;
+    const auto ids = shaders_.FindAllBySlangFilename(filename);
+    if (ids.empty()) return;
 
-    const auto& slot = shaders_.GetSlot(id);
+    const auto& slot = shaders_.GetSlot(ids.front());
     const std::string slang_path = slot.slang_path;
-    LOGIFACE_LOG(debug, "ShaderWatcher: file changed: " + slang_path);
+    LOGIFACE_LOG(debug, "ShaderWatcher: file changed: " + slang_path +
+                 " (" + std::to_string(ids.size()) + " variant module(s))");
 
     pending_reloads_[slang_path] = std::chrono::steady_clock::now() + kReloadDebounce;
     cv_.notify_one();
@@ -207,9 +208,10 @@ void ShaderWatcher::ReloadPath(const std::string& slang_path) {
         if (it != last_compile_.end() && ftime <= it->second) return; // duplicate event
         last_compile_[slang_path] = ftime;
     }
-    const auto id = shaders_.FindBySlangPath(slang_path);
-    if (id == static_cast<ShaderId>(-1)) return;
-    shaders_.RequestReload(id);
+    // Reload every module built from this source (all entry-point variants).
+    // RequestReloadByPath resolves to false when none match, so a stale path is
+    // a no-op.
+    (void)shaders_.RequestReloadByPath(slang_path);
 }
 
 } // namespace VulkanEngine::ShaderSystem

@@ -9,12 +9,19 @@ import fastgltf;
 import FileLoader;
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
+import VulkanEngine.MaterialManager.MaterialId;
 
 export namespace VulkanEngine::FileLoaders::Mesh {
 
 class GltfMeshAssembler : public FileLoader::IAssembler<VulkanEngine::Mesh, FileLoader::AssemblyMode::FullBuffer>
 {
 public:
+    // Asset material index -> engine MaterialId, matching the OBJ/BIN path.
+    // The importer never names a technique; the app supplies the table.
+    void SetMaterialBindings(const std::vector<VulkanEngine::MaterialId>* bindings) {
+        material_bindings_ = bindings;
+    }
+
     std::future<std::shared_ptr<VulkanEngine::Mesh>> AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer> buffer) override {
         auto prom = std::make_shared<std::promise<std::shared_ptr<VulkanEngine::Mesh>>>();
 
@@ -42,6 +49,12 @@ public:
 
         return prom->get_future();
     }
+
+private:
+    // Retained for the geometry importer (a separate workstream). The material
+    // binding table is resolved here so the glTF path already flows through the
+    // same asset-index -> MaterialId mechanism as OBJ/BIN (K15).
+    const std::vector<VulkanEngine::MaterialId>* material_bindings_ = nullptr;
 };
 
 class GltfMeshLoader : public IMeshLoader {
@@ -53,6 +66,7 @@ protected:
         auto buf = ReadEntireFile(path);
         auto buf_ptr = std::make_shared<FileLoader::ByteBuffer>(buf.begin(), buf.end());
         GltfMeshAssembler assembler;
+        assembler.SetMaterialBindings(material_bindings_);
         return assembler.AssembleFromFullBuffer(std::move(buf_ptr)).get();
     }
 

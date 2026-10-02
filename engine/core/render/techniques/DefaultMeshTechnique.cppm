@@ -12,6 +12,7 @@ import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.TextureTypes;
+import VulkanEngine.FileLoaders.Mesh.GltfMaterialImport;
 
 export namespace VulkanEngine::TechniqueManager {
 
@@ -51,6 +52,42 @@ constexpr std::uint32_t kHasTransformFlag = 1u << 3;
 [[nodiscard]] constexpr std::uint32_t PackNormalEncoding(
     const VulkanEngine::Textures::TextureNormalEncoding encoding) {
     return static_cast<std::uint32_t>(encoding) & kNormalEncodingMask;
+}
+
+// Builds the lit technique's per-material payload from an imported glTF
+// material. Texture slots are the caller's to resolve (bindless slots differ
+// per upload), so `albedo_texture`/`normal_texture`/`orm_texture`/
+// `emissive_texture` are left 0 and filled by the caller after it uploads the
+// images. Everything the material declares — factors, encoding, UV selection,
+// the transform gate and the MASK cutoff — is mapped here so the shader sees a
+// consistent contract. The render state (blend/cull) is a MaterialDesc the
+// caller derives from alpha_mode/double_sided, not part of this payload.
+[[nodiscard]] inline DefaultMeshPerMaterialData FromGltfMaterial(
+    const VulkanEngine::FileLoaders::Mesh::GltfMaterialInfo& material) {
+    using VulkanEngine::FileLoaders::Mesh::GltfAlphaMode;
+    using VulkanEngine::FileLoaders::Mesh::GltfMaterialHasTransform;
+    using VulkanEngine::FileLoaders::Mesh::ComputeGltfUvSets;
+
+    DefaultMeshPerMaterialData data{};
+    data.flags = PackNormalEncoding(material.normal_encoding);
+    if (material.alpha_mode == GltfAlphaMode::Mask) {
+        data.flags |= kAlphaMaskFlag;
+    }
+    if (GltfMaterialHasTransform(material)) {
+        data.flags |= kHasTransformFlag;
+    }
+    data.uv_sets = ComputeGltfUvSets(material);
+    data.roughness_factor = material.roughness_factor;
+    data.metallic_factor = material.metallic_factor;
+    data.ao_factor = material.ao_factor;
+    data.normal_scale = material.normal_scale;
+    data.occlusion_strength = material.occlusion_strength;
+    data.alpha_cutoff = material.alpha_cutoff;
+    data.emissive_factor[0] = material.emissive_factor[0];
+    data.emissive_factor[1] = material.emissive_factor[1];
+    data.emissive_factor[2] = material.emissive_factor[2];
+    data.emissive_factor[3] = material.emissive_strength;
+    return data;
 }
 
 class DefaultMeshTechnique final : public BaseTechnique {

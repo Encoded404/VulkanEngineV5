@@ -122,6 +122,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     input/InputSystem.cpp
     gpu/BlockArray.cpp
     assets/FileLoaders/Mesh/MeshLoaderBase.cpp
+    assets/FileLoaders/Mesh/GltfMaterialImport.cpp
     assets/FileLoaders/Textures/TextureLoaders.cpp
     assets/FileLoaders/Textures/TextureLoaders.cppm
     assets/TextureFormat.cpp
@@ -258,6 +259,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             components/OrmOverride.cppm
             components/MaterialOverride.cppm
             assets/FileLoaders/Mesh/BinMeshAssembler.cppm
+            assets/FileLoaders/Mesh/GltfMaterialImport.cppm
             assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
             assets/FileLoaders/Mesh/MeshLoaderBase.cppm
             assets/FileLoaders/Mesh/ObjMeshAssembler.cppm

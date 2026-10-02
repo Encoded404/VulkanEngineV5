@@ -89,6 +89,11 @@ public:
     [[nodiscard]] std::uint32_t GetMipLevels() const { return mip_levels_; }
     [[nodiscard]] std::uint32_t GetArrayLayers() const { return array_layers_; }
     [[nodiscard]] bool IsValid() const { return heap_ != nullptr && image_.IsValid(); }
+    // Device bytes the backing heap image reserves (0 when invalid). Used by
+    // residency accounting to size whole-texture eviction.
+    [[nodiscard]] std::uint64_t GetByteSize() const {
+        return IsValid() ? heap_->GetAllocationSize(image_) : 0;
+    }
 
     // Metadata snapshot for the bindless GpuTextureInfo buffer: extent, chain
     // length, layer count and the resolved device format. Shaders read it

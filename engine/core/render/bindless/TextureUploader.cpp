@@ -141,6 +141,9 @@ std::optional<TextureReservation> TextureUploader::Reserve(TextureSemantic seman
     reservation.normal_encoding = normal_encoding;
     reservation.sampler = sampler;
     reservation.id = id;
+    if (on_reserve_) {
+        on_reserve_(*handle, id);
+    }
     return reservation;
 }
 
@@ -330,10 +333,18 @@ std::uint64_t TextureUploader::RecordUploads(vk::CommandBuffer cmd, std::uint32_
         staging_pool_->RecordBufferToImage(cmd, item.staging, image, regions);
         RecordBarrier(cmd, image, full_range, /*to_transfer_dst=*/false);
 
+        // Bytes the image occupies, captured before ownership moves into the
+        // bindless binding; residency accounts whole-texture eviction by it.
+        const std::uint64_t image_bytes = item.texture.GetByteSize();
+
         // Hand the image to the bindless manager (published one FIF later) and
         // retire the staging range once the recording frame completes.
         bindless_->CommitSlot(item.reservation.handle, std::move(item.texture), frame_index);
         staging_pool_->Retire(item.staging, frame_index);
+
+        if (on_resident_) {
+            on_resident_(item.reservation.handle, image_bytes, frame_index);
+        }
 
         if (item.promise) {
             item.promise->set_value(UploadResult{

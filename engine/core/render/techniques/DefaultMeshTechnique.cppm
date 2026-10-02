@@ -1,5 +1,7 @@
 module;
 
+#include <cstddef>
+
 export module VulkanEngine.TechniqueManager.DefaultMeshTechnique;
 
 import std;
@@ -158,6 +160,19 @@ public:
 
     [[nodiscard]] VulkanEngine::GpuResources::BlockArray* GetMaterialBlockArray() {
         return GetBlockArrayForType<DefaultMeshPerMaterialData>();
+    }
+
+    // The four texture-slot words the residency layer rewrites on eviction:
+    // albedo, normal, orm, emissive. Offsets are computed from the struct so a
+    // layout change cannot silently desynchronize them.
+    [[nodiscard]] std::span<const std::uint32_t> TextureSlotFieldOffsets() const override {
+        static const std::array<std::uint32_t, 4> offsets{
+            static_cast<std::uint32_t>(offsetof(DefaultMeshPerMaterialData, albedo_texture)),
+            static_cast<std::uint32_t>(offsetof(DefaultMeshPerMaterialData, normal_texture)),
+            static_cast<std::uint32_t>(offsetof(DefaultMeshPerMaterialData, orm_texture)),
+            static_cast<std::uint32_t>(offsetof(DefaultMeshPerMaterialData, emissive_texture)),
+        };
+        return offsets;
     }
 };
 

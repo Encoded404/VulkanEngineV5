@@ -327,6 +327,14 @@ public:
         return 0;
     }
 
+    // Byte offsets of the 32-bit bindless texture-slot words inside this
+    // technique's PerMaterial payload. The residency layer uses them to find and
+    // rewrite a material's texture references when a bindless slot is evicted.
+    // The base technique has no texture slots.
+    [[nodiscard]] virtual std::span<const std::uint32_t> TextureSlotFieldOffsets() const {
+        return {};
+    }
+
     // ── Custom descriptor sets (technique-owned BlockArray/Shared bindings at sets 4+) ──
     [[nodiscard]] std::span<const vk::DescriptorSet> GetCustomDescriptorSets() const {
         return { custom_descriptor_set_handles_.data(), custom_descriptor_set_handles_.size() };

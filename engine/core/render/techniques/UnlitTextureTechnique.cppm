@@ -1,5 +1,7 @@
 module;
 
+#include <cstddef>
+
 export module VulkanEngine.TechniqueManager.UnlitTextureTechnique;
 
 import std;
@@ -78,6 +80,15 @@ public:
 
     [[nodiscard]] VulkanEngine::GpuResources::BlockArray* GetMaterialBlockArray() {
         return GetBlockArrayForType<UnlitPerMaterialData>();
+    }
+
+    // The single albedo texture-slot word the residency layer rewrites on
+    // eviction; computed from the struct so the layout stays authoritative.
+    [[nodiscard]] std::span<const std::uint32_t> TextureSlotFieldOffsets() const override {
+        static const std::array<std::uint32_t, 1> offsets{
+            static_cast<std::uint32_t>(offsetof(UnlitPerMaterialData, albedo_texture)),
+        };
+        return offsets;
     }
 };
 

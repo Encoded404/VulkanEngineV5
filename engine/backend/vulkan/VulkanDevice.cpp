@@ -118,13 +118,24 @@ bool VulkanDevice::SelectPhysicalDevice(const VulkanInstance& instance) {
             }
 
             // Features2 query — one-time, chain written into the supported state.
+            // Build the tail after vulkan13 from the optional extension structs
+            // that are actually enumerated on this device, so the query (and
+            // later the create chain) never references an absent extension.
             supported_.vulkan13.pNext = nullptr;
             supported_.vulkan12.pNext = &supported_.vulkan13;
             supported_.vulkan11.pNext = &supported_.vulkan12;
             supported_.features2.pNext = &supported_.vulkan11;
+            supported_.gpl.pNext = nullptr;
+            supported_.memory_priority.pNext = nullptr;
+            void* feature_tail = nullptr;
             if (supported_.HasExtension("VK_EXT_graphics_pipeline_library")) {
-                supported_.vulkan13.pNext = &supported_.gpl;
+                feature_tail = &supported_.gpl;
             }
+            if (supported_.HasExtension("VK_EXT_memory_priority")) {
+                supported_.memory_priority.pNext = feature_tail;
+                feature_tail = &supported_.memory_priority;
+            }
+            supported_.vulkan13.pNext = feature_tail;
             (*device).getFeatures2(&supported_.features2);
 
             // Required features.
@@ -232,6 +243,10 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     } else {
         LOGIFACE_LOG(warn, "graphics pipeline library feature not supported, using monolithic pipeline path");
     }
+    // Device-memory residency extensions are optional: request them when
+    // advertised, otherwise residency falls back to the caller's byte budget.
+    try_request(DeviceExtension::MemoryBudget, "VK_EXT_memory_budget", Requirement::Optional);
+    try_request(DeviceExtension::MemoryPriority, "VK_EXT_memory_priority", Requirement::Optional);
 
     // 4. App requests (deduped against the catalog; unknown names are dynamic).
     for (const auto& request : config.device_extensions) {
@@ -346,6 +361,35 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     builder.SetDriverProperties(supported_.driver_properties);
     builder.SetFormatSupports(supported_.format_supports);
     builder.FinalizeDescriptorCapabilities(kBindlessAppSampledReserve);
+
+    // Optional per-heap budget/usage snapshot (VK_EXT_memory_budget). Captured
+    // only when the extension is in the final request set; otherwise the
+    // snapshot stays empty and residency uses the caller's byte budget.
+    {
+        const bool memory_budget = std::ranges::find(requested_extensions, DeviceExtension::MemoryBudget) !=
+                                   requested_extensions.end();
+        std::vector<VulkanCapabilities::MemoryHeapBudget> budget;
+        if (memory_budget) {
+            vk::PhysicalDeviceMemoryBudgetPropertiesEXT budget_props{};
+            vk::PhysicalDeviceMemoryProperties2 props{};
+            props.pNext = &budget_props;
+            // The raii overload takes no pNext pointer; call through the
+            // dispatcher with layout-identical C structs (as ImageHeap does).
+            auto* dispatcher = physical_device_->getDispatcher();
+            dispatcher->vkGetPhysicalDeviceMemoryProperties2(
+                static_cast<vk::PhysicalDevice::CType>(**physical_device_),
+                reinterpret_cast<VkPhysicalDeviceMemoryProperties2*>(&props));
+            const std::uint32_t heaps = props.memoryProperties.memoryHeapCount;
+            budget.reserve(heaps);
+            for (std::uint32_t i = 0; i < heaps; ++i) {
+                budget.push_back(VulkanCapabilities::MemoryHeapBudget{
+                    .budget = budget_props.heapBudget[i],
+                    .usage = budget_props.heapUsage[i],
+                });
+            }
+        }
+        builder.SetMemoryBudget(budget);
+    }
     for (const auto& name : requested_dynamic_names) {
         builder.AddDeviceExtensionName(name);
     }

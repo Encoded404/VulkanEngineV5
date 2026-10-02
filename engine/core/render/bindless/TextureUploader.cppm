@@ -99,6 +99,22 @@ public:
     void BeginFrame(std::uint32_t frame_index,
                     const std::function<bool(std::uint32_t)>& gate);
 
+    // Optional observer invoked on the main thread when a texture's real
+    // binding is committed and recorded, with the device bytes its image
+    // occupies and the recording frame. Residency uses it to move a reservation
+    // to a resident, sized candidate. Safe to leave unset.
+    void SetOnResident(
+        std::function<void(BindlessManager::TextureHandle, std::uint64_t, std::uint32_t)> cb) {
+        on_resident_ = std::move(cb);
+    }
+    // Optional observer invoked on the main thread at Reserve time, carrying the
+    // resource id. Residency keys its resource->handle registry from it so hot
+    // reload can find the slot a resource currently occupies.
+    void SetOnReserve(
+        std::function<void(BindlessManager::TextureHandle, const ResourceId&)> cb) {
+        on_reserve_ = std::move(cb);
+    }
+
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
     [[nodiscard]] std::uint32_t PendingCount() const;
 
@@ -159,6 +175,8 @@ private:
     std::vector<ReadyItem> ready_{};
 
     // Main-thread-only state.
+    std::function<void(BindlessManager::TextureHandle, std::uint64_t, std::uint32_t)> on_resident_{};
+    std::function<void(BindlessManager::TextureHandle, const ResourceId&)> on_reserve_{};
     std::vector<StagedItem> staged_{};
     UploadScheduler scheduler_{};
     std::atomic<std::uint32_t> in_flight_{0};

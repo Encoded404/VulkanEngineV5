@@ -60,6 +60,8 @@ bool VulkanCapabilitiesBuilder::GetSupportedFeature(const SupportedDeviceState& 
             return supported.vulkan13.synchronization2 == vk::True;
         case Feature::GraphicsPipelineLibrary:
             return supported.gpl.graphicsPipelineLibrary == vk::True;
+        case Feature::MemoryPriority:
+            return supported.memory_priority.memoryPriority == vk::True;
         case Feature::Count:
             break;
     }
@@ -112,6 +114,8 @@ bool VulkanCapabilitiesBuilder::GetRequestedFeature(const VulkanCapabilities& ca
             return caps.vulkan13_features_.synchronization2 == vk::True;
         case Feature::GraphicsPipelineLibrary:
             return caps.gpl_features_.graphicsPipelineLibrary == vk::True;
+        case Feature::MemoryPriority:
+            return caps.memory_priority_features_.memoryPriority == vk::True;
         case Feature::Count:
             break;
     }
@@ -187,6 +191,9 @@ void VulkanCapabilitiesBuilder::SetRequestedFeature(VulkanCapabilities& caps, Fe
         case Feature::GraphicsPipelineLibrary:
             caps.gpl_features_.graphicsPipelineLibrary = bit;
             break;
+        case Feature::MemoryPriority:
+            caps.memory_priority_features_.memoryPriority = bit;
+            break;
         case Feature::Count:
             break;
     }
@@ -213,10 +220,21 @@ void VulkanCapabilitiesBuilder::FinalizeFeatures() {
     caps_.core_features2_.pNext = &caps_.vulkan11_features_;
     caps_.vulkan11_features_.pNext = &caps_.vulkan12_features_;
     caps_.vulkan12_features_.pNext = &caps_.vulkan13_features_;
-    caps_.vulkan13_features_.pNext = caps_.features_[static_cast<std::size_t>(Feature::GraphicsPipelineLibrary)]
-        ? static_cast<void*>(&caps_.gpl_features_)
-        : nullptr;
-    caps_.gpl_features_.pNext = nullptr;
+    // VK_EXT_memory_priority's feature struct is chained only when its feature
+    // was requested (i.e. the extension is enabled and supported), so the
+    // create-time chain stays valid without the extension.
+    if (caps_.features_[static_cast<std::size_t>(Feature::MemoryPriority)]) {
+        caps_.vulkan13_features_.pNext = &caps_.memory_priority_features_;
+        caps_.memory_priority_features_.pNext = caps_.features_[static_cast<std::size_t>(Feature::GraphicsPipelineLibrary)]
+            ? static_cast<void*>(&caps_.gpl_features_)
+            : nullptr;
+        caps_.gpl_features_.pNext = nullptr;
+    } else {
+        caps_.vulkan13_features_.pNext = caps_.features_[static_cast<std::size_t>(Feature::GraphicsPipelineLibrary)]
+            ? static_cast<void*>(&caps_.gpl_features_)
+            : nullptr;
+        caps_.gpl_features_.pNext = nullptr;
+    }
 }
 
 // ── Diagnostics ───────────────────────────────────────────────────────

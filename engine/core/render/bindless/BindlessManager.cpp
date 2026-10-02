@@ -419,6 +419,21 @@ const VulkanEngine::GpuResources::GpuTexture* BindlessManager::GetTexture(Textur
     return &slot.binding;
 }
 
+std::optional<TextureHandle> BindlessManager::GetHandle(std::uint32_t slot) const {
+    if (slot == kFallbackSlot || slot >= slots_.size()) {
+        return std::nullopt;
+    }
+    const auto& record = slots_[slot];
+    if (record.generation == 0) {
+        return std::nullopt;
+    }
+    return TextureHandle{.slot = slot, .generation = record.generation};
+}
+
+bool BindlessManager::IsCommitted(std::uint32_t slot) const {
+    return slot < slots_.size() && slots_[slot].committed && slots_[slot].binding.IsValid();
+}
+
 void BindlessManager::WriteFallback(std::uint32_t slot) {
     if (!fallback_ready_ && slot != kFallbackSlot) {
         return;

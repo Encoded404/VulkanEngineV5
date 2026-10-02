@@ -29,6 +29,8 @@ enum class DeviceExtension : std::uint16_t {
     DebugUtils,             // VK_EXT_debug_utils                (Optional, linked to instance entry)
     PipelineLibrary,        // VK_KHR_pipeline_library           (Optional, auto with GPL)
     GraphicsPipelineLibrary, // VK_EXT_graphics_pipeline_library (Optional)
+    MemoryBudget,           // VK_EXT_memory_budget              (Optional; budget/usage reporting)
+    MemoryPriority,         // VK_EXT_memory_priority            (Optional; per-allocation priority)
     Count,
 };
 
@@ -62,6 +64,7 @@ enum class Feature : std::uint16_t {
     Synchronization2,      // vkCmdPipelineBarrier2 and friends (render-graph barriers)
     // EXT
     GraphicsPipelineLibrary,
+    MemoryPriority,       // VK_EXT_memory_priority (optional); gates the feature-chain struct
     Count,
 };
 
@@ -99,6 +102,8 @@ inline constexpr std::array<DeviceExtensionSpec, static_cast<std::size_t>(Device
     { "VK_KHR_pipeline_library",          Requirement::Optional, {}, {} },                                   // PipelineLibrary
     { "VK_EXT_graphics_pipeline_library", Requirement::Optional,
       std::span<const DeviceExtension>(kGplDependencies), Feature::GraphicsPipelineLibrary },                // GraphicsPipelineLibrary
+    { "VK_EXT_memory_budget",             Requirement::Optional, {}, {} },                                   // MemoryBudget
+    { "VK_EXT_memory_priority",           Requirement::Optional, {}, Feature::MemoryPriority },              // MemoryPriority
 }};
 
 inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count)> kFeatureCatalog = {{
@@ -124,6 +129,7 @@ inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count
     { "pipelineCreationCacheControl", Requirement::Required },
     { "synchronization2", Requirement::Required },
     { "graphicsPipelineLibrary", Requirement::Optional },
+    { "memoryPriority", Requirement::Optional },
 }};
 
 // ── Format support snapshot (closed candidate set) ────────────────────
@@ -236,6 +242,7 @@ struct SupportedDeviceState {
     vk::PhysicalDeviceVulkan12Features vulkan12{}; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::PhysicalDeviceVulkan13Features vulkan13{}; // NOLINT(misc-non-private-member-variables-in-classes)
     vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    vk::PhysicalDeviceMemoryPriorityFeaturesEXT memory_priority{}; // NOLINT(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool HasExtension(std::string_view name) const noexcept {
         for (const auto& ext : extensions) {
@@ -333,6 +340,26 @@ public:
         return properties_.limits.maxSamplerAllocationCount;
     }
     [[nodiscard]] const vk::PhysicalDeviceDriverProperties& GetDriverProperties() const noexcept { return driver_properties_; }
+
+    // ── Optional device-memory reporting (Phase 5 residency) ──
+    // Both extensions are optional: the engine must run without them. When
+    // VK_EXT_memory_budget is present the per-heap budget/usage snapshot is
+    // populated at boot; otherwise the snapshot is empty and residency falls
+    // back to a caller-supplied byte budget. VK_EXT_memory_priority is only
+    // usable together with the memoryPriority core feature.
+    struct MemoryHeapBudget {
+        std::uint64_t budget{0};
+        std::uint64_t usage{0};
+    };
+    [[nodiscard]] bool HasMemoryBudget() const noexcept {
+        return IsDeviceExtensionEnabled(DeviceExtension::MemoryBudget);
+    }
+    [[nodiscard]] bool HasMemoryPriority() const noexcept {
+        return CanUse(DeviceExtension::MemoryPriority);
+    }
+    [[nodiscard]] std::span<const MemoryHeapBudget> GetMemoryBudgetSnapshot() const noexcept {
+        return memory_budget_;
+    }
     // Root of the create-time feature chain (chained into VkDeviceCreateInfo).
     [[nodiscard]] const vk::PhysicalDeviceFeatures2& GetFeatureChain() const noexcept {
         return core_features2_;
@@ -355,6 +382,9 @@ private:
     vk::PhysicalDeviceVulkan12Features vulkan12_features_{};
     vk::PhysicalDeviceVulkan13Features vulkan13_features_{};
     vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl_features_{};
+    vk::PhysicalDeviceMemoryPriorityFeaturesEXT memory_priority_features_{};
+
+    std::vector<MemoryHeapBudget> memory_budget_{};
 
     vk::PhysicalDeviceProperties properties_{};
     vk::PhysicalDeviceDescriptorIndexingProperties descriptor_indexing_{};
@@ -404,6 +434,11 @@ public:
     }
     void SetDriverProperties(const vk::PhysicalDeviceDriverProperties& properties) {
         caps_.driver_properties_ = properties;
+    }
+    // Captures the optional per-heap budget/usage snapshot when the extension
+    // is enabled. Empty when it is absent, so the engine runs unmodified.
+    void SetMemoryBudget(std::span<const VulkanCapabilities::MemoryHeapBudget> budget) {
+        caps_.memory_budget_.assign(budget.begin(), budget.end());
     }
     void AppendError(std::string_view message) {
         if (!caps_.error_message_.empty()) caps_.error_message_ += "; ";

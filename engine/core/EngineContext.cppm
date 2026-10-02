@@ -8,6 +8,7 @@ import vulkan_hpp;
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.TextureUploader;
+import VulkanEngine.TextureResidency;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.Renderer;
@@ -48,6 +49,10 @@ struct GameConfig {
     // Requested bindless combined-image-sampler capacity. Clamped at boot by the
     // device limits minus the other update-after-bind pools' descriptor counts.
     std::uint32_t bindless_capacity = 65536;
+    // Whole-texture residency budget in bytes. 0 means "use the
+    // VK_EXT_memory_budget heap budget when present, otherwise disable
+    // eviction". Set it to force a budget (or a smaller one) on any device.
+    std::uint64_t texture_memory_budget_bytes = 0;
     bool enable_imgui = true;
     std::string shader_data_dir;
     // Empty means "the resolved per-user cache root" (see GameEngine::Setup).
@@ -88,6 +93,10 @@ struct EngineContext {
     // Async texture uploader (render/bindless); constructed after bindless and
     // the staging pool, before anything that uploads a texture.
     std::unique_ptr<Textures::TextureUploader> texture_uploader;
+    // Whole-texture residency under a device memory budget (optional
+    // VK_EXT_memory_budget). Constructed after the uploader and material
+    // manager; inert when no budget is available.
+    std::unique_ptr<Textures::TextureResidency> texture_residency;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer;
     std::unique_ptr<TechniqueManager::TechniqueManager> technique_mgr;
     std::unique_ptr<Renderer::Renderer> renderer;
@@ -142,6 +151,7 @@ struct EngineContext {
     GpuResources::StagingPool& GetStagingPool() { return staging_pool; }
     auto& GetDynamicVertexHeaps() { return dynamic_vertex_heaps; }
     auto& GetDynamicIndexHeaps() { return dynamic_index_heaps; }
+    Textures::TextureResidency* GetTextureResidency() { return texture_residency.get(); }
 
     ImGui::ImGuiSystem* GetImGuiSystem() { return imgui_system.get(); }
     VulkanBackend::ImGui::IImGuiBackend* GetImGuiBackend() { return imgui_backend.get(); }

@@ -94,6 +94,9 @@ public:
     // Generation-checked overloads: a stale handle resolves to null.
     [[nodiscard]] vk::Image GetImage(const HeapImage& image) const;
     [[nodiscard]] vk::ImageView GetImageView(const HeapImage& image) const;
+    // Device bytes reserved for the image (its memory requirement). Generation
+    // checked: a stale handle reports 0.
+    [[nodiscard]] std::uint64_t GetAllocationSize(const HeapImage& image) const;
     [[nodiscard]] std::uint64_t GetBufferImageGranularity() const { return buffer_image_granularity_; }
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
     [[nodiscard]] const std::string& GetDebugName() const { return debug_name_; }

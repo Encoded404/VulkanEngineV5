@@ -124,6 +124,14 @@ public:
     [[nodiscard]] const VulkanEngine::GpuResources::GpuTexture* GetTexture(std::uint32_t slot) const;
     [[nodiscard]] const VulkanEngine::GpuResources::GpuTexture* GetTexture(TextureHandle handle) const;
 
+    // Generation-checked handle for a live slot. nullopt for the reserved
+    // fallback (slot 0), an out-of-range slot, or a free slot. Used by residency
+    // to release a slot without holding its original handle.
+    [[nodiscard]] std::optional<TextureHandle> GetHandle(std::uint32_t slot) const;
+    // True when the slot currently holds a published real binding (not the
+    // fallback, not a reserved-but-uncommitted reservation).
+    [[nodiscard]] bool IsCommitted(std::uint32_t slot) const;
+
     [[nodiscard]] std::uint32_t Capacity() const { return capacity_; }
     [[nodiscard]] std::uint32_t FreeSlotCount() const { return static_cast<std::uint32_t>(free_slots_.size()); }
 

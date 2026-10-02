@@ -14,6 +14,7 @@ import VulkanShared.Teardown;
 
 import VulkanEngine.BindlessManager;
 import VulkanEngine.TextureUploader;
+import VulkanEngine.TextureResidency;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.MeshManager;
@@ -92,6 +93,25 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
                                           &ctx.sampler_cache)) {
         return false;
     }
+
+    // Whole-texture residency: active only with VK_EXT_memory_budget or an
+    // explicit budget override, otherwise inert so the engine is unchanged.
+    ctx.texture_residency = std::make_unique<Textures::TextureResidency>();
+    ctx.texture_residency->Initialize(*ctx.bindless_mgr, ctx.material_mgr,
+                                      vk_backend.GetCapabilities(),
+                                      config.texture_memory_budget_bytes);
+    ctx.texture_uploader->SetOnReserve(
+        [&ctx](BindlessManager::TextureHandle handle, const ResourceId& id) {
+            if (ctx.texture_residency) {
+                ctx.texture_residency->RegisterResourceHandle(id, handle, 0);
+            }
+        });
+    ctx.texture_uploader->SetOnResident(
+        [&ctx](BindlessManager::TextureHandle handle, std::uint64_t bytes, std::uint32_t frame) {
+            if (ctx.texture_residency) {
+                ctx.texture_residency->MarkResident(handle, bytes, frame);
+            }
+        });
 
     {
         GpuResources::HeapConfig dynamic_heap_config{};
@@ -248,6 +268,16 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             ctx.texture_uploader.reset();
         }, {idle_id});
     }
+
+    if (ctx.texture_residency) {
+        teardown.Add("engineshutdown.texture_residency", [&ctx] {
+            auto s = DebugSection("engineshutdown.texture_residency");
+            ctx.texture_residency->Shutdown();
+            ctx.texture_residency.reset();
+        }, {idle_id});
+    }
+
+
 
     if (ctx.shader_manager) {
         std::vector<VulkanShared::TeardownId> deps;

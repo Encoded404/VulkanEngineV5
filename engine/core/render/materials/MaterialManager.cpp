@@ -117,6 +117,49 @@ void MaterialManager::FlushDirtyMaterials() {
     Dirty_list.clear();
 }
 
+void MaterialManager::RewriteTextureSlot(std::uint32_t slot, std::uint32_t replacement) {
+    const auto users_it = slot_users_.find(slot);
+    if (users_it == slot_users_.end()) {
+        return;
+    }
+    // Copy: modifying a material can (via MarkDirty) touch Dirty_list, not the
+    // users list, but iterate a snapshot to stay safe against reentrancy.
+    const std::vector<MaterialId> users = users_it->second;
+    for (const MaterialId id : users) {
+        if (!IsUsable(id)) continue;
+        auto& entry = Materials[id.value];
+        const auto fields = GetTextureSlotFields(entry->technique_id.value);
+        if (fields.empty()) continue;
+        bool changed = false;
+        for (const std::uint32_t offset : fields) {
+            if (offset + sizeof(std::uint32_t) > entry->cpu_data.size()) continue;
+            auto* word = reinterpret_cast<std::uint32_t*>(entry->cpu_data.data() + offset);
+            if (*word == slot) {
+                *word = replacement;
+                changed = true;
+            }
+        }
+        if (changed) {
+            MarkDirty(id);
+        }
+    }
+}
+
+void MaterialManager::RebuildTextureSlotIndex() {
+    slot_users_.clear();
+    for (std::size_t i = 0; i < Materials.size(); ++i) {
+        const auto& entry = Materials[i];
+        if (!entry) continue;
+        const auto fields = GetTextureSlotFields(entry->technique_id.value);
+        if (fields.empty()) continue;
+        for (const std::uint32_t offset : fields) {
+            if (offset + sizeof(std::uint32_t) > entry->cpu_data.size()) continue;
+            const auto* word = reinterpret_cast<const std::uint32_t*>(entry->cpu_data.data() + offset);
+            slot_users_[*word].push_back(MaterialId{static_cast<std::uint32_t>(i)});
+        }
+    }
+}
+
 void ValidateTextureBlendMode(const VulkanEngine::FileLoaders::Textures::AlphaAnalysis& alpha,
                                BlendMode mode,
                                std::string_view texture_name) {

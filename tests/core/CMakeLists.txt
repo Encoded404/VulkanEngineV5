@@ -16,6 +16,8 @@ add_executable(engine_tests
   shader_entry_point_tests.cpp
   uv_variant_tests.cpp
   frame_ring_tests.cpp
+  residency_policy_tests.cpp
+  material_slot_rewrite_tests.cpp
   gpl_resolution_tests.cpp
   tlsf_allocator_tests.cpp
   transient_allocator_tests.cpp

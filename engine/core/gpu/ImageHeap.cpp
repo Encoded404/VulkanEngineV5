@@ -315,4 +315,12 @@ vk::ImageView GpuImageHeap::GetImageView(const HeapImage& image) const {
     return GetImageView(image.image_index);
 }
 
+std::uint64_t GpuImageHeap::GetAllocationSize(const HeapImage& image) const {
+    if (!image.IsValid() || image.image_index >= images_.size() ||
+        images_[image.image_index].generation != image.generation) {
+        return 0;
+    }
+    return images_[image.image_index].size;
+}
+
 } // namespace VulkanEngine::GpuResources

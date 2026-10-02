@@ -524,6 +524,17 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
                                    std::to_string(handle.slot) + " (recording frame not submitted)");
         });
 
+    // Whole-texture residency: evict least-recently-used textures when the
+    // resident set exceeds the device memory budget. Inert when no budget is
+    // available. Eviction goes through the deferred bindless release, so a
+    // slot's descriptor is reset to the fallback at the ring drain and no
+    // in-flight frame samples a destroyed image.
+    if (ctx_.texture_residency && ctx_.texture_residency->IsEnabled()) {
+        const std::uint32_t residency_fif = ctx.bootstrap->GetBackend().GetFramesInFlight();
+        (void)ctx_.texture_residency->Collect(ctx.frame.frame_counter,
+                                              /*min_residency_frames=*/residency_fif);
+    }
+
     // Flush dirty material data to GPU before rendering
     ctx_.material_mgr.FlushDirtyMaterials();
 

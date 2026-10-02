@@ -83,6 +83,10 @@ public:
         // fold into one composite key interned by the technique manager.
         const MaterialRenderState render_state = DeriveRenderState(desc);
 
+        // Record the technique's texture-slot word offsets so a later eviction
+        // can find and rewrite this material's bindless references.
+        SetTextureSlotFields(tech_id.value, tech_ptr->TextureSlotFieldOffsets());
+
         // ── Serialize PerMaterial binding data into flat cpu_data buffer ──
         auto entry = std::make_unique<MaterialEntry>();
         entry->technique_id = tech_id;
@@ -246,6 +250,48 @@ public:
         return &Materials[id.value]->render_state;
     }
 
+    // ── Texture-slot reference tracking (bindless residency/eviction) ──
+    // Texture slots are stored as plain uint32_t words inside a technique's
+    // PerMaterial payload, so the manager cannot know a technique's slot field
+    // layout. The technique advertises the slot words and the manager keeps a
+    // slot -> materials index so a released bindless slot can be rewritten to
+    // the fallback across every referencing material.
+
+    // Registers one 32-bit texture-slot word at `byte_offset` within the
+    // technique's PerMaterial payload. Idempotent per technique id.
+    void SetTextureSlotFields(std::uint32_t technique_id, std::span<const std::uint32_t> byte_offsets) {
+        auto& fields = texture_slot_fields_[technique_id];
+        fields.assign(byte_offsets.begin(), byte_offsets.end());
+    }
+
+    // Rewrites every material slot word equal to `slot` to `replacement`. Used
+    // when a bindless slot is evicted/decommitted: the descriptor has already
+    // been reset to the fallback, so the CPU payload must follow. Marks the
+    // changed materials dirty so the new slot reaches the GPU.
+    void RewriteTextureSlot(std::uint32_t slot, std::uint32_t replacement);
+
+    // Calls `fn` for each material that currently references `slot`.
+    template <typename Fn>
+    void ForEachMaterialUsingSlot(std::uint32_t slot, Fn&& fn) const {
+        const auto it = slot_users_.find(slot);
+        if (it == slot_users_.end()) return;
+        for (const MaterialId id : it->second) {
+            fn(id);
+        }
+    }
+
+    // Rebuilds `slot_users_` from every live material's registered slot words.
+    // Called after registrations/mutations rather than maintained on each write.
+    void RebuildTextureSlotIndex();
+
+    [[nodiscard]] std::span<const std::uint32_t> GetTextureSlotFields(
+        std::uint32_t technique_id) const {
+        const auto it = texture_slot_fields_.find(technique_id);
+        return it != texture_slot_fields_.end()
+                   ? std::span<const std::uint32_t>(it->second)
+                   : std::span<const std::uint32_t>{};
+    }
+
     MaterialManager(const MaterialManager&) = delete;
     MaterialManager& operator=(const MaterialManager&) = delete;
 
@@ -262,6 +308,11 @@ public:
     std::vector<MaterialId> Dirty_list{};
     std::vector<MaterialId> Free_list{};
     std::uint32_t next_generation_{1};
+    // technique_id -> byte offsets of the 32-bit texture-slot words in that
+    // technique's PerMaterial payload.
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> texture_slot_fields_{};
+    // slot -> live materials that reference it (rebuilt on demand).
+    std::unordered_map<std::uint32_t, std::vector<MaterialId>> slot_users_{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     GpuResources::StagingPool* staging_pool = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)

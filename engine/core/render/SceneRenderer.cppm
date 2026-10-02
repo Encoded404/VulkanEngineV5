@@ -83,14 +83,14 @@ public:
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
     static constexpr std::uint32_t BLOCK_ENTRIES = 256;
     static constexpr std::uint32_t MAX_BLOCKS = 1024;
-    // Draw-key table capacity: the full technique/draw-group bit width from
-    // TechniquePacking (TECHNIQUE_BITS = 14 -> 16384). Every per-key GPU table
-    // (flags, counts, results, command regions) is sized to this, and the
-    // collect push constants carry the live count, never a hardcoded 256.
-    // A key can never exceed this: the low TECHNIQUE_BITS of a packed
+    // Draw-key table capacity: the full technique/draw-group bit width, owned
+    // by TechniquePacking (TECHNIQUE_BITS = 14 -> 16384). Every per-key GPU
+    // table (flags, counts, results, command regions) is sized to this, and the
+    // collect push constants carry the live count, never a hardcoded 256. A key
+    // can never exceed this: the low TECHNIQUE_BITS of a packed
     // technique_material are the key, and registration caps the count.
     static constexpr std::uint32_t MAX_DRAW_GROUPS =
-        1u << VulkanEngine::TechniqueManager::TechniquePacking::TECHNIQUE_BITS;
+        VulkanEngine::TechniqueManager::TechniquePacking::MAX_DRAW_GROUPS;
 
     // Highest Hi-Z level covered by whole HIZ_BATCH-sized DispatchHiZGen
     // iterations for a `mip_count`-level pyramid. The cull shaders clamp their

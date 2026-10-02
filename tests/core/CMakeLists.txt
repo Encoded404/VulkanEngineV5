@@ -9,6 +9,7 @@ add_executable(engine_tests
   texture_loader_subresource_tests.cpp
   normal_encoding_material_tests.cpp
   draw_key_bound_tests.cpp
+  draw_group_tests.cpp
   frame_ring_tests.cpp
   gpl_resolution_tests.cpp
   tlsf_allocator_tests.cpp

@@ -118,8 +118,12 @@ public:
 #ifdef VKENGINE_PHYSICAL_CAMERA
     PhysicalCamera::PhysicalCameraSystem* GetPhysicalCameraSystem() { return ctx_.physical_camera.get(); }
 #endif
+    // Id of the main lit technique. Materials of that technique resolve to a
+    // draw group derived from their render state; the technique's base group
+    // (no render-state variant) has the same value as the technique id.
     std::uint16_t GetMainTechniqueIdRaw() const { return main_technique_id_; }
     VulkanEngine::TechniqueManager::TechniqueId GetMainTechniqueId() const { return VulkanEngine::TechniqueManager::TechniqueId{main_technique_id_}; }
+    std::uint16_t GetMainDrawGroup() const { return main_draw_group_; }
     bool IsInitialized() const { return initialized_; }
     void MarkSceneValid() { scene_valid_ = true; }
     std::uint32_t UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& ctx,
@@ -154,6 +158,7 @@ private:
     Components::Camera* camera_ = nullptr;
 
     std::uint16_t main_technique_id_ = 0;
+    std::uint16_t main_draw_group_ = 0;
     bool scene_valid_ = false;
     bool initialized_ = false;
 };

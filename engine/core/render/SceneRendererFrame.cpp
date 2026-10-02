@@ -273,22 +273,27 @@ void SceneRenderer::UpdateTechniqueFlags(
     VulkanEngine::TechniqueManager::TechniqueManager& tm) {
     if (!backend_) return;
 
+    // Flags are per draw group, inheriting the owning technique's PipelineFlags.
+    // The interning guarantee that every live group is below the registered
+    // technique count is what lets the collect passes scan only up to that
+    // count; assert it in debug builds.
     const std::uint32_t count =
-        std::min<std::uint32_t>(tm.GetTechniqueCount(), MAX_DRAW_GROUPS);
-    if (tm.GetTechniqueCount() > MAX_DRAW_GROUPS) {
+        std::min<std::uint32_t>(tm.GetDrawGroupCount(), MAX_DRAW_GROUPS);
+    if (tm.GetDrawGroupCount() > MAX_DRAW_GROUPS) {
         LOGIFACE_LOG(warn, "UpdateTechniqueFlags: " +
-                     std::to_string(tm.GetTechniqueCount()) +
-                     " techniques exceed flag-table capacity " +
+                     std::to_string(tm.GetDrawGroupCount()) +
+                     " draw groups exceed flag-table capacity " +
                      std::to_string(MAX_DRAW_GROUPS));
     }
-    // The registered technique count is an upper bound on any draw key, so the
-    // collect passes never scan beyond it. Keep the tight region bound when it
-    // is already higher (registered-but-unused techniques cost one iteration).
+    // The live group count is the upper bound on any key, so the collect passes
+    // never scan beyond it. Keep a tighter region bound when it is already
+    // higher (region indices are group ids).
     technique_count_ = std::max(technique_count_, count);
 
     std::vector<std::uint32_t> flags(MAX_DRAW_GROUPS, 0);
-    for (std::uint32_t t = 0; t < count; ++t) {
-        auto* tech = tm.GetTechnique(static_cast<std::uint16_t>(t));
+    for (std::uint32_t g = 0; g < count; ++g) {
+        const std::uint16_t tech_id = tm.GetDrawGroupTechnique(static_cast<std::uint16_t>(g));
+        auto* tech = tm.GetTechnique(tech_id);
         if (!tech) continue;
         const auto& f = tech->pipeline_flags;
         std::uint32_t bits = 0;
@@ -296,7 +301,7 @@ void SceneRenderer::UpdateTechniqueFlags(
         if (f.receives_occlusion)        bits |= TECHNIQUE_FLAG_RECEIVES_OCCLUSION;
         if (f.participates_in_collect)   bits |= TECHNIQUE_FLAG_COLLECT;
         if (f.bounds_conservative)       bits |= TECHNIQUE_FLAG_OCCLUDER_SAFE;
-        flags[t] = bits;
+        flags[g] = bits;
     }
 
     // Upload only when contents change (flags are static in practice).
@@ -418,21 +423,30 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         mid ? *fr.draw_indices.GetBuffer() : *fr.main_indices.GetBuffer(),
         0, vk::IndexType::eUint32);
 
-    for (uint32_t t = 0; t < static_cast<uint32_t>(tm.GetTechniqueCount()); ++t) {
-        auto* tech = tm.GetTechnique(t);
+    // The collect arrays and command regions are indexed by draw group. A group
+    // resolves to its owning technique, which owns the pipeline and the shared
+    // layout/descriptor sets; render-state variants reuse the same set (variant
+    // pipelines are added by the variant work, and the pipeline is selected per
+    // group there).
+    const std::uint32_t group_count =
+        std::min<std::uint32_t>(tm.GetDrawGroupCount(), MAX_DRAW_GROUPS);
+    for (std::uint32_t g = 0; g < group_count; ++g) {
+        const std::uint16_t tech_id = tm.GetDrawGroupTechnique(static_cast<std::uint16_t>(g));
+        if (tech_id == std::numeric_limits<std::uint16_t>::max()) continue;
+        auto* tech = tm.GetTechnique(tech_id);
         if (!tech) continue;
         if (!tech->pipeline_flags.participates_in_collect) continue;
 
         auto pipeline = tech->GetPipeline();
         auto layout = tech->GetPipelineLayout();
         if (!pipeline || !layout) {
-            LOGIFACE_LOG(trace, std::format("RenderMain: technique {} missing pipeline or layout, skipping", t));
+            LOGIFACE_LOG(trace, std::format("RenderMain: group {} missing pipeline or layout, skipping", g));
             continue;
         }
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
-        LOGIFACE_LOG(trace, std::format("RenderMain: technique {} bound pipeline 0x{:x}",
-                                        t, HandleToU64(pipeline)));
+        LOGIFACE_LOG(trace, std::format("RenderMain: group {} bound pipeline 0x{:x}",
+                                        g, HandleToU64(pipeline)));
 
         std::array<vk::DescriptorSet, 16> ds{};
         std::uint32_t slot = 0;
@@ -459,18 +473,18 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
         cmd.pushConstants(layout, vk::ShaderStageFlagBits::eFragment, 0, 16, camera_pos);
 
         if (mid) {
-            const std::uint32_t base = (t < region_base_.size()) ? region_base_[t] : 0u;
-            const std::uint32_t cnt = (t < region_count_.size()) ? region_count_[t] : 0u;
+            const std::uint32_t base = (g < region_base_.size()) ? region_base_[g] : 0u;
+            const std::uint32_t cnt = (g < region_count_.size()) ? region_count_[g] : 0u;
             if (cnt == 0) continue;
             cmd.drawIndexedIndirectCount(
                 *fr.main_commands.GetBuffer(),
                 static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
                 *fr.technique_counts.GetBuffer(),
-                static_cast<vk::DeviceSize>(t) * sizeof(std::uint32_t),
+                static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
                 cnt, sizeof(vk::DrawIndexedIndirectCommand));
         } else {
             const vk::DeviceSize draw_cmd_offset =
-                static_cast<vk::DeviceSize>(t) * sizeof(vk::DrawIndexedIndirectCommand);
+                static_cast<vk::DeviceSize>(g) * sizeof(vk::DrawIndexedIndirectCommand);
             cmd.drawIndexedIndirect(*fr.technique_draw_commands.GetBuffer(),
                                     draw_cmd_offset, 1,
                                     sizeof(vk::DrawIndexedIndirectCommand));

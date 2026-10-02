@@ -168,6 +168,9 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         }
         auto tech_id = ctx_.technique_mgr->Register(std::move(mesh_tech));
         main_technique_id_ = tech_id.value;
+        // The technique's base group (no render-state variant) is seeded at
+        // registration and carries the technique id.
+        main_draw_group_ = ctx_.technique_mgr->InternDrawGroup(tech_id.value, 0, 0);
     }
     {
         // Unlit technique: same engine sets + PerMaterial layout as the main

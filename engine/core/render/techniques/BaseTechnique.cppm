@@ -29,6 +29,12 @@ namespace TechniquePacking {
     inline constexpr std::uint32_t TECHNIQUE_BITS  = 14;                 // → 16384 techniques max
     inline constexpr std::uint32_t MATERIAL_BITS   = 32 - TECHNIQUE_BITS; // → 262144 materials max
     inline constexpr std::uint32_t TECHNIQUE_MASK  = (1u << TECHNIQUE_BITS) - 1;
+    // Draw-key table capacity. The low TECHNIQUE_BITS of a packed
+    // technique_material carry the draw key (a technique id, and from the
+    // variant work a dense interned group id), so every representable key is
+    // below this. Every per-key GPU table and the group registry are sized to
+    // it, and allocation is capped here so a key can never index out of range.
+    inline constexpr std::uint32_t MAX_DRAW_GROUPS = 1u << TECHNIQUE_BITS;
 
     // Per-material BlockArray geometry. The fragment shaders hardcode this
     // split as materialId / 256 and materialId % 256, so it must remain 256.
@@ -178,9 +184,12 @@ public:
     }
 
     // ── Material packing — each technique defines how to pack material_id into StaticEntry.technique_material ──
-    // Default implementation uses TechniquePacking::Pack(material_id, technique_id).
-    // Override for custom per-material data encoding (e.g., packing texture_slot for legacy shaders).
-    [[nodiscard]] virtual uint32_t PackMaterialData(uint32_t material_id) const;
+    // The caller passes the material's resolved draw key (a technique id today,
+    // a dense interned group id once render-state variants exist). The default
+    // packs (material_id << TECHNIQUE_BITS) | draw_key. Override for custom
+    // per-material data encoding.
+    [[nodiscard]] virtual uint32_t PackMaterialData(uint32_t material_id,
+                                                    uint32_t draw_key) const;
 
     // ── Per-material descriptor arrays ──
     // Bind block `block_index` of the per-material descriptor array for the

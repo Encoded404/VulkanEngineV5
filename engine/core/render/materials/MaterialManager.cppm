@@ -40,8 +40,14 @@ public:
 
     // Typed registration — technique type inferred from template.
     // Only PerMaterial binding data is passed; Shared data lives on the technique.
+    // The legacy BlendMode overload forwards to the MaterialDesc form.
     template<typename Tech, typename... Ts>
     MaterialHandle<Tech> Register(BlendMode blend, const Ts&... data) {
+        return Register<Tech>(MaterialDesc{.blend = blend}, data...);
+    }
+
+    template<typename Tech, typename... Ts>
+    MaterialHandle<Tech> Register(const MaterialDesc& desc, const Ts&... data) {
         static_assert((std::is_trivially_copyable_v<Ts> && ...),
                       "All material data types must be trivially copyable (GPU POD)");
 
@@ -69,10 +75,23 @@ public:
         const std::uint32_t generation = next_generation_++;
         generations_[id.value] = generation;
 
+        // ── Resolve the material's draw key ──
+        // Render state is stored on the material (not the technique payload)
+        // and folded into a group key so the technique's pipeline-variant cache
+        // can select the pipeline. alpha_mask is derived from the blend mode.
+        const MaterialRenderState render_state = DeriveRenderState(desc);
+
+        // Variant slot is derived later (render-state variant work); today the
+        // base group (variant 0) is used, so the group key is the state bits.
+        const std::uint16_t group_id =
+            technique_mgr->InternDrawGroup(tech_id.value, 0, RenderStateKey(desc));
+
         // ── Serialize PerMaterial binding data into flat cpu_data buffer ──
         auto entry = std::make_unique<MaterialEntry>();
         entry->technique_id = tech_id;
-        entry->blend_mode = blend;
+        entry->blend_mode = desc.blend;
+        entry->render_state = render_state;
+        entry->group_id = group_id;
         entry->cpu_data.clear();
         auto write_one = [&]<typename U>(const U& d) {
             const auto* bytes = reinterpret_cast<const std::byte*>(&d);
@@ -206,6 +225,19 @@ public:
     [[nodiscard]] TechniqueManager::BaseTechnique* GetTechniqueForMaterial(MaterialId id) const {
         if (!IsUsable(id) || technique_mgr == nullptr) return nullptr;
         return technique_mgr->GetTechnique(Materials[id.value]->technique_id);
+    }
+
+    // Resolved draw key for a material. Returns 0 (the base group) for an
+    // unusable id, matching the fallback material's group.
+    [[nodiscard]] std::uint16_t GetGroupForMaterial(MaterialId id) const {
+        if (!IsUsable(id)) return 0;
+        return static_cast<std::uint16_t>(Materials[id.value]->group_id);
+    }
+
+    // Per-material render state. Null for an unusable id.
+    [[nodiscard]] const MaterialRenderState* GetRenderState(MaterialId id) const {
+        if (!IsUsable(id)) return nullptr;
+        return &Materials[id.value]->render_state;
     }
 
     MaterialManager(const MaterialManager&) = delete;

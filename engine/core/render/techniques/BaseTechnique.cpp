@@ -58,9 +58,9 @@ void BaseTechnique::Shutdown() {
     device_ = nullptr;
 }
 
-uint32_t BaseTechnique::PackMaterialData(uint32_t material_id) const {
-    // Default: pack material_id and technique_id into a single uint32
-    return TechniquePacking::Pack(material_id, id_.value);
+uint32_t BaseTechnique::PackMaterialData(uint32_t material_id, uint32_t draw_key) const {
+    // Default: pack material_id and the resolved draw key into a single uint32
+    return TechniquePacking::Pack(material_id, draw_key);
 }
 
 bool BaseTechnique::EnsureMaterialBlockBound(std::size_t binding_index,

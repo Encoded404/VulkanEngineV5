@@ -59,6 +59,10 @@ std::uint64_t OverrideSignature(const std::uint64_t tag,
 struct EffectiveMaterial {
     MaterialManager::MaterialId id{0};
     TechniqueManager::BaseTechnique* technique = nullptr;
+    // Resolved draw key for the material (its technique + render-state group).
+    // Written into the low bits of StaticEntry.technique_material so the GPU
+    // buckets and pipelines by group, not by bare technique id.
+    std::uint16_t group_id{0};
     bool overridden = false;
 };
 
@@ -80,7 +84,7 @@ EffectiveMaterial ResolveEffectiveMaterial(
     const std::uint32_t mesh_id,
     const std::uint32_t submesh_count,
     const std::uint64_t entity_id) {
-    EffectiveMaterial result{asset_material, nullptr, false};
+    EffectiveMaterial result{asset_material, nullptr, 0u, false};
 
     if (override_comp != nullptr) {
         // Lazily adopt the owner's mesh the first time the override is used.
@@ -137,6 +141,12 @@ EffectiveMaterial ResolveEffectiveMaterial(
         result.overridden = false;
         result.technique = material_mgr.GetTechniqueForMaterial(result.id);
     }
+
+    // A material's group is meaningful only when its technique resolved;
+    // otherwise the gather writes the fallback base group.
+    result.group_id = (result.technique != nullptr)
+        ? material_mgr.GetGroupForMaterial(result.id)
+        : 0u;
 
     return result;
 }
@@ -423,7 +433,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 s2->index_start_packed = (index_buf_slot << 24) | sm.index_start;
                 s2->index_range = sm.index_count;
                 if (effective.technique != nullptr) {
-                    s2->technique_material = effective.technique->PackMaterialData(effective.id.value);
+                    s2->technique_material = effective.technique->PackMaterialData(effective.id.value, effective.group_id);
                 } else {
                     // Unreachable while the fallback material (id 0) is registered.
                     assert(effective.technique != nullptr &&
@@ -553,7 +563,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                     s2->index_range = sm.index_count;
                     if (effective.technique != nullptr) {
                         s2->technique_material =
-                            effective.technique->PackMaterialData(effective.id.value);
+                            effective.technique->PackMaterialData(effective.id.value, effective.group_id);
                     } else {
                         // Unreachable while the fallback material (id 0) is registered.
                         assert(effective.technique != nullptr &&

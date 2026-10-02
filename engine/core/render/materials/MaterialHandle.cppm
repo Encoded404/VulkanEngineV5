@@ -32,10 +32,62 @@ enum class BlendMode : std::uint8_t {
     Transparent
 };
 
+// Authoring descriptor for a material's render state. `blend` selects the
+// alpha contract (Opaque / MASK discard / alpha blend); `double_sided` and
+// `depth_write` are the orthogonal cull/depth bits. All three resolve to a
+// draw key, never to the technique's material payload.
+struct MaterialDesc {
+    BlendMode blend{BlendMode::Opaque};
+    bool double_sided{false};
+    bool depth_write{true};
+};
+
+// ── Per-material render state ──
+// Orthogonal to the technique's material contract: stored on the material and
+// resolved to a draw key so the technique's pipeline-variant cache can select
+// the matching pipeline. Transparent *ordering* is a separate pass; these only
+// pick pipeline state.
+struct MaterialRenderState {
+    bool double_sided{false};   // disable culling
+    bool depth_write{true};
+    bool alpha_mask{false};     // derived from BlendMode::Cutout for a MASK discard
+    bool operator==(const MaterialRenderState&) const = default;
+};
+
+// Derives the stored render state from an authoring descriptor. alpha_mask is
+// implied by Cutout, never independently settable, so the flag and the discard
+// path cannot disagree.
+[[nodiscard]] constexpr MaterialRenderState DeriveRenderState(const MaterialDesc& desc) {
+    return MaterialRenderState{
+        .double_sided = desc.double_sided,
+        .depth_write = desc.depth_write,
+        .alpha_mask = (desc.blend == BlendMode::Cutout),
+    };
+}
+
+// Packs render state into the key folded into a material's draw group. The
+// default descriptor (Opaque, front-culled, depth write) maps to 0, so a
+// default material interns the technique's seeded base group and existing
+// scenes keep group == technique id. `blend` is included so a Transparent
+// material selects a different pipeline than an Opaque one even when the
+// boolean bits agree.
+[[nodiscard]] constexpr std::uint32_t RenderStateKey(const MaterialDesc& desc) {
+    const MaterialRenderState s = DeriveRenderState(desc);
+    return (static_cast<std::uint32_t>(desc.blend) << 8) |
+           (s.double_sided ? (1u << 0) : 0u) |
+           (s.depth_write   ? 0u : (1u << 1)) |
+           (s.alpha_mask    ? (1u << 2) : 0u);
+}
+
 // ── Per-material GPU data entry ──
 struct MaterialEntry {
     TechniqueManager::TechniqueId technique_id{0};
     BlendMode blend_mode{BlendMode::Opaque};
+    MaterialRenderState render_state{};
+    // Resolved draw key for this material, interned from
+    // (technique_id, variant_slot, render_state). Written into the low bits of
+    // StaticEntry.technique_material by the gather pass.
+    std::uint32_t group_id{0};
     bool dirty = false;
     std::uint32_t dirty_bindings = 0;
     std::vector<std::byte> cpu_data;  // PerMaterial bindings only, flat buffer

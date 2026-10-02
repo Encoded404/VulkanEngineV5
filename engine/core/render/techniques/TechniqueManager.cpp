@@ -28,6 +28,11 @@ BaseTechnique* TechniqueManager::GetTechnique(TechniqueId id) {
 
 void TechniqueManager::Shutdown() {
     techniques_.clear();
+    type_to_id_.clear();
+    intern_to_group_.clear();
+    group_technique_.clear();
+    group_variant_.clear();
+    next_draw_group_ = 0;
 }
 
 void TechniqueManager::PollShaders(ShaderSystem::ShaderManager& shaders,

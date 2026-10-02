@@ -111,6 +111,8 @@ bool TextureRenderHarness::CreateDescriptorLayouts() {
         }};
         scene_set4_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             device, vk::DescriptorSetLayoutCreateInfo{{}, 2, scene_bindings.data()});
+    }
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::Unlit) {
         const vk::DescriptorSetLayoutBinding material_binding(
             0, vk::DescriptorType::eStorageBuffer, 1,
             vk::ShaderStageFlagBits::eFragment, nullptr);
@@ -133,6 +135,10 @@ bool TextureRenderHarness::CreatePipeline() {
         set_layouts = {**bindless_set0_layout_, {}, {}, {}, **scene_set4_layout_,
                        **material_set5_layout_};
         push_ranges = {vk::PushConstantRange(vk::ShaderStageFlagBits::eFragment, 0, 16)};
+    } else if (config_.mode == HarnessMode::Unlit) {
+        // unlit.spv names sets 0 and 5; reserve empty layouts for 1..4 so the
+        // material layout lands at index 5.
+        set_layouts = {**bindless_set0_layout_, {}, {}, {}, {}, **material_set5_layout_};
     } else {
         set_layouts = {**bindless_set0_layout_};
     }
@@ -205,6 +211,8 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
     if (config_.mode == HarnessMode::Standard) {
         layouts.push_back(**scene_set4_layout_);
         layouts.push_back(**material_set5_layout_);
+    } else if (config_.mode == HarnessMode::Unlit) {
+        layouts.push_back(**material_set5_layout_);
     }
     auto sets = backend_->GetDevice().allocateDescriptorSets(
         vk::DescriptorSetAllocateInfo{**pool_, static_cast<std::uint32_t>(layouts.size()), layouts.data()});
@@ -215,8 +223,12 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
     if (config_.mode == HarnessMode::Standard) {
         scene_set4_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[1]));
         material_set5_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[2]));
+    } else if (config_.mode == HarnessMode::Unlit) {
+        material_set5_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[1]));
     }
 
+    // Unlit mode does not use the scene set; the pool is only sized for what
+    // each mode allocates.
     return CreatePipeline();
 }
 
@@ -289,6 +301,54 @@ void TextureRenderHarness::WriteDescriptors(const VulkanEngine::GpuResources::Gp
     host_memories_.push_back(std::move(material_memory));
 }
 
+void TextureRenderHarness::WriteUnlitDescriptors(
+    const VulkanEngine::GpuResources::GpuTexture& albedo,
+    const HarnessUnlitMaterialData& material) {
+    const vk::raii::Device& device = backend_->GetDevice();
+
+    std::array<vk::DescriptorImageInfo, kBindlessSlots> images{};
+    const vk::DescriptorImageInfo albedo_info(albedo.GetSampler(), albedo.GetImageView(),
+                                              vk::ImageLayout::eShaderReadOnlyOptimal);
+    for (auto& info : images) {
+        info = albedo_info;
+    }
+    const vk::WriteDescriptorSet image_write(*bindless_set0_, 0, 0, kBindlessSlots,
+                                             vk::DescriptorType::eCombinedImageSampler,
+                                             images.data());
+    device.updateDescriptorSets(image_write, {});
+
+    host_buffers_.clear();
+    host_memories_.clear();
+    std::unique_ptr<vk::raii::DeviceMemory> material_memory;
+    auto material_buffer = CreateHostBuffer(device, backend_->GetPhysicalDevice(),
+                                            sizeof(HarnessUnlitMaterialData), material_memory);
+    WriteHostBuffer(*material_memory, material);
+    const vk::DescriptorBufferInfo material_info(**material_buffer, 0, vk::WholeSize);
+    const vk::WriteDescriptorSet buffer_write(*material_set5_, 0, 0, 1,
+                                              vk::DescriptorType::eStorageBuffer, nullptr, &material_info);
+    device.updateDescriptorSets(buffer_write, {});
+    host_buffers_.push_back(std::move(material_buffer));
+    host_memories_.push_back(std::move(material_memory));
+}
+
+std::vector<std::uint8_t> TextureRenderHarness::RenderUnlitAndReadBack(
+    const VulkanEngine::GpuResources::GpuTexture& albedo,
+    const HarnessUnlitMaterialData& material_in) {
+    if (!albedo.IsValid()) {
+        return {};
+    }
+    HarnessUnlitMaterialData material = material_in;
+    material.albedo_texture = 0;
+    WriteUnlitDescriptors(albedo, material);
+    return RenderFrame([this](vk::raii::CommandBuffer& cmd) {
+        const std::array<vk::DescriptorSet, 1> set0{**bindless_set0_};
+        const std::array<vk::DescriptorSet, 1> set5{**material_set5_};
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, set0, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
+        cmd.draw(3, 1, 0, 0);
+    });
+}
+
 std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     const VulkanEngine::GpuResources::GpuTexture& albedo,
     const VulkanEngine::GpuResources::GpuTexture& normal,
@@ -299,15 +359,37 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     if (!albedo.IsValid()) {
         return {};
     }
-    const vk::raii::Device& device = backend_->GetDevice();
-    const std::uint32_t width = config_.width;
-    const std::uint32_t height = config_.height;
-    const vk::DeviceSize pixel_bytes = static_cast<vk::DeviceSize>(width) * height * 4U;
-
     HarnessMaterialData material = material_in;
     material.albedo_texture = 0;
     material.normal_texture = normal.IsValid() ? 1U : 0U;
     material.orm_texture = orm.IsValid() ? 2U : 0U;
+    WriteDescriptors(albedo, normal, orm, material, scene, light);
+    return RenderFrame([this](vk::raii::CommandBuffer& cmd) {
+        if (config_.mode == HarnessMode::Standard) {
+            // Sets 1..3 are empty/null in the layout, so bind each real set at
+            // the index the shader names: 0, 4, 5.
+            const std::array<vk::DescriptorSet, 1> set0{**bindless_set0_};
+            const std::array<vk::DescriptorSet, 1> set4{**scene_set4_};
+            const std::array<vk::DescriptorSet, 1> set5{**material_set5_};
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, set0, {});
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 4, set4, {});
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
+            const std::array<float, 4> camera{kCameraZ, 0.0f, 0.0f, 0.0f};
+            cmd.pushConstants<float>(**pipeline_layout_, vk::ShaderStageFlagBits::eFragment, 0, camera);
+        } else {
+            const std::array<vk::DescriptorSet, 1> sets{**bindless_set0_};
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, sets, {});
+        }
+        cmd.draw(3, 1, 0, 0);
+    });
+}
+
+std::vector<std::uint8_t> TextureRenderHarness::RenderFrame(
+    const std::function<void(vk::raii::CommandBuffer&)>& bind_and_draw) {
+    const vk::raii::Device& device = backend_->GetDevice();
+    const std::uint32_t width = config_.width;
+    const std::uint32_t height = config_.height;
+    const vk::DeviceSize pixel_bytes = static_cast<vk::DeviceSize>(width) * height * 4U;
 
     const vk::ImageCreateInfo color_info(
         {}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, vk::Extent3D{width, height, 1},
@@ -340,8 +422,6 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
     readback_buffer.bindMemory(*read_memory, 0);
 
-    WriteDescriptors(albedo, normal, orm, material, scene, light);
-
     vk::raii::CommandBuffer& cmd = backend_->GetCommandBuffer(0);
     cmd.reset({});
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
@@ -372,22 +452,7 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderAndReadBack(
     cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline_->Get());
-    if (config_.mode == HarnessMode::Standard) {
-        // Sets 1..3 are empty/null in the layout, so bind each real set at the
-        // index the shader names: 0, 4, 5.
-        const std::array<vk::DescriptorSet, 1> set0{**bindless_set0_};
-        const std::array<vk::DescriptorSet, 1> set4{**scene_set4_};
-        const std::array<vk::DescriptorSet, 1> set5{**material_set5_};
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, set0, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 4, set4, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
-        const std::array<float, 4> camera{kCameraZ, 0.0f, 0.0f, 0.0f};
-        cmd.pushConstants<float>(**pipeline_layout_, vk::ShaderStageFlagBits::eFragment, 0, camera);
-    } else {
-        const std::array<vk::DescriptorSet, 1> sets{**bindless_set0_};
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, sets, {});
-    }
-    cmd.draw(3, 1, 0, 0);
+    bind_and_draw(cmd);
     cmd.endRendering();
 
     const vk::ImageMemoryBarrier to_src(

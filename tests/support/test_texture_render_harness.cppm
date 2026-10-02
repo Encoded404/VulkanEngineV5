@@ -75,7 +75,18 @@ struct HarnessLight {
 enum class HarnessMode {
     Sampled,   // test_sample_frag, bindless set 0 only
     Standard,  // standard_mesh.spv, sets 0/4/5 + camera push constant
+    Unlit,     // unlit.spv, set 0 + a trimmed 24-byte per-material set 5
 };
+
+// Matches UnlitTextureTechnique::UnlitPerMaterialData: albedo_texture, float4
+// albedo_factor, float alpha_cutoff. C data layout, 24 bytes, no padding.
+struct HarnessUnlitMaterialData {
+    std::uint32_t albedo_texture{0};
+    float albedo_factor[4]{1.0f, 1.0f, 1.0f, 1.0f};
+    float alpha_cutoff{0.5f};
+};
+static_assert(sizeof(HarnessUnlitMaterialData) == 24,
+              "unlit material layout must mirror the shader");
 
 struct TextureRenderHarnessConfig {
     std::uint32_t width = 64;
@@ -121,6 +132,13 @@ public:
                                                 const HarnessSceneHeader& scene = {},
                                                 const HarnessLight& light = {});
 
+    // Unlit mode: draws one frame with the REAL unlit.spv against slot 0 and a
+    // trimmed 24-byte UnlitPerMaterialData in set 5. Exercises the shipped
+    // albedo_factor multiply and alpha_cutoff discard.
+    std::vector<std::uint8_t> RenderUnlitAndReadBack(
+        const VulkanEngine::GpuResources::GpuTexture& albedo,
+        const HarnessUnlitMaterialData& material = {});
+
 private:
     bool CreateDescriptorLayouts();
     bool CreatePipeline();
@@ -130,6 +148,10 @@ private:
                           const HarnessMaterialData& material,
                           const HarnessSceneHeader& scene,
                           const HarnessLight& light);
+    void WriteUnlitDescriptors(const VulkanEngine::GpuResources::GpuTexture& albedo,
+                               const HarnessUnlitMaterialData& material);
+    std::vector<std::uint8_t> RenderFrame(
+        const std::function<void(vk::raii::CommandBuffer&)>& bind_and_draw);
 
     TestSupport::HeadlessVulkanBackend* backend_ = nullptr;
     VulkanEngine::ShaderSystem::ShaderManager* shaders_ = nullptr;

@@ -48,6 +48,7 @@ struct VSOutputUV1 {
 // vertex index the UV re-base uses.
 struct VertexDecode {
     float4x4 mvp;
+    float3 position_ms;
     float3 position_ws;
     float3 normal_ws;
     float3 tangent_ws;
@@ -93,6 +94,9 @@ VertexDecode DecodeVertex(uint vertexId, uint submeshIndex, bool use_uv1) {
     d.handedness = t_ms.w;
     d.uv0 = float2(vert.u, vert.v);
     d.uv1 = d.uv0;
+    // mvp already contains the model transform, so the clip position must be fed
+    // the model-space position; position_ws is only for world-space interpolants.
+    d.position_ms = p;
     d.position_ws = mul(float4(p, 1.0), info.modelMatrix).xyz;
     if (use_uv1 && info.uvSlot != kNoUvSlot) {
         // uvBias re-bases the absolute vertex index into the UV region's own
@@ -115,7 +119,7 @@ VSOutput main(uint vertexId : SV_VertexID,
     result.outHandedness = d.handedness;
     result.outT = d.uv0;
     result.outW = d.position_ws;
-    result.position = mul(float4(d.position_ws, 1.0), d.mvp);
+    result.position = mul(float4(d.position_ms, 1.0), d.mvp);
     return result;
 }
 
@@ -134,7 +138,7 @@ VSOutputUV1 main_uv1(uint vertexId : SV_VertexID,
     result.outT = d.uv0;
     result.outUV1 = d.uv1;
     result.outW = d.position_ws;
-    result.position = mul(float4(d.position_ws, 1.0), d.mvp);
+    result.position = mul(float4(d.position_ms, 1.0), d.mvp);
     return result;
 }
 

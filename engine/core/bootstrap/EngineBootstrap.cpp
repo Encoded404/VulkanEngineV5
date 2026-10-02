@@ -192,13 +192,22 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     // destruction of disjoint state cannot race the VkQueue.
     //
     // Everything below owns GPU resources (safe to destroy once the device is
-    // idle) and, except for the two edges noted below, destroys disjoint state,
-    // so subsystems are torn down in parallel on a small worker pool.
+    // idle). Subsystems are torn down in parallel on a small worker pool, but
+    // only where their state is genuinely disjoint.
     //
-    // Dependency edges:
-    //   - imgui_backend  -> imgui_system: both touch the same shared backend object.
-    //   - shader_manager -> shader_watcher: the watcher's efsw thread may be inside
+    // Dependency edges (a task waits for everything it names):
+    //   - imgui_backend     -> imgui_system: both touch the same shared backend object.
+    //   - shader_manager    -> shader_watcher: the watcher's efsw thread may be inside
     //     OnFileChanged(); StopAsync() quiesces it before the manager is destroyed.
+    //   - texture_reloader  -> texture_watcher: the listener must stop enqueuing first.
+    //   - texture_residency -> texture_uploader, texture_reloader.
+    //   - texture_uploader  -> scene_renderer, physical_camera: no upload may be submitted
+    //     after the worker pool stops.
+    //   - mesh_manager      -> mesh_registry; material_manager -> its writers/readers;
+    //     technique_manager -> material_manager (its block arrays back material entries).
+    //   - staging/dynamic/static heaps -> everything that owns a range in them.
+    //   - sampler_cache     -> every sampler owner, and runs before the device is destroyed.
+    // The ids held above are exactly the ones referenced by a later edge.
     const std::size_t worker_count =
         std::min<std::size_t>(4, std::max<std::size_t>(2, std::thread::hardware_concurrency()));
     VulkanShared::TeardownScheduler teardown{worker_count};
@@ -209,6 +218,21 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         auto s = DebugSection("engineshutdown.wait_idle");
         backend.GetBackend().WaitDeviceIdle();
     });
+
+    // Owner tasks referenced by dependency edges further down. Keeping the ids
+    // lets a resource be destroyed only once every subsystem that reaches into
+    // it has stopped, instead of racing it on the worker pool.
+    std::optional<VulkanShared::TeardownId> texture_uploader_id;
+    std::optional<VulkanShared::TeardownId> texture_residency_id;
+    std::optional<VulkanShared::TeardownId> texture_watcher_id;
+    std::optional<VulkanShared::TeardownId> texture_reloader_id;
+    std::optional<VulkanShared::TeardownId> material_manager_id;
+    std::optional<VulkanShared::TeardownId> scene_renderer_id;
+    std::optional<VulkanShared::TeardownId> mesh_registry_id;
+    std::optional<VulkanShared::TeardownId> mesh_manager_id;
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    std::optional<VulkanShared::TeardownId> physical_camera_id;
+#endif
 
     std::optional<VulkanShared::TeardownId> shader_watcher_id;
     if (ctx.shader_watcher) {
@@ -256,7 +280,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     }
 
     if (ctx.scene_renderer) {
-        teardown.Add("engineshutdown.scene_renderer", [&ctx] {
+        scene_renderer_id = teardown.Add("engineshutdown.scene_renderer", [&ctx] {
             auto s = DebugSection("engineshutdown.scene_renderer");
             ctx.scene_renderer->Shutdown();
             ctx.scene_renderer.reset();
@@ -265,7 +289,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
     if (ctx.physical_camera) {
-        teardown.Add("engineshutdown.physical_camera", [&ctx] {
+        physical_camera_id = teardown.Add("engineshutdown.physical_camera", [&ctx] {
             auto s = DebugSection("engineshutdown.physical_camera");
             ctx.physical_camera->Shutdown();
             ctx.physical_camera.reset();
@@ -275,37 +299,50 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
 
     // The uploader owns worker threads and staged images; stop it (and return
     // any staging ranges) before the staging pool and image heap are torn down.
+    // It must also outlive every subsystem that can still submit an upload
+    // (scene renderer, physical camera), so those stop first.
     if (ctx.texture_uploader) {
-        teardown.Add("engineshutdown.texture_uploader", [&ctx] {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        texture_uploader_id = teardown.Add("engineshutdown.texture_uploader", [&ctx] {
             auto s = DebugSection("engineshutdown.texture_uploader");
             ctx.texture_uploader->Shutdown();
             ctx.texture_uploader.reset();
-        }, {idle_id});
-    }
-
-    if (ctx.texture_residency) {
-        teardown.Add("engineshutdown.texture_residency", [&ctx] {
-            auto s = DebugSection("engineshutdown.texture_residency");
-            ctx.texture_residency->Shutdown();
-            ctx.texture_residency.reset();
-        }, {idle_id});
+        }, std::move(deps));
     }
 
     // The reloader references the watcher, uploader and residency; stop the
-    // watcher first so no listener thread can enqueue a change mid-teardown.
+    // watcher first so no listener thread can enqueue a change mid-teardown,
+    // then the reloader, and only then tear down the residency it reports into.
     if (ctx.texture_watcher) {
-        teardown.Add("engineshutdown.texture_watcher", [&ctx] {
+        texture_watcher_id = teardown.Add("engineshutdown.texture_watcher", [&ctx] {
             auto s = DebugSection("engineshutdown.texture_watcher");
             ctx.texture_watcher->Stop();
             ctx.texture_watcher.reset();
         });
     }
     if (ctx.texture_reloader) {
-        teardown.Add("engineshutdown.texture_reloader", [&ctx] {
+        std::vector<VulkanShared::TeardownId> deps;
+        if (texture_watcher_id) deps.push_back(*texture_watcher_id);
+        texture_reloader_id = teardown.Add("engineshutdown.texture_reloader", [&ctx] {
             auto s = DebugSection("engineshutdown.texture_reloader");
             ctx.texture_reloader->Shutdown();
             ctx.texture_reloader.reset();
-        });
+        }, std::move(deps));
+    }
+
+    if (ctx.texture_residency) {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (texture_uploader_id) deps.push_back(*texture_uploader_id);
+        if (texture_reloader_id) deps.push_back(*texture_reloader_id);
+        texture_residency_id = teardown.Add("engineshutdown.texture_residency", [&ctx] {
+            auto s = DebugSection("engineshutdown.texture_residency");
+            ctx.texture_residency->Shutdown();
+            ctx.texture_residency.reset();
+        }, std::move(deps));
     }
 
     if (ctx.shader_manager) {
@@ -321,70 +358,151 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
                      std::move(deps));
     }
 
-    teardown.Add("engineshutdown.mesh_registry", [&ctx] {
-        auto s = DebugSection("engineshutdown.mesh_registry");
-        ctx.mesh_registry.Shutdown();
-    }, {idle_id});
+    // The registry owns GPU allocations; stop every subsystem that reads it
+    // (the scene renderer uploads meshes into it) before it is freed.
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+        mesh_registry_id = teardown.Add("engineshutdown.mesh_registry", [&ctx] {
+            auto s = DebugSection("engineshutdown.mesh_registry");
+            ctx.mesh_registry.Shutdown();
+        }, std::move(deps));
+    }
 
     if (ctx.mesh_manager) {
-        teardown.Add("engineshutdown.mesh_manager", [&ctx] {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (mesh_registry_id) deps.push_back(*mesh_registry_id);
+        mesh_manager_id = teardown.Add("engineshutdown.mesh_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.mesh_manager");
             ctx.mesh_manager->Shutdown();
             ctx.mesh_manager.reset();
-        }, {idle_id});
+        }, std::move(deps));
     }
 
-    teardown.Add("engineshutdown.dynamic_heaps", [&ctx] {
-        auto s = DebugSection("engineshutdown.dynamic_heaps");
-        for (auto& heap : ctx.dynamic_vertex_heaps) heap.Shutdown();
-        for (auto& heap : ctx.dynamic_index_heaps) heap.Shutdown();
-    }, {idle_id});
+    // The per-frame dynamic rings, static heaps and the staging pool are all
+    // written by the scene renderer / physical camera / uploader; those own the
+    // ranges and must stop before the backing heaps are torn down.
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        if (mesh_registry_id) deps.push_back(*mesh_registry_id);
+        teardown.Add("engineshutdown.dynamic_heaps", [&ctx] {
+            auto s = DebugSection("engineshutdown.dynamic_heaps");
+            for (auto& heap : ctx.dynamic_vertex_heaps) heap.Shutdown();
+            for (auto& heap : ctx.dynamic_index_heaps) heap.Shutdown();
+        }, std::move(deps));
+    }
 
-    teardown.Add("engineshutdown.staging_manager", [&ctx] {
-        auto s = DebugSection("engineshutdown.staging_manager");
-        ctx.staging_pool.Shutdown();
-    }, {idle_id});
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        if (texture_uploader_id) deps.push_back(*texture_uploader_id);
+        if (mesh_manager_id) deps.push_back(*mesh_manager_id);
+        teardown.Add("engineshutdown.staging_manager", [&ctx] {
+            auto s = DebugSection("engineshutdown.staging_manager");
+            ctx.staging_pool.Shutdown();
+        }, std::move(deps));
+    }
 
-    teardown.Add("engineshutdown.static_heaps", [&ctx] {
-        auto s = DebugSection("engineshutdown.static_heaps");
-        ctx.vertex_heap.Shutdown();
-        ctx.index_heap.Shutdown();
-        ctx.uv_heap.Shutdown();
-    }, {idle_id});
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        if (mesh_registry_id) deps.push_back(*mesh_registry_id);
+        teardown.Add("engineshutdown.static_heaps", [&ctx] {
+            auto s = DebugSection("engineshutdown.static_heaps");
+            ctx.vertex_heap.Shutdown();
+            ctx.index_heap.Shutdown();
+            ctx.uv_heap.Shutdown();
+        }, std::move(deps));
+    }
 
     std::optional<VulkanShared::TeardownId> bindless_id;
     if (ctx.bindless_mgr) {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
         bindless_id = teardown.Add("engineshutdown.bindless_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.bindless_manager");
             ctx.bindless_mgr->Shutdown();
             ctx.bindless_mgr.reset();
-        }, {idle_id});
+        }, std::move(deps));
     }
 
-    // The image heap must outlive the bindless manager: bindless slots own
-    // heap-backed textures whose destructors free heap records.
+    // The image heap must outlive the bindless manager (bindless slots own
+    // heap-backed textures whose destructors free heap records) and the uploader
+    // (staged images free on destruction).
     {
         std::vector<VulkanShared::TeardownId> image_heap_deps{idle_id};
-        if (bindless_id) {
-            image_heap_deps.push_back(*bindless_id);
-        }
+        if (bindless_id) image_heap_deps.push_back(*bindless_id);
+        if (texture_uploader_id) image_heap_deps.push_back(*texture_uploader_id);
+        if (scene_renderer_id) image_heap_deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) image_heap_deps.push_back(*physical_camera_id);
+#endif
         teardown.Add("engineshutdown.image_heap", [&ctx] {
             auto s = DebugSection("engineshutdown.image_heap");
             ctx.image_heap.Shutdown();
         }, std::move(image_heap_deps));
     }
 
-    teardown.Add("engineshutdown.material_manager", [&ctx] {
-        auto s = DebugSection("engineshutdown.material_manager");
-        ctx.material_mgr.Shutdown();
-    });
+    // Material entries alias technique arrays and staging-range-backed buffers,
+    // and are rewritten by the texture reloader/residency. Stop every writer and
+    // reader of those structures before the manager drops them.
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+        if (texture_uploader_id) deps.push_back(*texture_uploader_id);
+        if (texture_reloader_id) deps.push_back(*texture_reloader_id);
+        if (texture_residency_id) deps.push_back(*texture_residency_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        material_manager_id = teardown.Add("engineshutdown.material_manager", [&ctx] {
+            auto s = DebugSection("engineshutdown.material_manager");
+            ctx.material_mgr.Shutdown();
+        }, std::move(deps));
+    }
 
+    // Techniques own the per-material descriptor block arrays that material
+    // entries point into, so they must outlive the material manager.
     if (ctx.technique_mgr) {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (material_manager_id) deps.push_back(*material_manager_id);
         teardown.Add("engineshutdown.technique_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.technique_manager");
             ctx.technique_mgr->Shutdown();
             ctx.technique_mgr.reset();
-        }, {idle_id});
+        }, std::move(deps));
+    }
+
+    // The sampler cache owns every VkSampler handed to a texture, and each
+    // vk::raii::Sampler holds a dispatcher pointer into the logical device. It
+    // must therefore be released here, before the device is destroyed (the
+    // device outlives the engine context), and after every subsystem that can
+    // request a sampler has stopped.
+    {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (bindless_id) deps.push_back(*bindless_id);
+        if (texture_uploader_id) deps.push_back(*texture_uploader_id);
+        if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+#ifdef VKENGINE_PHYSICAL_CAMERA
+        if (physical_camera_id) deps.push_back(*physical_camera_id);
+#endif
+        teardown.Add("engineshutdown.sampler_cache", [&ctx] {
+            auto s = DebugSection("engineshutdown.sampler_cache");
+            ctx.sampler_cache.Shutdown();
+        }, std::move(deps));
     }
 
     try {

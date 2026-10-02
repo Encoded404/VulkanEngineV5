@@ -6,6 +6,7 @@ import std;
 import std.compat;
 import VulkanEngine.TechniqueManager.TechniqueId;
 import VulkanEngine.MaterialManager.MaterialId;
+import VulkanEngine.TechniqueManager.BaseTechnique;
 
 // ── Design ──
 // Lambda-based modify<T>([](T& d) { d.field = value; }) eliminates the
@@ -72,11 +73,12 @@ struct MaterialRenderState {
 // material selects a different pipeline than an Opaque one even when the
 // boolean bits agree.
 [[nodiscard]] constexpr std::uint32_t RenderStateKey(const MaterialDesc& desc) {
+    using namespace VulkanEngine::TechniqueManager::DrawKeyState;
     const MaterialRenderState s = DeriveRenderState(desc);
-    return (static_cast<std::uint32_t>(desc.blend) << 8) |
-           (s.double_sided ? (1u << 0) : 0u) |
-           (s.depth_write   ? 0u : (1u << 1)) |
-           (s.alpha_mask    ? (1u << 2) : 0u);
+    return (static_cast<std::uint32_t>(desc.blend) << BLEND_SHIFT) |
+           (s.double_sided ? DOUBLE_SIDED : 0u) |
+           (s.depth_write   ? 0u : DEPTH_WRITE_DISABLED) |
+           (s.alpha_mask    ? ALPHA_MASK : 0u);
 }
 
 // ── Per-material GPU data entry ──

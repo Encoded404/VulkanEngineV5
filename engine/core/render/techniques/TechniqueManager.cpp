@@ -32,6 +32,7 @@ void TechniqueManager::Shutdown() {
     intern_to_group_.clear();
     group_technique_.clear();
     group_variant_.clear();
+    group_render_state_.clear();
     next_draw_group_ = 0;
 }
 

@@ -122,6 +122,10 @@ public:
 
     void RetireFrame(std::uint32_t frame_index);
 
+    // Configured retire-ring depth (>= 1). Variants created later copy it so
+    // every slot in a technique retires on the same schedule.
+    [[nodiscard]] std::uint32_t FramesInFlight() const { return frames_in_flight_; }
+
     [[nodiscard]] vk::Pipeline Get() const;
 
     bool PollAndRebuild(ShaderManager& shaders, ShaderId id,

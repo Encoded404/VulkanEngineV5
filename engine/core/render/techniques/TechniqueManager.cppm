@@ -100,6 +100,7 @@ public:
         intern_to_group_.emplace(intern_key, group);
         group_technique_.push_back(technique_id);
         group_variant_.push_back(variant_slot);
+        group_render_state_.push_back(render_state_key);
         return group;
     }
 
@@ -115,6 +116,12 @@ public:
 
     [[nodiscard]] std::uint16_t GetDrawGroupVariant(std::uint16_t group) const {
         return group < group_variant_.size() ? group_variant_[group] : 0u;
+    }
+
+    // Render-state key of a draw group: the bits a technique turns into
+    // pipeline state (blend/cull/depth). 0 for an unknown group.
+    [[nodiscard]] std::uint32_t GetDrawGroupRenderState(std::uint16_t group) const {
+        return group < group_render_state_.size() ? group_render_state_[group] : 0u;
     }
 
     // Get technique ID by type
@@ -156,6 +163,7 @@ private:
     std::unordered_map<std::uint64_t, std::uint16_t> intern_to_group_{};
     std::vector<std::uint16_t> group_technique_{};
     std::vector<std::uint16_t> group_variant_{};
+    std::vector<std::uint32_t> group_render_state_{};
     std::uint32_t next_draw_group_{0};
 };
 

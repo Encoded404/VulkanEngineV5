@@ -21,7 +21,19 @@ import VulkanEngine.PipelineFactory;
 
 export namespace VulkanEngine::TechniqueManager {
 
-// ── Configurable bit packing for StaticEntry.technique_material ──
+struct DrawKeyPipelineState {
+    bool blend_enable{false};
+    vk::CullModeFlags cull_mode{vk::CullModeFlagBits::eBack};
+    bool depth_write{true};
+};
+
+// Pure render-state → pipeline-state derivation for a draw group. Shared by
+// pipeline-variant creation and unit-testable without a device: the blend/cull/
+// depth bits of a key decide the variant's state. `base_cull_mode` is the
+// technique's configured cull mode (a double-sided key overrides it to None).
+[[nodiscard]] DrawKeyPipelineState DeriveDrawKeyPipelineState(
+    std::uint32_t render_state_key, vk::CullModeFlags base_cull_mode);
+
 // The 32-bit field is split into a technique id (low bits) and a material id
 // (high bits). Change TECHNIQUE_BITS to redistribute the budget; keep
 // kTechniqueBits in expand.slang in sync.
@@ -35,6 +47,41 @@ namespace TechniquePacking {
     // below this. Every per-key GPU table and the group registry are sized to
     // it, and allocation is capped here so a key can never index out of range.
     inline constexpr std::uint32_t MAX_DRAW_GROUPS = 1u << TECHNIQUE_BITS;
+}
+
+// ── Draw-key render-state bits ──
+// A draw group key folds a material's render state (blend mode, cull, depth
+// write) below a blend-mode byte. This layout is shared by MaterialManager
+// (which packs it) and BaseTechnique (which turns it into pipeline state), so
+// it lives on the technique layer that MaterialManager already depends on.
+namespace DrawKeyState {
+    inline constexpr std::uint32_t BLEND_SHIFT = 8;
+    inline constexpr std::uint32_t BLEND_MASK  = 0x3u;
+    inline constexpr std::uint32_t DOUBLE_SIDED        = 1u << 0;
+    inline constexpr std::uint32_t DEPTH_WRITE_DISABLED = 1u << 1;
+    inline constexpr std::uint32_t ALPHA_MASK          = 1u << 2;
+    // BlendMode values (MaterialManager): Opaque=0, Cutout=1, Transparent=2.
+    inline constexpr std::uint32_t BLEND_TRANSPARENT = 2u;
+    inline constexpr std::uint32_t BLEND_OPAQUE = 0u;
+
+    [[nodiscard]] constexpr std::uint32_t Blend(std::uint32_t key) {
+        return (key >> BLEND_SHIFT) & BLEND_MASK;
+    }
+    [[nodiscard]] constexpr bool BlendEnabled(std::uint32_t key) {
+        return Blend(key) == BLEND_TRANSPARENT;
+    }
+    [[nodiscard]] constexpr bool DoubleSided(std::uint32_t key) {
+        return (key & DOUBLE_SIDED) != 0;
+    }
+    [[nodiscard]] constexpr bool DepthWriteEnabled(std::uint32_t key) {
+        return (key & DEPTH_WRITE_DISABLED) == 0;
+    }
+    [[nodiscard]] constexpr bool AlphaMask(std::uint32_t key) {
+        return (key & ALPHA_MASK) != 0;
+    }
+}
+
+namespace TechniquePacking {
 
     // Per-material BlockArray geometry. The fragment shaders hardcode this
     // split as materialId / 256 and materialId % 256, so it must remain 256.
@@ -175,8 +222,39 @@ public:
     }
 
     // ── GPU resource access ──
-    [[nodiscard]] vk::Pipeline GetPipeline() const { return pipeline_slot_.Get(); }
+    // Variant 0 is the base pipeline (no render-state variation). A draw group
+    // selects its variant by the render-state bits of its key; a key with no
+    // materialized variant falls back to the base pipeline, so a technique that
+    // never sees blend/cull content never pays for extra pipelines.
+    [[nodiscard]] vk::Pipeline GetPipeline() const {
+        return variants_.empty() ? nullptr : variants_[0].slot.Get();
+    }
+    [[nodiscard]] vk::Pipeline GetPipeline(std::uint32_t render_state_key) const {
+        for (const auto& v : variants_) {
+            if (v.render_state_key == render_state_key) return v.slot.Get();
+        }
+        return GetPipeline();
+    }
     [[nodiscard]] vk::PipelineLayout GetPipelineLayout() const { return *pipeline_layout_; }
+
+    // True when a variant for this render-state key exists. The main pass uses
+    // this to decide whether to materialize one before binding.
+    [[nodiscard]] bool HasVariant(std::uint32_t render_state_key) const {
+        return std::any_of(variants_.begin(), variants_.end(),
+            [render_state_key](const TechniqueVariant& v) {
+                return v.render_state_key == render_state_key;
+            });
+    }
+
+    // Materialize a pipeline variant for `render_state_key` if it does not
+    // exist, then return whether the technique has a usable pipeline for it.
+    // Requires a prior successful Compile. Safe to call while frames are in
+    // flight: a brand-new pipeline is created, no in-flight pipeline is
+    // destroyed. Returns the base pipeline's usability when variant creation
+    // fails, so the caller still has a pipeline to bind.
+    [[nodiscard]] bool EnsureVariant(std::uint32_t render_state_key,
+                                     ShaderSystem::ShaderManager& shaders,
+                                     ShaderSystem::PipelineFactory& factory);
 
     // ── Custom descriptor sets (technique-owned BlockArray/Shared bindings at sets 4+) ──
     [[nodiscard]] std::span<const vk::DescriptorSet> GetCustomDescriptorSets() const {
@@ -301,16 +379,33 @@ private:
     const vk::raii::Device* device_ = nullptr;  // backend device, valid for the technique's lifetime
 
     vk::raii::PipelineLayout pipeline_layout_ = nullptr;
-    ShaderSystem::PipelineSlot pipeline_slot_;
 
-    // Hot-reload state: the fully-built pipeline desc is stored as a member and
-    // re-fed to PipelineFactory when a shader version changes. The desc owns its
-    // color-blend attachments (PipelineFactory rebinds pAttachments at each
-    // entry), so no separate pointer-stable member is needed.
-    ShaderSystem::ShaderId vert_id_{};
-    ShaderSystem::ShaderId frag_id_{};
+    // ── Pipeline variants ──
+    // One entry per materialized render-state key plus variant 0 (the base
+    // pipeline, key 0). Layout, BlockArrays, Shared buffers, and descriptor
+    // sets are technique-scoped and shared across variants; only the pipeline
+    // differs. Each variant owns its own PipelineSlot so hot reload retires
+    // only the pipeline it is rebuilding.
+    struct TechniqueVariant {
+        std::uint32_t render_state_key = 0;
+        ShaderSystem::ShaderId vert{};
+        ShaderSystem::ShaderId frag{};
+        ShaderSystem::GraphicsPipelineDesc desc{};
+        ShaderSystem::PipelineSlot slot;
+    };
+    std::vector<TechniqueVariant> variants_;  // [0] is the base pipeline
     bool compiled_ = false;
-    ShaderSystem::GraphicsPipelineDesc pipeline_desc_{};
+
+    // Base pipeline config, kept to build a new variant's desc on demand (the
+    // variant desc differs only in blend/cull/depth state and the draw-mode
+    // specialization constant).
+    VulkanEngine::StandardMeshPipeline::PipelineConfig pipeline_config_{};
+
+    // Builds a variant's pipeline desc from the base desc + this key's render
+    // state. Pure; the desc owns its color-blend attachments.
+    ShaderSystem::GraphicsPipelineDesc MakeVariantDesc(
+        const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t render_state_key,
+        const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const;
 
     // Descriptor pool + sets for custom bindings (sets 4+)
     vk::raii::DescriptorPool descriptor_pool_ = nullptr;

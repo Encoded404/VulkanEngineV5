@@ -53,8 +53,10 @@ void BaseTechnique::Shutdown() {
     block_arrays_.clear();
     shared_buffers_.clear();
     shared_cpu_data_.clear();
+    variants_.clear();
     pipeline_layout_ = nullptr;
     bindings_.clear();
+    compiled_ = false;
     device_ = nullptr;
 }
 
@@ -136,8 +138,8 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     LOGIFACE_LOG(debug, std::format("BaseTechnique: compiling technique (vert={}, frag={})",
                                     vert_id, frag_id));
 
-    // Size the pipeline retire ring to the pipeline depth configured on the device.
-    pipeline_slot_.SetFramesInFlight(bootstrap.GetBackend().GetFramesInFlight());
+    // The base variant's retire ring is sized in step 5; any variant created
+    // later by EnsureVariant is sized there.
 
     // ── 1. Build descriptor set layout array ──
     // Engine sets 0-4 are always at layout slots 0-4
@@ -231,39 +233,39 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_layout_ = vk::raii::PipelineLayout(device, layout_info);
     VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_layout_, "base-technique-layout");
 
-    // ── 5. Create pipeline via PipelineFactory ──
+    // ── 5. Create the base pipeline (variant 0) via PipelineFactory ──
     {
-        vert_id_ = vert_id;
-        frag_id_ = frag_id;
+        pipeline_config_ = config;
 
-        pipeline_desc_.color_blend_attachments = {vk::PipelineColorBlendAttachmentState(
+        ShaderSystem::GraphicsPipelineDesc base{};
+        base.color_blend_attachments = {vk::PipelineColorBlendAttachmentState(
             config.blend_enable,
             config.src_color_blend_factor, config.dst_color_blend_factor, config.color_blend_op,
             config.src_alpha_blend_factor, config.dst_alpha_blend_factor, config.alpha_blend_op,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)};
 
-        pipeline_desc_.vertex_shader = vert_id;
-        pipeline_desc_.fragment_shader = frag_id;
-        pipeline_desc_.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
-        pipeline_desc_.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, config.primitive_topology);
-        pipeline_desc_.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
-        pipeline_desc_.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
-        pipeline_desc_.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
-        pipeline_desc_.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
+        base.vertex_shader = vert_id;
+        base.fragment_shader = frag_id;
+        base.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+        base.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, config.primitive_topology);
+        base.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
+        base.rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false, config.polygon_mode, config.cull_mode, config.front_face, false, 0, 0, 0, config.line_width);
+        base.multisample = vk::PipelineMultisampleStateCreateInfo({}, config.sample_count);
+        base.depth_stencil = vk::PipelineDepthStencilStateCreateInfo({}, config.depth_test_enable, config.depth_write_enable, config.depth_compare_op);
         // Attachment pointer/count are rebound by PipelineFactory from the
         // desc's owned color_blend_attachments vector; do not borrow a member.
-        pipeline_desc_.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, 0, nullptr);
-        pipeline_desc_.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        pipeline_desc_.layout = *pipeline_layout_;
-        pipeline_desc_.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };
-        pipeline_desc_.depth_format = bootstrap.GetBackend().GetDepthFormat();
+        base.color_blend = vk::PipelineColorBlendStateCreateInfo({}, false, vk::LogicOp::eCopy, 0, nullptr);
+        base.dynamic_states = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        base.layout = *pipeline_layout_;
+        base.color_formats = { bootstrap.GetBackend().GetSurfaceFormat().format };
+        base.depth_format = bootstrap.GetBackend().GetDepthFormat();
 
         // Vertex-stage draw-mode specialization (constant_id 0). main_indir and
         // depth_indir read it to select the addressing path. Applied to the
         // vertex stage only; the fragment shader does not declare it.
-        SetDrawModeSpec(pipeline_desc_, config.draw_mode);
+        SetDrawModeSpec(base, config.draw_mode);
 
-        auto result = pipeline_factory.CreateGraphics(pipeline_desc_, shader_mgr);
+        auto result = pipeline_factory.CreateGraphics(base, shader_mgr);
         if (!result.has_value()) {
             LOGIFACE_LOG(error, std::format(
                 "BaseTechnique {} ({}): pipeline creation failed: {} "
@@ -276,10 +278,21 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                 vk::to_string(bootstrap.GetBackend().GetDepthFormat())));
             return false;
         }
-        pipeline_slot_.Swap(std::move(result.value()), 0);
-        VulkanBackend::Vulkan::SetVulkanObjectName(device, pipeline_slot_.Get(), vk::ObjectType::ePipeline, "technique-pipeline");
+
+        variants_.clear();
+        TechniqueVariant base_variant{};
+        base_variant.render_state_key = 0;
+        base_variant.vert = vert_id;
+        base_variant.frag = frag_id;
+        base_variant.desc = std::move(base);
+        base_variant.slot.SetFramesInFlight(bootstrap.GetBackend().GetFramesInFlight());
+        base_variant.slot.Swap(std::move(result.value()), 0);
+        variants_.push_back(std::move(base_variant));
+
+        VulkanBackend::Vulkan::SetVulkanObjectName(device, variants_[0].slot.Get(),
+            vk::ObjectType::ePipeline, "technique-pipeline");
         LOGIFACE_LOG(debug, std::format("BaseTechnique: pipeline ready: 0x{:x} (layout 0x{:x})",
-                                        HandleToU64(pipeline_slot_.Get()),
+                                        HandleToU64(variants_[0].slot.Get()),
                                         HandleToU64(*pipeline_layout_)));
         // Mark compiled only once a usable pipeline exists: a failed creation
         // must not enable the hot-reload PollAndRebuild retry path.
@@ -426,39 +439,129 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     return true;
 }
 
+DrawKeyPipelineState DeriveDrawKeyPipelineState(std::uint32_t render_state_key,
+                                                vk::CullModeFlags base_cull_mode) {
+    using namespace DrawKeyState;
+    DrawKeyPipelineState state{};
+    state.blend_enable = BlendEnabled(render_state_key);
+    state.cull_mode = DoubleSided(render_state_key)
+                          ? vk::CullModeFlags(vk::CullModeFlagBits::eNone)
+                          : base_cull_mode;
+    // Transparent and explicitly no-depth-write keys keep testing but do not
+    // write depth.
+    state.depth_write = DepthWriteEnabled(render_state_key) && !BlendEnabled(render_state_key);
+    return state;
+}
+
+ShaderSystem::GraphicsPipelineDesc BaseTechnique::MakeVariantDesc(
+    const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t render_state_key,
+    const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const {
+    ShaderSystem::GraphicsPipelineDesc desc = base;
+    const DrawKeyPipelineState state = DeriveDrawKeyPipelineState(
+        render_state_key, config.cull_mode);
+
+    // Color blend: the attachment's enable and factors come from the config for
+    // the base variant; a blending key overrides them with standard
+    // src-alpha / one-minus-src-alpha blending.
+    vk::PipelineColorBlendAttachmentState attachment = config.blend_enable
+        ? vk::PipelineColorBlendAttachmentState(
+              true, config.src_color_blend_factor, config.dst_color_blend_factor,
+              config.color_blend_op, config.src_alpha_blend_factor,
+              config.dst_alpha_blend_factor, config.alpha_blend_op,
+              vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+        : vk::PipelineColorBlendAttachmentState(
+              false, vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd,
+              vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd,
+              vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+    if (state.blend_enable) {
+        attachment.blendEnable = true;
+        attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        attachment.colorBlendOp = vk::BlendOp::eAdd;
+        attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        attachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+        attachment.alphaBlendOp = vk::BlendOp::eAdd;
+    }
+    desc.color_blend_attachments = {attachment};
+
+    desc.rasterization.cullMode = state.cull_mode;
+    desc.depth_stencil.depthWriteEnable = state.depth_write;
+    return desc;
+}
+
+bool BaseTechnique::EnsureVariant(std::uint32_t render_state_key,
+                                  ShaderSystem::ShaderManager& shaders,
+                                  ShaderSystem::PipelineFactory& factory) {
+    if (!compiled_) return false;
+    if (HasVariant(render_state_key)) return true;
+    if (variants_.empty()) return false;
+
+    TechniqueVariant variant{};
+    variant.render_state_key = render_state_key;
+    variant.vert = variants_[0].vert;
+    variant.frag = variants_[0].frag;
+    variant.desc = MakeVariantDesc(variants_[0].desc, render_state_key, pipeline_config_);
+    variant.slot.SetFramesInFlight(variants_[0].slot.FramesInFlight());
+
+    auto result = factory.CreateGraphics(variant.desc, shaders);
+    if (!result.has_value()) {
+        LOGIFACE_LOG(error, std::format(
+            "BaseTechnique {}: variant 0x{:x} pipeline creation failed: {}",
+            id_.value, render_state_key, result.error().message));
+        return false;
+    }
+    variant.slot.Swap(std::move(result.value()), 0);
+    LOGIFACE_LOG(debug, std::format("BaseTechnique {}: materialized variant 0x{:x}",
+                                    id_.value, render_state_key));
+    variants_.push_back(std::move(variant));
+    return true;
+}
+
 void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,
                                    ShaderSystem::PipelineFactory& factory,
                                    std::uint32_t frame_index) {
-    pipeline_slot_.RetireFrame(frame_index);
     if (!compiled_) return;
-    pipeline_slot_.PollAndRebuild(shaders, vert_id_, frag_id_,
-        [this, &factory](ShaderSystem::ShaderManager& s)
-            -> std::optional<ShaderSystem::PipelineProduct> {
-            auto result = factory.CreateGraphics(pipeline_desc_, s);
-            return result
-                ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
-                : std::nullopt;
-        }, frame_index);
+    // Each variant owns its slot, so a shader change rebuilds every variant
+    // that references the changed stage without disturbing the others.
+    for (auto& variant : variants_) {
+        variant.slot.RetireFrame(frame_index);
+        variant.slot.PollAndRebuild(shaders, variant.vert, variant.frag,
+            [&factory, &variant](ShaderSystem::ShaderManager& s)
+                -> std::optional<ShaderSystem::PipelineProduct> {
+                auto result = factory.CreateGraphics(variant.desc, s);
+                return result
+                    ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
+                    : std::nullopt;
+            }, frame_index);
+    }
 }
 
 bool BaseTechnique::RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
                                        ShaderSystem::PipelineFactory& factory,
                                        std::uint32_t draw_mode,
                                        std::uint32_t frame_index) {
-    pipeline_slot_.RetireFrame(frame_index);
     if (!compiled_) return true;
-    SetDrawModeSpec(pipeline_desc_, draw_mode);
-    auto result = factory.CreateGraphics(pipeline_desc_, shaders);
-    if (!result.has_value()) {
-        LOGIFACE_LOG(error, std::format(
-            "BaseTechnique {}: draw-mode pipeline rebuild failed: {}",
-            id_.value, result.error().message));
-        return false;
+    bool ok = true;
+    for (auto& variant : variants_) {
+        variant.slot.RetireFrame(frame_index);
+        SetDrawModeSpec(variant.desc, draw_mode);
+        auto result = factory.CreateGraphics(variant.desc, shaders);
+        if (!result.has_value()) {
+            LOGIFACE_LOG(error, std::format(
+                "BaseTechnique {}: draw-mode pipeline rebuild failed for variant 0x{:x}: {}",
+                id_.value, variant.render_state_key, result.error().message));
+            ok = false;
+            continue;
+        }
+        variant.slot.Swap(std::move(result.value()), frame_index);
     }
-    pipeline_slot_.Swap(std::move(result.value()), frame_index);
-    LOGIFACE_LOG(debug, std::format("BaseTechnique {}: re-specialized for draw mode {}",
-                                    id_.value, draw_mode));
-    return true;
+    if (ok) {
+        LOGIFACE_LOG(debug, std::format("BaseTechnique {}: re-specialized {} variant(s) for draw mode {}",
+                                        id_.value, variants_.size(), draw_mode));
+    }
+    return ok;
 }
 
 } // namespace VulkanEngine::TechniqueManager

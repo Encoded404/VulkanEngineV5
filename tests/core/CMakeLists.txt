@@ -8,6 +8,7 @@ add_executable(engine_tests
   texture_mip_chain_tests.cpp
   texture_loader_subresource_tests.cpp
   normal_encoding_material_tests.cpp
+  unlit_material_tests.cpp
   draw_key_bound_tests.cpp
   draw_group_tests.cpp
   variant_pipeline_state_tests.cpp

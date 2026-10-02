@@ -38,7 +38,7 @@ public:
 
     template<typename T>
     static constexpr bool HasBinding() {
-        return std::is_same_v<T, DefaultMeshPerMaterialData>;
+        return std::is_same_v<T, UnlitPerMaterialData>;
     }
 
     template<typename T>

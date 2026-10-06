@@ -381,4 +381,64 @@ TEST_F(ShapingCacheTest, IsSafeToShapeFromManyThreads) {
     EXPECT_LE(cache.Size(), 4u) << "eviction raced the workers without losing the bound";
 }
 
+// The cache keys runs on the face, and it must not key them on the face's
+// address: an allocator can hand a destroyed face's address to a different font,
+// and two fonts both at resource version 1 would then share every entry. Face
+// ids are never reused, which is what makes that impossible. Address reuse
+// itself cannot be forced portably -- which is precisely why the key must not
+// depend on it -- so this pins the invariant the cache relies on.
+TEST(FontFaceIdentityTest, GivesEveryFaceAnIdentityThatIsNeverReused) {
+    ResourceManager manager;
+    auto handle = manager.LoadFromFile<FontResource>(
+        TestFontPath(), ResourceManager::LoadSpeed::Instant);
+    ASSERT_TRUE(handle.IsValid());
+    FontResource* resource = handle.Get();
+    ASSERT_NE(resource, nullptr);
+
+    std::vector<std::uint64_t> ids;
+    std::vector<std::shared_ptr<FontFace>> faces;
+    for (int i = 0; i < 8; ++i) {
+        auto face = FontFace::Create(*resource);
+        ASSERT_NE(face, nullptr);
+        ids.push_back(face->UniqueId());
+        faces.push_back(std::move(face));
+    }
+
+    const std::set<std::uint64_t> distinct(ids.begin(), ids.end());
+    EXPECT_EQ(distinct.size(), ids.size()) << "a face id was handed out twice";
+
+    // Stable while the face lives, and not recycled to a later face.
+    EXPECT_EQ(faces.front()->UniqueId(), ids.front());
+    faces.clear();
+
+    auto later = FontFace::Create(*resource);
+    ASSERT_NE(later, nullptr);
+    EXPECT_EQ(distinct.count(later->UniqueId()), 0u)
+        << "a new face reused a destroyed face's id";
+}
+
+// Two live faces of the same font are still two entries: the cache is keyed on
+// the face, not on the text alone.
+TEST_F(ShapingCacheTest, KeepsTwoFacesOfTheSameFontApart) {
+    auto other = FontFace::Create(*handle_.Get());
+    ASSERT_NE(other, nullptr);
+    ASSERT_NE(other->UniqueId(), face_->UniqueId());
+
+    ShapingCache cache;
+    const auto first = cache.Shape(*face_, "AV");
+    ASSERT_NE(first, nullptr);
+    ASSERT_EQ(cache.Size(), 1u);
+    ASSERT_EQ(cache.HitCount(), 0u);
+
+    const auto second = cache.Shape(*other, "AV");
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(cache.HitCount(), 0u) << "another face must not hit this face's entry";
+    EXPECT_EQ(cache.Size(), 2u);
+
+    // The first face's entry is still its own.
+    const auto again = cache.Shape(*face_, "AV");
+    EXPECT_EQ(again.get(), first.get());
+    EXPECT_EQ(cache.HitCount(), 1u);
+}
+
 } // namespace

@@ -16,6 +16,11 @@ namespace VulkanEngine::Text {
 
 namespace {
 
+// Monotonic, so a destroyed face's id is never handed out again. Relaxed
+// ordering is enough: the value is only ever compared for equality, never used
+// to order anything.
+std::atomic<std::uint64_t> g_next_face_id{1};
+
 // Owns the font bytes for as long as the HarfBuzz blob reading them exists.
 // The blob is created read-only over this buffer and releases it through this
 // callback, so the memory cannot be freed while any face still points at it,
@@ -126,7 +131,9 @@ FontFace::FontFace(hb_face_t* face, hb_font_t* font, std::uint32_t face_index,
       font_(font),
       face_index_(face_index),
       resource_version_(resource_version),
-      metrics_(metrics) {}
+      metrics_(metrics) {
+    unique_id_ = g_next_face_id.fetch_add(1, std::memory_order_relaxed);
+}
 
 FontFace::~FontFace() {
     if (font_ != nullptr) {

@@ -113,7 +113,7 @@ ShapedRun ShapeText(const FontFace& face, std::string_view utf8, const ShapeOpti
 ShapingCache::ShapingCache(std::size_t max_entries) : max_entries_(max_entries) {}
 
 std::size_t ShapingCache::KeyHash::operator()(const Key& key) const noexcept {
-    std::size_t hash = std::hash<const FontFace*>{}(key.face);
+    std::size_t hash = std::hash<std::uint64_t>{}(key.face_id);
     hash = MixHash(hash, std::hash<std::uint32_t>{}(key.resource_version));
     hash = MixHash(hash, std::hash<std::string>{}(key.text));
     hash = MixHash(hash, std::hash<int>{}(static_cast<int>(key.direction)));
@@ -124,7 +124,7 @@ std::size_t ShapingCache::KeyHash::operator()(const Key& key) const noexcept {
 
 std::shared_ptr<const ShapedRun> ShapingCache::Shape(const FontFace& face, std::string_view utf8,
                                                      const ShapeOptions& options) {
-    Key key{&face,
+    Key key{face.UniqueId(),
             face.ResourceVersion(),
             std::string(utf8),
             options.direction,

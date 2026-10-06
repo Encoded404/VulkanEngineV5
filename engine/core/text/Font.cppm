@@ -100,6 +100,16 @@ public:
     // a face can tell when a reloaded font has replaced it.
     [[nodiscard]] std::uint32_t ResourceVersion() const noexcept { return resource_version_; }
 
+    // A process-unique identity for this face, stable for its whole lifetime.
+    //
+    // Caches key shaped runs, glyph bitmaps and atlases on a face, and a pointer
+    // is not safe as that key: an allocator may hand a new face the address of a
+    // destroyed one, and two different fonts both at resource version 1 would
+    // then share every entry and quietly render each other's glyphs. Ids are
+    // never reused, so comparing this one closes that hole without requiring the
+    // cache to own the face.
+    [[nodiscard]] std::uint64_t UniqueId() const noexcept { return unique_id_; }
+
     // The glyph id for `codepoint`, or MissingGlyph() when the font has none.
     [[nodiscard]] std::uint32_t GlyphForCodepoint(std::uint32_t codepoint) const noexcept;
 
@@ -125,6 +135,7 @@ private:
     hb_font_t* font_ = nullptr;
     std::uint32_t face_index_ = 0;
     std::uint32_t resource_version_ = 0;
+    std::uint64_t unique_id_ = 0;
     FontMetrics metrics_{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };

@@ -88,6 +88,11 @@ struct ShapeOptions {
 // other's glyphs, which is a silent correctness failure rather than a
 // performance one. The hash only picks a bucket; equality compares the bytes.
 //
+// The face identity in the key is FontFace::UniqueId(), which is never reused,
+// and not the face's address: an allocator can hand a destroyed face's address
+// to a different font, and two fonts both at resource version 1 would then share
+// every entry and quietly render each other's glyphs.
+//
 // Entries are shared pointers, so a run handed to a caller stays valid after
 // the entry is evicted or the cache is cleared, and no caller can mutate a run
 // another caller is reading. Eviction is least-recently-used, so the cache has
@@ -116,7 +121,7 @@ public:
 private:
     struct Key {
         // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-        const FontFace* face = nullptr;
+        std::uint64_t face_id = 0;
         std::uint32_t resource_version = 0;
         std::string text;
         TextDirection direction = TextDirection::LeftToRight;
@@ -125,7 +130,7 @@ private:
         // NOLINTEND(misc-non-private-member-variables-in-classes)
 
         [[nodiscard]] bool operator==(const Key& other) const noexcept {
-            return face == other.face && resource_version == other.resource_version &&
+            return face_id == other.face_id && resource_version == other.resource_version &&
                    direction == other.direction && kerning == other.kerning &&
                    ligatures == other.ligatures && text == other.text;
         }

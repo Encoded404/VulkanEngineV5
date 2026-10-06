@@ -35,6 +35,7 @@ add_executable(engine_tests
   font_resource_tests.cpp
   font_face_tests.cpp
   text_shaping_tests.cpp
+  text_layout_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 

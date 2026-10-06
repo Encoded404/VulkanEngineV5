@@ -54,15 +54,26 @@ find_package(efsw CONFIG REQUIRED)
 # only widen the shipped closure. Its "subpixel-rendering" feature is not a
 # default and is deliberately left off too: the UI path uses greyscale
 # antialiasing, which does not depend on the panel's subpixel geometry.
+#
+# libunibreak supplies the line breaking rules layout wraps with. Where a line
+# may break is a Unicode question -- CJK breaks between characters, Latin only
+# at spaces and hyphens, and neither at a non-breaking space -- and the answer
+# is UAX#14's pair table, which is exactly what this port is. The alternative is
+# a whitespace check, which is wrong the moment the text is not English, and
+# hand-rolling the table is a Unicode data file to keep in sync forever. Only
+# the line breaker is used here; the same port's word and grapheme breakers stay
+# unreferenced.
 find_package(freetype CONFIG REQUIRED)
 find_package(harfbuzz CONFIG REQUIRED)
 find_package(msdfgen CONFIG REQUIRED)
+find_package(libunibreak CONFIG REQUIRED)
 
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     freetype
     harfbuzz::harfbuzz
     harfbuzz::harfbuzz-gpu
     msdfgen::msdfgen
+    libunibreak::libunibreak
 )
 
 # Runtime shader compilation links the Slang SDK. Two constraints shape when it
@@ -204,6 +215,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     text/FontLibrary.cpp
     text/Font.cpp
     text/Shaping.cpp
+    text/Layout.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -315,6 +327,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             text/FontLibrary.cppm
             text/Font.cppm
             text/Shaping.cppm
+            text/Layout.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
             render/DescriptorDecl.cppm

@@ -203,6 +203,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/TextureWatcher.cpp
     text/FontLibrary.cpp
     text/Font.cpp
+    text/Shaping.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -313,6 +314,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             ui/ImGuiSystem.cppm
             text/FontLibrary.cppm
             text/Font.cppm
+            text/Shaping.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
             render/DescriptorDecl.cppm

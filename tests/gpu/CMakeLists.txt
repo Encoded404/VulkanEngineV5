@@ -16,6 +16,7 @@ add_executable(gpu_tests
   texture_residency_gpu_tests.cpp
   texture_hot_reload_gpu_tests.cpp
   glyph_atlas_gpu_tests.cpp
+  msdf_atlas_gpu_tests.cpp
   text_render_gpu_tests.cpp
   text_system_gpu_tests.cpp
 )
@@ -65,6 +66,7 @@ add_slang_shaders(
     test_sample_frag   test_sample_frag.slang   fragment main
     test_texture_info  test_texture_info.cs.slang compute main
     test_read_page     test_read_page.cs.slang  compute main
+    test_read_page_rgba test_read_page_rgba.cs.slang compute main
 )
 add_dependencies(gpu_tests gpu_test_shaders)
 

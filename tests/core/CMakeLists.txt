@@ -38,6 +38,7 @@ add_executable(engine_tests
   text_layout_tests.cpp
   text_atlas_tests.cpp
   text_glyph_raster_tests.cpp
+  text_msdf_tests.cpp
   text_pass_tests.cpp
   font_watcher_tests.cpp
   text_system_tests.cpp

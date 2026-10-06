@@ -219,6 +219,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     text/Atlas.cpp
     text/GlyphRaster.cpp
     text/GlyphAtlasGpu.cpp
+    text/Msdf.cpp
     text/FontWatcher.cpp
     text/FontReloader.cpp
     text/TextSystem.cpp
@@ -340,6 +341,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             text/Atlas.cppm
             text/GlyphRaster.cppm
             text/GlyphAtlasGpu.cppm
+            text/Msdf.cppm
             text/FontWatcher.cppm
             text/FontReloader.cppm
             text/TextSystem.cppm

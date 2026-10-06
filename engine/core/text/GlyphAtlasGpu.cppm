@@ -19,9 +19,9 @@ import VulkanEngine.Text.GlyphRaster;
 
 export namespace VulkanEngine::Text {
 
-// The GPU side of a GlyphAtlas: one persistent R8 page image per CPU page, each
+// The GPU side of a GlyphAtlas: one persistent page image per CPU page, each
 // referenced by a stable bindless slot, plus the dirty-rect uploads that keep
-// the image in step with the rasterized bitmaps.
+// the image in step with the bitmaps.
 //
 // The split follows the atlas's own design. GlyphAtlas answers *where* a bitmap
 // goes and *what changed*; it stores rectangles and never pixels. This class
@@ -32,8 +32,31 @@ export namespace VulkanEngine::Text {
 // Pages are created with GpuTexture::CreateStream, the same persistent
 // eTransferDst | eSampled image the physical-camera path uploads into: the page
 // is written in place for the life of the atlas instead of being recreated per
-// frame, and the sampled side is a single R8_UNORM with a linear sampler so the
-// bilinear edge the atlas's padding gutter exists for works.
+// frame, and the sampled side is a single UNORM format with a linear sampler so
+// the bilinear edge the atlas's padding gutter exists for works.
+//
+// One uploader design serves both text pipelines through a small seam. The page
+// format chooses the image format (R8_UNORM for the FreeType coverage page,
+// RGBA8_UNORM for the MSDF page) and how many bytes a texel costs, and a byte
+// source resolves an atlas key to the bytes that belong in its rectangle. The
+// existing SetGlyphSource A8 path is that seam with the default format: it wraps
+// a RasterGlyph's coverage as the bytes. The MSDF pipeline calls SetPageFormat
+// with Rgba8 and SetByteSource with a resolver that returns the generated four
+// channels. The seam exists so there is exactly one uploader rather than two:
+// page creation, page growth, whole-page recomposition after an eviction,
+// precise dirty regions, staging retirement and frame-gated slot release all
+// stay in one place, and only the format and the byte lookup differ. Duplicating
+// that machinery for MSDF would be a second copy of the part most likely to rot.
+//
+// The format is a property of the uploader, not of one page: this class already
+// tracks exactly one GlyphAtlas, and the A8 and MSDF pipelines keep separate
+// atlases anyway (different key spaces and different cache owners), so each of
+// them owns its own uploader. Two formats in one instance would make the byte
+// stride ambiguous for no gain.
+//
+// SetPageFormat must be called before the first page is created (Initialize is
+// not a page creation, but the first EnsurePages/UploadDirty is): a page image's
+// format is fixed at creation and cannot be changed by the uploader afterwards.
 //
 // Lifetime mirrors the bindless manager's own rules rather than adding a second
 // release path. A page that the atlas has dropped (Reset()) is released through
@@ -48,6 +71,12 @@ public:
     // fresh or evicted page is entirely dirty) needs this to find the pixels of
     // every live entry. Returning nullptr leaves that rectangle zeroed.
     using GlyphSource = std::function<std::shared_ptr<const RasterGlyph>(std::uint64_t)>;
+
+    // Resolves an atlas key to the pixels that belong in its rectangle, in the
+    // page's own format. This is the format-agnostic half of the seam: the MSDF
+    // store hands back four channels per texel, and the A8 path is expressed
+    // through SetGlyphSource below.
+    using ByteSource = std::function<std::shared_ptr<const AtlasBitmap>(std::uint64_t)>;
 
     GlyphAtlasGpu() = default;
     ~GlyphAtlasGpu();
@@ -64,9 +93,20 @@ public:
                                   GpuResources::SamplerCache* sampler_cache = nullptr);
     void Shutdown();
 
+    // The page format every page image is created with. Defaults to A8, the
+    // FreeType coverage page, so existing callers are unchanged. Must be set
+    // before the first page is created; see the class comment.
+    void SetPageFormat(AtlasPageFormat format) { page_format_ = format; }
+    [[nodiscard]] AtlasPageFormat PageFormat() const noexcept { return page_format_; }
+
     // The bitmap source used by a full-page upload. Must be set before the first
     // UploadDirty that can dirty a whole page.
-    void SetGlyphSource(GlyphSource source) { glyph_source_ = std::move(source); }
+    void SetGlyphSource(GlyphSource source);
+
+    // The format-agnostic pixel source. Setting it supersedes a glyph source;
+    // the two exist so the A8 path keeps returning its RasterGlyph owner without
+    // the uploader repacking coverage on every upload.
+    void SetByteSource(ByteSource source) { byte_source_ = std::move(source); }
 
     // Creates the image and bindless slot for every atlas page that does not
     // have one yet, without recording anything. A caller that builds glyph
@@ -148,6 +188,8 @@ private:
     GpuResources::SamplerCache* sampler_cache_ = nullptr;
 
     GlyphSource glyph_source_{};
+    ByteSource byte_source_{};
+    AtlasPageFormat page_format_ = AtlasPageFormat::A8;
     std::vector<Page> pages_{};
 };
 

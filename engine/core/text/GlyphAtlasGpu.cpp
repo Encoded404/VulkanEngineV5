@@ -23,8 +23,8 @@ namespace VulkanEngine::Text {
 namespace {
 
 // The staging range for one page's regions is one allocation; the alignment is
-// the R8 texel block size rounded up to the 4 bytes a copy offset is most
-// commonly required to observe. It is never a correctness problem to over-align.
+// the texel block size rounded up to the 4 bytes a copy offset is most commonly
+// required to observe. It is never a correctness problem to over-align.
 constexpr std::uint64_t kStagingAlignment = 4;
 
 [[nodiscard]] bool Intersects(const AtlasRect& a, const AtlasRect& b) {
@@ -34,9 +34,45 @@ constexpr std::uint64_t kStagingAlignment = 4;
            b.y < static_cast<std::uint64_t>(a.y) + a.height;
 }
 
+// One rectangle's pixels resolved through whichever source is configured. The
+// owner keeps the bytes alive for as long as the piece is used; only one of the
+// two owners is ever non-null.
+struct Piece {
+    std::shared_ptr<const RasterGlyph> glyph;   // A8 glyph source, or null
+    std::shared_ptr<const AtlasBitmap> bitmap;  // format-agnostic byte source, or null
+    std::uint32_t x = 0;                        // inner (ink) top-left on the page
+    std::uint32_t y = 0;
+
+    [[nodiscard]] const std::uint8_t* Data() const noexcept {
+        if (bitmap != nullptr) {
+            return bitmap->bytes.data();
+        }
+        return glyph != nullptr ? glyph->coverage.data() : nullptr;
+    }
+    [[nodiscard]] std::uint32_t Width() const noexcept {
+        return bitmap != nullptr ? bitmap->width : (glyph != nullptr ? glyph->width : 0U);
+    }
+    [[nodiscard]] std::uint32_t Height() const noexcept {
+        return bitmap != nullptr ? bitmap->height : (glyph != nullptr ? glyph->height : 0U);
+    }
+    [[nodiscard]] std::uint64_t ByteCount() const noexcept {
+        if (bitmap != nullptr) {
+            return bitmap->bytes.size();
+        }
+        return glyph != nullptr ? glyph->coverage.size() : 0U;
+    }
+};
+
 } // namespace
 
 GlyphAtlasGpu::~GlyphAtlasGpu() = default;
+
+void GlyphAtlasGpu::SetGlyphSource(GlyphSource source) {
+    glyph_source_ = std::move(source);
+    // A byte source supersedes a glyph source; clearing it keeps the two from
+    // disagreeing about which pixels belong in a rectangle.
+    byte_source_ = {};
+}
 
 bool GlyphAtlasGpu::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               GpuResources::GpuImageHeap& heap,
@@ -66,6 +102,7 @@ void GlyphAtlasGpu::Shutdown() {
     }
     pages_.clear();
     glyph_source_ = {};
+    byte_source_ = {};
     backend_ = nullptr;
     heap_ = nullptr;
     staging_ = nullptr;
@@ -78,7 +115,9 @@ bool GlyphAtlasGpu::CreatePage(const AtlasConfig& config, std::uint32_t page) {
         return false; // pages are created in order; a gap is a caller bug
     }
     GpuResources::GpuTexture texture = GpuResources::GpuTexture::CreateStream(
-        *backend_, *heap_, config.page_width, config.page_height, vk::Format::eR8Unorm,
+        *backend_, *heap_, config.page_width, config.page_height,
+        page_format_ == AtlasPageFormat::Rgba8 ? vk::Format::eR8G8B8A8Unorm
+                                               : vk::Format::eR8Unorm,
         /*linear_filter=*/true, sampler_cache_);
     if (!texture.IsValid()) {
         return false;
@@ -184,12 +223,6 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
         }
     }
 
-    struct Piece {
-        std::shared_ptr<const RasterGlyph> glyph;
-        std::uint32_t x = 0;
-        std::uint32_t y = 0;
-    };
-
     const auto entries = atlas.Entries();
     std::uint32_t written = 0;
     for (std::uint32_t page = 0; page < static_cast<std::uint32_t>(atlas.PageCount()); ++page) {
@@ -212,10 +245,13 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
                           dirty->width == config.page_width &&
                           dirty->height == config.page_height;
 
+        const std::uint32_t bytes_per_texel = BytesPerTexel(page_format_);
+
         std::vector<Piece> pieces;
         std::uint64_t total_bytes = 0;
         if (full) {
-            total_bytes = static_cast<std::uint64_t>(config.page_width) * config.page_height;
+            total_bytes = static_cast<std::uint64_t>(config.page_width) * config.page_height *
+                          bytes_per_texel;
         }
         for (const auto& [key, slot] : entries) {
             if (slot.page != page) {
@@ -224,16 +260,24 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
             if (!full && !Intersects(slot.rect, *dirty)) {
                 continue;
             }
-            std::shared_ptr<const RasterGlyph> glyph =
-                glyph_source_ ? glyph_source_(key) : nullptr;
-            if (glyph == nullptr || glyph->coverage.empty()) {
+            // Only one source is configured at a time; the byte source is the
+            // format-agnostic one and supersedes the A8 glyph source.
+            Piece piece{};
+            if (byte_source_) {
+                piece.bitmap = byte_source_(key);
+            } else if (glyph_source_) {
+                piece.glyph = glyph_source_(key);
+            }
+            if (piece.Width() == 0 || piece.Height() == 0 || piece.ByteCount() == 0) {
                 continue;
             }
             if (!full) {
-                total_bytes += static_cast<std::uint64_t>(glyph->width) * glyph->height;
+                total_bytes += static_cast<std::uint64_t>(piece.Width()) * piece.Height() *
+                               bytes_per_texel;
             }
-            pieces.push_back(Piece{std::move(glyph), slot.rect.x + config.padding,
-                                   slot.rect.y + config.padding});
+            piece.x = slot.rect.x + config.padding;
+            piece.y = slot.rect.y + config.padding;
+            pieces.push_back(std::move(piece));
         }
         if (!full && pieces.empty()) {
             // The dirty region is only freed space (an Erase); the bytes already
@@ -255,19 +299,21 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
         if (full) {
             std::memset(base, 0, static_cast<std::size_t>(total_bytes));
             for (const Piece& piece : pieces) {
-                const std::uint32_t w = piece.glyph->width;
-                const std::uint32_t h = piece.glyph->height;
+                const std::uint32_t w = piece.Width();
+                const std::uint32_t h = piece.Height();
                 if (w == 0 || h == 0 || piece.x + w > config.page_width ||
                     piece.y + h > config.page_height) {
                     continue;
                 }
+                const std::uint32_t row_bytes = w * bytes_per_texel;
+                const std::uint8_t* source = piece.Data();
                 for (std::uint32_t row = 0; row < h; ++row) {
                     const std::size_t dst = (static_cast<std::size_t>(piece.y + row) *
-                                                 config.page_width) +
-                                            piece.x;
-                    std::memcpy(base + dst, piece.glyph->coverage.data() +
-                                               static_cast<std::size_t>(row) * w,
-                                w);
+                                                 config.page_width +
+                                             piece.x) *
+                                            bytes_per_texel;
+                    std::memcpy(base + dst,
+                                source + static_cast<std::size_t>(row) * row_bytes, row_bytes);
                 }
             }
             vk::BufferImageCopy region{};
@@ -282,10 +328,9 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
         } else {
             std::uint64_t offset = 0;
             for (const Piece& piece : pieces) {
-                const std::uint32_t w = piece.glyph->width;
-                const std::uint32_t h = piece.glyph->height;
-                std::memcpy(base + offset, piece.glyph->coverage.data(),
-                            piece.glyph->coverage.size());
+                const std::uint32_t w = piece.Width();
+                const std::uint32_t h = piece.Height();
+                std::memcpy(base + offset, piece.Data(), piece.ByteCount());
                 vk::BufferImageCopy region{};
                 region.bufferOffset = offset;
                 region.bufferRowLength = 0; // tightly packed w-wide rows
@@ -297,7 +342,7 @@ std::uint32_t GlyphAtlasGpu::UploadDirty(GlyphAtlas& atlas, vk::CommandBuffer cm
                                  static_cast<std::int32_t>(piece.y), 0};
                 region.imageExtent = vk::Extent3D{w, h, 1};
                 regions.push_back(region);
-                offset += static_cast<std::uint64_t>(w) * h;
+                offset += static_cast<std::uint64_t>(w) * h * bytes_per_texel;
             }
         }
 

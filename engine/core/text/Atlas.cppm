@@ -39,6 +39,49 @@ struct GlyphSlot {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
+// What one texel of a page means to whoever samples it.
+//
+// The pure atlas stores rectangles and never pixels, so this is not a property
+// the allocator needs. The GPU uploader does need it: the format picks the page
+// image format and how many bytes a texel costs, which is the difference between
+// copying a glyph's A8 coverage and copying its four MSDF channels. A8 is the
+// hinted-coverage page the FreeType rasterizer feeds; Rgba8 is the MSDF page
+// (rgb = the three distance channels, a = the true single-channel distance).
+//
+// Both are sampled as *linear*: a distance field read through an sRGB view is a
+// different field, and the A8 coverage page has always been linear.
+enum class AtlasPageFormat : std::uint8_t {
+    A8,
+    Rgba8,
+};
+
+// Bytes one texel occupies in a page of `format`. A full-page composition and a
+// precise region copy both scale every texel count by this.
+[[nodiscard]] constexpr std::uint32_t BytesPerTexel(AtlasPageFormat format) noexcept {
+    return format == AtlasPageFormat::Rgba8 ? 4U : 1U;
+}
+
+// One atlas entry's pixels in its page's format: tightly packed, row-major,
+// top-down, `width * height * BytesPerTexel(format)` bytes.
+//
+// This is the currency the GPU uploader's byte source hands back. It is the
+// reason the uploader does not need to know whether a rectangle holds FreeType
+// coverage or an MSDF: either way it is just bytes in a page, and the page
+// format says how to read them. Keeping it here -- next to the atlas, which
+// decides *where* bytes go -- is deliberate; the atlas itself still never owns
+// pixels.
+struct AtlasBitmap {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::uint8_t> bytes;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+    [[nodiscard]] bool Empty() const noexcept {
+        return width == 0 || height == 0 || bytes.empty();
+    }
+};
+
 // What an insertion actually did, so a caller can react. The atlas never
 // silently drops an entry a caller believes is resident: a key that is reported
 // Inserted, Replaced or Evicted is findable afterwards; only TooLarge leaves the

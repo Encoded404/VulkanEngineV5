@@ -30,6 +30,41 @@ find_package(Stb REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(efsw CONFIG REQUIRED)
 
+# ── Text stack ──────────────────────────────────────────────────────────
+# HarfBuzz shapes runs, FreeType rasterizes hinted greyscale glyphs for
+# screen-space text, and msdfgen generates the multi-channel distance fields
+# used by world-space text.
+#
+# harfbuzz::harfbuzz-gpu is NOT an upstream export: HarfBuzz 14 builds the GPU
+# glyph encoder as a separate library and libharfbuzz defines none of the
+# hb_gpu_* symbols, so the project overlay
+# (vcpkg-overlays/ports/harfbuzz) adds that imported target. The same overlay
+# raises the port above the registry baseline, which predates hb-gpu entirely;
+# see the port for both reasons.
+#
+# msdfgen is requested with default-features: false in vcpkg.json, so this is
+# the dependency-free core library. The engine adapts HarfBuzz outlines into
+# msdfgen::Shape itself instead of pulling msdfgen's FreeType/PNG/Skia
+# extensions, which keeps the generated fields on the same outline source as
+# the rest of the text pipeline.
+#
+# freetype is also requested without its default features. Those are container
+# decompression (brotli, bzip2, png, zlib) for WOFF/WOFF2 and PNG-embedded
+# bitmap glyph tables; this engine rasterizes TTF/OTF outlines, so they would
+# only widen the shipped closure. Its "subpixel-rendering" feature is not a
+# default and is deliberately left off too: the UI path uses greyscale
+# antialiasing, which does not depend on the panel's subpixel geometry.
+find_package(freetype CONFIG REQUIRED)
+find_package(harfbuzz CONFIG REQUIRED)
+find_package(msdfgen CONFIG REQUIRED)
+
+target_link_libraries(${ENGINE_TARGET} PRIVATE
+    freetype
+    harfbuzz::harfbuzz
+    harfbuzz::harfbuzz-gpu
+    msdfgen::msdfgen
+)
+
 # Runtime shader compilation links the Slang SDK. Two constraints shape when it
 # is available:
 #
@@ -164,6 +199,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/bindless/TextureResidency.cpp
     render/bindless/TextureReloader.cpp
     render/TextureWatcher.cpp
+    text/FontLibrary.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -270,6 +306,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Mesh/TangentGenerator.cppm
             assets/FileLoaders/Textures/TextureLoaders.cppm
             ui/ImGuiSystem.cppm
+            text/FontLibrary.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
             render/DescriptorDecl.cppm

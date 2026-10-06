@@ -29,6 +29,7 @@ import VulkanEngine.EngineContext;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderWatcher;
+import VulkanEngine.Text.FontLibrary;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import VulkanEngine.PhysicalCameraSystem;
@@ -50,6 +51,12 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
                                   const GameConfig& config,
                                   VulkanBackend::Vulkan::VulkanBootstrap& backend) {
     auto& vk_backend = backend.GetBackend();
+
+    // Record the shaping/rasterization library identity once at startup. These
+    // two dependencies are the usual explanation for a glyph or layout
+    // difference in a bug report, and the linked version is not otherwise
+    // observable from a shipped build.
+    LOGIFACE_LOG(info, "text stack: " + Text::FormatLibraryVersions());
 
     ctx.missing_texture = DefaultTextureFactory::CreateCheckerboard(ctx.resource_manager);
     // The checkerboard must be registered so ctx.fallback_handle resolves

@@ -30,7 +30,21 @@ add_executable(engine_tests
   builtin_pass_declarations_tests.cpp
   render_resize_tests.cpp
   gpu_stats_tests.cpp
+  font_library_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
+
+# The text-stack gate test includes and calls the third-party headers directly
+# (hb-gpu.h, msdfgen.h) rather than going through an engine module, so it proves
+# the libraries are installed, exported, and linkable on its own. The engine
+# links them PRIVATE on purpose: the headers stay out of every other consumer.
+find_package(harfbuzz CONFIG REQUIRED)
+find_package(msdfgen CONFIG REQUIRED)
+target_link_libraries(engine_tests PRIVATE
+  harfbuzz::harfbuzz
+  harfbuzz::harfbuzz-gpu
+  msdfgen::msdfgen
+)
+
 target_include_directories(engine_tests PRIVATE ${TEST_SUPPORT_DIR})
 setup_test_target(engine_tests)

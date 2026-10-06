@@ -45,6 +45,15 @@
         {
             "name": "shader-slang",
             "platform": "!windows"
+        },
+        "harfbuzz",
+        {
+            "name": "freetype",
+            "default-features": false
+        },
+        {
+            "name": "msdfgen",
+            "default-features": false
         }
     ]
 }

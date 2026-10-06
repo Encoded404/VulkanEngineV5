@@ -21,6 +21,8 @@ import Shaders.Engine.StandardMeshFrag;
 import Shaders.Engine.StandardMeshFragUV1;
 import Shaders.Engine.DepthPrepassFrag;
 import Shaders.Engine.UnlitFrag;
+import Shaders.Engine.UiTextVert;
+import Shaders.Engine.UiTextFrag;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import Shaders.Engine.PhysicalCameraCompositeVert;
@@ -46,6 +48,10 @@ struct EngineShaderIds {
     ShaderSystem::ShaderId standard_mesh_frag_uv1;
     ShaderSystem::ShaderId depth_prepass_frag;
     ShaderSystem::ShaderId unlit_frag;
+    // Screen-space text overlay: the vertex pulls the quad from SV_VertexID and
+    // reads per-glyph instances; the fragment samples the R8 atlas page.
+    ShaderSystem::ShaderId ui_text_vert;
+    ShaderSystem::ShaderId ui_text_frag;
 #ifdef VKENGINE_PHYSICAL_CAMERA
     ShaderSystem::ShaderId physical_camera_composite_vert;
     ShaderSystem::ShaderId physical_camera_composite_frag;
@@ -67,6 +73,8 @@ struct EngineShaderIds {
         standard_mesh_frag_uv1   = Shaders::Engine::StandardMeshFragUV1::Register(mgr, data_dir);
         depth_prepass_frag       = Shaders::Engine::DepthPrepassFrag::Register(mgr, data_dir);
         unlit_frag               = Shaders::Engine::UnlitFrag::Register(mgr, data_dir);
+        ui_text_vert             = Shaders::Engine::UiTextVert::Register(mgr, data_dir);
+        ui_text_frag             = Shaders::Engine::UiTextFrag::Register(mgr, data_dir);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         physical_camera_composite_vert = Shaders::Engine::PhysicalCameraCompositeVert::Register(mgr, data_dir);
         physical_camera_composite_frag = Shaders::Engine::PhysicalCameraCompositeFrag::Register(mgr, data_dir);

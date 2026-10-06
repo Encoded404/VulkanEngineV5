@@ -252,7 +252,8 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
 
     ctx_.renderer = std::make_unique<Renderer::Renderer>();
     ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer,
-                              &ctx_.GetShaderManager(), &ctx_.GetPipelineFactory());
+                              &ctx_.GetShaderManager(), &ctx_.GetPipelineFactory(),
+                              &ctx_.GetShaderIds());
 
     // Engine-standard descriptor set layouts let the renderer build custom-pass
     // pipelines and layouts.

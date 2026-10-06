@@ -32,6 +32,8 @@ import VulkanEngine.Render.Passes.OcclusionPass;
 import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
 import VulkanEngine.Render.Passes.ImGuiPass;
+import VulkanEngine.Render.Passes.TextPass;
+import VulkanEngine.ShaderRegistration;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import VulkanEngine.PhysicalCameraSystem;
@@ -41,6 +43,10 @@ export namespace VulkanEngine::Renderer {
 
 struct RendererConfig {
     bool enable_imgui = true;
+    // Registers the screen-space text overlay built-in. It draws nothing (and
+    // costs one empty pass) until a caller queues a run through
+    // Renderer::GetTextPass().
+    bool enable_text = true;
     glm::vec4 clear_color{0.1f, 0.1f, 0.1f, 1.0f};
     vk::ClearDepthStencilValue clear_depth_stencil{1.0f, 0};
 };
@@ -53,11 +59,22 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
+    // `shader_ids` carries the registered engine shader handles the built-in
+    // pass pipelines are built from. When null (or when the text overlay
+    // shaders are not registered) the text built-in is not added.
     bool Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                     const RendererConfig& config,
                     VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                     ShaderSystem::ShaderManager* shader_manager = nullptr,
-                    ShaderSystem::PipelineFactory* pipeline_factory = nullptr);
+                    ShaderSystem::PipelineFactory* pipeline_factory = nullptr,
+                    const VulkanEngine::EngineShaderIds* shader_ids = nullptr);
+
+    // The text overlay pass, or null when it was not registered. A caller queues
+    // shaped runs here for the frame; the queue is consumed by the frame that
+    // draws it.
+    [[nodiscard]] VulkanEngine::SceneRenderer::TextPass* GetTextPass() const {
+        return text_pass_;
+    }
 
     // Engine-standard set layouts (0-4) used to build custom-pass pipelines.
     void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
@@ -87,6 +104,9 @@ private:
 
     // Pass classes
     VulkanEngine::SceneRenderer::SceneRenderer* scene_renderer_ = nullptr;
+    // Owned by the render pipeline once registered; non-owning here so the
+    // instance-buffer resolver can find the pass for the frame being resolved.
+    VulkanEngine::SceneRenderer::TextPass* text_pass_ = nullptr;
 
     std::uint32_t frame_counter_ = 0;
     std::uint32_t last_swapchain_image_count_ = 0;

@@ -867,11 +867,21 @@ void RenderPipeline::BuildPassPipelines() {
                                         state.name + "': " + product.error().message);
             }
         } else if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Graphics) {
+            // Blend comes from the pass's declaration (a straight-alpha
+            // source-over is the default when it enables blending); an
+            // undeclared blend keeps the opaque write every other pass gets.
+            const auto& blend = state.request.blend;
             vk::PipelineColorBlendAttachmentState blend_attachment{};
             blend_attachment.colorWriteMask =
                 vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                 vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-            blend_attachment.blendEnable = vk::False;
+            blend_attachment.blendEnable = blend.enable ? vk::True : vk::False;
+            blend_attachment.srcColorBlendFactor = blend.src_color_blend_factor;
+            blend_attachment.dstColorBlendFactor = blend.dst_color_blend_factor;
+            blend_attachment.colorBlendOp = blend.color_blend_op;
+            blend_attachment.srcAlphaBlendFactor = blend.src_alpha_blend_factor;
+            blend_attachment.dstAlphaBlendFactor = blend.dst_alpha_blend_factor;
+            blend_attachment.alphaBlendOp = blend.alpha_blend_op;
 
             state.graphics_desc = ShaderSystem::GraphicsPipelineDesc{};
             state.graphics_desc.vertex_shader = static_cast<ShaderSystem::ShaderId>(state.request.vertex_shader);

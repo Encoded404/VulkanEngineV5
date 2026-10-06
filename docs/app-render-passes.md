@@ -62,6 +62,13 @@ void MyPass::Setup(PassSetupContext& ctx) {
     ctx.RequestGraphicsPipeline(vert_id_, frag_id_);
     // or: ctx.RequestComputePipeline(compute_id_);
 
+    // Optional colour blend for a graphics pass. Defaults to blending disabled;
+    // PassBlendState's factors default to the engine's straight-alpha
+    // source-over (src-alpha / one-minus-src-alpha).
+    PassBlendState blend{};
+    blend.enable = true;
+    ctx.SetBlendState(blend);
+
     // Engine-owned descriptors (app sets start at 5)
     DescriptorDecl texture{};
     texture.set = 5;
@@ -219,5 +226,5 @@ are resized by the engine automatically.
 
 `BuiltinPass` enumerates the engine passes for ordering: `Expand`,
 `OccluderSelect`, `OccluderPrepass`, `HiZGenPre`, `PreCull`, `DepthPrepass`,
-`HiZGen`, `Occlusion`, `Collect`, `MainPass`, `ImGui`. Engine descriptor sets
-0-4 are reserved; application sets start at `kFirstAppDescriptorSet` (5).
+`HiZGen`, `Occlusion`, `Collect`, `MainPass`, `Text`, `ImGui`. Engine descriptor
+sets 0-4 are reserved; application sets start at `kFirstAppDescriptorSet` (5).

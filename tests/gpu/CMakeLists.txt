@@ -16,6 +16,7 @@ add_executable(gpu_tests
   texture_residency_gpu_tests.cpp
   texture_hot_reload_gpu_tests.cpp
   glyph_atlas_gpu_tests.cpp
+  text_render_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE

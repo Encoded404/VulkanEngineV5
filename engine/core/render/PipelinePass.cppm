@@ -34,6 +34,7 @@ enum class BuiltinPass : std::uint8_t {
     Occlusion,
     Collect,
     MainPass,
+    Text,
     ImGui,
     Count,
 };
@@ -197,6 +198,26 @@ enum class PassPipelineKind : std::uint8_t {
     Compute,
 };
 
+// Colour-blend state for an engine-owned graphics pipeline. The defaults are the
+// engine's standard straight-alpha source-over -- the same factors
+// PipelineUtils::CreateAlphaBlendAttachment uses -- so a pass that declares
+// blending gets a composited overlay without restating them, and a pass that
+// leaves blending disabled keeps the opaque write every other pass gets.
+struct PassBlendState {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    bool enable = false;
+    vk::BlendFactor src_color_blend_factor = vk::BlendFactor::eSrcAlpha;
+    vk::BlendFactor dst_color_blend_factor = vk::BlendFactor::eOneMinusSrcAlpha;
+    vk::BlendOp color_blend_op = vk::BlendOp::eAdd;
+    // Alpha accumulates as one/one-minus-src-alpha: the destination's coverage
+    // is attenuated by the source's, so an overlay never makes an opaque target
+    // transparent.
+    vk::BlendFactor src_alpha_blend_factor = vk::BlendFactor::eOne;
+    vk::BlendFactor dst_alpha_blend_factor = vk::BlendFactor::eOneMinusSrcAlpha;
+    vk::BlendOp alpha_blend_op = vk::BlendOp::eAdd;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
 struct PassPipelineRequest {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     PassPipelineKind kind = PassPipelineKind::None;
@@ -207,6 +228,8 @@ struct PassPipelineRequest {
     vk::Format depth_format = vk::Format::eUndefined;
     std::uint32_t push_constant_size = 0;
     vk::ShaderStageFlags push_constant_stages{};
+    // Graphics only; ignored for a compute pipeline.
+    PassBlendState blend{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsDeclared() const { return kind != PassPipelineKind::None; }
@@ -437,6 +460,10 @@ public:
                                  std::vector<vk::Format> color_formats = {},
                                  vk::Format depth_format = vk::Format::eUndefined);
     void RequestComputePipeline(std::uint64_t compute_shader);
+    // Colour blend for the requested graphics pipeline. Only meaningful for
+    // RequestGraphicsPipeline; the defaults of PassBlendState are the engine's
+    // straight-alpha source-over.
+    void SetBlendState(PassBlendState blend) { pipeline_request_.blend = blend; }
     [[nodiscard]] const PassPipelineRequest& GetPipelineRequest() const { return pipeline_request_; }
 
     // Queue the pass runs on. Compute requires a dedicated async compute queue;

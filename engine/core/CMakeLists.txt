@@ -232,6 +232,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/DepthPrePass.cpp
     render/passes/MainPass.cpp
     render/passes/ImGuiPass.cpp
+    render/passes/TextPass.cpp
     render/passes/ExpandPass.cppm
     render/passes/HiZPass.cppm
     render/passes/OcclusionPass.cppm
@@ -265,6 +266,8 @@ set(_engine_shaders
     StandardMeshFragUV1     standard_mesh.slang        fragment main_uv1
     DepthPrepassFrag        depth_prepass.slang        fragment main
     UnlitFrag               unlit.slang                fragment main
+    UiTextVert              ui_text.slang              vertex   vs_main
+    UiTextFrag              ui_text.slang              fragment ps_main
 )
 if(VKENGINE_PHYSICAL_CAMERA)
     list(APPEND _engine_shaders
@@ -396,6 +399,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/passes/DepthPrePass.cppm
             render/passes/MainPass.cppm
             render/passes/ImGuiPass.cppm
+            render/passes/TextPass.cppm
     )
     if(VKENGINE_PHYSICAL_CAMERA)
         target_sources(${ENGINE_TARGET} PUBLIC

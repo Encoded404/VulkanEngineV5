@@ -50,7 +50,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   const RendererConfig& config,
                                   VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                                   ShaderSystem::ShaderManager* shader_manager,
-                                  ShaderSystem::PipelineFactory* pipeline_factory) {
+                                  ShaderSystem::PipelineFactory* pipeline_factory,
+                                  const VulkanEngine::EngineShaderIds* shader_ids) {
     bootstrap_ = &bootstrap;
     scene_renderer_ = &scene_renderer;
 
@@ -64,6 +65,10 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     (void)pipeline_->ImportBuffer("draw-indirect");
     (void)pipeline_->ImportBuffer("depth-indirect");
     (void)pipeline_->ImportBuffer("occluder-indirect");
+    // The text overlay's per-frame glyph instance buffer. It lives in the pass
+    // (one host-visible slot per frames-in-flight) and is resolved back into the
+    // graph through the buffer resolver registered below.
+    (void)pipeline_->ImportBuffer("text-instances");
     auto backbuffer = pipeline_->ImportBackbuffer();
     (void)pipeline_->ImportDepthBuffer();
 
@@ -139,6 +144,24 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
             std::make_unique<VulkanEngine::SceneRenderer::ImGuiPass>(&bootstrap));
     }
 
+    // Screen-space text sits above the scene and below the ImGui overlay, so an
+    // app can order an effect between the two. It needs the registered engine
+    // shader handles; without them there is no pipeline to build.
+    VulkanEngine::RenderGraph::PassHandle text_handle{};
+    if (config.enable_text && shader_ids != nullptr) {
+        auto text_pass = std::make_unique<VulkanEngine::SceneRenderer::TextPass>(
+            &bootstrap.GetBackend(), shader_ids->ui_text_vert, shader_ids->ui_text_frag);
+        text_pass_ = text_pass.get();
+        // The resolver reads the same ring slot Execute writes, keyed by the
+        // renderer's frame counter (the frame context's frame_index).
+        pipeline_->RegisterBufferResolver(
+            "text-instances", [this](std::uint32_t) -> vk::Buffer {
+                return text_pass_ != nullptr ? text_pass_->InstanceBufferForFrame(frame_counter_)
+                                             : vk::Buffer{};
+            });
+        text_handle = register_builtin(std::move(text_pass));
+    }
+
     // Explicit ordering ensures correct pipeline:
     // expand → occluder-select → occluder-prepass → hiz-gen-pre → pre-cull →
     // depth-prepass → hiz-gen (full) → occlusion → collect → main.
@@ -151,6 +174,12 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_->AddDependency(hiz_handle, occlusion_handle);
     pipeline_->AddDependency(occlusion_handle, collect_handle);
     pipeline_->AddDependency(collect_handle, main_handle);
+    if (text_handle.IsValid()) {
+        pipeline_->AddDependency(main_handle, text_handle);
+        if (imgui_handle.IsValid()) {
+            pipeline_->AddDependency(text_handle, imgui_handle);
+        }
+    }
 
     // Expose every built-in as an ordering anchor before app passes apply.
     pipeline_->SetBuiltinHandles(std::array<
@@ -166,6 +195,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         occlusion_handle,
         collect_handle,
         main_handle,
+        text_handle,
         imgui_handle,
     });
 
@@ -233,6 +263,9 @@ void Renderer::Shutdown() {
         pipeline_->Shutdown();
         pipeline_.reset();
     }
+    // The pipeline owned the pass; the non-owning resolver pointer must not
+    // outlive it.
+    text_pass_ = nullptr;
     bootstrap_ = nullptr;
 }
 

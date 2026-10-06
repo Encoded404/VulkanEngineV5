@@ -7,6 +7,8 @@ export module VulkanEngine.Text.Font;
 import std;
 import std.compat;
 
+import FileLoader.Types;
+
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.FontResource;
 
@@ -74,7 +76,12 @@ struct GlyphMetrics {
 // metric is reported in design units and no result depends on the requested
 // pixel size. That is what lets one shaped run be cached and reused at every
 // size; callers scale with ScaleForSize().
-class FontFace {
+//
+// The face is shared_from_this so a consumer handed only a reference -- the
+// FreeType face cache, which must keep the sfnt buffer alive for as long as it
+// caches a face over it -- can extend the face's lifetime instead of borrowing
+// it.
+class FontFace : public std::enable_shared_from_this<FontFace> {
 public:
     // Returns nullptr when the resource holds no bytes, when the container
     // reports fewer faces than `face_index`, or when HarfBuzz opens the face
@@ -83,7 +90,9 @@ public:
     // The face takes its own copy of the font bytes: HarfBuzz must be able to
     // read them for as long as the face lives, and tying that to the resource's
     // lifetime instead would make face lifetime depend on resource eviction.
-    // One buffer per opened face is the whole cost.
+    // One buffer per opened face is the whole cost. The same buffer is handed to
+    // every face built on it -- the HarfBuzz blob, this face, and a FreeType
+    // face created through Bytes() -- so none of them can outlive the memory.
     [[nodiscard]] static std::shared_ptr<FontFace> Create(const FontResource& resource,
                                                          std::uint32_t face_index = 0);
 
@@ -126,13 +135,24 @@ public:
     [[nodiscard]] hb_font_t* HarfBuzzFont() const noexcept { return font_; }
     [[nodiscard]] hb_face_t* HarfBuzzFace() const noexcept { return face_; }
 
+    // The exact sfnt bytes this face was opened from.
+    //
+    // The span is valid for as long as the face is alive, and the bytes it
+    // points at outlive every face built on them: the shared buffer is held by
+    // both the HarfBuzz blob's owner and this face. FreeType needs the original
+    // buffer for the same reason HarfBuzz does, and a second copy per FreeType
+    // library would defeat the point of the shared owner.
+    [[nodiscard]] FileLoader::ByteSpan Bytes() const noexcept;
+
 private:
-    FontFace(hb_face_t* face, hb_font_t* font, std::uint32_t face_index,
-             std::uint32_t resource_version, FontMetrics metrics);
+    FontFace(hb_face_t* face, hb_font_t* font, std::shared_ptr<const std::vector<std::byte>> bytes,
+             std::uint32_t face_index, std::uint32_t resource_version, FontMetrics metrics);
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     hb_face_t* face_ = nullptr;
     hb_font_t* font_ = nullptr;
+    // Shared with the HarfBuzz blob's owner, never copied again.
+    std::shared_ptr<const std::vector<std::byte>> bytes_;
     std::uint32_t face_index_ = 0;
     std::uint32_t resource_version_ = 0;
     std::uint64_t unique_id_ = 0;

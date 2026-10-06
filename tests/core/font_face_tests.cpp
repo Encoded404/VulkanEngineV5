@@ -44,6 +44,27 @@ protected:
     std::shared_ptr<FontFace> face_;
 };
 
+// The face hands out the sfnt buffer it was opened from. FreeType has to parse
+// the same bytes the shaper reads -- a second copy per library would defeat the
+// shared owner -- so the span must be the resource's own bytes, non-empty, and
+// recognisably an sfnt (0x00010000 opens a TrueType outline).
+TEST_F(FontFaceTest, ExposesTheFontBytesItOwns) {
+    const FileLoader::ByteSpan bytes = face_->Bytes();
+
+    ASSERT_FALSE(bytes.empty());
+    EXPECT_EQ(bytes.size(), resource_->GetBytes().size());
+    EXPECT_EQ(bytes.size(), resource_->GetByteSpan().size());
+
+    ASSERT_GE(bytes.size(), 2U);
+    EXPECT_EQ(std::to_integer<int>(bytes[0]), 0x00);
+    EXPECT_EQ(std::to_integer<int>(bytes[1]), 0x01);
+
+    // The same buffer every call: it is owned, not rebuilt per request.
+    const FileLoader::ByteSpan again = face_->Bytes();
+    EXPECT_EQ(again.data(), bytes.data());
+    EXPECT_EQ(again.size(), bytes.size());
+}
+
 TEST_F(FontFaceTest, ReportsMetricsFromTheShapingFace) {
     const auto& metrics = face_->Metrics();
 

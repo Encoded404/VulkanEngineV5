@@ -76,10 +76,11 @@ std::shared_ptr<FontFace> FontFace::Create(const FontResource& resource, std::ui
     }
 
     // HarfBuzz reads the sfnt buffer for the whole life of the face, so the face
-    // owns its copy. The blob hands the bytes on to the face and then drops its
-    // own reference.
-    hb_blob_t* blob =
-        MakeFontBlob(std::make_shared<const std::vector<std::byte>>(resource.GetBytes()));
+    // owns its copy. The blob shares that copy rather than a second one: the
+    // buffer is held by the blob's owner and by the FontFace, so it is released
+    // only after both are gone, whichever order they die in.
+    auto bytes = std::make_shared<const std::vector<std::byte>>(resource.GetBytes());
+    hb_blob_t* blob = MakeFontBlob(bytes);
     hb_face_t* face = hb_face_create(blob, face_index);
     hb_blob_destroy(blob);
     if (face == nullptr) {
@@ -122,13 +123,15 @@ std::shared_ptr<FontFace> FontFace::Create(const FontResource& resource, std::ui
     metrics.underline_thickness = OptionalMetric(font, HB_OT_METRICS_TAG_UNDERLINE_SIZE);
 
     return std::shared_ptr<FontFace>(
-        new FontFace(face, font, face_index, resource.GetVersion(), metrics));
+        new FontFace(face, font, std::move(bytes), face_index, resource.GetVersion(), metrics));
 }
 
-FontFace::FontFace(hb_face_t* face, hb_font_t* font, std::uint32_t face_index,
+FontFace::FontFace(hb_face_t* face, hb_font_t* font,
+                   std::shared_ptr<const std::vector<std::byte>> bytes, std::uint32_t face_index,
                    std::uint32_t resource_version, FontMetrics metrics)
     : face_(face),
       font_(font),
+      bytes_(std::move(bytes)),
       face_index_(face_index),
       resource_version_(resource_version),
       metrics_(metrics) {
@@ -150,6 +153,13 @@ std::uint32_t FontFace::GlyphForCodepoint(std::uint32_t codepoint) const noexcep
         return glyph;
     }
     return MissingGlyph();
+}
+
+FileLoader::ByteSpan FontFace::Bytes() const noexcept {
+    if (bytes_ == nullptr) {
+        return {};
+    }
+    return FileLoader::ByteSpan{bytes_->data(), bytes_->size()};
 }
 
 float FontFace::ScaleForSize(float pixel_size) const noexcept {

@@ -47,22 +47,30 @@ public:
         if (rings_.empty()) {
             return;
         }
-        auto& ring = rings_[frame_index % frames_in_flight_];
-        for (auto& entry : ring) {
+        // An applied op may enqueue a follow-up op into this same ring (the
+        // bindless Decommit enqueues the destroy of the binding it retired).
+        // Swap the ring out before iterating it so that re-entrant Enqueue
+        // cannot reallocate the container under the loop; the follow-up op lands
+        // in the now-empty ring and applies at the next drain of this slot,
+        // which is the "one ring cycle later" the callers document.
+        std::vector<Entry> draining;
+        draining.swap(rings_[frame_index % frames_in_flight_]);
+        for (auto& entry : draining) {
             if (entry.gated && !gate(entry.frame)) {
                 on_drop(entry.op, entry.frame);
             } else {
                 apply(entry.op, entry.frame);
             }
         }
-        ring.clear();
     }
 
     // Drain without any gating (shutdown path: the device is idle).
     template <typename Apply>
     void Flush(Apply&& apply) {
         for (auto& ring : rings_) {
-            for (auto& entry : ring) {
+            std::vector<Entry> draining;
+            draining.swap(ring);
+            for (auto& entry : draining) {
                 apply(entry.op, entry.frame);
             }
         }

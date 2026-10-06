@@ -259,6 +259,19 @@ public:
     // upload pass runs after the workers have drained.
     [[nodiscard]] const GlyphAtlas& Atlas() const noexcept { return atlas_; }
 
+    // Mutable access for the uploader, which has to clear a page's dirty region
+    // once its bytes have been copied. The atlas is otherwise private to the
+    // rasterizer, and this carries the same contract as Atlas(): the caller must
+    // not rasterize concurrently.
+    [[nodiscard]] GlyphAtlas& MutableAtlas() noexcept { return atlas_; }
+
+    // The bitmap packed into the rectangle an atlas entry is keyed by, or
+    // nullptr when no live entry uses that key. The atlas stores rectangles and
+    // deliberately not pixels, so an uploader that has to fill a whole page (a
+    // fresh or evicted page is entirely dirty) resolves every live rectangle's
+    // pixels through this rather than the atlas growing a byte copy.
+    [[nodiscard]] std::shared_ptr<const RasterGlyph> GlyphForAtlasKey(std::uint64_t atlas_key) const;
+
     [[nodiscard]] std::size_t Size() const;
     // Lifetime hit count. Clear() does not reset it, matching ShapingCache.
     [[nodiscard]] std::uint64_t HitCount() const;

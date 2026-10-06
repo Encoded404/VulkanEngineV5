@@ -218,6 +218,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     text/Layout.cpp
     text/Atlas.cpp
     text/GlyphRaster.cpp
+    text/GlyphAtlasGpu.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -332,6 +333,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             text/Layout.cppm
             text/Atlas.cppm
             text/GlyphRaster.cppm
+            text/GlyphAtlasGpu.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
             render/DescriptorDecl.cppm

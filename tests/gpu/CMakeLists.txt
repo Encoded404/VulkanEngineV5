@@ -15,6 +15,7 @@ add_executable(gpu_tests
   texture_info_gpu_tests.cpp
   texture_residency_gpu_tests.cpp
   texture_hot_reload_gpu_tests.cpp
+  glyph_atlas_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE
@@ -61,6 +62,7 @@ add_slang_shaders(
     test_fullscreen_vs_uv1 test_fullscreen_vs.slang vertex main_uv1
     test_sample_frag   test_sample_frag.slang   fragment main
     test_texture_info  test_texture_info.cs.slang compute main
+    test_read_page     test_read_page.cs.slang  compute main
 )
 add_dependencies(gpu_tests gpu_test_shaders)
 
@@ -70,6 +72,7 @@ get_property(_engine_shader_dir GLOBAL PROPERTY VKENGINE_ENGINE_SHADER_DIR)
 target_compile_definitions(gpu_tests PRIVATE
   VKENGINE_TEST_SHADER_DIR="${_gpu_test_shader_dir}"
   VKENGINE_ENGINE_SHADER_DIR="${_engine_shader_dir}"
+  VKENGINE_TEST_FONT_DIR="${CMAKE_SOURCE_DIR}/tests/assets/fonts"
 )
 
 # `gpu` label: excluded by the default test presets, opt in with the *-gpu

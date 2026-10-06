@@ -310,6 +310,17 @@ void GlyphRasterizer::Clear() {
     index_.clear();
 }
 
+std::shared_ptr<const RasterGlyph> GlyphRasterizer::GlyphForAtlasKey(
+    std::uint64_t atlas_key) const {
+    const std::scoped_lock lock(mutex_);
+    for (const Entry& entry : entries_) {
+        if (entry.in_atlas && entry.atlas_key == atlas_key) {
+            return entry.glyph;
+        }
+    }
+    return nullptr;
+}
+
 GlyphRasterizer::Result GlyphRasterizer::GetOrRasterize(const FontFace& face,
                                                         std::uint32_t glyph_id, float pixel_size,
                                                         GlyphHinting hinting) {

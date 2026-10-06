@@ -119,6 +119,11 @@ public:
     [[nodiscard]] std::size_t PageCount() const noexcept { return pages_.size(); }
     [[nodiscard]] std::size_t GlyphCount() const noexcept { return entries_.size(); }
 
+    // The configuration the atlas was built with. An uploader needs page_width/
+    // page_height to size a page image and padding to compute the inner region a
+    // glyph's pixels belong in, and neither is derivable from the slots alone.
+    [[nodiscard]] const AtlasConfig& Config() const noexcept { return config_; }
+
     // Lifetime count of evicted glyphs. Reset() does not clear it, the same way
     // ShapingCache::Clear() does not clear its hit count.
     [[nodiscard]] std::uint64_t EvictionCount() const noexcept { return evictions_; }

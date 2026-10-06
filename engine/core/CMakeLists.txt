@@ -160,9 +160,11 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/FileLoaders/Mesh/GltfMaterialImport.cpp
     assets/FileLoaders/Textures/TextureLoaders.cpp
     assets/FileLoaders/Textures/TextureLoaders.cppm
+    assets/FileLoaders/Fonts/FontLoader.cpp
     assets/TextureFormat.cpp
     assets/ResourceCache.cpp
     assets/TextureResource.cpp
+    assets/FontResource.cpp
     ui/ImGuiSystem.cpp
     render/Pipeline.cpp
     render/PipelinePass.cpp
@@ -288,6 +290,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/TextureUploadScheduler.cppm
             assets/ResourceCache.cppm
             assets/TextureResource.cppm
+            assets/FontResource.cppm
             bootstrap/Startup.cppm
             ApplicationContext.cppm
             ecs/ComponentRegistry.cppm
@@ -305,6 +308,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Mesh/MeshMagicLoader.cppm
             assets/FileLoaders/Mesh/TangentGenerator.cppm
             assets/FileLoaders/Textures/TextureLoaders.cppm
+            assets/FileLoaders/Fonts/FontLoader.cppm
             ui/ImGuiSystem.cppm
             text/FontLibrary.cppm
             render/Pipeline.cppm

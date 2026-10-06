@@ -31,6 +31,8 @@ add_executable(engine_tests
   render_resize_tests.cpp
   gpu_stats_tests.cpp
   font_library_tests.cpp
+  font_loader_tests.cpp
+  font_resource_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 
@@ -47,4 +49,12 @@ target_link_libraries(engine_tests PRIVATE
 )
 
 target_include_directories(engine_tests PRIVATE ${TEST_SUPPORT_DIR})
+
+# The text fixtures live in the source tree rather than being copied next to the
+# test binary: they are read-only inputs, and pointing at the source keeps the
+# test that reads them honest about what it is reading. Same shape as the
+# GPU tests' VKENGINE_TEST_SHADER_DIR.
+target_compile_definitions(engine_tests PRIVATE
+  VKENGINE_TEST_FONT_DIR="${CMAKE_SOURCE_DIR}/tests/assets/fonts"
+)
 setup_test_target(engine_tests)

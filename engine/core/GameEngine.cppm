@@ -25,6 +25,8 @@ export import VulkanEngine.GpuResources;
 export import VulkanEngine.Application;
 export import VulkanEngine.Input;
 export import VulkanEngine.EngineContext;
+export import VulkanEngine.Text.TextSystem;
+export import VulkanEngine.Text.Font;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 export import VulkanEngine.PhysicalCameraSystem;
@@ -69,6 +71,13 @@ public:
                       ShaderSystem::ShaderId frag_id = 0,
                       ShaderSystem::ShaderManager* shader_mgr = nullptr);
 
+    // Loads a font file into the text system's registry and, when hot reload is
+    // built in, registers the source file with the font watcher so an edit to it
+    // is picked up on the next frame. Mirrors LoadTexture; returns null when the
+    // file is not a readable font.
+    std::shared_ptr<const Text::FontFace> LoadFont(const std::filesystem::path& path,
+                                                   std::uint32_t face_index = 0);
+
     // Switches the indexed-drawing mode at runtime. Resolves the request against
     // device capabilities, re-creates the mode-dependent SceneRenderer buffers
     // and compaction pipelines, and re-specializes the main-pass technique
@@ -100,6 +109,10 @@ public:
 
     // Subsystem accessors delegate to EngineContext
     ResourceManager& GetResourceManager() { return ctx_.resource_manager; }
+    // The text pipeline's single submission entry point and font registry. The
+    // render pass it queues into is attached during InitRenderer, so submit
+    // draws from the frame that calls it onward.
+    Text::TextSystem& GetTextSystem() { return *ctx_.text_system; }
     BindlessManager::BindlessManager& GetBindlessManager() { return *ctx_.bindless_mgr; }
     SceneRenderer::SceneRenderer& GetSceneRenderer() { return *ctx_.scene_renderer; }
     TechniqueManager::TechniqueManager& GetTechniqueManager() { return *ctx_.technique_mgr; }

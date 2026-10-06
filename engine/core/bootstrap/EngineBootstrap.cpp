@@ -17,6 +17,9 @@ import VulkanEngine.TextureUploader;
 import VulkanEngine.TextureResidency;
 import VulkanEngine.TextureReloader;
 import VulkanEngine.TextureWatcher;
+import VulkanEngine.Text.TextSystem;
+import VulkanEngine.Text.FontWatcher;
+import VulkanEngine.Text.FontReloader;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.MeshManager;
@@ -134,6 +137,27 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     ctx.texture_watcher->Start();
 #endif
 
+    // Text pipeline. The registry, shaping, layout, rasterization and the pure
+    // atlas are device-free; the GPU glyph-atlas layer needs the bindless
+    // manager, image heap, sampler cache and staging pool, all of which exist by
+    // here. Text is optional, so a device whose glyph-atlas layer cannot come up
+    // still boots -- it simply never draws text.
+    ctx.text_system = std::make_unique<Text::TextSystem>();
+    ctx.text_system->SetResourceManager(ctx.resource_manager);
+    if (!ctx.text_system->InitializeGpu(vk_backend, ctx.image_heap, ctx.staging_pool,
+                                        *ctx.bindless_mgr, &ctx.sampler_cache)) {
+        LOGIFACE_LOG(warn, "EngineBootstrap: glyph atlas GPU layer unavailable; text stays CPU-only");
+    }
+
+#ifdef VKENGINE_HOT_RELOAD
+    // Font hot reload mirrors the texture pair: the watcher starts empty and
+    // GameEngine registers each font file it loads through the text system.
+    ctx.font_watcher = std::make_unique<Text::FontWatcher>();
+    ctx.font_reloader = std::make_unique<Text::FontReloader>();
+    ctx.font_reloader->Initialize(*ctx.font_watcher, *ctx.text_system);
+    ctx.font_watcher->Start();
+#endif
+
     {
         GpuResources::HeapConfig dynamic_heap_config{};
         dynamic_heap_config.block_size = 32ULL << 20;
@@ -208,6 +232,11 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     //     OnFileChanged(); StopAsync() quiesces it before the manager is destroyed.
     //   - texture_reloader  -> texture_watcher: the listener must stop enqueuing first.
     //   - texture_residency -> texture_uploader, texture_reloader.
+    //   - font_reloader     -> font_watcher: same listener rule for font files.
+    //   - text_system       -> font_reloader (it pumps into the system), renderer
+    //     (the system borrows the pass the renderer owns), and it runs before the
+    //     bindless manager / image heap / sampler cache / staging pool it holds
+    //     descriptors, images and upload ranges in.
     //   - texture_uploader  -> scene_renderer, physical_camera: no upload may be submitted
     //     after the worker pool stops.
     //   - mesh_manager      -> mesh_registry; material_manager -> its writers/readers;
@@ -233,6 +262,10 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     std::optional<VulkanShared::TeardownId> texture_residency_id;
     std::optional<VulkanShared::TeardownId> texture_watcher_id;
     std::optional<VulkanShared::TeardownId> texture_reloader_id;
+    std::optional<VulkanShared::TeardownId> renderer_id;
+    std::optional<VulkanShared::TeardownId> font_watcher_id;
+    std::optional<VulkanShared::TeardownId> font_reloader_id;
+    std::optional<VulkanShared::TeardownId> text_system_id;
     std::optional<VulkanShared::TeardownId> material_manager_id;
     std::optional<VulkanShared::TeardownId> scene_renderer_id;
     std::optional<VulkanShared::TeardownId> mesh_registry_id;
@@ -258,7 +291,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
     }
 
     if (ctx.renderer) {
-        teardown.Add("engineshutdown.renderer", [&ctx] {
+        renderer_id = teardown.Add("engineshutdown.renderer", [&ctx] {
             auto s = DebugSection("engineshutdown.renderer");
             ctx.renderer->Shutdown();
             ctx.renderer.reset();
@@ -352,6 +385,42 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         }, std::move(deps));
     }
 
+    // Font hot reload mirrors the texture pair: stop the watcher first so no
+    // listener thread can enqueue a change mid-teardown, then the reloader that
+    // pumps into the text system, and only then the text system itself.
+    if (ctx.font_watcher) {
+        font_watcher_id = teardown.Add("engineshutdown.font_watcher", [&ctx] {
+            auto s = DebugSection("engineshutdown.font_watcher");
+            ctx.font_watcher->Stop();
+            ctx.font_watcher.reset();
+        });
+    }
+    if (ctx.font_reloader) {
+        std::vector<VulkanShared::TeardownId> deps;
+        if (font_watcher_id) deps.push_back(*font_watcher_id);
+        font_reloader_id = teardown.Add("engineshutdown.font_reloader", [&ctx] {
+            auto s = DebugSection("engineshutdown.font_reloader");
+            ctx.font_reloader->Shutdown();
+            ctx.font_reloader.reset();
+        }, std::move(deps));
+    }
+
+    // The text system holds glyph-atlas bindless slots whose images live in the
+    // image heap, samples through the sampler cache, uploads through the staging
+    // pool, and borrows the render pass the renderer owns. It therefore stops
+    // after the reloader that pumps into it and after the renderer, and before
+    // the bindless manager and heaps whose descriptors and images it holds.
+    if (ctx.text_system) {
+        std::vector<VulkanShared::TeardownId> deps{idle_id};
+        if (font_reloader_id) deps.push_back(*font_reloader_id);
+        if (renderer_id) deps.push_back(*renderer_id);
+        text_system_id = teardown.Add("engineshutdown.text_system", [&ctx] {
+            auto s = DebugSection("engineshutdown.text_system");
+            ctx.text_system->Shutdown();
+            ctx.text_system.reset();
+        }, std::move(deps));
+    }
+
     if (ctx.shader_manager) {
         std::vector<VulkanShared::TeardownId> deps;
         if (shader_watcher_id) {
@@ -411,6 +480,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
 #endif
         if (texture_uploader_id) deps.push_back(*texture_uploader_id);
         if (mesh_manager_id) deps.push_back(*mesh_manager_id);
+        if (text_system_id) deps.push_back(*text_system_id);
         teardown.Add("engineshutdown.staging_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.staging_manager");
             ctx.staging_pool.Shutdown();
@@ -439,6 +509,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
 #ifdef VKENGINE_PHYSICAL_CAMERA
         if (physical_camera_id) deps.push_back(*physical_camera_id);
 #endif
+        if (text_system_id) deps.push_back(*text_system_id);
         bindless_id = teardown.Add("engineshutdown.bindless_manager", [&ctx] {
             auto s = DebugSection("engineshutdown.bindless_manager");
             ctx.bindless_mgr->Shutdown();
@@ -454,6 +525,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         if (bindless_id) image_heap_deps.push_back(*bindless_id);
         if (texture_uploader_id) image_heap_deps.push_back(*texture_uploader_id);
         if (scene_renderer_id) image_heap_deps.push_back(*scene_renderer_id);
+        if (text_system_id) image_heap_deps.push_back(*text_system_id);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         if (physical_camera_id) image_heap_deps.push_back(*physical_camera_id);
 #endif
@@ -503,6 +575,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
         if (bindless_id) deps.push_back(*bindless_id);
         if (texture_uploader_id) deps.push_back(*texture_uploader_id);
         if (scene_renderer_id) deps.push_back(*scene_renderer_id);
+        if (text_system_id) deps.push_back(*text_system_id);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         if (physical_camera_id) deps.push_back(*physical_camera_id);
 #endif

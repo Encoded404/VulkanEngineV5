@@ -126,10 +126,8 @@ float QuantizePixelSize(float pixel_size) noexcept {
 }
 
 std::size_t FtLibraryPool::FaceKeyHash::operator()(const FaceKey& key) const noexcept {
-    std::size_t hash = std::hash<std::uintptr_t>{}(key.bytes);
-    hash = MixHash(hash, std::hash<std::size_t>{}(key.size));
-    hash = MixHash(hash, std::hash<std::uint32_t>{}(key.face_index));
-    return hash;
+    // Identity, not address: see FaceKey.
+    return std::hash<std::uint64_t>{}(key.face_id);
 }
 
 FtLibraryPool::FtLibraryPool()
@@ -228,8 +226,7 @@ FT_Face FtLibraryPool::Lease::Face(const FontFace& font) {
         return nullptr;
     }
 
-    const FaceKey key{reinterpret_cast<std::uintptr_t>(bytes.data()), bytes.size(),
-                      font.FaceIndex()};
+    const FaceKey key{font.UniqueId()};
     {
         const std::scoped_lock lock(pool.mutex_);
         const auto found = pool.slots_[index_].faces.find(key);
@@ -308,6 +305,15 @@ void GlyphRasterizer::Clear() {
     }
     entries_.clear();
     index_.clear();
+}
+
+void GlyphRasterizer::Reset() {
+    const std::scoped_lock lock(mutex_);
+    entries_.clear();
+    index_.clear();
+    // Drop the pages too, so the next rasterization starts from an empty atlas
+    // whose fresh pages are reported entirely dirty.
+    atlas_.Reset();
 }
 
 std::shared_ptr<const RasterGlyph> GlyphRasterizer::GlyphForAtlasKey(

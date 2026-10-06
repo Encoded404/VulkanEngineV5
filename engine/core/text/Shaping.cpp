@@ -171,6 +171,20 @@ void ShapingCache::Clear() {
     entries_.clear();
 }
 
+void ShapingCache::InvalidateFace(std::uint64_t face_id) {
+    const std::scoped_lock lock(mutex_);
+    // Erase through the index's iterators so the list and the map stay in step;
+    // a run already returned to a caller is kept alive by its shared_ptr.
+    for (auto it = index_.begin(); it != index_.end();) {
+        if (it->first.face_id != face_id) {
+            ++it;
+            continue;
+        }
+        entries_.erase(it->second);
+        it = index_.erase(it);
+    }
+}
+
 std::size_t ShapingCache::Size() const {
     const std::scoped_lock lock(mutex_);
     return entries_.size();

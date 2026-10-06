@@ -115,6 +115,14 @@ public:
     // so a flush does not erase how the cache has performed.
     void Clear();
 
+    // Drops every run shaped with `face_id`, leaving entries for other faces
+    // alone. Runs already handed to a caller stay alive -- entries are shared
+    // pointers -- so a frame holding one keeps reading it; only the cache stops
+    // serving it. Font hot reload uses this on the face it is replacing: the new
+    // face has a different UniqueId, so the old entries could never be hit again
+    // and would only sit in the cache until LRU eviction.
+    void InvalidateFace(std::uint64_t face_id);
+
     [[nodiscard]] std::size_t Size() const;
     [[nodiscard]] std::uint64_t HitCount() const;
 

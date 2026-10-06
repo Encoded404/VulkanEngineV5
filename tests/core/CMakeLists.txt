@@ -39,6 +39,8 @@ add_executable(engine_tests
   text_atlas_tests.cpp
   text_glyph_raster_tests.cpp
   text_pass_tests.cpp
+  font_watcher_tests.cpp
+  text_system_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})
 

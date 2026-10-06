@@ -36,6 +36,40 @@ using VulkanEngine::ResourceManager;
     return bytes;
 }
 
+// A scratch file removed on destruction, so a reload test can point at a real
+// path without leaving anything behind.
+class TempFontFile final {
+public:
+    explicit TempFontFile(std::string_view extension) {
+        const auto stamp = static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        std::random_device rd;
+        path_ = std::filesystem::temp_directory_path() /
+                ("ve5_font_resource_" + std::to_string(stamp) + "_" + std::to_string(rd()) +
+                 std::string(extension));
+    }
+
+    ~TempFontFile() {
+        std::error_code ec;
+        std::filesystem::remove(path_, ec);
+    }
+
+    [[nodiscard]] const std::filesystem::path& Path() const noexcept { return path_; }
+
+    [[nodiscard]] bool Write(std::span<const std::byte> bytes) const {
+        std::ofstream file(path_, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            return false;
+        }
+        file.write(reinterpret_cast<const char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+        return static_cast<bool>(file);
+    }
+
+private:
+    std::filesystem::path path_;
+};
+
 TEST(FontResourceTest, LoadsAFontThroughTheResourceManager) {
     const std::vector<std::byte> expected = ReadFileBytes(TestFontPath());
     ASSERT_FALSE(expected.empty()) << "missing fixture " << TestFontPath().string();
@@ -125,6 +159,86 @@ TEST(FontResourceTest, UnloadReleasesTheBytes) {
     EXPECT_FALSE(font.IsLoaded());
     EXPECT_FALSE(font.HasBytes());
     EXPECT_FALSE(font.GetContainerInfo().IsValid());
+}
+
+// ReloadFromPath is the promise the initial-load test above points at: a valid
+// re-read replaces the payload and bumps the version. The replacement file is
+// Lato plus trailing padding -- still a readable sfnt container, but a different
+// size -- so the test proves the new bytes are the ones being served.
+TEST(FontResourceTest, ReloadFromPathServesNewBytesAndBumpsVersion) {
+    const std::vector<std::byte> complete = ReadFileBytes(TestFontPath());
+    ASSERT_FALSE(complete.empty());
+
+    std::vector<std::byte> padded = complete;
+    padded.insert(padded.end(), 16, std::byte{0x00});
+    const TempFontFile replacement(".ttf");
+    ASSERT_TRUE(replacement.Write(padded));
+
+    FontResource font(ResourceId{.value = "reload-valid"});
+    ASSERT_TRUE(font.Load(FileLoader::ByteBuffer{complete}));
+    ASSERT_EQ(font.GetVersion(), 1u);
+    ASSERT_EQ(font.GetBytes().size(), complete.size());
+
+    ASSERT_TRUE(font.ReloadFromPath(replacement.Path()));
+    EXPECT_EQ(font.GetVersion(), 2u) << "a valid reload must bump the version";
+    EXPECT_EQ(font.GetBytes().size(), padded.size()) << "the reloaded bytes must be served";
+    EXPECT_TRUE(font.GetContainerInfo().IsValid());
+}
+
+// A corrupt edit fails the reload and leaves the working bytes and version
+// exactly as they were.
+TEST(FontResourceTest, ReloadFromPathRejectsGarbageAndKeepsTheWorkingPayload) {
+    const std::vector<std::byte> complete = ReadFileBytes(TestFontPath());
+    ASSERT_FALSE(complete.empty());
+
+    const std::vector<std::byte> junk(256, std::byte{0x5A});
+    const TempFontFile garbage(".ttf");
+    ASSERT_TRUE(garbage.Write(junk));
+
+    FontResource font(ResourceId{.value = "reload-garbage"});
+    ASSERT_TRUE(font.Load(FileLoader::ByteBuffer{complete}));
+    ASSERT_EQ(font.GetVersion(), 1u);
+
+    EXPECT_FALSE(font.ReloadFromPath(garbage.Path()));
+    EXPECT_TRUE(font.HasBytes());
+    EXPECT_EQ(font.GetBytes(), complete) << "a rejected reload must not touch the bytes";
+    EXPECT_EQ(font.GetVersion(), 1u) << "a rejected reload must not bump the version";
+    EXPECT_EQ(font.GetContainerInfo().container, FontContainer::TrueType);
+}
+
+// A truncated font (valid magic, directory beyond the buffer) is rejected the
+// same way.
+TEST(FontResourceTest, ReloadFromPathRejectsATruncatedFont) {
+    const std::vector<std::byte> complete = ReadFileBytes(TestFontPath());
+    ASSERT_GT(complete.size(), 64u);
+    const std::vector<std::byte> truncated(complete.begin(), complete.begin() + 32);
+    const TempFontFile file(".ttf");
+    ASSERT_TRUE(file.Write(truncated));
+
+    FontResource font(ResourceId{.value = "reload-truncated"});
+    ASSERT_TRUE(font.Load(FileLoader::ByteBuffer{complete}));
+
+    EXPECT_FALSE(font.ReloadFromPath(file.Path()));
+    EXPECT_EQ(font.GetBytes(), complete);
+    EXPECT_EQ(font.GetVersion(), 1u);
+}
+
+// A missing file is a no-op: the live payload is untouched.
+TEST(FontResourceTest, ReloadFromPathMissingFileIsANoOp) {
+    const std::vector<std::byte> complete = ReadFileBytes(TestFontPath());
+    ASSERT_FALSE(complete.empty());
+
+    FontResource font(ResourceId{.value = "reload-missing"});
+    ASSERT_TRUE(font.Load(FileLoader::ByteBuffer{complete}));
+
+    const std::filesystem::path missing =
+        std::filesystem::temp_directory_path() / "ve5_font_resource_does_not_exist.ttf";
+    std::error_code ec;
+    std::filesystem::remove(missing, ec);
+
+    EXPECT_FALSE(font.ReloadFromPath(missing));
+    EXPECT_EQ(font.GetBytes(), complete);
+    EXPECT_EQ(font.GetVersion(), 1u);
 }
 
 } // namespace

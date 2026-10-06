@@ -168,16 +168,18 @@ public:
 private:
     struct FaceKey {
         // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-        // Identity of the font's byte buffer. The cached entry owns the bytes,
-        // so this address cannot be recycled while the entry exists.
-        std::uintptr_t bytes = 0;
-        std::size_t size = 0;
-        std::uint32_t face_index = 0;
+        // FontFace::UniqueId(), never reused. The key is deliberately the face's
+        // identity and not its byte buffer's address: font hot reload builds a
+        // new face, and the allocator may well place its (different) buffer at
+        // the address the old one freed -- keying on the address would then hand
+        // the new face the previous font's cached FT_Face. The cached entry also
+        // owns the face, so the bytes it points into cannot be freed while it is
+        // resident.
+        std::uint64_t face_id = 0;
         // NOLINTEND(misc-non-private-member-variables-in-classes)
 
         [[nodiscard]] bool operator==(const FaceKey& other) const noexcept {
-            return bytes == other.bytes && size == other.size &&
-                   face_index == other.face_index;
+            return face_id == other.face_id;
         }
     };
 
@@ -277,6 +279,13 @@ public:
     [[nodiscard]] std::uint64_t HitCount() const;
     // Drops every cached glyph and releases the atlas slots they hold.
     void Clear();
+    // Drops every cached glyph *and* every atlas page, so the CPU atlas is
+    // rebuilt from zero. Clear() keeps the pages and only frees the slots the
+    // cached glyphs held; a font reload retires the GPU pages wholesale (a page
+    // image cannot be rewritten while a recorded frame may still sample it), so
+    // the CPU side has to be dropped to match -- otherwise the next upload would
+    // believe a page it must repaint is already clean.
+    void Reset();
 
 private:
     struct Key {

@@ -68,6 +68,17 @@ public:
     // UploadDirty that can dirty a whole page.
     void SetGlyphSource(GlyphSource source) { glyph_source_ = std::move(source); }
 
+    // Creates the image and bindless slot for every atlas page that does not
+    // have one yet, without recording anything. A caller that builds glyph
+    // instances *before* the frame's command buffer exists -- the text system
+    // shapes and resolves during the app's update, then the pass records later --
+    // uses this so each instance captures the real page slot instead of the
+    // fallback; UploadDirty then writes the dirty bytes into those images before
+    // the draw in the same command buffer. Returns true when every page has an
+    // image; a heap or bindless-capacity failure leaves the rest for a later
+    // frame to retry, exactly as UploadDirty does.
+    [[nodiscard]] bool EnsurePages(const GlyphAtlas& atlas);
+
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr && bindless_ != nullptr; }
 
     // Pages that currently have a GPU image. Tracks GlyphAtlas::PageCount().

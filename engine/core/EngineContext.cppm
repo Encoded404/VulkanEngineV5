@@ -11,6 +11,9 @@ import VulkanEngine.TextureUploader;
 import VulkanEngine.TextureResidency;
 import VulkanEngine.TextureReloader;
 import VulkanEngine.TextureWatcher;
+import VulkanEngine.Text.TextSystem;
+import VulkanEngine.Text.FontWatcher;
+import VulkanEngine.Text.FontReloader;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.Renderer;
@@ -103,6 +106,17 @@ struct EngineContext {
     // frame-safely. Gated by VKENGINE_HOT_RELOAD.
     std::unique_ptr<TextureSystem::TextureWatcher> texture_watcher;
     std::unique_ptr<Textures::TextureReloader> texture_reloader;
+
+    // Text pipeline: font registry, shaping cache, hinted-glyph rasterizer and
+    // the pure glyph atlas, plus an optional GPU layer added once the device
+    // resources exist. The device-free core is constructed unconditionally;
+    // InitializeGpu() adds the layer.
+    std::unique_ptr<Text::TextSystem> text_system;
+    // Font hot reload: watches source font files and rebuilds faces frame-safely
+    // (new UniqueId, cache invalidation, ring-drained page retirement). Gated by
+    // VKENGINE_HOT_RELOAD like the texture hot-reload pair.
+    std::unique_ptr<Text::FontWatcher> font_watcher;
+    std::unique_ptr<Text::FontReloader> font_reloader;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer;
     std::unique_ptr<TechniqueManager::TechniqueManager> technique_mgr;
     std::unique_ptr<Renderer::Renderer> renderer;
@@ -148,6 +162,9 @@ struct EngineContext {
     auto& GetShaderManager() { return *shader_manager; }
     auto& GetPipelineFactory() { return *pipeline_factory; }
     auto& GetShaderIds() { return shader_ids; }
+    auto& GetTextSystem() { return *text_system; }
+    Text::FontWatcher* GetFontWatcher() { return font_watcher.get(); }
+    Text::FontReloader* GetFontReloader() { return font_reloader.get(); }
 
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }

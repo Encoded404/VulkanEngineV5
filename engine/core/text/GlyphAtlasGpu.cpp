@@ -120,6 +120,19 @@ void GlyphAtlasGpu::ReleaseAll(std::uint32_t frame_index) {
     TrimPages(0, frame_index);
 }
 
+bool GlyphAtlasGpu::EnsurePages(const GlyphAtlas& atlas) {
+    if (!IsValid()) {
+        return false;
+    }
+    const AtlasConfig& config = atlas.Config();
+    while (pages_.size() < atlas.PageCount()) {
+        if (!CreatePage(config, static_cast<std::uint32_t>(pages_.size()))) {
+            break;
+        }
+    }
+    return pages_.size() >= atlas.PageCount();
+}
+
 void GlyphAtlasGpu::Transition(vk::CommandBuffer cmd, vk::Image image,
                                vk::ImageLayout from, vk::ImageLayout to) {
     vk::PipelineStageFlags src_stage = vk::PipelineStageFlagBits::eFragmentShader;

@@ -33,6 +33,16 @@ public:
     // face it was built from is no longer the current one.
     [[nodiscard]] std::uint32_t GetVersion() const noexcept { return version_; }
 
+    // Re-reads the font from `path` for hot reload.
+    //
+    // Unlike DoLoadFromBuffer (the initial-load path, which resets first), this
+    // reads and validates into a temporary and only then adopts the bytes and
+    // bumps the version. A garbage, truncated or missing file therefore returns
+    // false and leaves the previous payload and version exactly as they were --
+    // a bad edit in an editor can never destroy the font a running frame is
+    // using.
+    [[nodiscard]] bool ReloadFromPath(const std::filesystem::path& path);
+
 protected:
     bool DoLoad() override;
     bool DoUnload() override;

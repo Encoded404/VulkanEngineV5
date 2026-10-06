@@ -187,6 +187,14 @@ void TextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     instance_buffers_[ring].UploadAt(pending_.data(),
                                      static_cast<std::uint64_t>(count) * sizeof(TextInstance), 0);
 
+    // The atlas pages the queued instances sample are copied first, so the draw
+    // below is ordered after the transfer in this same command buffer. This is
+    // the only place the pass reaches outside its own data, and it is a hook:
+    // the pass still owns no atlas and no face.
+    if (pre_record_) {
+        pre_record_(cmd, ctx.frame_index);
+    }
+
     // Setup() declares auto_begin_rendering = false, like the ImGui overlay:
     // the engine's executor only opens a dynamic-rendering scope around passes
     // that ask for one, so a pass that issues its own draws owns that scope. The

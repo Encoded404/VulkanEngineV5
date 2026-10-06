@@ -129,6 +129,17 @@ public:
     // needed to discard a queued frame.
     void ClearQueue() { pending_.clear(); }
 
+    // Installed by the owning text system: called once per frame that actually
+    // draws, after the pipeline/layout checks and before the glyph draw is
+    // recorded, with this frame's command buffer and frame index. The text
+    // system uses it to copy the dirty glyph-atlas pages the queued instances
+    // sample, so the transfer is ordered before the draw in one command buffer.
+    // A pass with no hook (a device-free test, or a caller driving the pass
+    // directly) simply draws what was queued.
+    void SetPreRecordHook(std::function<void(vk::CommandBuffer, std::uint32_t)> hook) {
+        pre_record_ = std::move(hook);
+    }
+
     [[nodiscard]] std::uint32_t QueuedInstanceCount() const {
         return static_cast<std::uint32_t>(pending_.size());
     }
@@ -151,6 +162,8 @@ private:
     std::uint64_t vertex_shader_ = 0;
     std::uint64_t fragment_shader_ = 0;
     std::uint32_t frames_in_flight_ = 1;
+    // Called before the draw when set; see SetPreRecordHook.
+    std::function<void(vk::CommandBuffer, std::uint32_t)> pre_record_{};
     // One host-visible instance buffer per frames-in-flight slot; the frame
     // recorded against a slot is GPU-complete before that slot is reused.
     std::vector<GpuBuffer> instance_buffers_{};

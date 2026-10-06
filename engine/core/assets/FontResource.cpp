@@ -41,6 +41,40 @@ void FontResource::Reset() noexcept {
     container_ = FileLoaders::Fonts::FontContainerInfo{};
 }
 
+bool FontResource::ReloadFromPath(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        LOGIFACE_LOG(warn, "FontResource: reload failed, cannot open '" + path.string() + "'");
+        return false;
+    }
+    const std::streamsize size = file.tellg();
+    if (size <= 0) {
+        LOGIFACE_LOG(warn, "FontResource: reload failed, empty file '" + path.string() + "'");
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
+    FileLoader::ByteBuffer buffer(static_cast<std::size_t>(size));
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        LOGIFACE_LOG(warn, "FontResource: reload failed, short read '" + path.string() + "'");
+        return false;
+    }
+
+    // Validate before adopting: a rejected re-read must not touch the live
+    // bytes or bump the version.
+    const FileLoaders::Fonts::FontContainerInfo info =
+        FileLoaders::Fonts::InspectFontContainer(FileLoader::ByteSpan{buffer.data(), buffer.size()});
+    if (!info.IsValid()) {
+        LOGIFACE_LOG(warn, "FontResource: reload of '" + GetId().value +
+                               "' is not a readable sfnt font container");
+        return false;
+    }
+
+    bytes_ = std::move(buffer);
+    container_ = info;
+    ++version_;
+    return true;
+}
+
 bool FontResource::DoLoad() {
     LOGIFACE_LOG(error, "FontResource '" + GetId().value +
                             "' cannot be loaded without file buffer data");

@@ -20,6 +20,7 @@ import VulkanEngine.TextureTypes;
 import VulkanEngine.TextureFormat;
 import VulkanEngine.TextureUploader;
 import VulkanEngine.FileLoaders.TextureLoaders;
+import VulkanEngine.Text.FontReloader;
 import VulkanBackend.Vulkan.VulkanBootstrap;
 
 namespace VulkanEngine {
@@ -131,6 +132,28 @@ uint32_t GameEngine::LoadTexture(VulkanEngine::Application::ApplicationContext& 
     }
     LOGIFACE_LOG(debug, "Failed to load texture from path: " + path.string() + ", using fallback");
     return BindlessManager::kFallbackSlot;
+}
+
+std::shared_ptr<const VulkanEngine::Text::FontFace> GameEngine::LoadFont(
+    const std::filesystem::path& path, std::uint32_t face_index) {
+    if (!ctx_.text_system) {
+        LOGIFACE_LOG(warn, "GameEngine::LoadFont: text system is not initialized");
+        return nullptr;
+    }
+    const std::shared_ptr<const VulkanEngine::Text::FontFace> face =
+        ctx_.text_system->LoadFontFromPath(path, face_index);
+    if (face == nullptr) {
+        LOGIFACE_LOG(warn, "GameEngine::LoadFont: failed to load '" + path.string() + "'");
+        return nullptr;
+    }
+#ifdef VKENGINE_HOT_RELOAD
+    if (ctx_.font_reloader) {
+        // The registry id a path load assigns is the path itself, so that is the
+        // id the reloader reports back when the file changes.
+        ctx_.font_reloader->WatchResource(ResourceId{path.string()}, path, face_index);
+    }
+#endif
+    return face;
 }
 
 bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
@@ -254,6 +277,15 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer,
                               &ctx_.GetShaderManager(), &ctx_.GetPipelineFactory(),
                               &ctx_.GetShaderIds());
+
+    // The text system's single submission entry point queues into the renderer's
+    // built-in text pass. Attaching it here -- after the renderer owns the pass,
+    // before the first frame records -- is the one seam that keeps submission
+    // one call without the text layer owning render-graph state. Until this
+    // runs, SubmitScreenText is deliberately a no-op.
+    if (ctx_.text_system && ctx_.renderer) {
+        ctx_.text_system->SetTextPass(ctx_.renderer->GetTextPass());
+    }
 
     // Engine-standard descriptor set layouts let the renderer build custom-pass
     // pipelines and layouts.
@@ -539,6 +571,13 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
     // before materials flush so the rewritten slots reach the GPU this frame.
     if (ctx_.texture_reloader) {
         (void)ctx_.texture_reloader->Pump(ctx.frame.frame_counter);
+    }
+    // Font hot reload is pumped exactly alongside it: the same point in the
+    // frame, after the bindless drain so a page retired by a reload is applied
+    // at the right ring, and before the pass records so the reload is visible to
+    // the frame being built.
+    if (ctx_.font_reloader) {
+        (void)ctx_.font_reloader->Pump(ctx.frame.frame_counter);
     }
 #endif
 

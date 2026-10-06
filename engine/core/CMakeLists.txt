@@ -202,6 +202,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/bindless/TextureReloader.cpp
     render/TextureWatcher.cpp
     text/FontLibrary.cpp
+    text/Font.cpp
     GameEngine.cpp
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
@@ -311,6 +312,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FileLoaders/Fonts/FontLoader.cppm
             ui/ImGuiSystem.cppm
             text/FontLibrary.cppm
+            text/Font.cppm
             render/Pipeline.cppm
             render/PipelinePass.cppm
             render/DescriptorDecl.cppm

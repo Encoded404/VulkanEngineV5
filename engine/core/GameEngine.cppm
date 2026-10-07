@@ -15,6 +15,7 @@ export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.Components.Camera;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
+export import VulkanEngine.Components.Text;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.ImGui;
 export import VulkanEngine.ResourceSystem;

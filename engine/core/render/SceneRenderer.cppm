@@ -13,6 +13,7 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanShared.CallbackList;
 export import VulkanEngine.Components.Transform;
 export import VulkanEngine.Components.MeshReference;
+export import VulkanEngine.Components.Text;
 export import VulkanEngine.StandardMeshPipeline;
 export import VulkanEngine.TechniqueManager;
 export import VulkanEngine.BindlessManager;

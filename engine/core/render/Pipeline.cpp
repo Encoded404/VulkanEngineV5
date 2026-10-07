@@ -889,6 +889,14 @@ void RenderPipeline::BuildPassPipelines() {
             state.graphics_desc.layout = *state.layout;
             state.graphics_desc.color_formats = state.request.color_formats;
             state.graphics_desc.depth_format = state.request.depth_format;
+            // Depth state comes from the pass's declaration. The defaults leave
+            // depth disabled, which is the overlay pipeline every pass that does
+            // not declare one has always received; a depth-tested pass opts in.
+            state.graphics_desc.depth_stencil.depthTestEnable =
+                state.request.depth.test_enable ? vk::True : vk::False;
+            state.graphics_desc.depth_stencil.depthWriteEnable =
+                state.request.depth.write_enable ? vk::True : vk::False;
+            state.graphics_desc.depth_stencil.depthCompareOp = state.request.depth.compare_op;
             state.graphics_desc.input_assembly.topology = vk::PrimitiveTopology::eTriangleList;
             state.graphics_desc.viewport.viewportCount = 1;
             state.graphics_desc.viewport.scissorCount = 1;

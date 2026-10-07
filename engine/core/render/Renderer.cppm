@@ -33,6 +33,7 @@ import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
 import VulkanEngine.Render.Passes.ImGuiPass;
 import VulkanEngine.Render.Passes.TextPass;
+import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.ShaderRegistration;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -76,6 +77,14 @@ public:
         return text_pass_;
     }
 
+    // The depth-tested world-space text pass, or null when it was not registered
+    // (the same enable_text + registered-shader condition as the overlay). A
+    // caller queues a Text component plus its Transform here for the frame; the
+    // queue is consumed by the frame that draws it.
+    [[nodiscard]] VulkanEngine::SceneRenderer::WorldTextPass* GetWorldTextPass() const {
+        return world_text_pass_;
+    }
+
     // Engine-standard set layouts (0-4) used to build custom-pass pipelines.
     void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
 
@@ -107,6 +116,7 @@ private:
     // Owned by the render pipeline once registered; non-owning here so the
     // instance-buffer resolver can find the pass for the frame being resolved.
     VulkanEngine::SceneRenderer::TextPass* text_pass_ = nullptr;
+    VulkanEngine::SceneRenderer::WorldTextPass* world_text_pass_ = nullptr;
 
     std::uint32_t frame_counter_ = 0;
     std::uint32_t last_swapchain_image_count_ = 0;

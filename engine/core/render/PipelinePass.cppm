@@ -34,6 +34,9 @@ enum class BuiltinPass : std::uint8_t {
     Occlusion,
     Collect,
     MainPass,
+    // Depth-tested world-space text: scene content, so it sits after the main
+    // pass and before the screen-space overlay.
+    WorldText,
     Text,
     ImGui,
     Count,
@@ -218,6 +221,26 @@ struct PassBlendState {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
+// Depth state for an engine-owned graphics pipeline.
+//
+// The defaults are the engine's *disabled* state -- the depth attachment-less
+// overlay every existing pass builds today -- so a pass that does not ask for
+// depth keeps exactly the pipeline it had. A pass that renders into the scene's
+// depth buffer declares test-only depth: depth_write stays false so the overlay
+// never hides geometry a later pass would draw, and the compare is the engine's
+// less-or-equal (the scene is depth 0..1 via GLM_FORCE_DEPTH_ZERO_TO_ONE and the
+// camera techniques use eLessOrEqual). Enabling the test with an undefined
+// depth format is the caller's to avoid: the engine infers the format from the
+// declared depth attachment, and without one pipeline creation fails.
+struct PassDepthState {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    bool test_enable = false;
+    bool write_enable = false;
+    vk::CompareOp compare_op = vk::CompareOp::eLessOrEqual;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+// ── Pass pipeline request — declarative, engine-owned pipeline creation ──
 struct PassPipelineRequest {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     PassPipelineKind kind = PassPipelineKind::None;
@@ -230,6 +253,8 @@ struct PassPipelineRequest {
     vk::ShaderStageFlags push_constant_stages{};
     // Graphics only; ignored for a compute pipeline.
     PassBlendState blend{};
+    // Graphics only; ignored for a compute pipeline.
+    PassDepthState depth{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
     [[nodiscard]] bool IsDeclared() const { return kind != PassPipelineKind::None; }
@@ -464,6 +489,10 @@ public:
     // RequestGraphicsPipeline; the defaults of PassBlendState are the engine's
     // straight-alpha source-over.
     void SetBlendState(PassBlendState blend) { pipeline_request_.blend = blend; }
+    // Depth state for the requested graphics pipeline. Only meaningful for
+    // RequestGraphicsPipeline; the defaults of PassDepthState keep depth
+    // disabled, so a pass that renders over the scene is unchanged.
+    void SetDepthState(PassDepthState depth) { pipeline_request_.depth = depth; }
     [[nodiscard]] const PassPipelineRequest& GetPipelineRequest() const { return pipeline_request_; }
 
     // Queue the pass runs on. Compute requires a dedicated async compute queue;

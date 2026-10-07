@@ -148,6 +148,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     // app can order an effect between the two. It needs the registered engine
     // shader handles; without them there is no pipeline to build.
     VulkanEngine::RenderGraph::PassHandle text_handle{};
+    VulkanEngine::RenderGraph::PassHandle world_text_handle{};
     if (config.enable_text && shader_ids != nullptr) {
         auto text_pass = std::make_unique<VulkanEngine::SceneRenderer::TextPass>(
             &bootstrap.GetBackend(), shader_ids->ui_text_vert, shader_ids->ui_text_frag);
@@ -160,11 +161,26 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                              : vk::Buffer{};
             });
         text_handle = register_builtin(std::move(text_pass));
+
+        // World text is depth-tested scene content: it draws after the main
+        // pass, so scene geometry occludes it, and before the screen-space
+        // overlay, which must never be hidden by scene depth.
+        auto world_text_pass = std::make_unique<VulkanEngine::SceneRenderer::WorldTextPass>(
+            &bootstrap.GetBackend(), shader_ids->world_text_vert, shader_ids->world_text_frag);
+        world_text_pass_ = world_text_pass.get();
+        pipeline_->RegisterBufferResolver(
+            "world-text-instances", [this](std::uint32_t) -> vk::Buffer {
+                return world_text_pass_ != nullptr
+                           ? world_text_pass_->InstanceBufferForFrame(frame_counter_)
+                           : vk::Buffer{};
+            });
+        world_text_handle = register_builtin(std::move(world_text_pass));
     }
 
     // Explicit ordering ensures correct pipeline:
     // expand → occluder-select → occluder-prepass → hiz-gen-pre → pre-cull →
-    // depth-prepass → hiz-gen (full) → occlusion → collect → main.
+    // depth-prepass → hiz-gen (full) → occlusion → collect → main →
+    // world text (depth-tested) → screen-space text → ImGui.
     pipeline_->AddDependency(expand_handle, occluder_select_handle);
     pipeline_->AddDependency(occluder_select_handle, occluder_prepass_handle);
     pipeline_->AddDependency(occluder_prepass_handle, hiz_pre_handle);
@@ -174,8 +190,19 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     pipeline_->AddDependency(hiz_handle, occlusion_handle);
     pipeline_->AddDependency(occlusion_handle, collect_handle);
     pipeline_->AddDependency(collect_handle, main_handle);
+    if (world_text_handle.IsValid()) {
+        // main pass -> depth-tested world text -> screen-space overlay -> ImGui.
+        pipeline_->AddDependency(main_handle, world_text_handle);
+        if (text_handle.IsValid()) {
+            pipeline_->AddDependency(world_text_handle, text_handle);
+        } else if (imgui_handle.IsValid()) {
+            pipeline_->AddDependency(world_text_handle, imgui_handle);
+        }
+    }
     if (text_handle.IsValid()) {
-        pipeline_->AddDependency(main_handle, text_handle);
+        if (!world_text_handle.IsValid()) {
+            pipeline_->AddDependency(main_handle, text_handle);
+        }
         if (imgui_handle.IsValid()) {
             pipeline_->AddDependency(text_handle, imgui_handle);
         }
@@ -195,6 +222,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         occlusion_handle,
         collect_handle,
         main_handle,
+        world_text_handle,
         text_handle,
         imgui_handle,
     });
@@ -266,6 +294,7 @@ void Renderer::Shutdown() {
     // The pipeline owned the pass; the non-owning resolver pointer must not
     // outlive it.
     text_pass_ = nullptr;
+    world_text_pass_ = nullptr;
     bootstrap_ = nullptr;
 }
 

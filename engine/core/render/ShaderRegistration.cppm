@@ -23,6 +23,8 @@ import Shaders.Engine.DepthPrepassFrag;
 import Shaders.Engine.UnlitFrag;
 import Shaders.Engine.UiTextVert;
 import Shaders.Engine.UiTextFrag;
+import Shaders.Engine.WorldTextVert;
+import Shaders.Engine.WorldTextFrag;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import Shaders.Engine.PhysicalCameraCompositeVert;
@@ -52,6 +54,11 @@ struct EngineShaderIds {
     // reads per-glyph instances; the fragment samples the R8 atlas page.
     ShaderSystem::ShaderId ui_text_vert;
     ShaderSystem::ShaderId ui_text_frag;
+    // Depth-tested world-space text: the vertex pulls the quad from
+    // SV_VertexID and the world-space basis from a per-glyph instance; the
+    // fragment reconstructs coverage from the RGBA8 MSDF page.
+    ShaderSystem::ShaderId world_text_vert;
+    ShaderSystem::ShaderId world_text_frag;
 #ifdef VKENGINE_PHYSICAL_CAMERA
     ShaderSystem::ShaderId physical_camera_composite_vert;
     ShaderSystem::ShaderId physical_camera_composite_frag;
@@ -75,6 +82,8 @@ struct EngineShaderIds {
         unlit_frag               = Shaders::Engine::UnlitFrag::Register(mgr, data_dir);
         ui_text_vert             = Shaders::Engine::UiTextVert::Register(mgr, data_dir);
         ui_text_frag             = Shaders::Engine::UiTextFrag::Register(mgr, data_dir);
+        world_text_vert          = Shaders::Engine::WorldTextVert::Register(mgr, data_dir);
+        world_text_frag          = Shaders::Engine::WorldTextFrag::Register(mgr, data_dir);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         physical_camera_composite_vert = Shaders::Engine::PhysicalCameraCompositeVert::Register(mgr, data_dir);
         physical_camera_composite_frag = Shaders::Engine::PhysicalCameraCompositeFrag::Register(mgr, data_dir);

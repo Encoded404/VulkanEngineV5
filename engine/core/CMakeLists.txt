@@ -237,6 +237,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/MainPass.cpp
     render/passes/ImGuiPass.cpp
     render/passes/TextPass.cpp
+    render/passes/WorldTextPass.cpp
     render/passes/ExpandPass.cppm
     render/passes/HiZPass.cppm
     render/passes/OcclusionPass.cppm
@@ -272,6 +273,8 @@ set(_engine_shaders
     UnlitFrag               unlit.slang                fragment main
     UiTextVert              ui_text.slang              vertex   vs_main
     UiTextFrag              ui_text.slang              fragment ps_main
+    WorldTextVert           world_text.slang           vertex   vs_main
+    WorldTextFrag           world_text.slang           fragment ps_main
 )
 if(VKENGINE_PHYSICAL_CAMERA)
     list(APPEND _engine_shaders
@@ -321,6 +324,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             components/Transform.cppm
             components/Camera.cppm
             components/MeshReference.cppm
+            components/Text.cppm
             components/DynamicMesh.cppm
             components/OrmOverride.cppm
             components/MaterialOverride.cppm
@@ -408,6 +412,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             render/passes/MainPass.cppm
             render/passes/ImGuiPass.cppm
             render/passes/TextPass.cppm
+            render/passes/WorldTextPass.cppm
     )
     if(VKENGINE_PHYSICAL_CAMERA)
         target_sources(${ENGINE_TARGET} PUBLIC

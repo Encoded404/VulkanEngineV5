@@ -19,6 +19,7 @@ add_executable(gpu_tests
   msdf_atlas_gpu_tests.cpp
   text_render_gpu_tests.cpp
   text_system_gpu_tests.cpp
+  world_text_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE

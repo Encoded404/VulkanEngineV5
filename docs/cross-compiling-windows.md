@@ -9,9 +9,19 @@ makes `import std;` work on the Windows target.
 ## 1. Prerequisites
 
 - Linux x86_64 build host
-- CMake ≥ 4.2 (4.2 introduced `CMAKE_CXX_STDLIB_MODULES_JSON`, which the cross
-  toolchain uses to point CMake at the *target* libc++ module metadata; the
-  CMake bundled with recent CLion releases works)
+- CMake 4.2 or 4.3 — note the upper bound. 4.2 introduced
+  `CMAKE_CXX_STDLIB_MODULES_JSON`, which the cross toolchain uses to point CMake
+  at the *target* libc++ module metadata, and 4.3 is what the CMake bundled with
+  recent CLion releases provides. **CMake 4.4 does not work**: this project
+  enables `import std;` through `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD` set to the
+  4.3-era UUID before `project()`, and 4.4 no longer uses that mechanism, so the
+  compiler probe records no std-module support and the configure fails in the
+  *generate* step with
+  `The "CXX_MODULE_STD" property on target "Vulkan-HppModule" requires toolchain
+  support, but it was not provided`. Nothing about the failure points at
+  vulkan-hpp or at the text stack; it is purely the CMake version. Point
+  `-DCMAKE_COMMAND` (or your IDE's toolchain setting) at a 4.3 install, e.g.
+  CLion's `bin/cmake/linux/x64/bin/cmake`.
 - Ninja
 - vcpkg, with `VCPKG_ROOT` set
 - *optional*: `wine`, to run the resulting executables

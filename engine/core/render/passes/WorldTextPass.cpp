@@ -110,13 +110,21 @@ void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,
             const auto slot = generator.Generate(face, glyph.glyph_id, config);
             const auto field = generator.Get(face, glyph.glyph_id, config);
             const float glyph_x = pen_x + glyph.offset_x * design_to_local;
-            const float glyph_y = pen_y - glyph.offset_y * design_to_local;
+            // y-up local frame. The layout measures a block downward from its
+            // top, so a baseline sits at -advance_y; HarfBuzz's glyph offsets are
+            // already y-up and add directly. The screen-space builder works in a
+            // y-down frame because screens are y-down, but the engine's world is
+            // y-up (the camera's up is (0,1,0)), so reusing that frame here
+            // rendered every glyph vertically mirrored.
+            const float baseline_y = -pen_y + glyph.offset_y * design_to_local;
 
             if (slot.has_value() && field != nullptr && !field->Empty()) {
                 // The field's own top-left in local units: it already includes
                 // the range padding, so its corner is left/top of the ink box.
+                // `field->top` is y-down, so in this y-up frame the bitmap top
+                // sits *above* the baseline by its magnitude.
                 const float local_left = glyph_x + field->left * field_to_local;
-                const float local_top = glyph_y + field->top * field_to_local;
+                const float local_top = baseline_y - field->top * field_to_local;
                 const float width = static_cast<float>(field->width) * field_to_local;
                 const float height = static_cast<float>(field->height) * field_to_local;
 
@@ -125,10 +133,12 @@ void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,
 
                 // The model matrix turns the two local edge vectors into world
                 // vectors; the shader adds them to origin so the quad follows any
-                // rotation and non-uniform scale.
+                // rotation and non-uniform scale. `origin` is the field's top-left
+                // and `up` runs to its bottom-left, which in this y-up frame is
+                // -y, matching the atlas's top-down row order.
                 const glm::vec4 origin = model * glm::vec4(local_left, local_top, 0.0f, 1.0f);
                 const glm::vec4 right = model * glm::vec4(width, 0.0f, 0.0f, 0.0f);
-                const glm::vec4 up = model * glm::vec4(0.0f, height, 0.0f, 0.0f);
+                const glm::vec4 up = model * glm::vec4(0.0f, -height, 0.0f, 0.0f);
 
                 WorldTextInstance instance{};
                 instance.origin[0] = origin.x;

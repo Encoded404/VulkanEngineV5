@@ -169,19 +169,21 @@ TEST_F(WorldTextTest, BuildsOneQuadPerDrawableGlyphAtTheTransform) {
         // gutter, scaled into local units.
         const float local_left =
             pen_x + run.glyphs[i].offset_x * design_to_local + field->left * field_to_local;
-        const float local_top = -run.glyphs[i].offset_y * design_to_local +
+        const float local_top = run.glyphs[i].offset_y * design_to_local -
                                 field->top * field_to_local;
         EXPECT_NEAR(instance.origin[0], 1.0f + local_left, 1e-4f);
         EXPECT_NEAR(instance.origin[1], 2.0f + local_top, 1e-4f);
         EXPECT_NEAR(instance.origin[2], 3.0f, 1e-4f);
 
-        // Identity rotation and unit scale: right is local +x, up is local +y.
+        // Identity rotation and unit scale: right is local +x, and up is local
+        // -y because world space is y-up while the field's rows run top-down, so
+        // the edge from the field's top to its bottom points down.
         EXPECT_NEAR(instance.right[0], static_cast<float>(field->width) * field_to_local, 1e-4f);
         EXPECT_NEAR(instance.right[1], 0.0f, 1e-4f);
         EXPECT_NEAR(instance.up[0], 0.0f, 1e-4f);
-        EXPECT_NEAR(instance.up[1], static_cast<float>(field->height) * field_to_local, 1e-4f);
+        EXPECT_NEAR(instance.up[1], -static_cast<float>(field->height) * field_to_local, 1e-4f);
         EXPECT_GT(instance.right[0], 0.0f);
-        EXPECT_GT(instance.up[1], 0.0f);
+        EXPECT_LT(instance.up[1], 0.0f);
 
         // The uv rect is the atlas slot's inner region, which is the whole field.
         const auto slot = generator_->Generate(*face_, run.glyphs[i].glyph_id, config);
@@ -284,17 +286,43 @@ TEST_F(WorldTextTest, RotationTurnsTheQuadBasis) {
     ASSERT_EQ(unrotated.size(), 1u);
     EXPECT_NEAR(unrotated.front().right[1], 0.0f, 1e-4f);
 
-    // 90 degrees about z: local +x becomes world +y, and local +y becomes
-    // world -x. The up vector's world y is therefore zero, not negative -- it is
-    // only 5.8e-08 off it in float, which is why this is a tolerance and not an
-    // ordering assertion.
+    // 90 degrees about z: local +x becomes world +y, and local -y (the field's
+    // top-to-bottom edge) becomes world +x.
     transform.rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3{0.0f, 0.0f, 1.0f});
     const auto rotated = Build(text, transform, run);
     ASSERT_EQ(rotated.size(), 1u);
     EXPECT_NEAR(rotated.front().right[0], 0.0f, 1e-4f);
     EXPECT_GT(rotated.front().right[1], 0.0f);
     EXPECT_NEAR(rotated.front().up[1], 0.0f, 1e-4f);
-    EXPECT_LT(rotated.front().up[0], 0.0f);
+    EXPECT_GT(rotated.front().up[0], 0.0f);
+}
+
+// World space is y-up (the camera's up vector is (0, 1, 0)) while the field's
+// rows run top-down, so a glyph's field must sit ABOVE the baseline with its up
+// edge running downward. Getting that frame wrong mirrors every glyph
+// vertically, which no assertion about the quads' magnitudes can catch -- only
+// the signs can.
+TEST_F(WorldTextTest, PlacesGlyphFieldsAboveTheBaselineInAYUpFrame) {
+    ComponentRegistry registry;
+    Entity& entity = registry.CreateEntity();
+    const Text& text = AddText(registry, entity, "H", 1.0f);
+    const Transform& transform = *entity.GetComponent<Transform>();
+    const ShapedRun run = ShapeText(*face_, text.content, ShapeOptions{});
+
+    const auto instances = Build(text, transform, run);
+    ASSERT_EQ(instances.size(), 1u);
+    const WorldTextInstance& instance = instances.front();
+
+    // The first line's baseline is the block origin, so a capital's field top
+    // must be above it and the field must extend downward from there.
+    EXPECT_GT(instance.origin[1], 0.0f)
+        << "the field's top edge must sit above the baseline in a y-up world";
+    EXPECT_LT(instance.up[1], 0.0f)
+        << "the field's top-to-bottom edge must run downward in a y-up world";
+
+    // A mirrored build passes both of the above with the opposite signs, so this
+    // is the assertion that actually fails on the bug.
+    EXPECT_LT(instance.origin[1] + instance.up[1], instance.origin[1]);
 }
 
 // WorldModelMatrix composes translate * rotation * scale, the engine's

@@ -118,10 +118,27 @@ void GpuTextBlobBuffer::Collect(std::uint32_t frame_index) {
     if (!retire_ring_.PendingCount()) {
         return;
     }
+    // A retire is enqueued with the frame that is recording, and the ring applies
+    // it one full frames-in-flight cycle later. The drain runs from the pass's
+    // Execute, which is *after* the application queued that frame's glyphs, so an
+    // op enqueued for this very frame shares the ring slot this drain just swapped
+    // out. Destroying it here would free a buffer the command buffers recorded for
+    // the intervening frames may still read -- validation reports exactly that as
+    // vkDestroyBuffer while the buffer is in use. Hold any op whose full cycle has
+    // not actually elapsed for one more drain of its ring slot.
+    const std::uint32_t frames_in_flight = std::max(retire_ring_.GetFramesInFlight(), 1U);
     retire_ring_.BeginFrame(
         frame_index,
-        [](VulkanEngine::GpuResources::GpuBuffer& buffer, std::uint32_t) {
-            buffer = VulkanEngine::GpuResources::GpuBuffer{};
+        [this, frame_index, frames_in_flight](
+            VulkanEngine::GpuResources::GpuBuffer& buffer, std::uint32_t frame) {
+            const std::uint32_t age = frame_index >= frame ? frame_index - frame : 0U;
+            if (age >= frames_in_flight) {
+                buffer = VulkanEngine::GpuResources::GpuBuffer{};
+                return;
+            }
+            // Re-enqueueing from inside the drain lands in the now-empty ring slot
+            // it came from, so it applies at that slot's next drain, one cycle on.
+            retire_ring_.Enqueue(std::move(buffer), frame, /*gated=*/false);
         },
         /*gate=*/[](std::uint32_t) { return true; },
         /*on_drop=*/[](VulkanEngine::GpuResources::GpuBuffer&, std::uint32_t) {});

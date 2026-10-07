@@ -33,7 +33,8 @@ import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
 import VulkanEngine.Render.Passes.ImGuiPass;
 import VulkanEngine.Render.Passes.TextPass;
-import VulkanEngine.Render.Passes.WorldTextPass;
+// Re-exported because RendererConfig names SceneRenderer::TextBackend.
+export import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.ShaderRegistration;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -48,6 +49,11 @@ struct RendererConfig {
     // costs one empty pass) until a caller queues a run through
     // Renderer::GetTextPass().
     bool enable_text = true;
+    // Which rasterizer the depth-tested world-text built-in draws with. The MSDF
+    // backend is the default; Slug selects the analytic hb-gpu backend, which
+    // must have its blobs queued through WorldTextPass::QueueSlugRun instead.
+    VulkanEngine::SceneRenderer::TextBackend text_backend =
+        VulkanEngine::SceneRenderer::kDefaultTextBackend;
     glm::vec4 clear_color{0.1f, 0.1f, 0.1f, 1.0f};
     vk::ClearDepthStencilValue clear_depth_stencil{1.0f, 0};
 };

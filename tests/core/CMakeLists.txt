@@ -40,6 +40,8 @@ add_executable(engine_tests
   text_glyph_raster_tests.cpp
   text_msdf_tests.cpp
   text_blob_tests.cpp
+  slug_text_tests.cpp
+  slug_shader_provenance_tests.cpp
   text_pass_tests.cpp
   world_text_tests.cpp
   font_watcher_tests.cpp
@@ -67,5 +69,8 @@ target_include_directories(engine_tests PRIVATE ${TEST_SUPPORT_DIR})
 # GPU tests' VKENGINE_TEST_SHADER_DIR.
 target_compile_definitions(engine_tests PRIVATE
   VKENGINE_TEST_FONT_DIR="${CMAKE_SOURCE_DIR}/tests/assets/fonts"
+  # The Slug provenance test reads the committed port to assert it still carries
+  # the two adaptations; pointing at the source keeps it honest about the file.
+  VKENGINE_ENGINE_SHADER_SOURCE_DIR="${CMAKE_SOURCE_DIR}/engine/core/shaders"
 )
 setup_test_target(engine_tests)

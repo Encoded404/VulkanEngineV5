@@ -13,6 +13,8 @@ import test_gpu;
 import ShaderReflection;
 import Shaders.Engine.WorldTextVert;
 import Shaders.Engine.WorldTextFrag;
+import Shaders.Engine.SlugTextVert;
+import Shaders.Engine.SlugTextFrag;
 import TestSupport.HeadlessVulkanBackend;
 import VulkanBackend.Vulkan.MemoryUtils;
 import VulkanBackend.Vulkan.VulkanBootstrap;
@@ -24,8 +26,10 @@ import VulkanEngine.Components.Text;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.Text.Atlas;
+import VulkanEngine.Text.Blob;
 import VulkanEngine.Text.Font;
 import VulkanEngine.Text.GlyphAtlasGpu;
+import VulkanEngine.Text.GpuTextBlobBuffer;
 import VulkanEngine.Text.Msdf;
 import VulkanEngine.Text.Shaping;
 import VulkanEngine.TextureTypes;
@@ -53,7 +57,11 @@ using VulkanEngine::GpuResources::ImageHeapConfig;
 using VulkanEngine::GpuResources::SamplerCache;
 using VulkanEngine::GpuResources::StagingPool;
 using VulkanEngine::GpuResources::StagingPoolConfig;
+using VulkanEngine::SceneRenderer::BlobUploader;
+using VulkanEngine::SceneRenderer::BuildSlugTextInstances;
 using VulkanEngine::SceneRenderer::BuildWorldTextInstances;
+using VulkanEngine::SceneRenderer::SlugTextConstants;
+using VulkanEngine::SceneRenderer::SlugTextInstance;
 using VulkanEngine::SceneRenderer::WorldTextConstants;
 using VulkanEngine::SceneRenderer::WorldTextInstance;
 using VulkanEngine::ShaderSystem::GraphicsPipelineDesc;
@@ -64,6 +72,8 @@ using VulkanEngine::ShaderSystem::ShaderManager;
 using VulkanEngine::Text::AtlasConfig;
 using VulkanEngine::Text::FontFace;
 using VulkanEngine::Text::GlyphAtlasGpu;
+using VulkanEngine::Text::GlyphBlobEncoder;
+using VulkanEngine::Text::GpuTextBlobBuffer;
 using VulkanEngine::Text::MsdfConfig;
 using VulkanEngine::Text::MsdfGenerator;
 using VulkanEngine::Text::ShapedRun;
@@ -193,6 +203,12 @@ protected:
         atlas_gpu_->SetByteSource(
             [this](std::uint64_t key) { return generator_->BitmapForAtlasKey(key); });
 
+        // The Slug backend's blob storage buffer. Deliberately small so the
+        // first glyphs exercise the growth path (new buffer, whole image
+        // re-uploaded, old buffer retired frame-gated).
+        blobs_ = std::make_unique<GpuTextBlobBuffer>();
+        ASSERT_TRUE(blobs_->Initialize(backend_, 64U));
+
         view_proj_ = TestViewProjection();
         BuildPipelines();
         CreateTargets();
@@ -213,13 +229,20 @@ protected:
         occluder_pipeline_.reset();
         no_depth_pipeline_.reset();
         text_pipeline_.reset();
+        slug_pipeline_.reset();
         pipeline_layout_.reset();
         occluder_set_.reset();
         text_set_.reset();
+        slug_set_.reset();
         instance_pool_.reset();
         instance_layout_.reset();
         instance_buffer_.reset();
         shaders_.reset();
+        slug_encoder_.Clear();
+        if (blobs_) {
+            blobs_->Shutdown();
+            blobs_.reset();
+        }
         if (atlas_gpu_) {
             atlas_gpu_->Shutdown();
             atlas_gpu_.reset();
@@ -266,16 +289,29 @@ protected:
                                                                        VKENGINE_ENGINE_SHADER_DIR);
         const ShaderId frag = Shaders::Engine::WorldTextFrag::Register(*shaders_,
                                                                        VKENGINE_ENGINE_SHADER_DIR);
+        const ShaderId slug_vert = Shaders::Engine::SlugTextVert::Register(
+            *shaders_, VKENGINE_ENGINE_SHADER_DIR);
+        const ShaderId slug_frag = Shaders::Engine::SlugTextFrag::Register(
+            *shaders_, VKENGINE_ENGINE_SHADER_DIR);
 
-        // Set 5: the instance storage buffer, one buffer per draw.
-        const vk::DescriptorSetLayoutBinding instance_binding(
-            0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+        // Set 5: the instance storage buffer at binding 0 (one buffer per draw)
+        // and, for the Slug backend, the blob storage buffer at binding 1. The
+        // binding-1 stage flags are fragment-only, exactly as the pass's
+        // DeclareBindings sets them: the Slug vertex does not read the blob, so
+        // a vertex stage flag here would hide a layout mismatch. The MSDF
+        // shaders declare only binding 0 and never statically use binding 1.
+        const std::array<vk::DescriptorSetLayoutBinding, 2> bindings{
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageBuffer, 1,
+                                           vk::ShaderStageFlagBits::eVertex, nullptr),
+            vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1,
+                                           vk::ShaderStageFlagBits::eFragment, nullptr)};
         instance_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            backend_.GetDevice(), vk::DescriptorSetLayoutCreateInfo{{}, 1, &instance_binding});
+            backend_.GetDevice(),
+            vk::DescriptorSetLayoutCreateInfo{{}, bindings.size(), bindings.data()});
 
-        const vk::DescriptorPoolSize pool_size(vk::DescriptorType::eStorageBuffer, 2);
+        const vk::DescriptorPoolSize pool_size(vk::DescriptorType::eStorageBuffer, 6);
         instance_pool_ = std::make_unique<vk::raii::DescriptorPool>(
-            backend_.GetDevice(), vk::DescriptorPoolCreateInfo({}, 2, 1, &pool_size));
+            backend_.GetDevice(), vk::DescriptorPoolCreateInfo({}, 3, 1, &pool_size));
         auto sets = backend_.GetDevice().allocateDescriptorSets(
             vk::DescriptorSetAllocateInfo{**instance_pool_, 1, &**instance_layout_});
         ASSERT_EQ(sets.size(), 1u);
@@ -284,6 +320,10 @@ protected:
             vk::DescriptorSetAllocateInfo{**instance_pool_, 1, &**instance_layout_});
         ASSERT_EQ(sets.size(), 1u);
         occluder_set_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
+        sets = backend_.GetDevice().allocateDescriptorSets(
+            vk::DescriptorSetAllocateInfo{**instance_pool_, 1, &**instance_layout_});
+        ASSERT_EQ(sets.size(), 1u);
+        slug_set_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
 
         instance_buffer_ = std::make_unique<GpuBuffer>(GpuBuffer::Create(
             backend_, kInstanceBytes, vk::BufferUsageFlagBits::eStorageBuffer,
@@ -314,6 +354,22 @@ protected:
         occluder_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         occluder_write.pBufferInfo = &occluder_info;
         backend_.GetDevice().updateDescriptorSets({occluder_write}, {});
+
+        // The Slug set's binding 0 is the same instance buffer; binding 1 is the
+        // blob storage buffer the fragment's adapted accessor reads.
+        vk::WriteDescriptorSet slug_instance_write = text_write;
+        slug_instance_write.dstSet = **slug_set_;
+        vk::DescriptorBufferInfo blob_info{};
+        blob_info.buffer = blobs_->Buffer();
+        blob_info.offset = 0;
+        blob_info.range = vk::WholeSize;
+        vk::WriteDescriptorSet blob_write{};
+        blob_write.dstSet = **slug_set_;
+        blob_write.dstBinding = 1;
+        blob_write.descriptorCount = 1;
+        blob_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        blob_write.pBufferInfo = &blob_info;
+        backend_.GetDevice().updateDescriptorSets({slug_instance_write, blob_write}, {});
 
         // The shader names set 0 (bindless) and set 5 (instances); sets 1-4 are
         // reserved and must exist as empty layouts so set 5 lands where the
@@ -356,11 +412,16 @@ protected:
                                                   /*depth_write=*/false);
         occluder_pipeline_ = MakeGraphicsPipeline(vert, frag, occluder_blend, /*depth_test=*/true,
                                                   /*depth_write=*/true);
+        // The Slug backend, through the shipped slug_text modules and the same
+        // depth-tested, straight-alpha state the pass declares.
+        slug_pipeline_ = MakeGraphicsPipeline(slug_vert, slug_frag, text_blend, /*depth_test=*/true,
+                                              /*depth_write=*/false);
         // A missing pipeline is fatal for every test in the suite, so fail SetUp
         // here rather than dereferencing null inside a draw.
         ASSERT_NE(text_pipeline_, nullptr);
         ASSERT_NE(no_depth_pipeline_, nullptr);
         ASSERT_NE(occluder_pipeline_, nullptr);
+        ASSERT_NE(slug_pipeline_, nullptr);
     }
 
     [[nodiscard]] std::unique_ptr<PipelineProduct> MakeGraphicsPipeline(
@@ -509,6 +570,63 @@ protected:
         backend_.GetGraphicsQueue().waitIdle();
     }
 
+    // The Slug counterpart of QueueText: shapes, encodes each glyph's blob into
+    // the pass-owned storage buffer, and returns the em-box instances whose flat
+    // offsets point at those blobs. A growth inside Store() replaces the buffer,
+    // so the descriptor is rewritten from the current one; the engine's buffer
+    // resolver does the same thing every frame.
+    [[nodiscard]] std::vector<SlugTextInstance> QueueSlugText(const std::string& content,
+                                                              float world_height,
+                                                              const glm::vec3& position,
+                                                              const std::array<float, 4>& color) {
+        Entity& entity = registry_.CreateEntity();
+        Text& text = registry_.AddComponent<Text>(entity);
+        text.font_id = 1;
+        text.content = content;
+        text.world_height = world_height;
+        text.color = color;
+        Transform& transform = registry_.AddComponent<Transform>(entity);
+        transform.position = position;
+        transform.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+        transform.scale = glm::vec3{1.0f, 1.0f, 1.0f};
+        return BuildSlugFromComponent(text, transform);
+    }
+
+    [[nodiscard]] std::vector<SlugTextInstance> BuildSlugFromComponent(
+        const Text& text, const Transform& transform) {
+        const ShapedRun run =
+            ShapeText(*face_, text.content, ShapeOptions{.kerning = true, .ligatures = true});
+        const BlobUploader upload =
+            [this](std::span<const std::byte> bytes) -> std::optional<std::uint64_t> {
+            const auto offset = blobs_->Store(bytes, /*recording_frame=*/0);
+            if (!offset.has_value()) {
+                return std::nullopt;
+            }
+            return blobs_->ElementOffset(*offset);
+        };
+        std::vector<SlugTextInstance> instances;
+        BuildSlugTextInstances(slug_encoder_, upload, text, transform, *face_, run, instances);
+        UpdateBlobDescriptor();
+        return instances;
+    }
+
+    // Points the Slug set's binding 1 at whatever blob buffer is current. A
+    // growth retires the old buffer but leaves its bytes readable, so the only
+    // thing that has to change is the descriptor.
+    void UpdateBlobDescriptor() {
+        vk::DescriptorBufferInfo blob_info{};
+        blob_info.buffer = blobs_->Buffer();
+        blob_info.offset = 0;
+        blob_info.range = vk::WholeSize;
+        vk::WriteDescriptorSet blob_write{};
+        blob_write.dstSet = **slug_set_;
+        blob_write.dstBinding = 1;
+        blob_write.descriptorCount = 1;
+        blob_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        blob_write.pBufferInfo = &blob_info;
+        backend_.GetDevice().updateDescriptorSets({blob_write}, {});
+    }
+
     // One depth-writing quad covering framebuffer x < 128 (world x < 0) at
     // world z = -0.5, i.e. depth 0.25 -- nearer than any text the tests draw.
     // Its colour is masked off, so from the text pass's point of view it is
@@ -534,6 +652,7 @@ protected:
 
     struct RenderRequest {
         std::vector<WorldTextInstance> text{};
+        std::vector<SlugTextInstance> slug_text{};
         std::vector<WorldTextInstance> occluders{};
         // false runs the identical scene through a pipeline with depth testing
         // disabled -- the control that makes the occlusion assertion real.
@@ -544,6 +663,11 @@ protected:
         if (!request.text.empty()) {
             instance_buffer_->UploadAt(request.text.data(),
                                        request.text.size() * sizeof(WorldTextInstance), 0);
+        }
+        if (!request.slug_text.empty()) {
+            instance_buffer_->UploadAt(
+                request.slug_text.data(),
+                request.slug_text.size() * sizeof(SlugTextInstance), 0);
         }
         if (!request.occluders.empty()) {
             instance_buffer_->UploadAt(request.occluders.data(),
@@ -606,7 +730,12 @@ protected:
             rendering.pDepthAttachment = &depth_attachment;
             cmd.beginRendering(rendering);
             SetViewportAndScissor(cmd);
-            if (!request.text.empty()) {
+            if (!request.slug_text.empty()) {
+                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, slug_pipeline_->Get());
+                BindInstanceSet(cmd, **slug_set_);
+                PushSlugConstants(cmd);
+                cmd.draw(6, static_cast<std::uint32_t>(request.slug_text.size()), 0, 0);
+            } else if (!request.text.empty()) {
                 cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
                                  request.depth_test ? text_pipeline_->Get()
                                                     : no_depth_pipeline_->Get());
@@ -735,6 +864,18 @@ protected:
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
     }
 
+    void PushSlugConstants(vk::CommandBuffer cmd) const {
+        SlugTextConstants constants{};
+        std::memcpy(constants.view_proj, &view_proj_, sizeof(constants.view_proj));
+        // The same viewport the dynamic state sets; hb_gpu_dilate needs it for
+        // the half-pixel edge dilation.
+        constants.viewport[0] = static_cast<float>(kTargetSize);
+        constants.viewport[1] = static_cast<float>(kTargetSize);
+        cmd.pushConstants<SlugTextConstants>(
+            **pipeline_layout_,
+            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
+    }
+
     [[nodiscard]] static std::array<std::uint8_t, 4> Pixel(
         const std::vector<std::uint8_t>& pixels, std::uint32_t x, std::uint32_t y) {
         const std::size_t base = (static_cast<std::size_t>(y) * kTargetSize + x) * 4U;
@@ -782,6 +923,42 @@ protected:
         return bounds;
     }
 
+    [[nodiscard]] PixelBounds ProjectInstances(const std::vector<SlugTextInstance>& instances) const {
+        PixelBounds bounds{1.0e9f, 1.0e9f, -1.0e9f, -1.0e9f};
+        for (const SlugTextInstance& instance : instances) {
+            const glm::vec3 origin{instance.origin[0], instance.origin[1], instance.origin[2]};
+            const glm::vec3 right{instance.right[0], instance.right[1], instance.right[2]};
+            const glm::vec3 up{instance.up[0], instance.up[1], instance.up[2]};
+            for (const float cx : {0.0f, 1.0f}) {
+                for (const float cy : {0.0f, 1.0f}) {
+                    const PixelPoint point = Project(view_proj_, origin + cx * right + cy * up);
+                    bounds.min_x = std::min(bounds.min_x, point.x);
+                    bounds.min_y = std::min(bounds.min_y, point.y);
+                    bounds.max_x = std::max(bounds.max_x, point.x);
+                    bounds.max_y = std::max(bounds.max_y, point.y);
+                }
+            }
+        }
+        return bounds;
+    }
+
+    // Pixels with a partial red channel: the analytic rasterizer's coverage is a
+    // fraction in (0, 1), so an edge pixel composites to something strictly
+    // between the black background and the full white foreground. A hard 0/1
+    // step would produce none of these.
+    [[nodiscard]] static std::uint32_t FractionalInk(const std::vector<std::uint8_t>& pixels) {
+        std::uint32_t count = 0;
+        for (std::uint32_t y = 0; y < kTargetSize; ++y) {
+            for (std::uint32_t x = 0; x < kTargetSize; ++x) {
+                const std::uint8_t red = Pixel(pixels, x, y)[0];
+                if (red > kBackground[0] && red < 255u) {
+                    ++count;
+                }
+            }
+        }
+        return count;
+    }
+
     TestSupport::HeadlessVulkanBackend backend_{};
     GpuImageHeap heap_{};
     StagingPool staging_{};
@@ -794,10 +971,12 @@ protected:
     std::unique_ptr<vk::raii::DescriptorPool> instance_pool_{};
     std::unique_ptr<vk::raii::DescriptorSet> text_set_{};
     std::unique_ptr<vk::raii::DescriptorSet> occluder_set_{};
+    std::unique_ptr<vk::raii::DescriptorSet> slug_set_{};
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};
     std::unique_ptr<PipelineProduct> text_pipeline_{};
     std::unique_ptr<PipelineProduct> no_depth_pipeline_{};
     std::unique_ptr<PipelineProduct> occluder_pipeline_{};
+    std::unique_ptr<PipelineProduct> slug_pipeline_{};
     vk::Format depth_format_ = vk::Format::eUndefined;
     std::unique_ptr<vk::raii::Image> color_image_{};
     std::unique_ptr<vk::raii::DeviceMemory> color_memory_{};
@@ -816,6 +995,8 @@ protected:
     std::shared_ptr<FontFace> face_{};
     std::unique_ptr<MsdfGenerator> generator_{};
     std::unique_ptr<GlyphAtlasGpu> atlas_gpu_{};
+    std::unique_ptr<GpuTextBlobBuffer> blobs_{};
+    GlyphBlobEncoder slug_encoder_{};
     ComponentRegistry registry_{};
 };
 
@@ -946,6 +1127,123 @@ TEST_F(WorldTextGpuTest, EmptyAndInklessComponentsLeaveTheTargetUnchanged) {
     const auto drawn = Render(RenderRequest{.text = QueueText("Hi!", 0.5f, anchor, white)});
     EXPECT_NE(drawn, cleared) << "the frame comparison is vacuous: nothing draws at all";
     EXPECT_FALSE(Ink(drawn).empty());
+}
+
+// The Slug backend renders ink where the glyphs' projected em boxes are, through
+// the shipped slug_text modules and a real blob storage buffer. The buffer is
+// deliberately smaller than the first glyph's blob, so the stores inside
+// QueueSlugText grow it and the frame still reads every glyph.
+TEST_F(WorldTextGpuTest, SlugInkAppearsInsideTheProjectedWorldRegion) {
+    const std::array<float, 4> white{1.0f, 1.0f, 1.0f, 1.0f};
+    const auto instances = QueueSlugText("Hi!", 0.5f, glm::vec3{-0.2f, 0.35f, 0.0f}, white);
+    ASSERT_FALSE(instances.empty());
+    EXPECT_GT(blobs_->Capacity(), 64u) << "the blob buffer never grew past its initial size";
+
+    const auto pixels = Render(RenderRequest{.slug_text = instances});
+    const InkBounds ink = Ink(pixels);
+    ASSERT_FALSE(ink.empty()) << "the Slug backend drew no ink";
+
+    const PixelBounds expected = ProjectInstances(instances);
+    const int expected_min_x = static_cast<int>(std::floor(expected.min_x));
+    const int expected_max_x = static_cast<int>(std::ceil(expected.max_x));
+    const int expected_min_y = static_cast<int>(std::floor(expected.min_y));
+    const int expected_max_y = static_cast<int>(std::ceil(expected.max_y));
+    // The em box is the *undilated* quad; hb_gpu_dilate pushes each corner out
+    // by half a screen pixel along its outward normal, so the analytic ink may
+    // extend a pixel or two past the projected box. The MSDF path does not need
+    // this slack because its quad already carries the distance-field gutter.
+    constexpr int kDilationSlack = 3;
+    EXPECT_GE(static_cast<int>(ink.min_x), expected_min_x - kDilationSlack);
+    EXPECT_LE(static_cast<int>(ink.max_x), expected_max_x + kDilationSlack);
+    EXPECT_GE(static_cast<int>(ink.min_y), expected_min_y - kDilationSlack);
+    EXPECT_LE(static_cast<int>(ink.max_y), expected_max_y + kDilationSlack);
+    EXPECT_GT(ink.count, 200u);
+    EXPECT_GT(ink.width(), 20u);
+    EXPECT_GT(ink.height(), 20u);
+
+    for (std::uint32_t y = 0; y < 16; ++y) {
+        for (std::uint32_t x = 0; x < 16; ++x) {
+            EXPECT_EQ(Pixel(pixels, x, y), kBackground)
+                << "untouched pixel changed at (" << x << ", " << y << ")";
+        }
+    }
+}
+
+// Cross-check that the port is not wildly wrong: the same string at the same
+// size and anchor renders through Slug and through MSDF into comparable ink
+// bounding boxes. The assertion is deliberately loose (it is a cross-check, not
+// a golden image) and structural -- every edge and both extents.
+TEST_F(WorldTextGpuTest, SlugAndMsdfInkBoundsAreComparable) {
+    const std::array<float, 4> white{1.0f, 1.0f, 1.0f, 1.0f};
+    const glm::vec3 anchor{-0.2f, 0.35f, 0.0f};
+
+    const auto msdf_instances = QueueText("Hi!", 0.5f, anchor, white);
+    const auto slug_instances = QueueSlugText("Hi!", 0.5f, anchor, white);
+    ASSERT_FALSE(msdf_instances.empty());
+    ASSERT_FALSE(slug_instances.empty());
+
+    const InkBounds msdf = Ink(Render(RenderRequest{.text = msdf_instances}));
+    const InkBounds slug = Ink(Render(RenderRequest{.slug_text = slug_instances}));
+    ASSERT_FALSE(msdf.empty()) << "the MSDF reference drew no ink";
+    ASSERT_FALSE(slug.empty()) << "the Slug backend drew no ink";
+
+    const float tolerance_x =
+        std::max(4.0f, 0.2f * static_cast<float>(msdf.width()));
+    const float tolerance_y =
+        std::max(4.0f, 0.2f * static_cast<float>(msdf.height()));
+    EXPECT_NEAR(static_cast<float>(slug.min_x), static_cast<float>(msdf.min_x), tolerance_x);
+    EXPECT_NEAR(static_cast<float>(slug.max_x), static_cast<float>(msdf.max_x), tolerance_x);
+    EXPECT_NEAR(static_cast<float>(slug.min_y), static_cast<float>(msdf.min_y), tolerance_y);
+    EXPECT_NEAR(static_cast<float>(slug.max_y), static_cast<float>(msdf.max_y), tolerance_y);
+    EXPECT_NEAR(static_cast<float>(slug.width()), static_cast<float>(msdf.width()), tolerance_x);
+    EXPECT_NEAR(static_cast<float>(slug.height()), static_cast<float>(msdf.height()),
+                tolerance_y);
+}
+
+// The property the analytic rasterizer exists to provide: edge coverage is a
+// fraction, not a hard 0/1 step. Partial red pixels between the black background
+// and the full foreground can only come from fractional coverage.
+TEST_F(WorldTextGpuTest, SlugEdgeCoverageIsAntialiased) {
+    const std::array<float, 4> white{1.0f, 1.0f, 1.0f, 1.0f};
+    const auto instances = QueueSlugText("Hi!", 0.5f, glm::vec3{-0.2f, 0.35f, 0.0f}, white);
+    ASSERT_FALSE(instances.empty());
+
+    const auto pixels = Render(RenderRequest{.slug_text = instances});
+    ASSERT_FALSE(Ink(pixels).empty()) << "the Slug backend drew no ink";
+    EXPECT_GT(FractionalInk(pixels), 30u)
+        << "the Slug edge is a hard 0/1 step rather than analytic coverage";
+
+    // The MSDF path is antialiased too, so the assertion above is not just
+    // "the frame has some pixels".
+    const auto msdf_pixels = Render(RenderRequest{
+        .text = QueueText("Hi!", 0.5f, glm::vec3{-0.2f, 0.35f, 0.0f}, white)});
+    EXPECT_GT(FractionalInk(msdf_pixels), 30u);
+}
+
+// Resolution independence: the encoded outline is size independent and the
+// fragment evaluates it at the drawn size, so the ink box scales with the em
+// size instead of being clamped to a fixed field resolution.
+TEST_F(WorldTextGpuTest, SlugInkBoundsScaleWithSize) {
+    const std::array<float, 4> white{1.0f, 1.0f, 1.0f, 1.0f};
+    const glm::vec3 anchor{-0.2f, 0.35f, 0.0f};
+
+    const InkBounds small = Ink(
+        Render(RenderRequest{.slug_text = QueueSlugText("H", 0.25f, anchor, white)}));
+    const InkBounds large = Ink(
+        Render(RenderRequest{.slug_text = QueueSlugText("H", 0.5f, anchor, white)}));
+    ASSERT_FALSE(small.empty());
+    ASSERT_FALSE(large.empty());
+    EXPECT_GT(large.width(), small.width());
+    EXPECT_GT(large.height(), small.height());
+
+    const float ratio_width =
+        static_cast<float>(large.width()) / static_cast<float>(small.width());
+    const float ratio_height =
+        static_cast<float>(large.height()) / static_cast<float>(small.height());
+    // Doubling the em size doubles the ink box, within the couple of pixels a
+    // rasterized edge can differ by.
+    EXPECT_NEAR(ratio_width, 2.0f, 0.5f);
+    EXPECT_NEAR(ratio_height, 2.0f, 0.5f);
 }
 
 }  // namespace

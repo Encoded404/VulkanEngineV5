@@ -277,6 +277,11 @@ set(_engine_shaders
     UiTextFrag              ui_text.slang              fragment ps_main
     WorldTextVert           world_text.slang           vertex   vs_main
     WorldTextFrag           world_text.slang           fragment ps_main
+    # The Slug backend's entry points. The names are distinct because the
+    # compiler derives an entry's SPIR-V stage from its function; two functions
+    # both called `main` in one file both compile as vertex modules.
+    SlugTextVert            slug_text.slang            vertex   slug_vs_main
+    SlugTextFrag            slug_text.slang            fragment slug_ps_main
 )
 if(VKENGINE_PHYSICAL_CAMERA)
     list(APPEND _engine_shaders
@@ -294,6 +299,7 @@ add_slang_shaders(
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_entries.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/technique_packing.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/hiz_helpers.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/slug_gpu.slang"
     OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         ${_engine_shaders}

@@ -164,9 +164,14 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
         // World text is depth-tested scene content: it draws after the main
         // pass, so scene geometry occludes it, and before the screen-space
-        // overlay, which must never be hidden by scene depth.
+        // overlay, which must never be hidden by scene depth. The configured
+        // backend picks which shader pair (and instance layout) the pass owns.
+        const bool slug_text =
+            config.text_backend == VulkanEngine::SceneRenderer::TextBackend::Slug;
         auto world_text_pass = std::make_unique<VulkanEngine::SceneRenderer::WorldTextPass>(
-            &bootstrap.GetBackend(), shader_ids->world_text_vert, shader_ids->world_text_frag);
+            &bootstrap.GetBackend(), config.text_backend,
+            slug_text ? shader_ids->slug_text_vert : shader_ids->world_text_vert,
+            slug_text ? shader_ids->slug_text_frag : shader_ids->world_text_frag);
         world_text_pass_ = world_text_pass.get();
         pipeline_->RegisterBufferResolver(
             "world-text-instances", [this](std::uint32_t) -> vk::Buffer {
@@ -174,6 +179,17 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                            ? world_text_pass_->InstanceBufferForFrame(frame_counter_)
                            : vk::Buffer{};
             });
+        if (slug_text) {
+            // The Slug fragment reads the pass-owned blob storage buffer; the
+            // pass grows it (retiring the old buffer frame-gated), so the
+            // resolver returns whatever buffer is current for this frame.
+            pipeline_->RegisterBufferResolver(
+                "world-text-blobs", [this](std::uint32_t) -> vk::Buffer {
+                    auto* blobs = world_text_pass_ != nullptr ? world_text_pass_->BlobBuffer()
+                                                              : nullptr;
+                    return blobs != nullptr ? blobs->Buffer() : vk::Buffer{};
+                });
+        }
         world_text_handle = register_builtin(std::move(world_text_pass));
     }
 

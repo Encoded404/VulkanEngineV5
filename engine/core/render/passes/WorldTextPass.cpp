@@ -22,8 +22,10 @@ import VulkanEngine.ResourceSystem;
 import VulkanEngine.Components.Text;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Text.Atlas;
+import VulkanEngine.Text.Blob;
 import VulkanEngine.Text.Font;
 import VulkanEngine.Text.GlyphAtlasGpu;
+import VulkanEngine.Text.GpuTextBlobBuffer;
 import VulkanEngine.Text.Layout;
 import VulkanEngine.Text.Msdf;
 import VulkanEngine.Text.Shaping;
@@ -180,19 +182,136 @@ void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,
                             out, config);
 }
 
+void BuildSlugTextInstances(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                            const BlobUploader& upload,
+                            const VulkanEngine::Components::Text& component,
+                            const glm::mat4& model, const VulkanEngine::Text::FontFace& face,
+                            const VulkanEngine::Text::ShapedRun& run,
+                            std::vector<SlugTextInstance>& out) {
+    if (component.content.empty() || !(component.world_height > 0.0f) || run.Empty()) {
+        return;
+    }
+
+    // The layout is identical to the MSDF builder's: local units, the
+    // component's em size as the layout pixel size, and the same y-up frame.
+    VulkanEngine::Text::LayoutOptions options{};
+    options.pixel_size = component.world_height;
+    options.max_width =
+        component.wrap == VulkanEngine::Components::TextWrap::Word ? component.max_width : 0.0f;
+    options.align = ToLayoutAlign(component.align);
+    const VulkanEngine::Text::TextLayout layout = VulkanEngine::Text::LayoutText(face, run, options);
+
+    // Design units to local units. The blob's own coordinates are design units,
+    // so this is the only scale between the encoded outline and the world.
+    const float design_to_local = face.ScaleForSize(component.world_height);
+
+    for (const VulkanEngine::Text::LayoutLine& line : layout.lines) {
+        float pen_x = line.offset_x;
+        const float pen_y = line.advance_y;
+        const std::size_t last = std::min(line.first_glyph + line.glyph_count, run.glyphs.size());
+        for (std::size_t index = line.first_glyph; index < last; ++index) {
+            const VulkanEngine::Text::ShapedGlyph& glyph = run.glyphs[index];
+            const auto blob = encoder.Get(face, glyph.glyph_id);
+            const float glyph_x = pen_x + glyph.offset_x * design_to_local;
+            // Same y-up local frame the MSDF builder documents: the baseline sits
+            // at -advance_y and HarfBuzz's offsets are already y-up.
+            const float baseline_y = -pen_y + glyph.offset_y * design_to_local;
+
+            if (blob != nullptr && !blob->Empty()) {
+                const auto element_offset = upload(blob->bytes);
+                if (element_offset.has_value()) {
+                    // The ink box in design units, y-up: min_y is the bottom
+                    // (y_bearing plus the negative height), max_y the top.
+                    const float em_min_x = static_cast<float>(blob->x_bearing);
+                    const float em_min_y =
+                        static_cast<float>(blob->y_bearing + blob->height);
+                    const float em_max_x =
+                        static_cast<float>(blob->x_bearing + blob->width);
+                    const float em_max_y = static_cast<float>(blob->y_bearing);
+
+                    const float local_min_x = glyph_x + em_min_x * design_to_local;
+                    const float local_min_y = baseline_y + em_min_y * design_to_local;
+                    const float local_max_x = glyph_x + em_max_x * design_to_local;
+                    const float local_max_y = baseline_y + em_max_y * design_to_local;
+
+                    // The world basis of the em box: its minimum corner's world
+                    // position and one world vector per em axis. The shader
+                    // rebuilds the em-to-clip matrix from these, so any rotation
+                    // or non-uniform scale carries into the quad.
+                    const glm::vec4 origin =
+                        model * glm::vec4(local_min_x, local_min_y, 0.0f, 1.0f);
+                    const glm::vec4 right =
+                        model * glm::vec4(local_max_x - local_min_x, 0.0f, 0.0f, 0.0f);
+                    const glm::vec4 up =
+                        model * glm::vec4(0.0f, local_max_y - local_min_y, 0.0f, 0.0f);
+
+                    SlugTextInstance instance{};
+                    instance.origin[0] = origin.x;
+                    instance.origin[1] = origin.y;
+                    instance.origin[2] = origin.z;
+                    instance.right[0] = right.x;
+                    instance.right[1] = right.y;
+                    instance.right[2] = right.z;
+                    instance.up[0] = up.x;
+                    instance.up[1] = up.y;
+                    instance.up[2] = up.z;
+                    instance.em_min[0] = em_min_x;
+                    instance.em_min[1] = em_min_y;
+                    instance.em_max[0] = em_max_x;
+                    instance.em_max[1] = em_max_y;
+                    for (std::size_t channel = 0; channel < 4; ++channel) {
+                        instance.color[channel] = component.color[channel];
+                    }
+                    instance.blob_offset = static_cast<std::uint32_t>(*element_offset);
+                    out.push_back(instance);
+                }
+            }
+            pen_x += glyph.advance_x * design_to_local;
+        }
+    }
+}
+
+void BuildSlugTextInstances(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                            const BlobUploader& upload,
+                            const VulkanEngine::Components::Text& component,
+                            const VulkanEngine::Components::Transform& transform,
+                            const VulkanEngine::Text::FontFace& face,
+                            const VulkanEngine::Text::ShapedRun& run,
+                            std::vector<SlugTextInstance>& out) {
+    BuildSlugTextInstances(encoder, upload, component, WorldModelMatrix(transform), face, run,
+                           out);
+}
+
 WorldTextPass::WorldTextPass(VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap,
                              std::uint64_t vertex_shader, std::uint64_t fragment_shader)
-    : bootstrap_(bootstrap), vertex_shader_(vertex_shader), fragment_shader_(fragment_shader) {
+    : WorldTextPass(bootstrap, kDefaultTextBackend, vertex_shader, fragment_shader) {}
+
+WorldTextPass::WorldTextPass(VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap,
+                             TextBackend backend, std::uint64_t vertex_shader,
+                             std::uint64_t fragment_shader)
+    : bootstrap_(bootstrap),
+      vertex_shader_(vertex_shader),
+      fragment_shader_(fragment_shader),
+      backend_(backend) {
     frames_in_flight_ = bootstrap_ != nullptr ? std::max(bootstrap_->GetFramesInFlight(), 1U) : 1U;
     if (bootstrap_ == nullptr) {
         return;
     }
+    // The Slug backend needs the persistent blob storage buffer the instance
+    // offsets index. It lives on the pass because the pass is what draws the
+    // quads; the encoder (the design-unit cache) is the reusable half.
+    if (backend_ == TextBackend::Slug && !blobs_.Initialize(*bootstrap_)) {
+        return;
+    }
     // Host-visible and coherent: Execute writes the frame's instances straight
-    // into the slot its command buffer will read, with no staging copy.
+    // into the slot its command buffer will read, with no staging copy. The
+    // stride follows the backend's instance layout.
+    const std::uint64_t stride =
+        backend_ == TextBackend::Slug ? sizeof(SlugTextInstance) : sizeof(WorldTextInstance);
     instance_buffers_.reserve(frames_in_flight_);
     for (std::uint32_t slot = 0; slot < frames_in_flight_; ++slot) {
         instance_buffers_.push_back(GpuBuffer::Create(
-            *bootstrap_, static_cast<std::uint64_t>(kMaxInstances) * sizeof(WorldTextInstance),
+            *bootstrap_, static_cast<std::uint64_t>(kMaxInstances) * stride,
             vk::BufferUsageFlagBits::eStorageBuffer,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
@@ -240,13 +359,39 @@ void WorldTextPass::Setup(PassSetupContext& ctx) {
     decl.descriptor_type = vk::DescriptorType::eStorageBuffer;
     decl.stage_flags = vk::ShaderStageFlagBits::eVertex;
     decl.count = 1;
-    ctx.DeclareBindings({decl});
+    std::vector<VulkanEngine::Render::DescriptorDecl> decls{decl};
+
+    if (backend_ == TextBackend::Slug) {
+        // The Slug fragment reads the pass-owned blob storage buffer at (5, 1);
+        // the instance buffer above carries the flat offsets into it.
+        const auto blobs = ctx.ImportBuffer("world-text-blobs");
+        ctx.AddRead(blobs, VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader,
+                    VulkanEngine::RenderGraph::AccessIntent::Read);
+        VulkanEngine::Render::DescriptorDecl blob_decl{};
+        blob_decl.set = VulkanEngine::Render::kFirstAppDescriptorSet;
+        blob_decl.binding = 1;
+        blob_decl.kind = VulkanEngine::Render::DescriptorKind::Shared;
+        blob_decl.descriptor_type = vk::DescriptorType::eStorageBuffer;
+        blob_decl.stage_flags = vk::ShaderStageFlagBits::eFragment;
+        blob_decl.count = 1;
+        decls.push_back(blob_decl);
+        ctx.DeclareBindings(std::move(decls));
+        ctx.BindResource(VulkanEngine::Render::kFirstAppDescriptorSet, 1, blobs);
+    } else {
+        ctx.DeclareBindings(std::move(decls));
+    }
     ctx.BindResource(VulkanEngine::Render::kFirstAppDescriptorSet, 0, instances);
 
-    // The camera matrix goes out in the vertex stage; the atlas size the range
-    // conversion needs is read in the fragment stage.
-    ctx.DeclarePushConstants<WorldTextConstants>(vk::ShaderStageFlagBits::eVertex |
-                                                 vk::ShaderStageFlagBits::eFragment);
+    // The camera matrix goes out in the vertex stage. The MSDF backend also
+    // needs the atlas size for its range conversion; the Slug backend needs the
+    // viewport size for the half-pixel edge dilation. Both blocks are 80 bytes.
+    if (backend_ == TextBackend::Slug) {
+        ctx.DeclarePushConstants<SlugTextConstants>(vk::ShaderStageFlagBits::eVertex |
+                                                    vk::ShaderStageFlagBits::eFragment);
+    } else {
+        ctx.DeclarePushConstants<WorldTextConstants>(vk::ShaderStageFlagBits::eVertex |
+                                                     vk::ShaderStageFlagBits::eFragment);
+    }
 
     // Straight-alpha source-over: the fragment emits non-premultiplied colour
     // with reconstructed coverage in alpha.
@@ -272,6 +417,11 @@ void WorldTextPass::QueueRun(VulkanEngine::Text::MsdfGenerator& generator,
                              const VulkanEngine::Text::FontFace& face,
                              const VulkanEngine::Text::ShapedRun& run,
                              const VulkanEngine::Text::MsdfConfig& config) {
+    if (backend_ != TextBackend::Msdf) {
+        // Routed elsewhere: a Slug pass has no MSDF pipeline, and reinterpreting
+        // MSDF instances through the Slug layout would be silent corruption.
+        return;
+    }
     const PageSlotLookup page_slot = [&atlas](std::uint32_t page) {
         const auto handle = atlas.PageHandle(page);
         return handle.IsValid() ? handle.slot : kFallbackSlot;
@@ -283,6 +433,29 @@ void WorldTextPass::QueueRun(VulkanEngine::Text::MsdfGenerator& generator,
                             pending_, config);
 }
 
+void WorldTextPass::QueueSlugRun(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                                 const VulkanEngine::Components::Text& component,
+                                 const VulkanEngine::Components::Transform& transform,
+                                 const VulkanEngine::Text::FontFace& face,
+                                 const VulkanEngine::Text::ShapedRun& run,
+                                 std::uint32_t recording_frame) {
+    if (backend_ != TextBackend::Slug || !blobs_.IsValid()) {
+        return;
+    }
+    // The builder stays device-free: it asks this callback where each blob went
+    // and stores the element offset the shader will add to the buffer base.
+    const BlobUploader upload =
+        [this, recording_frame](std::span<const std::byte> bytes) -> std::optional<std::uint64_t> {
+        const auto offset = blobs_.Store(bytes, recording_frame);
+        if (!offset.has_value()) {
+            return std::nullopt;
+        }
+        return blobs_.ElementOffset(*offset);
+    };
+    BuildSlugTextInstances(encoder, upload, component, WorldModelMatrix(transform), face, run,
+                           pending_slug_);
+}
+
 vk::Buffer WorldTextPass::InstanceBufferForFrame(std::uint32_t frame_index) const {
     const std::uint32_t ring = RingForFrame(frame_index);
     if (ring >= instance_buffers_.size() || !instance_buffers_[ring].IsValid()) {
@@ -292,7 +465,14 @@ vk::Buffer WorldTextPass::InstanceBufferForFrame(std::uint32_t frame_index) cons
 }
 
 void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
-    if (pending_.empty()) {
+    const bool slug = backend_ == TextBackend::Slug;
+    if (slug) {
+        // Once-per-frame drain of buffers a growth retired; the device is idle
+        // for the slot this frame reuses, so the release is now provably safe.
+        blobs_.Collect(ctx.frame_index);
+    }
+    const std::size_t queued = slug ? pending_slug_.size() : pending_.size();
+    if (queued == 0) {
         return; // nothing queued: draw nothing, and open no rendering area
     }
     if (ctx.pass_pipeline == nullptr || ctx.pipeline_layout == nullptr || bootstrap_ == nullptr) {
@@ -312,20 +492,26 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     if (ring >= instance_buffers_.size() || !instance_buffers_[ring].IsValid()) {
         return;
     }
-    const std::uint32_t count = std::min<std::uint32_t>(
-        static_cast<std::uint32_t>(pending_.size()), kMaxInstances);
-    if (static_cast<std::uint32_t>(pending_.size()) > kMaxInstances) {
-        LOGIFACE_LOG(warn, "WorldTextPass: dropping " +
-                               std::to_string(pending_.size() - kMaxInstances) +
+    const std::uint32_t count =
+        std::min<std::uint32_t>(static_cast<std::uint32_t>(queued), kMaxInstances);
+    if (queued > kMaxInstances) {
+        LOGIFACE_LOG(warn, "WorldTextPass: dropping " + std::to_string(queued - kMaxInstances) +
                                " glyph instances over the per-frame budget");
     }
-    instance_buffers_[ring].UploadAt(
-        pending_.data(), static_cast<std::uint64_t>(count) * sizeof(WorldTextInstance), 0);
+    if (slug) {
+        instance_buffers_[ring].UploadAt(
+            pending_slug_.data(), static_cast<std::uint64_t>(count) * sizeof(SlugTextInstance), 0);
+    } else {
+        instance_buffers_[ring].UploadAt(
+            pending_.data(), static_cast<std::uint64_t>(count) * sizeof(WorldTextInstance), 0);
 
-    // The MSDF atlas pages the queued instances sample are copied first, so the
-    // draw below is ordered after the transfer in this same command buffer.
-    if (pre_record_) {
-        pre_record_(cmd, ctx.frame_index);
+        // The MSDF atlas pages the queued instances sample are copied first, so
+        // the draw below is ordered after the transfer in this same command
+        // buffer. The Slug backend has no atlas: its blobs are already in the
+        // buffer the pass owns.
+        if (pre_record_) {
+            pre_record_(cmd, ctx.frame_index);
+        }
     }
 
     // Setup() declares auto_begin_rendering = false, like the screen-space text
@@ -354,13 +540,23 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ctx.pass_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout,
                            ctx.first_app_descriptor_set, ctx.app_descriptor_sets, {});
-    WorldTextConstants constants{};
-    // Raw glm memory: the engine's shaders read matrices in the row-vector
-    // convention mul(float4(p, 1), m), which is what this layout provides.
-    std::memcpy(constants.view_proj, &ctx.view_proj, sizeof(constants.view_proj));
-    constants.atlas_size[0] = atlas_width_;
-    constants.atlas_size[1] = atlas_height_;
-    static_cast<void>(ctx.SetPushConstants(cmd, constants));
+    if (slug) {
+        SlugTextConstants constants{};
+        // Raw glm memory: the engine's shaders read matrices in the row-vector
+        // convention mul(float4(p, 1), m), which is what this layout provides.
+        std::memcpy(constants.view_proj, &ctx.view_proj, sizeof(constants.view_proj));
+        // The viewport size is what hb_gpu_dilate turns into half a screen pixel
+        // of edge dilation.
+        constants.viewport[0] = static_cast<float>(ctx.render_width);
+        constants.viewport[1] = static_cast<float>(ctx.render_height);
+        static_cast<void>(ctx.SetPushConstants(cmd, constants));
+    } else {
+        WorldTextConstants constants{};
+        std::memcpy(constants.view_proj, &ctx.view_proj, sizeof(constants.view_proj));
+        constants.atlas_size[0] = atlas_width_;
+        constants.atlas_size[1] = atlas_height_;
+        static_cast<void>(ctx.SetPushConstants(cmd, constants));
+    }
     // Each queue run records into its own command buffer, so the dynamic state
     // cannot be inherited from the scene passes.
     cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(ctx.render_width),
@@ -371,6 +567,7 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
 
     // The queue is consumed by the frame that draws it.
     pending_.clear();
+    pending_slug_.clear();
 }
 
 } // namespace VulkanEngine::SceneRenderer

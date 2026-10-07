@@ -16,8 +16,10 @@ import VulkanEngine.GpuBuffer;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.Components.Text;
 import VulkanEngine.Components.Transform;
+import VulkanEngine.Text.Blob;
 import VulkanEngine.Text.Font;
 import VulkanEngine.Text.GlyphAtlasGpu;
+import VulkanEngine.Text.GpuTextBlobBuffer;
 import VulkanEngine.Text.Layout;
 import VulkanEngine.Text.Msdf;
 import VulkanEngine.Text.Shaping;
@@ -28,6 +30,19 @@ using VulkanEngine::GpuResources::GpuBuffer;
 using VulkanEngine::PipelinePass::FrameContext;
 using VulkanEngine::PipelinePass::IPipelinePass;
 using VulkanEngine::PipelinePass::PassSetupContext;
+
+// Which rasterizer the world-text pass draws with. The MSDF backend samples a
+// generated distance field from a bindless atlas page and is the default; the
+// Slug backend evaluates the encoded outline analytically. The selector lives
+// here because a pass owns exactly one graphics pipeline, so the choice is made
+// when the pass is constructed (RendererConfig::text_backend) rather than per
+// glyph.
+enum class TextBackend : std::uint8_t {
+    Msdf,
+    Slug,
+};
+
+inline constexpr TextBackend kDefaultTextBackend = TextBackend::Msdf;
 
 // One world-space glyph quad. Mirrors engine/core/shaders/world_text.slang
 // exactly, C data layout, 80 bytes: a world-space basis (origin plus one vector
@@ -62,6 +77,47 @@ struct WorldTextConstants {
 };
 static_assert(sizeof(WorldTextConstants) == 80,
               "WorldTextConstants must mirror the world_text push constant block");
+
+// One world-space Slug glyph quad. Mirrors engine/core/shaders/slug_text.slang
+// exactly, C data layout, 76 bytes: the em box's world basis (the world position
+// of its minimum corner plus one vector per em axis, so the quad follows any
+// rotation and scale), the box in em/design units, colour, and the flat offset
+// of the glyph's blob in the blob storage buffer. There is no uv rect, no atlas
+// page and no distance range -- those are the MSDF backend's fields.
+struct SlugTextInstance {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    float origin[3]{0.0f, 0.0f, 0.0f}; // world position of the em (min_x, min_y) corner
+    float right[3]{1.0f, 0.0f, 0.0f};  // world vector from min_x to max_x
+    float up[3]{0.0f, 1.0f, 0.0f};     // world vector from min_y to max_y
+    float em_min[2]{0.0f, 0.0f};       // ink box minimum, in design units
+    float em_max[2]{1.0f, 1.0f};       // ink box maximum, in design units
+    float color[4]{1.0f, 1.0f, 1.0f, 1.0f}; // straight alpha
+    // Index of the glyph's first 8-byte unit in GpuTextBlobBuffer.
+    std::uint32_t blob_offset = 0;
+    std::uint32_t padding = 0;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(SlugTextInstance) == 76,
+              "SlugTextInstance must mirror the slug_text shader layout");
+
+// Camera and viewport pushed for one Slug draw. The matrix is the engine's
+// row-vector convention like every other pass; the viewport size is what
+// hb_gpu_dilate turns the half-pixel edge dilation into screen pixels.
+struct SlugTextConstants {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    float view_proj[16]{};
+    float viewport[2]{1.0f, 1.0f};
+    float padding[2]{0.0f, 0.0f};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(SlugTextConstants) == 80,
+              "SlugTextConstants must mirror the slug_text push constant block");
+
+// Reserves a glyph blob in the GPU buffer and returns the element (8-byte unit)
+// offset the shader will read it at, or nullopt when the blob cannot be placed.
+// Kept as a callback so the instance builder is device-free: a test can supply a
+// CPU allocator and assert the offsets a run of glyphs produces.
+using BlobUploader = std::function<std::optional<std::uint64_t>(std::span<const std::byte>)>;
 
 // Maps an atlas page index to the bindless slot its page image lives in. TextPass
 // has the same alias for the FreeType atlas; the two passes own different page
@@ -106,6 +162,31 @@ void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,
                              std::vector<WorldTextInstance>& out,
                              const VulkanEngine::Text::MsdfConfig& config = {});
 
+// Turns one Text component plus its world transform into Slug glyph quads.
+//
+// Same layout and same local-to-world placement as the MSDF builder -- including
+// the y-up local frame -- but each drawable glyph resolves to an encoded
+// hb-gpu blob instead of a distance field. The blob is in font design units and
+// size independent, so `encoder` is asked once per glyph with no size and the
+// instance carries the blob's flat buffer offset instead of an atlas uv rect;
+// `upload` places the bytes and hands back that offset. A glyph with no ink (a
+// space) advances the pen and contributes no quad, exactly like an empty field.
+void BuildSlugTextInstances(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                            const BlobUploader& upload,
+                            const VulkanEngine::Components::Text& component,
+                            const glm::mat4& model, const VulkanEngine::Text::FontFace& face,
+                            const VulkanEngine::Text::ShapedRun& run,
+                            std::vector<SlugTextInstance>& out);
+
+// Convenience overload: takes the entity's Transform and builds its matrix.
+void BuildSlugTextInstances(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                            const BlobUploader& upload,
+                            const VulkanEngine::Components::Text& component,
+                            const VulkanEngine::Components::Transform& transform,
+                            const VulkanEngine::Text::FontFace& face,
+                            const VulkanEngine::Text::ShapedRun& run,
+                            std::vector<SlugTextInstance>& out);
+
 // Depth-tested world-space text as an engine-owned render pass.
 //
 // The pass is the world-space counterpart of TextPass and follows its shape: a
@@ -137,12 +218,24 @@ public:
 
     WorldTextPass(VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap, std::uint64_t vertex_shader,
                   std::uint64_t fragment_shader);
+    // Backend-selecting form: `backend` decides which shader pair (and which
+    // instance layout) Setup declares. The 3-argument form above is the MSDF
+    // default, so every existing caller is unchanged.
+    WorldTextPass(VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap, TextBackend backend,
+                  std::uint64_t vertex_shader, std::uint64_t fragment_shader);
     ~WorldTextPass() override;
 
     WorldTextPass(const WorldTextPass&) = delete;
     WorldTextPass& operator=(const WorldTextPass&) = delete;
 
     [[nodiscard]] std::string_view GetName() const override { return "world-text"; }
+
+    // The rasterizer this pass draws with.
+    [[nodiscard]] TextBackend Backend() const noexcept { return backend_; }
+    // Routing predicates: a queue call for the other backend is a no-op rather
+    // than a second layout silently reinterpreted through the wrong struct.
+    [[nodiscard]] bool AcceptsMsdfRuns() const noexcept { return backend_ == TextBackend::Msdf; }
+    [[nodiscard]] bool AcceptsSlugRuns() const noexcept { return backend_ == TextBackend::Slug; }
 
     void Setup(PassSetupContext& ctx) override;
     void Execute(const FrameContext& ctx, vk::CommandBuffer cmd) override;
@@ -162,8 +255,24 @@ public:
                   const VulkanEngine::Text::ShapedRun& run,
                   const VulkanEngine::Text::MsdfConfig& config = {});
 
+    // Slug counterpart of QueueRun. `encoder` owns the hb-gpu blob encoder (the
+    // size-independent, design-unit cache); this pass owns the blob storage
+    // buffer the offsets point into, so it places each newly seen glyph's blob
+    // and records its element offset. `recording_frame` is the frame the caller
+    // is about to record: it is what a buffer retired by a growth inside Store()
+    // is released against. A no-op on an MSDF pass.
+    void QueueSlugRun(VulkanEngine::Text::GlyphBlobEncoder& encoder,
+                      const VulkanEngine::Components::Text& component,
+                      const VulkanEngine::Components::Transform& transform,
+                      const VulkanEngine::Text::FontFace& face,
+                      const VulkanEngine::Text::ShapedRun& run,
+                      std::uint32_t recording_frame);
+
     // Drops everything queued. Execute() consumes the queue.
-    void ClearQueue() { pending_.clear(); }
+    void ClearQueue() {
+        pending_.clear();
+        pending_slug_.clear();
+    }
 
     // Installed by the owning system: called once per frame that actually draws,
     // after the pipeline/layout checks and before the glyph draw is recorded,
@@ -178,6 +287,19 @@ public:
         return static_cast<std::uint32_t>(pending_.size());
     }
     [[nodiscard]] std::span<const WorldTextInstance> QueuedInstances() const { return pending_; }
+    [[nodiscard]] std::uint32_t QueuedSlugInstanceCount() const {
+        return static_cast<std::uint32_t>(pending_slug_.size());
+    }
+    [[nodiscard]] std::span<const SlugTextInstance> QueuedSlugInstances() const {
+        return pending_slug_;
+    }
+
+    // The pass-owned blob storage buffer the Slug instances offset into.
+    // Diagnostics and tests; the renderer's "world-text-blobs" resolver returns
+    // its buffer to the descriptor.
+    [[nodiscard]] VulkanEngine::Text::GpuTextBlobBuffer* BlobBuffer() noexcept {
+        return backend_ == TextBackend::Slug ? &blobs_ : nullptr;
+    }
 
     // The instance buffer the pass binds for `frame_index`'s ring slot. The
     // renderer registers this as the resolver for the imported
@@ -194,12 +316,18 @@ private:
     VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap_ = nullptr;
     std::uint64_t vertex_shader_ = 0;
     std::uint64_t fragment_shader_ = 0;
+    TextBackend backend_ = kDefaultTextBackend;
     std::uint32_t frames_in_flight_ = 1;
     // Called before the draw when set; see SetPreRecordHook.
     std::function<void(vk::CommandBuffer, std::uint32_t)> pre_record_{};
-    // One host-visible instance buffer per frames-in-flight slot.
+    // One host-visible instance buffer per frames-in-flight slot, sized for this
+    // backend's instance layout.
     std::vector<GpuBuffer> instance_buffers_{};
     std::vector<WorldTextInstance> pending_{};
+    std::vector<SlugTextInstance> pending_slug_{};
+    // The Slug backend's blob storage buffer; unused (and uninitialized) for
+    // MSDF.
+    VulkanEngine::Text::GpuTextBlobBuffer blobs_{};
     // Atlas page dimensions of the queued frame, for the shader's range
     // conversion. Kept with the queue because the pass owns no atlas.
     float atlas_width_ = 1.0f;

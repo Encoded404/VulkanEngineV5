@@ -25,6 +25,8 @@ import Shaders.Engine.UiTextVert;
 import Shaders.Engine.UiTextFrag;
 import Shaders.Engine.WorldTextVert;
 import Shaders.Engine.WorldTextFrag;
+import Shaders.Engine.SlugTextVert;
+import Shaders.Engine.SlugTextFrag;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import Shaders.Engine.PhysicalCameraCompositeVert;
@@ -59,6 +61,11 @@ struct EngineShaderIds {
     // fragment reconstructs coverage from the RGBA8 MSDF page.
     ShaderSystem::ShaderId world_text_vert;
     ShaderSystem::ShaderId world_text_frag;
+    // The Slug (hb-gpu) world-text backend: the vertex pulls the quad from
+    // SV_VertexID and the em-space box plus a flat blob offset from a per-glyph
+    // instance; the fragment reconstructs coverage analytically from the blob.
+    ShaderSystem::ShaderId slug_text_vert;
+    ShaderSystem::ShaderId slug_text_frag;
 #ifdef VKENGINE_PHYSICAL_CAMERA
     ShaderSystem::ShaderId physical_camera_composite_vert;
     ShaderSystem::ShaderId physical_camera_composite_frag;
@@ -84,6 +91,8 @@ struct EngineShaderIds {
         ui_text_frag             = Shaders::Engine::UiTextFrag::Register(mgr, data_dir);
         world_text_vert          = Shaders::Engine::WorldTextVert::Register(mgr, data_dir);
         world_text_frag          = Shaders::Engine::WorldTextFrag::Register(mgr, data_dir);
+        slug_text_vert           = Shaders::Engine::SlugTextVert::Register(mgr, data_dir);
+        slug_text_frag           = Shaders::Engine::SlugTextFrag::Register(mgr, data_dir);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         physical_camera_composite_vert = Shaders::Engine::PhysicalCameraCompositeVert::Register(mgr, data_dir);
         physical_camera_composite_frag = Shaders::Engine::PhysicalCameraCompositeFrag::Register(mgr, data_dir);

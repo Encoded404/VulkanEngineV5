@@ -1,14 +1,51 @@
 cmake_minimum_required(VERSION 3.30)
 
+# ── import std: CMake gates it behind a per-release activation value ────────
+#
+# `import std;` is still an experimental CMake feature. It is enabled by setting
+# CMAKE_EXPERIMENTAL_CXX_IMPORT_STD to the value documented in *that* CMake
+# release's Help/dev/experimental.rst under "C++ ``import std`` support", and
+# CMake deliberately changes the value from release to release to keep the
+# feature experimental. It must be set before the CXX toolchain is discovered,
+# which is why this block sits above project().
+#
+# A stale value is a nasty failure: compiler detection records no std-module
+# support, and the build dies later in the *generate* step with
+#   The "CXX_MODULE_STD" property on target "Vulkan-hppModule" requires
+#   toolchain support, but it was not provided.  Reason: Experimental `import
+#   std` support not enabled when detecting toolchain
+# which names neither the CMake version nor the real cause. So each band below
+# names the release it was verified against, and a release outside every band
+# stops with instructions instead of silently reusing another release's value.
+#
+# Verified values: 3.31.11, 4.3.1 and 4.4.0. When adding a band, verify it by
+# configuring with that CMake; passing -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<v>
+# from the command line still overrides everything here.
 if( NOT CMAKE_EXPERIMENTAL_CXX_IMPORT_STD )
-    if( ${CMAKE_VERSION} VERSION_GREATER_EQUAL 4.3 )
-		message("enabling import std with version greater or equal 4.3")
+    if( CMAKE_VERSION VERSION_GREATER_EQUAL 4.4 AND CMAKE_VERSION VERSION_LESS 4.5 )
+        message("enabling import std for CMake 4.4 (verified on 4.4.0)")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 4.3 AND CMAKE_VERSION VERSION_LESS 4.4 )
+        message("enabling import std for CMake 4.3 (verified on 4.3.1)")
         set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-    elseif( ${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.30 )
-		message("enabling import std with version greater or equal 3.30")
+    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 3.30 AND CMAKE_VERSION VERSION_LESS 3.32 )
+        message("enabling import std for CMake 3.30-3.31 (verified on 3.31.11)")
         set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
-    endif ()
-endif ()
+    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 4.5 )
+        message(FATAL_ERROR
+            "CMake ${CMAKE_VERSION} is newer than any release whose `import std` activation "
+            "value this project has verified. Set CMAKE_EXPERIMENTAL_CXX_IMPORT_STD to the "
+            "value documented for CxxImportStd in this CMake's Help/dev/experimental.rst:\n"
+            "  cmake -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<value> ...\n"
+            "then add a band for CMake ${CMAKE_VERSION} to this block.")
+    else()
+        message(FATAL_ERROR
+            "CMake ${CMAKE_VERSION} is outside the verified range for `import std;`, which "
+            "this project requires. Use CMake 3.30-3.31, 4.3 or 4.4, or set "
+            "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD from this CMake's "
+            "Help/dev/experimental.rst.")
+    endif()
+endif()
 
 set(PROJECT_NAME "VulkanEngineV5")
 set(BACKEND_TARGET "VulkanBackend")

@@ -20,6 +20,7 @@ add_executable(gpu_tests
   text_render_gpu_tests.cpp
   text_system_gpu_tests.cpp
   world_text_gpu_tests.cpp
+  slug_blob_gpu_tests.cpp
 )
 find_package(Ktx CONFIG REQUIRED)
 target_link_libraries(gpu_tests PRIVATE
@@ -68,6 +69,7 @@ add_slang_shaders(
     test_texture_info  test_texture_info.cs.slang compute main
     test_read_page     test_read_page.cs.slang  compute main
     test_read_page_rgba test_read_page_rgba.cs.slang compute main
+    test_slug_blob_probe test_slug_blob_probe.cs.slang compute main
 )
 add_dependencies(gpu_tests gpu_test_shaders)
 

@@ -107,5 +107,9 @@ troubleshooting.
 - **[docs/app-render-passes.md](docs/app-render-passes.md)** — registering
   application render passes (pipelines, descriptors, ordering, resize), with
   the `examples/custom_pass` walkthrough.
+- **[docs/text-rendering.md](docs/text-rendering.md)** — the two text paths
+  (hinted A8 screen-space text, resolution-independent MSDF and Slug world
+  text), the shared shaping/layout/cache pipeline and the tests that pin it,
+  with the `examples/text_demo` walkthrough.
 - [docs/render-graph-parity-checklist.md](docs/render-graph-parity-checklist.md)
 - [docs/descriptor-rewiring-contract.md](docs/descriptor-rewiring-contract.md)

@@ -122,26 +122,33 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
     // ContentsUndefined contract: an aliasable image must start Undefined, so a
     // requested non-Undefined initial layout is dropped rather than aliased.
     if (!desc.aliasable && desc.initial_layout != vk::ImageLayout::eUndefined) {
+        // Both layout paths share one mapping (ToImageLayoutIntent), so the
+        // initial and final chains cannot drift apart. An unrepresentable layout
+        // is reported rather than silently becoming Undefined.
+        const auto initial_layout = VulkanEngine::RenderGraph::ToImageLayoutIntent(desc.initial_layout);
+        if (initial_layout == VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined) {
+            LOGIFACE_LOG(warn, "RenderPipeline: transient image '" + desc.name +
+                                   "' requested an initial layout with no graph intent; using Undefined");
+        }
         auto initial_state = VulkanEngine::RenderGraph::ResourceState::ImageState(
             VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
             VulkanEngine::RenderGraph::QueueType::Graphics,
-            desc.initial_layout == vk::ImageLayout::eColorAttachmentOptimal ? VulkanEngine::RenderGraph::ImageLayoutIntent::ColorAttachment :
-            desc.initial_layout == vk::ImageLayout::eDepthAttachmentOptimal ? VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment :
-            desc.initial_layout == vk::ImageLayout::eShaderReadOnlyOptimal ? VulkanEngine::RenderGraph::ImageLayoutIntent::ShaderReadOnly :
-            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined);
+            initial_layout);
         graph_builder_.SetInitialState(handle, initial_state);
     }
 
     if (desc.final_layout != vk::ImageLayout::eUndefined) {
+        const auto final_layout = VulkanEngine::RenderGraph::ToImageLayoutIntent(desc.final_layout);
+        if (final_layout == VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined) {
+            LOGIFACE_LOG(warn, "RenderPipeline: transient image '" + desc.name +
+                                   "' requested a final layout with no graph intent; using Undefined");
+        }
         auto final_state = VulkanEngine::RenderGraph::ResourceState::ImageState(
             VulkanEngine::RenderGraph::PipelineStageIntent::BottomOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
             VulkanEngine::RenderGraph::QueueType::Graphics,
-            desc.final_layout == vk::ImageLayout::eColorAttachmentOptimal ? VulkanEngine::RenderGraph::ImageLayoutIntent::ColorAttachment :
-            desc.final_layout == vk::ImageLayout::eDepthAttachmentOptimal ? VulkanEngine::RenderGraph::ImageLayoutIntent::DepthAttachment :
-            desc.final_layout == vk::ImageLayout::ePresentSrcKHR ? VulkanEngine::RenderGraph::ImageLayoutIntent::Present :
-            VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined);
+            final_layout);
         graph_builder_.SetFinalState(handle, final_state);
     }
 

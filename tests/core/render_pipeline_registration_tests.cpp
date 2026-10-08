@@ -183,4 +183,54 @@ TEST(RenderPipelineRegistrationTest, OrdersAroundBuiltinAnchors) {
     EXPECT_EQ(passes[1].name, "main");
 }
 
+// A transient image's explicit initial/final layout must reach the compiled graph
+// unchanged. The final-layout path used to map eShaderReadOnlyOptimal to
+// Undefined (its ternary chain handled only ColorAttachment/DepthAttachment/
+// Present while the initial-layout chain also handled ShaderReadOnly), so the
+// requested layout degraded to a content-discarding Undefined transition.
+class LayoutRequestingPass final : public IPipelinePass {
+public:
+    [[nodiscard]] std::string_view GetName() const override { return "layout-requesting"; }
+
+    void Setup(PassSetupContext& ctx) override {
+        target_ = ctx.CreateTransientImage(TransientImageDesc{
+            .name = "shader-read-target",
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .width = 32,
+            .height = 32,
+            .initial_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .final_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        });
+        ctx.AddWrite(target_);
+    }
+
+    void Execute(const FrameContext&, vk::CommandBuffer) override {}
+
+    VulkanEngine::RenderGraph::ResourceHandle target_{};
+};
+
+TEST(RenderPipelineRegistrationTest, ShaderReadOnlyInitialAndFinalLayoutsSurviveCompile) {
+    RenderPipeline pipeline;
+    auto pass = std::make_unique<LayoutRequestingPass>();
+    auto* raw_pass = pass.get();
+    ASSERT_TRUE(pipeline.RegisterPass(std::move(pass)).has_value());
+    pipeline.ApplyChanges();
+    ASSERT_TRUE(pipeline.IsCompiled());
+
+    const auto& graph = pipeline.GetCompiledGraph();
+    const std::uint32_t index = raw_pass->target_.index;
+    ASSERT_LT(index, graph.has_initial_state.size());
+    ASSERT_TRUE(graph.has_initial_state[index]);
+    EXPECT_EQ(graph.initial_states[index].layout,
+              VulkanEngine::RenderGraph::ImageLayoutIntent::ShaderReadOnly);
+
+    ASSERT_EQ(graph.passes.size(), 1u);
+    const auto& post = graph.passes.front().post_pass_transitions;
+    ASSERT_EQ(post.size(), 1u);
+    EXPECT_EQ(post.front().target_state.layout,
+              VulkanEngine::RenderGraph::ImageLayoutIntent::ShaderReadOnly);
+    EXPECT_EQ(VulkanEngine::RenderGraph::IntentToImageLayout(post.front().target_state.layout),
+              vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
 }  // namespace

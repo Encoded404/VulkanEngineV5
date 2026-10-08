@@ -111,3 +111,44 @@ TEST(RenderGraphTest, CompiledGraphExecutesCallbacksInOrder) {
     EXPECT_EQ(call_order[0], 1);
     EXPECT_EQ(call_order[1], 2);
 }
+
+// The transient-image layout contract maps a requested vk::ImageLayout to an
+// ImageLayoutIntent and back. Every intent the enum defines must round-trip
+// exactly; the defect this pins is a mapping that dropped or substituted a
+// layout (the old hand-written initial/final chains disagreed about
+// ShaderReadOnly, and the final chain turned it into Undefined).
+TEST(RenderGraphTest, ImageLayoutIntentRoundTripsEveryIntent) {
+    constexpr std::array kIntents{
+        ImageLayoutIntent::Undefined,
+        ImageLayoutIntent::General,
+        ImageLayoutIntent::ColorAttachment,
+        ImageLayoutIntent::DepthAttachment,
+        ImageLayoutIntent::ShaderReadOnly,
+        ImageLayoutIntent::TransferSource,
+        ImageLayoutIntent::TransferDestination,
+        ImageLayoutIntent::Present,
+        ImageLayoutIntent::DepthReadOnly,
+    };
+
+    for (const ImageLayoutIntent intent : kIntents) {
+        EXPECT_EQ(ToImageLayoutIntent(IntentToImageLayout(intent)), intent)
+            << "layout " << static_cast<int>(IntentToImageLayout(intent)) << " did not round-trip";
+    }
+
+    // The specific regression: ShaderReadOnly was the one layout the final path
+    // failed to map.
+    EXPECT_EQ(ToImageLayoutIntent(vk::ImageLayout::eShaderReadOnlyOptimal),
+              ImageLayoutIntent::ShaderReadOnly);
+}
+
+// A layout the intent enum cannot represent must map to Undefined instead of
+// silently standing in for a different layout: the depth-stencil variants are
+// distinct Vulkan layouts, so folding them into DepthAttachment/DepthReadOnly
+// would substitute a layout the caller did not ask for.
+TEST(RenderGraphTest, UnrepresentableLayoutsMapToUndefined) {
+    EXPECT_EQ(ToImageLayoutIntent(vk::ImageLayout::ePreinitialized), ImageLayoutIntent::Undefined);
+    EXPECT_EQ(ToImageLayoutIntent(vk::ImageLayout::eDepthStencilAttachmentOptimal),
+              ImageLayoutIntent::Undefined);
+    EXPECT_EQ(ToImageLayoutIntent(vk::ImageLayout::eDepthStencilReadOnlyOptimal),
+              ImageLayoutIntent::Undefined);
+}

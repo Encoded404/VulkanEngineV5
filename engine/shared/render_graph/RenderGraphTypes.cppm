@@ -594,6 +594,38 @@ inline vk::ImageLayout IntentToImageLayout(ImageLayoutIntent intent) {
     return vk::ImageLayout::eUndefined;
 }
 
+// Inverse of IntentToImageLayout, and the only place a requested vk::ImageLayout
+// is mapped to an intent. It is faithful by construction: a layout maps to an
+// intent only when that intent's canonical layout is exactly that layout, so it
+// never substitutes a different layout for the requested one. A layout the
+// intent enum cannot represent (a vendor-extension layout, or the depth-stencil
+// variants it does not distinguish) maps to Undefined; callers that must not
+// silently drop a request compare the result against a non-Undefined input.
+[[nodiscard]] inline ImageLayoutIntent ToImageLayoutIntent(vk::ImageLayout layout) {
+    switch (layout) {
+        case vk::ImageLayout::eUndefined:
+            return ImageLayoutIntent::Undefined;
+        case vk::ImageLayout::eGeneral:
+            return ImageLayoutIntent::General;
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            return ImageLayoutIntent::ColorAttachment;
+        case vk::ImageLayout::eDepthAttachmentOptimal:
+            return ImageLayoutIntent::DepthAttachment;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            return ImageLayoutIntent::ShaderReadOnly;
+        case vk::ImageLayout::eTransferSrcOptimal:
+            return ImageLayoutIntent::TransferSource;
+        case vk::ImageLayout::eTransferDstOptimal:
+            return ImageLayoutIntent::TransferDestination;
+        case vk::ImageLayout::ePresentSrcKHR:
+            return ImageLayoutIntent::Present;
+        case vk::ImageLayout::eDepthReadOnlyOptimal:
+            return ImageLayoutIntent::DepthReadOnly;
+        default:
+            return ImageLayoutIntent::Undefined;
+    }
+}
+
 inline vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
     switch (format) {
         case vk::Format::eD16Unorm:

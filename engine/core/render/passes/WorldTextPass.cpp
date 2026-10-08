@@ -559,8 +559,14 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     }
     // Each queue run records into its own command buffer, so the dynamic state
     // cannot be inherited from the scene passes.
-    cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(ctx.render_width),
-                                    static_cast<float>(ctx.render_height), 0.0f, 1.0f));
+    //
+    // World text is scene content: it is placed in the y-up world and projected
+    // by the camera's view_proj, so it draws through the same y-mirroring viewport
+    // the main and depth passes use. The screen-space overlay's unflipped viewport
+    // would flip every glyph vertically (upside down), which is the bug this
+    // shared definition exists to prevent.
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(ctx.render_width,
+                                                                 ctx.render_height));
     cmd.setScissor(0, vk::Rect2D{{0, 0}, ctx.render_extent});
     cmd.draw(6, count, 0, 0);
     cmd.endRendering();

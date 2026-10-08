@@ -23,6 +23,7 @@ import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
@@ -388,8 +389,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     }
     LOGIFACE_LOG(trace, "DepthPrepass: submesh_count=" + std::to_string(current_entity_count_) +
                  " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
     LOGIFACE_LOG(trace, std::format("DepthPrepass: bound pipeline 0x{:x}",
@@ -426,8 +426,7 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
     }
     LOGIFACE_LOG(trace, "OccluderPrepass: selected occluders (" + std::to_string(w) + "x" +
                  std::to_string(h) + ")");
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
     const std::array<vk::DescriptorSet, 4> ds{
@@ -463,8 +462,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     }
     auto& fr = frames_[fi % frames_in_flight_];
 
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
 
     // Engine descriptor set handles (used by both legacy and BaseTechnique paths)

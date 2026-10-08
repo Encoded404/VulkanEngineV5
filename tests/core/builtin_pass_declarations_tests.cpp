@@ -8,6 +8,7 @@ import vulkan_hpp;
 
 import VulkanEngine.RenderPipeline;
 import VulkanEngine.SceneRenderer;
+import VulkanEngine.PipelinePass;
 import VulkanEngine.Render.Passes.ExpandPass;
 import VulkanEngine.Render.Passes.OccluderSelectPass;
 import VulkanEngine.Render.Passes.OccluderPrePass;
@@ -136,6 +137,29 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
     ASSERT_EQ(imgui_pass->attachment_setup->color_attachments.size(), 1u);
     EXPECT_EQ(imgui_pass->attachment_setup->color_attachments.front().load_op,
               vk::AttachmentLoadOp::eLoad);
+}
+
+// SceneViewport is the y mirror that reconciles GLM's y-up projection with
+// Vulkan's y-down framebuffer: clip-space +y (world up) has to land at
+// framebuffer row 0, which only a negative height does. World text draws through
+// this viewport as scene content; the screen-space overlay deliberately does not,
+// which is exactly why the two must not share one call site.
+TEST(SceneViewportTest, MirrorsClipSpaceYIntoTheFramebuffer) {
+    const vk::Viewport viewport = SceneViewport(1280, 720);
+    EXPECT_FLOAT_EQ(viewport.x, 0.0f);
+    EXPECT_FLOAT_EQ(viewport.y, 720.0f);
+    EXPECT_FLOAT_EQ(viewport.width, 1280.0f);
+    EXPECT_FLOAT_EQ(viewport.height, -720.0f);
+    EXPECT_FLOAT_EQ(viewport.minDepth, 0.0f);
+    EXPECT_FLOAT_EQ(viewport.maxDepth, 1.0f);
+
+    // The viewport transform's y term, framebuffer_y = (ndc_y + 1) * height / 2 + y.
+    const auto framebuffer_y = [&viewport](float ndc_y) {
+        return (ndc_y + 1.0f) * viewport.height * 0.5f + viewport.y;
+    };
+    EXPECT_FLOAT_EQ(framebuffer_y(1.0f), 0.0f)
+        << "clip-space +y (world up) must map to the top framebuffer row";
+    EXPECT_FLOAT_EQ(framebuffer_y(-1.0f), 720.0f);
 }
 
 } // namespace

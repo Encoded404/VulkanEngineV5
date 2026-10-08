@@ -320,10 +320,11 @@ maps a path back to its registered resource and pumps the reload on the main
 thread, where the frame pump can order the page retirement. The watcher is inert
 when the platform has no backend, so a shipped build simply never reloads.
 
-## 7. Two conventions that were wrong once
+## 7. Three conventions that were wrong once
 
-Both of these were real bugs that only a sign- or offset-sensitive assertion
-caught, and both are now pinned by tests.
+All three were real bugs, and all are now pinned by a sign- or offset-sensitive
+assertion. 7.1 and 7.2 were caught by existing tests; 7.3 slipped through
+because nothing asserted the pass's viewport.
 
 ### 7.1 Alignment offsets are positive from the box's left edge
 
@@ -350,6 +351,31 @@ above the baseline by its magnitude, and the quad's up edge runs downward
 (−height) to match the atlas's top-down row order. The test asserts the signs
 directly (a capital's field top is above the baseline; the up edge runs
 downward), because magnitudes cannot see the bug.
+
+### 7.3 The world-text pass draws with the scene viewport
+
+Vulkan's framebuffer origin is top-left and clip-space `+y` points **down** the
+framebuffer, while the engine's projection matrices are GLM's y-up ones
+(`GLM_FORCE_DEPTH_ZERO_TO_ONE` moves z to `[0, 1]` and leaves y alone) and the
+camera's up is `(0, 1, 0)`. Every scene pass reconciles the two with a
+negative-height viewport, now the single `PipelinePass::SceneViewport`
+definition.
+
+The world-text pass is scene content — it places quads in the y-up world and
+projects them with the camera's `view_proj` — but it had copied the *screen-space*
+overlay's positive-height viewport (the overlay draws y-down pixels straight to
+clip space and must not flip). The result was the same sign-only failure as 7.2,
+one layer up: the whole block rendered vertically mirrored, so each glyph looked
+upside down while the line still read left to right (a pure y mirror, not the
+180° rotation a horizontal mirror would give). Nothing caught it for the same
+reasons: world-space magnitudes, projected bounding boxes, the depth test against
+scene geometry and the shader's own y-up frame were all still correct, and the
+GPU suite draws through its own harness viewport rather than
+`WorldTextPass::Execute`.
+
+The pass now sets `SceneViewport`, shared with the main, depth and occluder
+passes, and `tests/core/builtin_pass_declarations_tests.cpp` pins the convention
+device-free (clip-space `+y`, i.e. world up, must map to framebuffer row 0).
 
 ## 8. Tests and harness conventions
 

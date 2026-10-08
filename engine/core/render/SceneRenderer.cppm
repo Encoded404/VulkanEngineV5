@@ -20,6 +20,7 @@ export import VulkanEngine.BindlessManager;
 export import VulkanEngine.Mesh.MeshTypes;
 export import VulkanEngine.GpuResources;
 export import VulkanEngine.GpuResources.BlockArray;
+export import VulkanEngine.SceneLimits;
 export import VulkanEngine.DrawMode;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
@@ -80,14 +81,16 @@ public:
     // base+1). The generator and the initialization-time coverage assert share
     // this value so the two cannot drift apart.
     static constexpr std::uint32_t HIZ_BATCH = 2;
-    static constexpr std::uint32_t MAX_VERTEX_BUFFERS = 64;
-    static constexpr std::uint32_t MAX_INDEX_BUFFERS = 64;
+    // Fixed descriptor-table sizes. Single source: SceneLimits.
+    static constexpr std::uint32_t MAX_VERTEX_BUFFERS = SceneLimits::kMaxVertexBuffers;
+    static constexpr std::uint32_t MAX_INDEX_BUFFERS = SceneLimits::kMaxIndexBuffers;
     // Out-of-line UV buffer table (engine set 2, binding 1). Same block-growth
     // model as the vertex table; a mesh without out-of-line UVs stores a
     // sentinel in its vertex entry and never indexes this table.
-    static constexpr std::uint32_t MAX_UV_BUFFERS = 64;
-    static constexpr std::uint32_t BLOCK_ENTRIES = 256;
-    static constexpr std::uint32_t MAX_BLOCKS = 1024;
+    static constexpr std::uint32_t MAX_UV_BUFFERS = SceneLimits::kMaxUvBuffers;
+    // Entries per storage-buffer block. Single source: SceneLimits; mirrored in
+    // shaders/scene_block_layout.slang.
+    static constexpr std::uint32_t BLOCK_ENTRIES = SceneLimits::kEntriesPerBlock;
     // Draw-key table capacity: the full technique/draw-group bit width, owned
     // by TechniquePacking (TECHNIQUE_BITS = 14 -> 16384). Every per-key GPU
     // table (flags, counts, results, command regions) is sized to this, and the
@@ -151,6 +154,14 @@ public:
 
     [[nodiscard]] DrawMode GetDrawMode() const { return draw_mode_; }
     [[nodiscard]] const SceneCapacity& GetSceneCapacity() const { return scene_capacity_; }
+    // Runtime submesh budget: the block count chosen at Initialize, clamped by
+    // the device's descriptor limits under SceneLimits::kMaxBlocksCeiling. The
+    // gather pass clamps to MaxSubmeshes() so a scene can never write past the
+    // descriptor binding arrays.
+    [[nodiscard]] std::uint32_t MaxBlocks() const { return max_blocks_; }
+    [[nodiscard]] std::uint32_t MaxSubmeshes() const {
+        return max_blocks_ * SceneLimits::kEntriesPerBlock;
+    }
     [[nodiscard]] bool IsDrawModeSupported(DrawMode mode) const;
     // Resolves a requested draw mode against the device capabilities: MID needs
     // both drawIndirectCount and drawIndirectFirstInstance, otherwise the result
@@ -296,6 +307,16 @@ private:
         VulkanEngine::GpuResources::BlockArray obb_entries{};
         VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
         VulkanEngine::GpuResources::BlockArray cull_entries{};
+
+        // Descriptor-write cache for the six submesh block arrays above. They
+        // grow in lockstep and only ever grow, so the descriptors for blocks
+        // that already exist do not need rewriting every frame. `epoch` matches
+        // SceneRenderer::binding_epoch_; when it differs the whole array is
+        // rewritten (capacity growth recreated the underlying buffers).
+        struct BlockBindingCache {
+            std::uint32_t written_blocks = 0;
+            std::uint32_t epoch = 0;
+        } block_binding_cache{};
 
         // ── Indexed-drawing substrate ──
         // One VertexIndirectionEntry per slot in each submesh's tight vertex
@@ -525,6 +546,14 @@ private:
     // single resolved rule feeds selection, IsDrawModeSupported and Reinitialize.
     bool mid_supported_ = false;
     SceneCapacity scene_capacity_{};
+    // Chosen in Initialize from SceneLimits::MaxBlocksForDevice(device limits),
+    // clamped to [1, kMaxBlocksCeiling]. Every descriptor binding array, pool
+    // size, and BlockArray limit derives from this.
+    std::uint32_t max_blocks_ = 0;
+    // Bumped whenever the per-frame block-array descriptors are invalidated
+    // (CreateFrameBuffers). PrepareCompute compares it against each frame's
+    // BlockBindingCache to choose a full vs incremental descriptor rewrite.
+    std::uint32_t binding_epoch_ = 1;
     // CPU prefix sum (MID): region_base_[t] = first command slot of technique t.
     std::vector<std::uint32_t> region_base_{};
     std::vector<std::uint32_t> region_count_{};

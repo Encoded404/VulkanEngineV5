@@ -24,6 +24,10 @@ public:
     struct Config {
         std::uint32_t entry_size = 0;
         std::uint32_t entries_per_block = 256;
+        // Hard ceiling on blocks. EnsureCapacity/AddBlock refuse to grow past
+        // this, so a caller can bound an array to its descriptor-set binding
+        // array size. Effectively unlimited by default.
+        std::uint32_t max_blocks = std::numeric_limits<std::uint32_t>::max();
         vk::BufferUsageFlags extra_usage = {};
         vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible |
                                           vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -43,7 +47,14 @@ public:
 
     void Shutdown();
 
-    void* EnsureCapacity(std::uint32_t count);
+    // Grows the array to hold at least `count` entries. Returns false without
+    // growing when the request would exceed Config::max_blocks or a block
+    // allocation fails. Callers whose descriptor-set layout bounds this array
+    // MUST check the result: writing a block past the binding array size is
+    // invalid descriptor usage.
+    [[nodiscard]] bool EnsureCapacity(std::uint32_t count);
+
+    [[nodiscard]] std::uint32_t BlockLimit() const { return cfg_.max_blocks; }
 
     // For HostVisible memory: returns pointer to entry data.
     // For DeviceLocal memory: asserts and returns nullptr — use UploadEntry() instead.

@@ -14,6 +14,7 @@
 // increments techniqueResults[].count (alive submesh count); collect_write
 // publishes it.
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 
 struct TechniqueResult {
     uint offset; // CID: compaction base; MID: alive-submesh count scratch
@@ -64,8 +65,8 @@ bool ValidKey(uint key) {
 void passCount(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
 
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
@@ -88,8 +89,8 @@ void passPrefix() {
 
 void passCompactMono(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;
@@ -105,8 +106,8 @@ void passCompactMono(uint submeshIndex) {
 
 void passCompactMid(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;

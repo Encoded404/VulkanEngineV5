@@ -148,7 +148,8 @@ public:
                         continue;
                     }
 
-                    ba->EnsureCapacity(id.value + 1);
+                    // Failure is handled by the BlockCount() check below.
+                    (void)ba->EnsureCapacity(id.value + 1);
                     if (block >= ba->BlockCount()) {
                         LOGIFACE_LOG(error, "MaterialManager::Register: BlockArray for technique " +
                                      std::to_string(tech_id.value) + " binding " + std::to_string(bi) +

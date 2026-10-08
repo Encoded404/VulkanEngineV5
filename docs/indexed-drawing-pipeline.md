@@ -164,8 +164,47 @@ until frames that recorded it have finished.
 Frame buffers size from the scene's current totals. The totals are known only
 after the gather pass, so buffers are allocated at an initial capacity and grow
 geometrically from the gather. Growth device-idles and re-creates the
-capacity-dependent buffers. Descriptors are written per frame, so growth and mode
-changes need no descriptor surgery.
+capacity-dependent buffers. Mode changes reuse the same path.
+
+### 2.9.1 The submesh budget has one source
+
+Per-submesh data lives in descriptor-bound block arrays: one storage-buffer
+binding per block, `kEntriesPerBlock` submeshes per block. Three numbers that
+used to be independent now derive from one budget
+(`engine/core/render/SceneLimits.cppm`):
+
+- `kEntriesPerBlock` (256) — mirrored in `shaders/scene_block_layout.slang`. The
+  submesh shaders divide a flat submesh index by it; the CPU sizes each
+  `BlockArray` with it. Material and light blocks keep their own constants.
+- `kMaxBlocksCeiling` — the compile-time ceiling, because descriptor binding
+  array sizes are static.
+- `max_blocks_` — chosen in `SceneRenderer::Initialize` as
+  `clamp(MaxBlocksForDevice(device descriptor limits), 1, ceiling)`, so a larger
+  GPU gets a larger budget without a recompile.
+
+Descriptor-set binding array sizes and descriptor-pool sizes are computed from
+the same `SetPlan` row per set, and each `BlockArray` is given an explicit block
+limit equal to `max_blocks_`, so it can no longer grow past its binding array.
+
+The gather pass clamps the frame's submesh total to
+`max_blocks_ × kEntriesPerBlock` and truncates at a submesh boundary, logging
+once, instead of writing past the binding array. The entity-level gather cap is
+only a safety valve; the submesh budget is the real capacity limit.
+
+Per-submesh cost is fixed at 368 B per submesh per frame (48+36+16+64+188+16);
+with 3 frames in flight that is about 1.1 KiB/submesh, so the ceiling is a
+capability bound, not a recommended working set.
+
+### 2.9.2 Block descriptors are written on change
+
+Each per-frame block array only ever gains blocks at the end. A descriptor
+written for a block in an earlier frame stays valid, so `PrepareCompute` writes
+only the blocks that do not exist yet, tracked by a per-frame `BlockBindingCache`
+(`written_blocks` + `epoch`). `CreateFrameBuffers` bumps a renderer-level epoch
+that forces a full rewrite after the underlying buffers are re-created. Steady
+state therefore performs no block-descriptor writes at all; the previous
+unconditional rewrite cost nine bindings × used blocks `vkUpdateDescriptorSets`
+calls every frame.
 
 ## 3. Cost data
 

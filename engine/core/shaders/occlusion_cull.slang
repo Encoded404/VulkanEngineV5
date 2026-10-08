@@ -1,5 +1,6 @@
 // Per-submesh transform and material info (written by expand pass).
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 
 [[vk::binding(0, 0)]]
 StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
@@ -55,8 +56,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint submeshIndex = dispatchThreadId.x;
     if (submeshIndex >= pc.elementCount) return;
 
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry cullEntry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (cullEntry.indexCount == 0) return;

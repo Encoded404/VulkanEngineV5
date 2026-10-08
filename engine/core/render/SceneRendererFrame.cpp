@@ -107,9 +107,12 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     grow_blocks(fr.cull_entries, total, "cull_entries");
 
     // The six arrays are grown with the same `total` and the same
-    // entries-per-block, so they always have the same block count. The shared
-    // descriptor-write cache below relies on that.
+    // entries-per-block, so they always have the same block count. The
+    // per-binding descriptor-write cursors below each track their own array,
+    // and this lockstep is the invariant the block lookups in the shaders use.
+#ifndef NDEBUG
     const std::uint32_t block_count = fr.dynamic_entries.BlockCount();
+#endif
     assert(fr.static_entries.BlockCount() == block_count &&
            fr.bounding_spheres.BlockCount() == block_count &&
            fr.obb_entries.BlockCount() == block_count &&
@@ -121,12 +124,19 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     // appended and never removed, so a descriptor written in an earlier frame
     // stays valid; `binding_epoch_` changes when CreateFrameBuffers recreated
     // the underlying buffers, forcing a full rewrite.
+    //
+    // Each (set, binding) pair owns its own cursor. The same BlockArray is bound
+    // into several sets (cull_entries alone appears in four) and each binding
+    // still has to be written: a single shared cursor lets the first pair write
+    // its blocks and then reports the frame's whole block budget written, so
+    // every later binding is left with a descriptor that was never written.
     const std::uint32_t binding_epoch = binding_epoch_;
     const auto sync_blocks = [&dev, &fr, binding_epoch](
+                                 FrameResources::BlockBindingSlot slot,
                                  vk::DescriptorSet ds, std::uint32_t binding,
                                  GpuResources::BlockArray& buf,
                                  vk::DescriptorType desc_type) {
-        auto& cache = fr.block_binding_cache;
+        auto& cache = fr.block_binding_cache[static_cast<std::size_t>(slot)];
         if (cache.epoch != binding_epoch) {
             cache.written_blocks = 0;
             cache.epoch = binding_epoch;
@@ -185,24 +195,31 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                  " static_entries blocks=" + std::to_string(fr.static_entries.BlockCount()) +
                  " total=" + std::to_string(total));
 
-    sync_blocks(fr.expand_set.GetHandle(), 0, fr.dynamic_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::expand_dynamic_entries,
+                fr.expand_set.GetHandle(), 0, fr.dynamic_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.expand_set.GetHandle(), 1, fr.static_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::expand_static_entries,
+                fr.expand_set.GetHandle(), 1, fr.static_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.expand_set.GetHandle(), 2, fr.submesh_vertex_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::expand_submesh_vertex,
+                fr.expand_set.GetHandle(), 2, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.expand_set.GetHandle(), 3, fr.cull_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::expand_cull,
+                fr.expand_set.GetHandle(), 3, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_indirection, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 5, fr.draw_indices, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 6, fr.expand_counter, dev);
 
     // Occluder-select block arrays (block counts change with scene capacity).
-    sync_blocks(fr.occluder_select_set.GetHandle(), 0, fr.cull_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_cull,
+                fr.occluder_select_set.GetHandle(), 0, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_submesh_vertex,
+                fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occluder_select_set.GetHandle(), 2, fr.obb_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_obb,
+                fr.occluder_select_set.GetHandle(), 2, fr.obb_entries,
                 vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 4, fr.draw_indices, dev);
@@ -212,15 +229,20 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 mid ? fr.occluder_out_command_count : fr.occluder_out_draw_command, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_candidate_count, dev);
 
-    sync_blocks(fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::submesh_vertex,
+                fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_submesh_vertex,
+                fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occlusion_set.GetHandle(), 1, fr.cull_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_cull,
+                fr.occlusion_set.GetHandle(), 1, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occlusion_set.GetHandle(), 2, fr.bounding_spheres,
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_bounding_spheres,
+                fr.occlusion_set.GetHandle(), 2, fr.bounding_spheres,
                 vk::DescriptorType::eStorageBuffer);
-    sync_blocks(fr.occlusion_set.GetHandle(), 4, fr.obb_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_obb,
+                fr.occlusion_set.GetHandle(), 4, fr.obb_entries,
                 vk::DescriptorType::eStorageBuffer);
     {
         const vk::DescriptorImageInfo hiz_info(
@@ -255,7 +277,8 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 mid ? fr.depth_out_command_count : fr.depth_out_draw_command, dev);
 
     // Collect bindings 1-4.
-    sync_blocks(fr.collect_set.GetHandle(), 0, fr.cull_entries,
+    sync_blocks(FrameResources::BlockBindingSlot::collect_cull,
+                fr.collect_set.GetHandle(), 0, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.collect_set.GetHandle(), 1, fr.draw_indices, dev);
     WriteBuffer(fr.collect_set.GetHandle(), 2,

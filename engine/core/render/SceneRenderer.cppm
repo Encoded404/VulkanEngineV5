@@ -308,15 +308,41 @@ private:
         VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
         VulkanEngine::GpuResources::BlockArray cull_entries{};
 
-        // Descriptor-write cache for the six submesh block arrays above. They
-        // grow in lockstep and only ever grow, so the descriptors for blocks
-        // that already exist do not need rewriting every frame. `epoch` matches
+        // Descriptor-write cursors for the block arrays above. They grow in
+        // lockstep and only ever grow, so the descriptors for blocks that
+        // already exist do not need rewriting every frame. `epoch` matches
         // SceneRenderer::binding_epoch_; when it differs the whole array is
         // rewritten (capacity growth recreated the underlying buffers).
+        //
+        // One cursor per (descriptor set, binding) pair. Each block array is
+        // bound into its own (set, binding), and every pair has to write its own
+        // blocks: a single shared cursor lets the first pair write its blocks
+        // and then mark the frame's whole block budget written, so every later
+        // binding keeps a descriptor that was never written (or, after a
+        // capacity change, a stale one). That is a GPU hang, not a wrong pixel.
+        enum class BlockBindingSlot : std::uint32_t {
+            expand_dynamic_entries = 0,
+            expand_static_entries,
+            expand_submesh_vertex,
+            expand_cull,
+            occluder_select_cull,
+            occluder_select_submesh_vertex,
+            occluder_select_obb,
+            submesh_vertex,
+            occlusion_submesh_vertex,
+            occlusion_cull,
+            occlusion_bounding_spheres,
+            occlusion_obb,
+            collect_cull,
+            count,
+        };
         struct BlockBindingCache {
             std::uint32_t written_blocks = 0;
             std::uint32_t epoch = 0;
-        } block_binding_cache{};
+        };
+        std::array<BlockBindingCache,
+                   static_cast<std::size_t>(BlockBindingSlot::count)>
+            block_binding_cache{};
 
         // ── Indexed-drawing substrate ──
         // One VertexIndirectionEntry per slot in each submesh's tight vertex

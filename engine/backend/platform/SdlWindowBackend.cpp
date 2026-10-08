@@ -5,10 +5,14 @@ module;
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
 
+#include <logging/logging_macros.hpp>
+
 
 module VulkanBackend.Platform.SdlPlatformBackend;
 
 import std;
+
+import logiface;
 
 import VulkanBackend.Event;
 import VulkanShared.CallbackList;
@@ -56,13 +60,43 @@ public:
             window_ = nullptr;
         }
 
+        // SDL_WINDOW_HIGH_PIXEL_DENSITY is what makes the backbuffer physically
+        // sized. On Wayland, SDL's own GetWindowScale() returns 1.0 unless this
+        // flag is set, so without it the reported pixel size equals the window's
+        // size in points, the swapchain is built at that size, and the compositor
+        // stretches every pixel to the output -- which defeats the 1:1 hinted
+        // screen-text path in particular.
+        //
+        // It has to be passed here and cannot be decided from a query:
+        // SDL_GetWindowDisplayScale() reports the real scale only once the flag is
+        // already set, so it answers 1.0 for the window whose scale we are asking
+        // about.
         window_ = SDL_CreateWindow(
             config.window_title.c_str(),
             static_cast<int>(config.window_width),
             static_cast<int>(config.window_height),
-            SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+            SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 
-        return window_ != nullptr;
+        if (window_ == nullptr) {
+            return false;
+        }
+
+        // The invariant the high-density flag exists to satisfy: on a scaled output
+        // the backbuffer is larger than the window's size in points. Reporting both
+        // numbers once, here, is what turns a field report of "the text looks soft"
+        // into a fact -- equal sizes on a scaled output mean the flag never reached
+        // the compositor.
+        int point_width = 0;
+        int point_height = 0;
+        int pixel_width = 0;
+        int pixel_height = 0;
+        SDL_GetWindowSize(window_, &point_width, &point_height);
+        SDL_GetWindowSizeInPixels(window_, &pixel_width, &pixel_height);
+        LOGIFACE_LOG(info, "Window created: point=" + std::to_string(point_width) + "x" +
+                               std::to_string(point_height) + " pixel=" + std::to_string(pixel_width) +
+                               "x" + std::to_string(pixel_height) + " scale=" +
+                               std::to_string(GetDisplayScale()));
+        return true;
     }
 
     VulkanShared::CallbackList<void(void*)>& GetSdlEventProcessors() override {
@@ -165,6 +199,16 @@ public:
 
     [[nodiscard]] SDL_Window* GetNativeWindowHandle() const override {
         return window_;
+    }
+
+    [[nodiscard]] float GetDisplayScale() const override {
+        if (window_ == nullptr) {
+            return 1.0f;
+        }
+        // 0.0f is SDL's failure value. A display that will not report a scale is
+        // 1:1, not zero scale, so it collapses to the same answer as "no window".
+        const float scale = SDL_GetWindowDisplayScale(window_);
+        return scale > 0.0f ? scale : 1.0f;
     }
 
 private:

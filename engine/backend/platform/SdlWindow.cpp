@@ -39,6 +39,10 @@ bool SdlPlatform::Initialize(const PlatformConfig& config) {
     state_.window_created = true;
     state_.drawable_width = config.window_width;
     state_.drawable_height = config.window_height;
+    // Read once the window exists: this is what turns the sizes above from
+    // "points the window was asked for" into the ratio against the pixel-sized
+    // backbuffer the first frame will present.
+    state_.content_scale = backend_->GetDisplayScale();
     return true;
 }
 
@@ -57,6 +61,12 @@ VulkanBackend::Event::EventList SdlPlatform::PollEvents() {
     }
 
     state_.resized = false;
+
+    // Re-sampled every poll rather than derived from an event. SDL keeps the
+    // window's display scale current when the window moves to an output with a
+    // different scale, and reading it is a field access, so the alternative is an
+    // event type for a value that cannot be stale when read here.
+    state_.content_scale = backend_->GetDisplayScale();
 
     auto events = backend_->PumpEvents();
 

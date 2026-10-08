@@ -202,4 +202,19 @@ TextLayout LayoutText(const FontFace& face, const ShapedRun& run, const LayoutOp
     return layout;
 }
 
+ScreenTextRequest ToPhysicalPixels(float point_size, float x_points, float y_points,
+                                   float max_width_points, float display_scale) noexcept {
+    // A non-positive scale is a platform that could not answer the question.
+    // Treating it as 1:1 keeps the caller's numbers usable rather than erasing
+    // the text, which a literal zero would do.
+    const float scale = display_scale > 0.0f ? display_scale : 1.0f;
+
+    ScreenTextRequest request{};
+    request.pixel_size = point_size * scale;
+    request.x = x_points * scale;
+    request.y = y_points * scale;
+    request.max_width = max_width_points > 0.0f ? max_width_points * scale : 0.0f;
+    return request;
+}
+
 } // namespace VulkanEngine::Text

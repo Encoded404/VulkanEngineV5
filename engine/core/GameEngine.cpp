@@ -493,6 +493,15 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
 }
 
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Screen text is authored in logical points while the overlay pass and the glyph
+    // rasterizer are in physical pixels, so the ratio between them is pushed here: once
+    // per frame, before any hook that submits text, and deliberately before the early
+    // returns below, because a frame with no valid scene still draws its UI. The platform
+    // owns the value; the text system does not read a window it does not own.
+    if (ctx_.text_system != nullptr && ctx.platform_state != nullptr) {
+        ctx_.text_system->SetDisplayScale(ctx.platform_state->content_scale);
+    }
+
     ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.delta_time);
 
     if (!ctx_.mesh_manager) {

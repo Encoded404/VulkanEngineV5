@@ -61,6 +61,32 @@ struct TextLayout {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
+// One screen-text request after conversion from the space it is authored in to
+// the space the rasterizer, the layout and the overlay pass all work in.
+struct ScreenTextRequest {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    float pixel_size = 0.0f;
+    float x = 0.0f;
+    float y = 0.0f;
+    // Wrapping width in pixels. 0 survives the conversion as 0, because "no
+    // wrapping" is not a distance and must not be scaled into one.
+    float max_width = 0.0f;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+// Converts a screen-text request from logical points to physical pixels.
+//
+// Screen text is authored in points -- the space the window is sized in and the
+// space every input coordinate arrives in -- while the swapchain, the glyph
+// rasterizer and the overlay pass are all in pixels. On a scaled display the two
+// differ, and text drawn 1:1 at its requested point size would be both smaller
+// than asked for and hinted for a pixel grid that is not the one it lands on.
+// Funnelling every screen-text request through here means a caller states a size
+// in points and gets the same apparent size at every display scale, and the
+// rasterizer still receives the pixel size it has to hint for.
+[[nodiscard]] ScreenTextRequest ToPhysicalPixels(float point_size, float x_points, float y_points,
+                                                float max_width_points, float display_scale) noexcept;
+
 // Wraps and aligns a shaped run.
 //
 // Break opportunities come from UAX#14 over the run's source text and are

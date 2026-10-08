@@ -22,6 +22,7 @@ using VulkanEngine::Text::ShapedRun;
 using VulkanEngine::Text::ShapeText;
 using VulkanEngine::Text::TextAlign;
 using VulkanEngine::Text::TextLayout;
+using VulkanEngine::Text::ToPhysicalPixels;
 
 constexpr float kPixelSize = 16.0f;
 
@@ -318,6 +319,72 @@ TEST_F(TextLayoutTest, TrailingWhitespaceAtABreakIsNotMeasured) {
     EXPECT_EQ(layout.lines[1].glyph_count, 6u) << "the final space is still in the line";
     EXPECT_FLOAT_EQ(layout.lines[1].width, world);
     EXPECT_FLOAT_EQ(layout.width, std::max(RangeWidth(*face_, run, 0, 5), world));
+}
+
+// ── Logical points -> physical pixels ───────────────────────────────────────
+//
+// The scale conversion is the seam that lets a caller state a UI size once and
+// get the same apparent size on a 1.0 output and on a 1.5 one. It is asserted
+// separately from any rasterization because the failure it prevents -- text that
+// silently shrinks on a scaled display -- is invisible on an unscaled one.
+
+TEST(ToPhysicalPixelsTest, ScaleOneIsTheIdentity) {
+    const auto request = ToPhysicalPixels(18.0f, 24.0f, 110.0f, 460.0f, 1.0f);
+    EXPECT_FLOAT_EQ(request.pixel_size, 18.0f);
+    EXPECT_FLOAT_EQ(request.x, 24.0f);
+    EXPECT_FLOAT_EQ(request.y, 110.0f);
+    EXPECT_FLOAT_EQ(request.max_width, 460.0f);
+}
+
+TEST(ToPhysicalPixelsTest, FractionalScaleScalesSizeOriginAndWrapWidth) {
+    // 1.5 is the actual scale of the fractional-scaling panel this was written
+    // against, so it is the case that has to be right.
+    const auto request = ToPhysicalPixels(18.0f, 24.0f, 110.0f, 460.0f, 1.5f);
+    EXPECT_FLOAT_EQ(request.pixel_size, 27.0f);
+    EXPECT_FLOAT_EQ(request.x, 36.0f);
+    EXPECT_FLOAT_EQ(request.y, 165.0f);
+    EXPECT_FLOAT_EQ(request.max_width, 690.0f);
+}
+
+TEST(ToPhysicalPixelsTest, IntegerScaleIsExact) {
+    const auto request = ToPhysicalPixels(14.0f, 10.0f, 20.0f, 0.0f, 2.0f);
+    EXPECT_FLOAT_EQ(request.pixel_size, 28.0f);
+    EXPECT_FLOAT_EQ(request.x, 20.0f);
+    EXPECT_FLOAT_EQ(request.y, 40.0f);
+}
+
+// "No wrapping" is the absence of a distance, not a distance of zero: scaling it
+// would turn every unwrapped request into a wrapped one at width 0.
+TEST(ToPhysicalPixelsTest, ZeroWrapWidthStaysUnwrappedAtEveryScale) {
+    for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f}) {
+        const auto request = ToPhysicalPixels(16.0f, 0.0f, 0.0f, 0.0f, scale);
+        EXPECT_FLOAT_EQ(request.max_width, 0.0f) << "scale " << scale;
+    }
+}
+
+// A platform that cannot answer must not erase the text. A literal zero scale
+// would collapse the pixel size and every glyph would vanish.
+TEST(ToPhysicalPixelsTest, NonPositiveScaleFallsBackToOne) {
+    for (const float scale : {0.0f, -1.0f}) {
+        const auto request = ToPhysicalPixels(20.0f, 5.0f, 7.0f, 100.0f, scale);
+        EXPECT_FLOAT_EQ(request.pixel_size, 20.0f) << "scale " << scale;
+        EXPECT_FLOAT_EQ(request.x, 5.0f) << "scale " << scale;
+        EXPECT_FLOAT_EQ(request.y, 7.0f) << "scale " << scale;
+        EXPECT_FLOAT_EQ(request.max_width, 100.0f) << "scale " << scale;
+    }
+}
+
+// The point of the conversion: a request expressed in points occupies the same
+// fraction of the window at every scale. If this drifts, UI text changes size
+// when the display scale does.
+TEST(ToPhysicalPixelsTest, ProportionalSizeIsScaleInvariant) {
+    constexpr float kPointSize = 18.0f;
+    constexpr float kWindowPoints = 720.0f;
+    for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f}) {
+        const auto request = ToPhysicalPixels(kPointSize, 0.0f, 0.0f, 0.0f, scale);
+        const float fraction = request.pixel_size / (kWindowPoints * scale);
+        EXPECT_NEAR(fraction, kPointSize / kWindowPoints, 1e-6f) << "scale " << scale;
+    }
 }
 
 } // namespace

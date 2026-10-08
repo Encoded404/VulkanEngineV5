@@ -26,6 +26,7 @@ export import VulkanEngine.GpuResources;
 export import VulkanEngine.Application;
 export import VulkanEngine.Input;
 export import VulkanEngine.EngineContext;
+export import VulkanEngine.ECS.SystemSchedule;
 export import VulkanEngine.Text.TextSystem;
 export import VulkanEngine.Text.Font;
 
@@ -110,9 +111,17 @@ public:
         return entity != nullptr ? entity->GetComponent<Components::Camera>() : nullptr;
     }
 
-    // Simulation. Dispatches every registered component's Update against
-    // ApplicationFrameState::fixed_delta_time, so this belongs on the
-    // on_fixed_update hook: it may run several times per rendered frame.
+    // Simulation. Runs, in order, on the on_fixed_update hook (which may fire
+    // several times per rendered frame): apply queued structural changes, run
+    // data-component systems in registration order, dispatch object-component
+    // Update, then apply structural changes queued during those phases.
+    //
+    // AddSystem is where data-component systems get an ordered home. Object
+    // components keep driving themselves through Component::Update.
+    using SystemFn = VulkanEngine::SystemSchedule::SystemFn;
+    void AddSystem(std::string name, SystemFn fn) {
+        systems_.Add(std::move(name), std::move(fn));
+    }
     void FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     // Everything that must happen exactly once per rendered frame: the text
     // display scale and the per-frame mesh/render processing (which indexes the
@@ -183,6 +192,9 @@ private:
     GameConfig config_{};
 
     EntityId camera_entity_{};
+
+    // Data-component systems, in registration order (see AddSystem).
+    VulkanEngine::SystemSchedule systems_{};
 
     std::uint16_t main_technique_id_ = 0;
     std::uint16_t main_draw_group_ = 0;

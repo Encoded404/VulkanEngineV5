@@ -123,6 +123,22 @@ object-component pointers under the lock and runs `Update` in parallel over
 stable addresses. No structural change may occur while a query or update is in
 flight.
 
+## Systems and the fixed-step order
+
+Data components have no `Update`, so they need an ordered place to run.
+`GameEngine::AddSystem(name, fn)` registers a
+`SystemSchedule::SystemFn = void(ComponentRegistry&, float delta_time)`; systems
+run in registration order once per fixed step. `GameEngine::FixedUpdate` orders
+the whole step as:
+
+1. `ApplyStructuralChanges()` — drain what the previous step queued,
+2. `SystemSchedule::Run(...)` — data systems, in registration order,
+3. `UpdateAllComponentsAsync(...)` — object components, parallel,
+4. `ApplyStructuralChanges()` — drain what 2–3 queued.
+
+Object components therefore keep driving themselves, and data systems get a
+deterministic order relative to them and to each other.
+
 ## Why not archetypes
 
 Views over per-type sparse sets give deterministic order, O(1) membership and

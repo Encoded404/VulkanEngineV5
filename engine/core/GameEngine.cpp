@@ -506,11 +506,18 @@ EntityId GameEngine::CreateCamera(ComponentRegistry& registry) {
 }
 
 void GameEngine::FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
-    // Simulation half of the update: components integrate against the fixed
-    // timestep, which equals the wall-clock delta when fixed stepping is disabled.
-    // Runs on the on_fixed_update hook, so it may execute more than once per
-    // rendered frame; nothing here may touch per-frame render state.
+    // Simulation phase order (docs/ecs-design.md):
+    //   1. apply structural changes queued during the previous step,
+    //   2. run data-component systems in registration order,
+    //   3. dispatch object-component Update (parallel over stable pointers),
+    //   4. apply structural changes queued during 2-3.
+    // The fixed timestep equals the wall-clock delta when fixed stepping is
+    // disabled. This runs on the on_fixed_update hook, so it may execute more
+    // than once per rendered frame; nothing here may touch per-frame render state.
+    ctx_.component_registry.ApplyStructuralChanges();
+    systems_.Run(ctx_.component_registry, ctx.frame.fixed_delta_time);
     ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.fixed_delta_time);
+    ctx_.component_registry.ApplyStructuralChanges();
 }
 
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {

@@ -1,5 +1,6 @@
 add_executable(runtime_tests
   overrides_tests.cpp
+  frame_step_clock_tests.cpp
 )
 target_link_libraries(runtime_tests PRIVATE
   ${ENGINE_TARGET}

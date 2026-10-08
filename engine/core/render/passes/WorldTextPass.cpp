@@ -538,6 +538,13 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     cmd.beginRendering(rendering);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ctx.pass_pipeline);
+    // Engine set 0 is the bindless array the MSDF fragment samples its atlas page
+    // from; the Slug fragment uses none of the engine sets. Both backends bind it
+    // anyway because the engine prefixes every pass pipeline layout with its five
+    // set layouts, and binding the app set (5) alone would leave the pipeline's
+    // statically used set 0 unbound.
+    const std::array<vk::DescriptorSet, 1> bindless{ctx.bindless_textures.handle};
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout, 0, bindless, {});
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout,
                            ctx.first_app_descriptor_set, ctx.app_descriptor_sets, {});
     if (slug) {

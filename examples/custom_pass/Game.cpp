@@ -27,6 +27,9 @@ CustomPassGame::CustomPassGame(const std::filesystem::path& executable_path)
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
+    fixed_update_token_ = hooks_.on_fixed_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
+        OnFixedUpdate(ctx);
+    });
     frame_update_token_ = hooks_.on_frame_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
         OnFrameUpdate(ctx);
     });
@@ -142,7 +145,13 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     return true;
 }
 
+void CustomPassGame::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    engine_game_.FixedUpdate(ctx);
+}
+
 void CustomPassGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Toggle is an edge-triggered action: it must be sampled once per frame, not
+    // once per fixed step, so it stays on the frame hook.
     if (ctx.input_system != nullptr && ctx.input_system->WasActionStarted(toggle_passes_) &&
         pipeline_ != nullptr) {
         passes_enabled_ = !passes_enabled_;

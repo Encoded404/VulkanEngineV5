@@ -492,6 +492,14 @@ Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
     return *camera_;
 }
 
+void GameEngine::FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Simulation half of the update: components integrate against the fixed
+    // timestep, which equals the wall-clock delta when fixed stepping is disabled.
+    // Runs on the on_fixed_update hook, so it may execute more than once per
+    // rendered frame; nothing here may touch per-frame render state.
+    ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.fixed_delta_time);
+}
+
 void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     // Screen text is authored in logical points while the overlay pass and the glyph
     // rasterizer are in physical pixels, so the ratio between them is pushed here: once
@@ -501,8 +509,6 @@ void GameEngine::FrameUpdate(const VulkanEngine::Application::ApplicationContext
     if (ctx_.text_system != nullptr && ctx.platform_state != nullptr) {
         ctx_.text_system->SetDisplayScale(ctx.platform_state->content_scale);
     }
-
-    ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.delta_time);
 
     if (!ctx_.mesh_manager) {
         LOGIFACE_LOG(warn, "Game::FrameUpdate: mesh_manager is null, skipping ProcessFrame");

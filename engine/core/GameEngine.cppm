@@ -104,6 +104,13 @@ public:
     Components::Camera& CreateCamera(ComponentRegistry& registry);
     Components::Camera* GetCamera() { return camera_; }
 
+    // Simulation. Dispatches every registered component's Update against
+    // ApplicationFrameState::fixed_delta_time, so this belongs on the
+    // on_fixed_update hook: it may run several times per rendered frame.
+    void FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
+    // Everything that must happen exactly once per rendered frame: the text
+    // display scale and the per-frame mesh/render processing (which indexes the
+    // in-flight rings by frame counter, so it must not run per simulation step).
     void FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void FrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void Shutdown();

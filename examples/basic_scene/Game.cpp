@@ -53,6 +53,9 @@ DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& ex
     hooks_.should_filter_keyboard_input = [this]() -> bool {
         return ShouldFilterKeyboardInput();
     };
+    fixed_update_token_ = hooks_.on_fixed_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
+        OnFixedUpdate(ctx);
+    });
     frame_update_token_ = hooks_.on_frame_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
         OnFrameUpdate(ctx);
     });
@@ -308,6 +311,10 @@ bool DemoGame::ShouldFilterMouseInput() {
 
 bool DemoGame::ShouldFilterKeyboardInput() {
     return ImGui::GetIO().WantCaptureKeyboard;
+}
+
+void DemoGame::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    engine_game_.FixedUpdate(ctx);
 }
 
 void DemoGame::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {

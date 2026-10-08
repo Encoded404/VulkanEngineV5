@@ -26,12 +26,14 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    void OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
     VulkanEngine::Application::ApplicationHooks hooks_{};
     VulkanShared::ScopedHandle<bool(VulkanEngine::Application::ApplicationContext&)> setup_token_{};
+    VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> fixed_update_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_update_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_render_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};

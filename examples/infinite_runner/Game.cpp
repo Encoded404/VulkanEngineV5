@@ -164,6 +164,9 @@ Game::Game(const std::filesystem::path& executable_path, EndpointOverride endpoi
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
+    fixed_update_token_ = hooks_.on_fixed_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
+        OnFixedUpdate(ctx);
+    });
     frame_update_token_ = hooks_.on_frame_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
         OnFrameUpdate(ctx);
     });
@@ -960,24 +963,21 @@ bool Game::PlayerOverlapsAnyWall() const {
     return false;
 }
 
-void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
-    const float delta_time = ctx.frame.delta_time;
+void Game::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Engine simulation. Components integrate against the fixed timestep, which
+    // equals the wall-clock delta while fixed stepping is disabled (the default),
+    // so this runs exactly once per iteration today and 0..N times once a fixed
+    // rate is configured.
+    engine_game_.FixedUpdate(ctx);
 
-    // Account work is polled every frame, modal or not, so a registration or
-    // settings update completes without blocking the frame loop.
-    PollPendingAccount();
-
-    // While the login window is open the run is paused and the game's own
-    // actions are ignored. Events are deliberately not filtered: Esc must still
-    // reach the quit action, and ImGui consumes its own text input.
+    // While the login window is open the run is paused and the game's own logic is
+    // skipped. The engine simulation above still runs so the scene stays
+    // consistent behind the modal.
     if (login_open_) {
-        engine_game_.FrameUpdate(ctx);
         return;
     }
 
-    if (ctx.input_system->WasActionStarted(restart_handle_)) {
-        ResetRun();
-    }
+    const float delta_time = ctx.frame.fixed_delta_time;
 
     if (!game_over_) {
         const float player_x_before = player_x_;
@@ -992,12 +992,36 @@ void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ct
         }
     }
 
+    // Gameplay timer: accumulates simulated time, not wall-clock time, so the
+    // leaderboard refresh rate does not follow the render rate.
     if (leaderboard_ != nullptr) {
         leaderboard_request_timer_ += delta_time;
         if (leaderboard_request_timer_ >= 2.0f) {
             leaderboard_request_timer_ = 0.0f;
             RequestLeaderboard();
         }
+    }
+}
+
+void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Account work is polled every frame, modal or not, so a registration or
+    // settings update completes without blocking the frame loop.
+    PollPendingAccount();
+
+    // While the login window is open the run is paused and the game's own
+    // actions are ignored. Events are deliberately not filtered: Esc must still
+    // reach the quit action, and ImGui consumes its own text input.
+    if (login_open_) {
+        engine_game_.FrameUpdate(ctx);
+        return;
+    }
+
+    // Restart is edge-triggered, so it is sampled on the frame hook: the fixed
+    // hook may run several times in one frame, which would fire the edge once per
+    // step. It therefore takes effect from the next simulation step rather than
+    // mid-iteration.
+    if (ctx.input_system->WasActionStarted(restart_handle_)) {
+        ResetRun();
     }
 
     engine_game_.FrameUpdate(ctx);

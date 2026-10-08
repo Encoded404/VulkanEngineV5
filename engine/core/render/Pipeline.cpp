@@ -60,7 +60,18 @@ void RenderPipeline::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstra
 }
 
 void RenderPipeline::SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts) {
+    if (engine_set_layouts_ == layouts) {
+        return;
+    }
     engine_set_layouts_ = layouts;
+    // Built-in passes register (and the first Compile() runs) inside
+    // Renderer::Initialize(), which its caller can only follow with this call:
+    // every pass that declared a pipeline before the layouts existed was deferred
+    // by BuildPassPipelines(), and nothing re-runs it until the pass model changes.
+    // A deferred pass executes with a null pipeline and draws nothing, so build
+    // what the new layouts unblocked here instead of waiting for a rebuild that a
+    // frame that only re-records never triggers.
+    BuildPassPipelines();
 }
 
 void RenderPipeline::Shutdown() {

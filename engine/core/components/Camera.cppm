@@ -24,8 +24,9 @@ enum class CameraOrientation : std::uint8_t {
     Direction
 };
 
-class Camera : public VulkanEngine::Component {
-public:
+// Data component: camera parameters plus the matrix helpers that read them.
+// Dense storage, so do not cache a Camera* -- store the owning EntityId.
+struct Camera {
     glm::vec3 position{0.0f, 0.0f, 3.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 target{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 up{0.0f, 1.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -58,21 +59,6 @@ public:
         const float fov_rad = fov_degrees * (std::numbers::pi_v<float> / 180.0f);
         return glm::perspective(fov_rad, aspect, near_plane, far_plane);
     }
-
-    static auto GetFields() {
-        return VulkanEngine::make_fields(
-            VulkanEngine::field<glm::vec3>("position"),
-            VulkanEngine::field<glm::vec3>("target"),
-            VulkanEngine::field<glm::vec3>("up"),
-            VulkanEngine::field<glm::vec3>("forward"),
-            VulkanEngine::field<float>("fov_degrees"),
-            VulkanEngine::field<float>("orthographic_size"),
-            VulkanEngine::field<float>("near_plane"),
-            VulkanEngine::field<float>("far_plane"),
-            VulkanEngine::field<std::uint8_t>("projection_mode"),
-            VulkanEngine::field<std::uint8_t>("orientation")
-        );
-    }
 };
 
-}
+} // namespace VulkanEngine::Components

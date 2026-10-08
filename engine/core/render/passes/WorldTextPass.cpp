@@ -54,16 +54,9 @@ constexpr std::uint32_t kFallbackSlot = VulkanEngine::BindlessManager::kFallback
 } // namespace
 
 glm::mat4 WorldModelMatrix(const VulkanEngine::Components::Transform& transform) {
-    // FieldHandle's conversion is a user-defined conversion, which glm's
-    // by-template-parameter functions cannot deduce through; dereferencing the
-    // handle names the bound value directly. The handles must be bound (the
-    // registry's SoA emplace does that), so an unbound Transform is a caller
-    // error rather than a silently identity placement.
-    const glm::vec3& position = *transform.position;
-    const glm::quat& rotation = *transform.rotation;
-    const glm::vec3& scale = *transform.scale;
-    return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation) *
-           glm::scale(glm::mat4(1.0f), scale);
+    return glm::translate(glm::mat4(1.0f), transform.position) *
+           glm::mat4_cast(transform.rotation) *
+           glm::scale(glm::mat4(1.0f), transform.scale);
 }
 
 void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,

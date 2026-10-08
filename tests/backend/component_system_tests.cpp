@@ -8,23 +8,16 @@ import test_logging;
 import VulkanEngine.ECS.ComponentRegistry;
 
 namespace {
-// Compile-time schema used to verify field metadata extraction in the tests.
-struct TransformSchema {
-    static constexpr auto fields = VulkanEngine::make_fields(
-        VulkanEngine::field<int>("position"),
-        VulkanEngine::field<float>("rotation")
-    );
-};
 
-struct RegistryProbeComponent : VulkanEngine::Component {
+// Object component: derives Component, so it is stored as a stable object and
+// receives OnAttach/Update.
+class RegistryProbeComponent : public VulkanEngine::Component {
 public:
-    [[nodiscard]] bool WasInitialized() const noexcept { return initialized_; }
+    [[nodiscard]] bool WasAttached() const noexcept { return attached_; }
     [[nodiscard]] bool WasUpdated() const noexcept { return updated_; }
     [[nodiscard]] float GetLastDeltaTime() const noexcept { return last_delta_time_; }
 
-    void Initialize() override {
-        initialized_ = true;
-    }
+    void OnAttach(VulkanEngine::Entity& /*owner*/) override { attached_ = true; }
 
     void Update(float delta_time) override {
         updated_ = true;
@@ -32,104 +25,28 @@ public:
     }
 
 private:
-    bool initialized_ = false;
+    bool attached_ = false;
     bool updated_ = false;
     float last_delta_time_ = 0.0f;
 };
+
+// Data components: plain structs, so they live in dense columns.
+struct ProbeData {
+    int value = 0;
+};
+
+struct OtherData {
+    int tag = 0;
+};
+
 }  // namespace
-
-TEST(ComponentSystemTest, FieldMetadataPreservesNamesAndTypes) {
-    TestLogging::InstallPerTestFileLogger();
-
-    // Capture the schema's field list as a constexpr value for type checks.
-    constexpr auto fields = TransformSchema::fields;
-
-    // The schema should expose exactly two fields.
-    static_assert(decltype(fields)::size == 2);
-
-    // Extract the field wrapper types so we can verify their declared value types.
-    using PositionField = std::remove_cvref_t<decltype(fields.Get<0>())>;
-    using RotationField = std::remove_cvref_t<decltype(fields.Get<1>())>;
-
-    // Each field wrapper should preserve the underlying field type.
-    static_assert(std::is_same_v<PositionField::value_type, int>);
-    static_assert(std::is_same_v<RotationField::value_type, float>);
-
-    LOGIFACE_LOG(info, "Validating field metadata for TransformSchema");
-
-    // Field names should match the schema definition.
-    EXPECT_EQ(fields.Get<0>().name, "position");
-    EXPECT_EQ(fields.Get<1>().name, "rotation");
-}
-
-TEST(ComponentSystemTest, FieldHandleActsLikePointerBackedAccess) {
-    TestLogging::InstallPerTestFileLogger();
-
-    // Start with a plain value and bind a handle to it.
-    int position = 7;
-    VulkanEngine::FieldHandle<int> handle(position);
-
-    LOGIFACE_LOG(info, "Checking FieldHandle pointer-like access");
-
-    // A live handle should point at the original value and dereference like a pointer.
-    ASSERT_NE(handle.Get(), nullptr);
-    EXPECT_EQ(handle.Get(), &position);
-    EXPECT_EQ(*handle, 7);
-
-    // Assigning through the handle should update the referenced value.
-    handle = 11;
-    EXPECT_EQ(position, 11);
-
-    // Resetting should detach the handle from the value.
-    handle.Reset();
-    EXPECT_EQ(handle.Get(), nullptr);
-}
-
-TEST(ComponentSystemTest, PackedFieldStorageSwapDeleteRebindsHandles) {
-    TestLogging::InstallPerTestFileLogger();
-
-    // Prepare storage and reserve room for two elements.
-    VulkanEngine::PackedFieldStorage<int> storage;
-    storage.Reserve(2);
-
-    // Keep handles to both stored values so we can verify rebinding later.
-    VulkanEngine::FieldHandle<int> first;
-    VulkanEngine::FieldHandle<int> second;
-
-    LOGIFACE_LOG(info, "Emplacing values into PackedFieldStorage");
-
-    // Emplace two values and capture their handles.
-    storage.Emplace(first, 10);
-    storage.Emplace(second, 20);
-
-    // Both handles should resolve to the inserted values.
-    ASSERT_NE(first.Get(), nullptr);
-    ASSERT_NE(second.Get(), nullptr);
-    EXPECT_EQ(*first, 10);
-    EXPECT_EQ(*second, 20);
-
-    LOGIFACE_LOG(info, "Removing index 0 with swap-delete");
-
-    // Removing one item should invalidate its handle and preserve the other.
-    storage.RemoveSwapDelete(0);
-
-    EXPECT_EQ(first.Get(), nullptr);
-    ASSERT_NE(second.Get(), nullptr);
-    EXPECT_EQ(storage.Size(), 1u);
-    EXPECT_EQ(storage[0], 20);
-    EXPECT_EQ(*second, 20);
-}
 
 TEST(ComponentSystemTest, TypeIdSystemReturnsStableIdsPerType) {
     TestLogging::InstallPerTestFileLogger();
 
-    // Two distinct types should receive distinct stable IDs.
     struct TypeA {};
     struct TypeB {};
 
-    LOGIFACE_LOG(info, "Checking stable component type ids");
-
-    // Repeated requests for the same type must return the same ID.
     const auto id_a_1 = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeA>();
     const auto id_a_2 = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeA>();
     const auto id_b = VulkanEngine::ComponentTypeIDSystem::GetTypeID<TypeB>();
@@ -138,40 +55,184 @@ TEST(ComponentSystemTest, TypeIdSystemReturnsStableIdsPerType) {
     EXPECT_NE(id_a_1, id_b);
 }
 
-TEST(ComponentSystemTest, RegistryStoresComponentsAndEntityReferences) {
+TEST(ComponentSystemTest, ObjectComponentReceivesOnAttachAndUpdate) {
     TestLogging::InstallPerTestFileLogger();
 
     VulkanEngine::ComponentRegistry registry;
     auto& entity = registry.CreateEntity();
     auto& component = registry.AddComponent<RegistryProbeComponent>(entity);
 
+    EXPECT_TRUE(component.WasAttached());
+    EXPECT_FALSE(component.WasUpdated());
     EXPECT_TRUE(entity.HasComponent<RegistryProbeComponent>());
     EXPECT_EQ(entity.GetComponent<RegistryProbeComponent>(), &component);
 
-    const auto all_components = registry.GetAll<RegistryProbeComponent>();
-    ASSERT_EQ(all_components.size(), 1u);
-    EXPECT_EQ(all_components[0], &component);
-
-    bool visited = false;
-    registry.ForEach<RegistryProbeComponent>([&](RegistryProbeComponent& probe) {
-        visited = true;
-        EXPECT_EQ(&probe, &component);
-    });
-    EXPECT_TRUE(visited);
-}
-
-TEST(ComponentSystemTest, RegistryInitializesAndUpdatesComponentsAsync) {
-    TestLogging::InstallPerTestFileLogger();
-
-    VulkanEngine::ComponentRegistry registry;
-    auto& entity = registry.CreateEntity();
-    auto& component = registry.AddComponent<RegistryProbeComponent>(entity);
-
-    EXPECT_FALSE(component.WasInitialized());
-
     registry.UpdateAllComponentsAsync(0.25f);
-    EXPECT_TRUE(component.WasInitialized());
     EXPECT_TRUE(component.WasUpdated());
     EXPECT_FLOAT_EQ(component.GetLastDeltaTime(), 0.25f);
 }
 
+TEST(ComponentSystemTest, DuplicateAddDoesNotReplaceTheStoredComponent) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    auto& first = registry.AddComponent<ProbeData>(entity);
+    first.value = 42;
+
+    EXPECT_THROW(registry.AddComponent<ProbeData>(entity), std::logic_error);
+    EXPECT_EQ(entity.GetComponent<ProbeData>(), &first);
+    EXPECT_EQ(registry.Count<ProbeData>(), 1u);
+}
+
+TEST(ComponentSystemTest, DataComponentsIterateDenselyInInsertionOrder) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    for (int i = 0; i < 5; ++i) {
+        auto& entity = registry.CreateEntity();
+        registry.AddComponent<ProbeData>(entity).value = i;
+    }
+    EXPECT_EQ(registry.Count<ProbeData>(), 5u);
+
+    int expected = 0;
+    registry.ForEach<ProbeData>([&](ProbeData& data) {
+        EXPECT_EQ(data.value, expected);
+        ++expected;
+    });
+    EXPECT_EQ(expected, 5);
+}
+
+TEST(ComponentSystemTest, ViewVisitsOnlyEntitiesWithEveryComponent) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& both = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(both).value = 7;
+    registry.AddComponent<OtherData>(both).tag = 1;
+
+    auto& only_probe = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(only_probe).value = 9;
+
+    std::size_t visited = 0;
+    registry.ForEach<ProbeData, OtherData>(
+        [&](VulkanEngine::Entity& entity, ProbeData& probe, OtherData& other) {
+            ++visited;
+            EXPECT_EQ(&entity, &both);
+            EXPECT_EQ(probe.value, 7);
+            EXPECT_EQ(other.tag, 1);
+        });
+    EXPECT_EQ(visited, 1u);
+}
+
+TEST(ComponentSystemTest, RemoveComponentClearsTheMaskAndTheColumn) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(entity).value = 3;
+    ASSERT_TRUE(entity.HasComponent<ProbeData>());
+
+    registry.RemoveComponent<ProbeData>(entity);
+    EXPECT_FALSE(entity.HasComponent<ProbeData>());
+    EXPECT_EQ(entity.GetComponent<ProbeData>(), nullptr);
+    EXPECT_EQ(registry.Count<ProbeData>(), 0u);
+}
+
+TEST(ComponentSystemTest, DestroyEntityRemovesEverythingAndRejectsTheStaleId) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    const auto id = entity.GetId();
+    registry.AddComponent<ProbeData>(entity).value = 1;
+    registry.AddComponent<RegistryProbeComponent>(entity);
+    EXPECT_EQ(registry.EntityCount(), 1u);
+
+    registry.DestroyEntity(entity);
+
+    EXPECT_FALSE(entity.IsAlive());
+    EXPECT_FALSE(registry.IsAlive(id));
+    EXPECT_EQ(registry.TryGetEntity(id), nullptr);
+    EXPECT_EQ(registry.Count<ProbeData>(), 0u);
+    EXPECT_EQ(registry.Count<RegistryProbeComponent>(), 0u);
+    EXPECT_EQ(registry.EntityCount(), 0u);
+}
+
+TEST(ComponentSystemTest, ReusedSlotBumpsGeneration) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& first = registry.CreateEntity();
+    const auto stale = first.GetId();
+    registry.DestroyEntity(first);
+
+    auto& second = registry.CreateEntity();
+    EXPECT_EQ(second.GetId().index, stale.index);
+    EXPECT_NE(second.GetId().generation, stale.generation);
+    EXPECT_FALSE(registry.IsAlive(stale));
+    EXPECT_TRUE(registry.IsAlive(second.GetId()));
+}
+
+TEST(ComponentSystemTest, StructuralChangesInsideForEachAreDeferred) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& keep = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(keep).value = 1;
+    auto& doomed = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(doomed).value = 2;
+    const auto doomed_id = doomed.GetId();
+
+    registry.ForEach<ProbeData>([&](VulkanEngine::Entity& entity, ProbeData&) {
+        if (entity.GetId() == doomed_id) {
+            registry.DestroyEntity(entity);
+        }
+    });
+
+    // Still present during iteration; applied at the phase boundary.
+    EXPECT_EQ(registry.Count<ProbeData>(), 2u);
+    registry.ApplyStructuralChanges();
+    EXPECT_EQ(registry.Count<ProbeData>(), 1u);
+    EXPECT_FALSE(registry.IsAlive(doomed_id));
+}
+
+TEST(ComponentSystemTest, EngineHooksFireOnAddAndRemove) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    int added = 0;
+    int removed = 0;
+    registry.OnAdd<ProbeData>([&](VulkanEngine::Entity&, ProbeData&) { ++added; });
+    registry.OnRemove<ProbeData>([&](VulkanEngine::Entity&, ProbeData&) { ++removed; });
+
+    auto& entity = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(entity);
+    EXPECT_EQ(added, 1);
+
+    registry.RemoveComponent<ProbeData>(entity);
+    EXPECT_EQ(removed, 1);
+
+    // Destroying an entity fires the remove hook even though it never calls
+    // RemoveComponent explicitly.
+    registry.AddComponent<ProbeData>(entity);
+    registry.DestroyEntity(entity);
+    EXPECT_EQ(added, 2);
+    EXPECT_EQ(removed, 2);
+}
+
+TEST(ComponentSystemTest, ClearRemovesEveryEntityAndComponent) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    for (int i = 0; i < 3; ++i) {
+        auto& entity = registry.CreateEntity();
+        registry.AddComponent<ProbeData>(entity);
+        registry.AddComponent<RegistryProbeComponent>(entity);
+    }
+
+    registry.Clear();
+    EXPECT_EQ(registry.EntityCount(), 0u);
+    EXPECT_EQ(registry.Count<ProbeData>(), 0u);
+    EXPECT_EQ(registry.Count<RegistryProbeComponent>(), 0u);
+}

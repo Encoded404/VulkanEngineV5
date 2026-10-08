@@ -10,8 +10,10 @@ import VulkanEngine.MeshManager;
 
 export namespace VulkanEngine::Components {
 
-class DynamicMesh : public VulkanEngine::Component {
-public:
+// Data component: a streamed mesh owned by this entity. Dense storage; the
+// engine releases `gpu_handle` through a registry OnRemove hook, because the
+// component does not own a MeshManager.
+struct DynamicMesh {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     MeshManager::Handle gpu_handle;
     GpuResources::MeshData mesh_data;
@@ -22,5 +24,4 @@ public:
     void SetupStreamed(MeshManager& mgr, const GpuResources::MeshData& initial);
 };
 
-}
-
+} // namespace VulkanEngine::Components

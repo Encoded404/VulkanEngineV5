@@ -43,11 +43,13 @@ public:
 
 private:
     struct DrawEntity {
+        Entity* entity = nullptr;
         const Components::Transform* transform = nullptr;
         const Components::MeshReference* mesh_ref = nullptr;
     };
 
     struct DynamicEntity {
+        Entity* entity = nullptr;
         const Components::Transform* transform = nullptr;
         const Components::DynamicMesh* dyn_mesh = nullptr;
     };

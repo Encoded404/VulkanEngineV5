@@ -12,6 +12,7 @@ import logiface;
 import vulkan_hpp;
 
 import VulkanEngine.MeshManager;
+import VulkanEngine.Components.DynamicMesh;
 import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderWatcher;
 import VulkanShared.Storage;
@@ -60,6 +61,18 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
 
     if (!bootstrap_.Initialize(ctx_, config_, *ctx.bootstrap)) {
         return false;
+    }
+
+    // Release a DynamicMesh entity's streamed GPU allocation when the component
+    // is removed or its entity is destroyed. Data components carry no destructor
+    // hook, so engine-owned resources are released through registry callbacks.
+    if (ctx_.mesh_manager) {
+        ctx_.component_registry.OnRemove<Components::DynamicMesh>(
+            [this](Entity& /*entity*/, Components::DynamicMesh& dynamic_mesh) {
+                if (ctx_.mesh_manager && dynamic_mesh.gpu_handle.IsValid()) {
+                    ctx_.mesh_manager->Remove(dynamic_mesh.gpu_handle);
+                }
+            });
     }
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -485,11 +498,11 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadSceneFromFiles(
     return UploadScene(ctx, mesh_data_list);
 }
 
-Components::Camera& GameEngine::CreateCamera(ComponentRegistry& registry) {
-    auto& entity = registry.CreateEntity();
+EntityId GameEngine::CreateCamera(ComponentRegistry& registry) {
+    Entity& entity = registry.CreateEntity();
     registry.AddComponent<Components::Camera>(entity);
-    camera_ = entity.GetComponent<Components::Camera>();
-    return *camera_;
+    camera_entity_ = entity.GetId();
+    return camera_entity_;
 }
 
 void GameEngine::FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
@@ -542,8 +555,9 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
         LOGIFACE_LOG(warn, "Game::FrameRender: renderer is null, skipping");
         return;
     }
-    if (!camera_) {
-        LOGIFACE_LOG(warn, "Game::FrameRender: camera_ is null, skipping");
+    Components::Camera* const camera = GetCamera();
+    if (camera == nullptr) {
+        LOGIFACE_LOG(warn, "Game::FrameRender: camera is null, skipping");
         return;
     }
     if (!scene_valid_) {
@@ -623,7 +637,7 @@ void GameEngine::FrameRender(const VulkanEngine::Application::ApplicationContext
 
     ctx_.renderer->RenderFrame(*ctx.bootstrap,
                                ctx_.component_registry,
-                               *camera_,
+                               *camera,
                                *ctx_.technique_mgr,
                                *ctx_.bindless_mgr,
                                *ctx_.scene_renderer,

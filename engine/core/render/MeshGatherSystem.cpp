@@ -173,33 +173,19 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // --- Phase 1: Collect static mesh entities ---
     static_ents_.clear();
     EnsureGatherReserve(static_ents_, last_static_count_);
-    registry.ForEach<Components::MeshReference>(
-        [&](Components::MeshReference& mr) {
+    registry.ForEach<Components::Transform, Components::MeshReference>(
+        [&](Entity& entity, Components::Transform& transform, Components::MeshReference& mesh_ref) {
             if (static_ents_.size() >= SceneLimits::kGatherEntityCap) return;
-            auto* owner = mr.GetOwner();
-            if (!owner) return;
-            auto* transform = owner->GetComponent<Components::Transform>();
-            if (!transform) return;
-            static_ents_.push_back({ transform, &mr });
+            static_ents_.push_back({ &entity, &transform, &mesh_ref });
         });
 
     // --- Phase 2: Collect dynamic mesh entities ---
     dyn_ents_.clear();
     EnsureGatherReserve(dyn_ents_, last_dyn_count_);
-    registry.ForEach<Components::DynamicMesh>(
-        [&](Components::DynamicMesh& dm) {
+    registry.ForEach<Components::Transform, Components::DynamicMesh>(
+        [&](Entity& entity, Components::Transform& transform, Components::DynamicMesh& dyn_mesh) {
             if (dyn_ents_.size() >= SceneLimits::kGatherEntityCap) return;
-            auto* owner = dm.GetOwner();
-            if (!owner) {
-                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no owner, skipping");
-                return;
-            }
-            auto* transform = owner->GetComponent<Components::Transform>();
-            if (!transform) {
-                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no Transform component, skipping");
-                return;
-            }
-            dyn_ents_.push_back({ transform, &dm });
+            dyn_ents_.push_back({ &entity, &transform, &dyn_mesh });
         });
 
     last_static_count_ = static_ents_.size();
@@ -427,12 +413,12 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         // submesh falls back to its material's own factors (resolved per submesh).
         const Components::OrmOverride* orm_override = nullptr;
         Components::MaterialOverride* material_override = nullptr;
-        if (e.mesh_ref && e.mesh_ref->GetOwner()) {
-            orm_override = e.mesh_ref->GetOwner()->GetComponent<Components::OrmOverride>();
-            material_override = e.mesh_ref->GetOwner()->GetComponent<Components::MaterialOverride>();
+        if (e.entity != nullptr) {
+            orm_override = e.entity->GetComponent<Components::OrmOverride>();
+            material_override = e.entity->GetComponent<Components::MaterialOverride>();
         }
-        const std::uint64_t entity_id = (e.mesh_ref && e.mesh_ref->GetOwner())
-            ? static_cast<std::uint64_t>(e.mesh_ref->GetOwner()->GetId())
+        const std::uint64_t entity_id = e.entity != nullptr
+            ? static_cast<std::uint64_t>(e.entity->GetId().index)
             : 0ull;
 
         for (std::uint32_t s = 0; s < loaded->submesh_count; ++s) {
@@ -564,10 +550,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const Components::OrmOverride* orm_override = nullptr;
         Components::MaterialOverride* material_override = nullptr;
         std::uint64_t entity_id = 0ull;
-        if (e.dyn_mesh->GetOwner() != nullptr) {
-            orm_override = e.dyn_mesh->GetOwner()->GetComponent<Components::OrmOverride>();
-            material_override = e.dyn_mesh->GetOwner()->GetComponent<Components::MaterialOverride>();
-            entity_id = static_cast<std::uint64_t>(e.dyn_mesh->GetOwner()->GetId());
+        if (e.entity != nullptr) {
+            orm_override = e.entity->GetComponent<Components::OrmOverride>();
+            material_override = e.entity->GetComponent<Components::MaterialOverride>();
+            entity_id = static_cast<std::uint64_t>(e.entity->GetId().index);
         }
 
         for (std::uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {

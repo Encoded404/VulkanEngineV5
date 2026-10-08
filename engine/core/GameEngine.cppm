@@ -101,8 +101,14 @@ public:
         const std::vector<std::filesystem::path>& file_paths,
         const std::vector<SceneLoader::MaterialId>* material_bindings = nullptr);
 
-    Components::Camera& CreateCamera(ComponentRegistry& registry);
-    Components::Camera* GetCamera() { return camera_; }
+    // Creates the camera entity and remembers its id. Camera is a data
+    // component, so callers re-fetch it through GetCamera() rather than caching
+    // a pointer (the storage can reallocate on any structural change).
+    EntityId CreateCamera(ComponentRegistry& registry);
+    [[nodiscard]] Components::Camera* GetCamera() {
+        Entity* entity = ctx_.component_registry.TryGetEntity(camera_entity_);
+        return entity != nullptr ? entity->GetComponent<Components::Camera>() : nullptr;
+    }
 
     // Simulation. Dispatches every registered component's Update against
     // ApplicationFrameState::fixed_delta_time, so this belongs on the
@@ -176,7 +182,7 @@ private:
     VulkanBackend::Vulkan::VulkanBootstrap* vk_backend_ = nullptr;
     GameConfig config_{};
 
-    Components::Camera* camera_ = nullptr;
+    EntityId camera_entity_{};
 
     std::uint16_t main_technique_id_ = 0;
     std::uint16_t main_draw_group_ = 0;

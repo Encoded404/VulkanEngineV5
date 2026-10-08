@@ -329,6 +329,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FontResource.cppm
             bootstrap/Startup.cppm
             ApplicationContext.cppm
+            ecs/Entity.cppm
             ecs/ComponentRegistry.cppm
             components/Transform.cppm
             components/Camera.cppm

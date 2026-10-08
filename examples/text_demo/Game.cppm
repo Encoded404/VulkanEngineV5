@@ -43,13 +43,11 @@ private:
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
-    // One spawned entity's two text components. The world-text builder needs the
-    // component and its Transform per frame; the component registry keeps both
-    // alive, so these are borrowed pointers like the ones examples/basic_scene
-    // keeps for its debug panel.
+    // One spawned world-text entity. Text and Transform are data components, so
+    // the builder re-fetches them by EntityId each frame instead of caching
+    // pointers that a later structural change would invalidate.
     struct WorldTextEntity {
-        VulkanEngine::Components::Text* text = nullptr;
-        VulkanEngine::Components::Transform* transform = nullptr;
+        VulkanEngine::EntityId entity{};
     };
 
     VulkanEngine::SceneRenderer::TextBackend backend_;

@@ -23,6 +23,7 @@ import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.BindlessManager;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
@@ -53,23 +54,10 @@ namespace VulkanEngine::SceneRenderer {
             dev.updateDescriptorSets(w, nullptr);
         }
 
-        static void WriteBlocks(vk::DescriptorSet ds, std::uint32_t binding,
-                                GpuResources::BlockArray& buf,
-                                vk::DescriptorType desc_type,
-                                const vk::raii::Device& dev) {
-            for (std::uint32_t bi = 0; bi < buf.BlockCount(); ++bi) {
-                const vk::DescriptorBufferInfo bii(
-                    buf.GetBlockArray(bi), 0, buf.BlockSize());
-                vk::WriteDescriptorSet w{};
-                w.dstSet = ds;
-                w.dstBinding = binding;
-                w.dstArrayElement = bi;
-                w.descriptorCount = 1;
-                w.descriptorType = desc_type;
-                w.pBufferInfo = &bii;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-        }
+        // Block-array descriptors are written incrementally: see the sync_blocks
+        // lambda in PrepareCompute. There is deliberately no unconditional
+        // WriteBlocks helper — rewriting every block every frame was the
+        // steady-state cost this cache exists to remove.
     } // anonymous namespace
 
 void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
@@ -96,12 +84,77 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         LOGIFACE_LOG(debug, "PrepareCompute: current_entity_count_ is 0, no work to do");
     }
 
-    fr.dynamic_entries.EnsureCapacity(total);
-    fr.static_entries.EnsureCapacity(total);
-    fr.bounding_spheres.EnsureCapacity(total);
-    fr.obb_entries.EnsureCapacity(total);
-    fr.submesh_vertex_entries.EnsureCapacity(total);
-    fr.cull_entries.EnsureCapacity(total);
+    // Grow the per-submesh block arrays. Each is bounded by Config::max_blocks
+    // (the descriptor binding array size), so a failure here means the scene
+    // exceeded the capacity budget; report once and let the caller clamp.
+    const auto grow_blocks = [](GpuResources::BlockArray& buf, const std::uint32_t count,
+                                const char* name) {
+        if (!buf.EnsureCapacity(count)) {
+            static bool reported = false;
+            if (!reported) {
+                reported = true;
+                LOGIFACE_LOG(error, std::string("PrepareCompute: BlockArray '") + name +
+                    "' could not grow to hold " + std::to_string(count) +
+                    " entries; it is capped at " + std::to_string(buf.BlockLimit()) +
+                    " blocks");
+            }
+        }
+    };
+    grow_blocks(fr.dynamic_entries, total, "dynamic_entries");
+    grow_blocks(fr.static_entries, total, "static_entries");
+    grow_blocks(fr.bounding_spheres, total, "bounding_spheres");
+    grow_blocks(fr.obb_entries, total, "obb_entries");
+    grow_blocks(fr.submesh_vertex_entries, total, "submesh_vertex_entries");
+    grow_blocks(fr.cull_entries, total, "cull_entries");
+
+    // The six arrays are grown with the same `total` and the same
+    // entries-per-block, so they always have the same block count. The
+    // per-binding descriptor-write cursors below each track their own array,
+    // and this lockstep is the invariant the block lookups in the shaders use.
+#ifndef NDEBUG
+    const std::uint32_t block_count = fr.dynamic_entries.BlockCount();
+#endif
+    assert(fr.static_entries.BlockCount() == block_count &&
+           fr.bounding_spheres.BlockCount() == block_count &&
+           fr.obb_entries.BlockCount() == block_count &&
+           fr.submesh_vertex_entries.BlockCount() == block_count &&
+           fr.cull_entries.BlockCount() == block_count &&
+           "the six submesh block arrays must grow in lockstep");
+
+    // Write only the block descriptors that do not exist yet. Blocks are only
+    // appended and never removed, so a descriptor written in an earlier frame
+    // stays valid; `binding_epoch_` changes when CreateFrameBuffers recreated
+    // the underlying buffers, forcing a full rewrite.
+    //
+    // Each (set, binding) pair owns its own cursor. The same BlockArray is bound
+    // into several sets (cull_entries alone appears in four) and each binding
+    // still has to be written: a single shared cursor lets the first pair write
+    // its blocks and then reports the frame's whole block budget written, so
+    // every later binding is left with a descriptor that was never written.
+    const std::uint32_t binding_epoch = binding_epoch_;
+    const auto sync_blocks = [&dev, &fr, binding_epoch](
+                                 FrameResources::BlockBindingSlot slot,
+                                 vk::DescriptorSet ds, std::uint32_t binding,
+                                 GpuResources::BlockArray& buf,
+                                 vk::DescriptorType desc_type) {
+        auto& cache = fr.block_binding_cache[static_cast<std::size_t>(slot)];
+        if (cache.epoch != binding_epoch) {
+            cache.written_blocks = 0;
+            cache.epoch = binding_epoch;
+        }
+        for (std::uint32_t bi = cache.written_blocks; bi < buf.BlockCount(); ++bi) {
+            const vk::DescriptorBufferInfo bii(buf.GetBlockArray(bi), 0, buf.BlockSize());
+            vk::WriteDescriptorSet w{};
+            w.dstSet = ds;
+            w.dstBinding = binding;
+            w.dstArrayElement = bi;
+            w.descriptorCount = 1;
+            w.descriptorType = desc_type;
+            w.pBufferInfo = &bii;
+            dev.updateDescriptorSets(w, nullptr);
+        }
+        cache.written_blocks = buf.BlockCount();
+    };
 
     const bool mid = draw_mode_ == DrawMode::MID;
 
@@ -143,25 +196,32 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                  " static_entries blocks=" + std::to_string(fr.static_entries.BlockCount()) +
                  " total=" + std::to_string(total));
 
-    WriteBlocks(fr.expand_set.GetHandle(), 0, fr.dynamic_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 1, fr.static_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 2, fr.submesh_vertex_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.expand_set.GetHandle(), 3, fr.cull_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
+    sync_blocks(FrameResources::BlockBindingSlot::expand_dynamic_entries,
+                fr.expand_set.GetHandle(), 0, fr.dynamic_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::expand_static_entries,
+                fr.expand_set.GetHandle(), 1, fr.static_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::expand_submesh_vertex,
+                fr.expand_set.GetHandle(), 2, fr.submesh_vertex_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::expand_cull,
+                fr.expand_set.GetHandle(), 3, fr.cull_entries,
+                vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_indirection, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 5, fr.draw_indices, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 6, fr.expand_counter, dev);
 
     // Occluder-select block arrays (block counts change with scene capacity).
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 0, fr.cull_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occluder_select_set.GetHandle(), 2, fr.obb_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_cull,
+                fr.occluder_select_set.GetHandle(), 0, fr.cull_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_submesh_vertex,
+                fr.occluder_select_set.GetHandle(), 1, fr.submesh_vertex_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occluder_select_obb,
+                fr.occluder_select_set.GetHandle(), 2, fr.obb_entries,
+                vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 4, fr.draw_indices, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 5,
@@ -170,16 +230,21 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 mid ? fr.occluder_out_command_count : fr.occluder_out_draw_command, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_candidate_count, dev);
 
-    WriteBlocks(fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 1, fr.cull_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 2, fr.bounding_spheres,
-                vk::DescriptorType::eStorageBuffer, dev);
-    WriteBlocks(fr.occlusion_set.GetHandle(), 4, fr.obb_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
+    sync_blocks(FrameResources::BlockBindingSlot::submesh_vertex,
+                fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_submesh_vertex,
+                fr.occlusion_set.GetHandle(), 0, fr.submesh_vertex_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_cull,
+                fr.occlusion_set.GetHandle(), 1, fr.cull_entries,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_bounding_spheres,
+                fr.occlusion_set.GetHandle(), 2, fr.bounding_spheres,
+                vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::occlusion_obb,
+                fr.occlusion_set.GetHandle(), 4, fr.obb_entries,
+                vk::DescriptorType::eStorageBuffer);
     {
         const vk::DescriptorImageInfo hiz_info(
             **hiz_sampler_, *fr.hiz_full_view,
@@ -213,8 +278,9 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 mid ? fr.depth_out_command_count : fr.depth_out_draw_command, dev);
 
     // Collect bindings 1-4.
-    WriteBlocks(fr.collect_set.GetHandle(), 0, fr.cull_entries,
-                vk::DescriptorType::eStorageBuffer, dev);
+    sync_blocks(FrameResources::BlockBindingSlot::collect_cull,
+                fr.collect_set.GetHandle(), 0, fr.cull_entries,
+                vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.collect_set.GetHandle(), 1, fr.draw_indices, dev);
     WriteBuffer(fr.collect_set.GetHandle(), 2,
                 mid ? fr.main_commands : fr.main_indices, dev);
@@ -323,8 +389,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
     }
     LOGIFACE_LOG(trace, "DepthPrepass: submesh_count=" + std::to_string(current_entity_count_) +
                  " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
     LOGIFACE_LOG(trace, std::format("DepthPrepass: bound pipeline 0x{:x}",
@@ -361,8 +426,7 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
     }
     LOGIFACE_LOG(trace, "OccluderPrepass: selected occluders (" + std::to_string(w) + "x" +
                  std::to_string(h) + ")");
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
     const std::array<vk::DescriptorSet, 4> ds{
@@ -398,8 +462,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
     }
     auto& fr = frames_[fi % frames_in_flight_];
 
-    cmd.setViewport(0, vk::Viewport(0, static_cast<float>(h), static_cast<float>(w),
-                                     -static_cast<float>(h), 0, 1));
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
 
     // Engine descriptor set handles (used by both legacy and BaseTechnique paths)

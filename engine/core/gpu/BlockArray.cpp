@@ -37,6 +37,7 @@ void BlockArray::Shutdown() {
 
 bool BlockArray::AddBlock() {
     if (!backend_) return false;
+    if (blocks_.size() >= cfg_.max_blocks) return false;
 
     const std::uint64_t block_bytes = BlockSize();
     if (block_bytes == 0) return false;
@@ -63,16 +64,16 @@ bool BlockArray::AddBlock() {
     return true;
 }
 
-void* BlockArray::EnsureCapacity(std::uint32_t count) {
-    if (!backend_) return nullptr;
+bool BlockArray::EnsureCapacity(std::uint32_t count) {
+    if (!backend_) return false;
 
     const std::uint32_t needed_blocks = (count + cfg_.entries_per_block - 1) / cfg_.entries_per_block;
+    if (needed_blocks > cfg_.max_blocks) return false;
     while (blocks_.size() < needed_blocks) {
-        if (!AddBlock()) return nullptr;
+        if (!AddBlock()) return false;
     }
-
-    if (mappings_.empty()) return nullptr;
-    return mappings_[0];
+    // count == 0 is satisfied by an empty array; it is not a failure.
+    return true;
 }
 
 void* BlockArray::Get(std::uint32_t index) {

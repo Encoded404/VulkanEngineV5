@@ -41,7 +41,22 @@ struct ApplicationFrameState {
     VulkanBackend::Vulkan::RuntimeFrameInfo runtime_frame{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t frame_counter = 0; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t image_index = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Clamped wall-clock delta between the starts of successive iterations.
+    // Presentation-rate work (camera follow, UI, animation blending, per-frame
+    // uploads) scales with this.
     float delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Timestep for on_fixed_update. Equal to fixed_timestep from ApplicationConfig
+    // when fixed stepping is enabled, and to delta_time when it is disabled, so
+    // simulation code can integrate with this unconditionally.
+    float fixed_delta_time = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Fixed steps run in this iteration: 1 when fixed stepping is disabled, and
+    // 0..max_fixed_steps_per_frame when it is enabled.
+    std::uint32_t fixed_step_count = 0; // NOLINT(misc-non-private-member-variables-in-classes)
+    // accumulator / fixed_timestep, in [0, 1); 1 when fixed stepping is disabled.
+    // Exposed for render interpolation, which nothing consumes yet: a constant
+    // simulation rate with a varying render rate judders without it, so consumers
+    // that enable fixed stepping should plan to interpolate with this.
+    float interpolation_alpha = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     bool render_success = true; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 
@@ -104,6 +119,20 @@ struct ApplicationConfig {
     VulkanBackend::Vulkan::RuntimeConfig runtime_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanBackend::Vulkan::VulkanBootstrapConfig bootstrap_config{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::uint32_t minimized_sleep_ms = 10; // NOLINT(misc-non-private-member-variables-in-classes)
+    // ── Simulation cadence ──
+    // Seconds per fixed simulation step. 0 (the default) disables fixed stepping:
+    // on_fixed_update then fires exactly once per iteration with the variable
+    // delta, so code that integrates against ApplicationFrameState::fixed_delta_time
+    // behaves identically to a plain variable-step loop until this is set. Set it
+    // (e.g. 1.0f / 60.0f) when gameplay must be rate-independent of the render rate.
+    float fixed_timestep = 0.0f; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Ceiling on fixed steps executed in one iteration. The backlog beyond this is
+    // dropped rather than carried, so a hitch cannot compound (spiral of death).
+    std::uint32_t max_fixed_steps_per_frame = 8; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Applied to the wall-clock delta before it is used for either delta_time or
+    // accumulation, so a minimize, swapchain stall, breakpoint or shader compile
+    // cannot land as one enormous step. <= 0 disables the clamp.
+    float max_frame_delta = 0.25f; // NOLINT(misc-non-private-member-variables-in-classes)
     // Exit cleanly after this many submitted frames. 0 = run until the user
     // quits. Used by automated smoke runs (`--max-frames`).
     std::uint32_t max_frames = 0; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -118,6 +147,18 @@ struct ApplicationHooks {
     VulkanShared::CallbackList<void(ApplicationContext&)> on_pre_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<bool()> should_filter_mouse_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
     std::function<bool()> should_filter_keyboard_input{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Simulation hook, run 0..max_fixed_steps_per_frame times per iteration before
+    // on_frame_update, with ApplicationFrameState::fixed_delta_time as the timestep.
+    // Anything that integrates state over time (velocity, character motion,
+    // collision sweeps, gameplay timers) belongs here; anything that samples the
+    // current state (camera follow, UI, per-frame uploads) belongs in
+    // on_frame_update, which runs exactly once.
+    //
+    // Caution: InputSystem's edge queries (WasActionStarted / WasActionCanceled) are
+    // per-iteration flags, so reading them here fires once per fixed step. Read edges
+    // in on_frame_update, or use InputSystem::RegisterStartedCallback. Level queries
+    // (IsActionActive) and GetActionValue are safe here.
+    VulkanShared::OrderedCallbackList<void(ApplicationContext&)> on_fixed_update{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanShared::OrderedCallbackList<void(ApplicationContext&)> on_frame_update{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanShared::OrderedCallbackList<void(ApplicationContext&)> on_frame_render{}; // NOLINT(misc-non-private-member-variables-in-classes)
     VulkanShared::CallbackList<void(ApplicationContext&)> on_shutdown{}; // NOLINT(misc-non-private-member-variables-in-classes)

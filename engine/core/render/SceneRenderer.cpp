@@ -58,6 +58,33 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount and drawIndirectFirstInstance "
                            "not both supported; falling back to CID draw mode");
     }
+
+    // Resolve the submesh-block budget from the device before any descriptor
+    // layout is created: binding array sizes and descriptor pool sizes both
+    // derive from it. Descriptor binding arrays are static, so the compile-time
+    // ceiling bounds them and the device clamps below it.
+    {
+        const auto& limits = be.GetCapabilities().GetProperties().limits;
+        const SceneLimits::DeviceLimits device_limits{
+            .max_descriptor_set_storage_buffers =
+                limits.maxDescriptorSetStorageBuffers,
+            .max_per_stage_descriptor_storage_buffers =
+                limits.maxPerStageDescriptorStorageBuffers,
+        };
+        max_blocks_ = std::clamp(SceneLimits::MaxBlocksForDevice(device_limits),
+                                 1u, SceneLimits::kMaxBlocksCeiling);
+        LOGIFACE_LOG(info, "SceneRenderer: submesh block budget max_blocks=" +
+                     std::to_string(max_blocks_) + " (" + std::to_string(MaxSubmeshes()) +
+                     " submeshes; ceiling " +
+                     std::to_string(SceneLimits::kMaxBlocksCeiling) + ")");
+        if (max_blocks_ < SceneLimits::kMaxBlocksCeiling) {
+            LOGIFACE_LOG(info, "SceneRenderer: block budget clamped by device descriptor limits "
+                         "(maxDescriptorSetStorageBuffers=" +
+                         std::to_string(limits.maxDescriptorSetStorageBuffers) +
+                         ", maxPerStageDescriptorStorageBuffers=" +
+                         std::to_string(limits.maxPerStageDescriptorStorageBuffers) + ")");
+        }
+    }
     scene_capacity_ = SceneCapacity{
         std::max(initial_capacity.index_count, 1u),
         std::max(initial_capacity.vertex_span, 1u),
@@ -86,7 +113,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = MAX_BLOCKS;
+        bs[0].descriptorCount = max_blocks_;
         bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex |
                            vk::ShaderStageFlagBits::eCompute;
         submesh_vertex_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
@@ -94,7 +121,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *submesh_vertex_layout_, "submesh-vertex-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS;
+        pc.max_storage_buffers = frames_in_flight_ *
+            SceneLimits::StorageBuffersForPlan(SceneLimits::kSubmeshVertexPlan, max_blocks_);
         submesh_vertex_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
     }
@@ -267,7 +295,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         for (std::uint32_t i = 0; i < 4; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].descriptorCount = max_blocks_;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
         for (std::uint32_t i = 4; i < 7; ++i) {
@@ -282,7 +310,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 4 + 3);
+        pc.max_storage_buffers = frames_in_flight_ *
+            SceneLimits::StorageBuffersForPlan(SceneLimits::kExpandPlan, max_blocks_);
         expand_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         expand_pool_->SetDebugName(dev, "expand-pool");
     }
@@ -295,7 +324,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].descriptorCount = max_blocks_;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
         bs[3].binding = 3;
@@ -304,7 +333,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         bs[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
         bs[4].binding = 4;
         bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[4].descriptorCount = MAX_BLOCKS;
+        bs[4].descriptorCount = max_blocks_;
         bs[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
         for (std::uint32_t i = 5; i < 9; ++i) {
             bs[i].binding = i;
@@ -318,7 +347,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * MAX_BLOCKS * 4 + frames_in_flight_ * 5;
+        pc.max_storage_buffers = frames_in_flight_ *
+            SceneLimits::StorageBuffersForPlan(SceneLimits::kOcclusionPlan, max_blocks_);
         pc.max_sampled_images = frames_in_flight_;
         pc.max_combined_image_samplers = frames_in_flight_;
         occlusion_pool_ = GpuResources::DescriptorPool::Create(be, pc);
@@ -333,7 +363,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = MAX_BLOCKS;
+            bs[i].descriptorCount = max_blocks_;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
         for (std::uint32_t i = 3; i < 8; ++i) {
@@ -348,7 +378,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occluder_select_layout_, "occluder-select-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS * 3 + 5);
+        pc.max_storage_buffers = frames_in_flight_ *
+            SceneLimits::StorageBuffersForPlan(SceneLimits::kOccluderSelectPlan, max_blocks_);
         occluder_select_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         occluder_select_pool_->SetDebugName(dev, "occluder-select-pool");
     }
@@ -360,7 +391,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = MAX_BLOCKS;
+        bs[0].descriptorCount = max_blocks_;
         bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
         for (std::uint32_t i = 1; i < bs.size(); ++i) {
             bs[i].binding = i;
@@ -374,7 +405,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
         GpuResources::DescriptorPoolConfig pc{};
         pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ * (MAX_BLOCKS + 5);
+        pc.max_storage_buffers = frames_in_flight_ *
+            SceneLimits::StorageBuffersForPlan(SceneLimits::kCollectPlan, max_blocks_);
         collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
         collect_pool_->SetDebugName(dev, "collect-pool");
     }
@@ -440,12 +472,17 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         constexpr std::uint64_t technique_flags_size =
             static_cast<uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
 
-        auto make_block_config = [](std::uint32_t entry_size, std::uint32_t entries_per_block,
-                                     vk::BufferUsageFlags extra_usage,
-                                     vk::MemoryPropertyFlags memory) {
+        // Every per-submesh block array is bounded to the runtime block budget:
+        // its descriptors are a max_blocks_-sized binding array, so growing past
+        // that would write descriptors out of range.
+        auto make_block_config = [max_blocks = max_blocks_](std::uint32_t entry_size,
+                                                            std::uint32_t entries_per_block,
+                                                            vk::BufferUsageFlags extra_usage,
+                                                            vk::MemoryPropertyFlags memory) {
             GpuResources::BlockArray::Config c{};
             c.entry_size = entry_size;
             c.entries_per_block = entries_per_block;
+            c.max_blocks = max_blocks;
             c.extra_usage = extra_usage;
             c.memory = memory;
             return c;
@@ -590,6 +627,9 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         GpuResources::BlockArray::Config light_cfg{};
         light_cfg.entry_size = sizeof(Light);
         light_cfg.entries_per_block = LIGHTS_PER_BLOCK;
+        // The light descriptor binding is a fixed MAX_LIGHT_BLOCKS array; the
+        // BlockArray must not grow past it.
+        light_cfg.max_blocks = MAX_LIGHT_BLOCKS;
         light_cfg.memory_mode = GpuResources::MemoryMode::DeviceLocal;
         light_cfg.memory = vk::MemoryPropertyFlagBits::eDeviceLocal;
         light_cfg.extra_usage = vk::BufferUsageFlagBits::eTransferDst; // NOLINT
@@ -619,6 +659,10 @@ bool SceneRenderer::CreateFrameBuffers() {
     if (!backend_) return false;
     auto& be = *backend_;
     const auto& dev = be.GetDevice();
+
+    // Any descriptor written against the previous buffers is stale; force a
+    // full block-descriptor rewrite on the next PrepareCompute.
+    ++binding_epoch_;
 
     const std::uint64_t vertex_indirection_size =
         static_cast<std::uint64_t>(scene_capacity_.vertex_span) * 8u;
@@ -1272,8 +1316,27 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
                                     GpuResources::StagingPool& staging) {
     if (!backend_) return;
 
-    // Grow BlockArray to fit all lights
-    scene_lights.EnsureCapacity(static_cast<std::uint32_t>(lights.size()));
+    // Grow BlockArray to fit all lights. The descriptor binding is a fixed
+    // MAX_LIGHT_BLOCKS array, so the upload is clamped to what actually fits.
+    constexpr std::size_t kLightCapacity =
+        static_cast<std::size_t>(MAX_LIGHT_BLOCKS) * LIGHTS_PER_BLOCK;
+    if (lights.size() > kLightCapacity) {
+        static bool reported_overflow = false;
+        if (!reported_overflow) {
+            reported_overflow = true;
+            LOGIFACE_LOG(error, "SceneRenderer::UploadLighting: " +
+                std::to_string(lights.size()) + " lights exceed the " +
+                std::to_string(kLightCapacity) +
+                "-light descriptor capacity; extra lights are dropped");
+        }
+    }
+    const std::size_t light_count = std::min<std::size_t>(lights.size(), kLightCapacity);
+    if (!scene_lights.EnsureCapacity(static_cast<std::uint32_t>(light_count))) {
+        LOGIFACE_LOG(error, "SceneRenderer::UploadLighting: light BlockArray could not grow to hold " +
+            std::to_string(light_count) + " lights");
+    }
+    const std::size_t uploadable = std::min<std::size_t>(light_count,
+        static_cast<std::size_t>(scene_lights.BlockCount()) * scene_lights.EntriesPerBlock());
 
     // Stage the header buffer
     {
@@ -1286,7 +1349,7 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
     }
 
     // Stage each light via BlockArray::UploadEntry (uses staging internally)
-    for (std::size_t i = 0; i < lights.size(); ++i) {
+    for (std::size_t i = 0; i < uploadable; ++i) {
         scene_lights.UploadEntry(static_cast<std::uint32_t>(i), &lights[i],
                                          sizeof(Light), staging);
     }

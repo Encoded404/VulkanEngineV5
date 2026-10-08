@@ -53,7 +53,10 @@ public:
     void Shutdown();
 
     // Engine-standard descriptor set layouts (sets 0-4) used to build pass
-    // pipeline layouts. Must be set before the first Compile().
+    // pipeline layouts. Passes that declared a pipeline before this call had it
+    // deferred, so setting the layouts builds them; a pass registered afterwards
+    // has them available from the next ApplyChanges(). Either order leaves every
+    // declared pass with a pipeline before the first frame is recorded.
     void SetEngineDescriptorSetLayouts(std::array<vk::DescriptorSetLayout, 5> layouts);
 
     // ── IResourceRegistry overrides ──

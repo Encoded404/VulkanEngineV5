@@ -164,6 +164,9 @@ Game::Game(const std::filesystem::path& executable_path, EndpointOverride endpoi
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
+    fixed_update_token_ = hooks_.on_fixed_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
+        OnFixedUpdate(ctx);
+    });
     frame_update_token_ = hooks_.on_frame_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
         OnFrameUpdate(ctx);
     });
@@ -177,7 +180,7 @@ Game::Game(const std::filesystem::path& executable_path, EndpointOverride endpoi
 
 Game::~Game() = default;
 
-VulkanEngine::Components::Transform* Game::CreateCubeEntity(
+VulkanEngine::EntityId Game::CreateCubeEntity(
     const float x, const float y, const float z,
     const float sx, const float sy, const float sz,
     const VulkanEngine::MaterialManager::MaterialRef material) {
@@ -185,9 +188,6 @@ VulkanEngine::Components::Transform* Game::CreateCubeEntity(
 
     auto& entity = registry.CreateEntity();
     auto& transform = registry.AddComponent<VulkanEngine::Components::Transform>(entity);
-    // Run Initialize() now so the per-frame component update does not reset the
-    // transform we are about to write on the first frame.
-    transform.DispatchUpdate(0.0f);
     transform.position = glm::vec3{x, y, z};
     transform.scale = glm::vec3{sx, sy, sz};
 
@@ -199,7 +199,7 @@ VulkanEngine::Components::Transform* Game::CreateCubeEntity(
     auto& override_comp = registry.AddComponent<VulkanEngine::Components::MaterialOverride>(entity);
     override_comp.Set(0, material);
 
-    return &transform;
+    return entity.GetId();
 }
 
 bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
@@ -286,21 +286,23 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // camera stays parallel to the corridor instead of yawing toward a fixed
     // world point as the player moves sideways.
     auto& registry = engine_game_.GetContext().GetComponentRegistry();
-    camera_ = &engine_game_.CreateCamera(registry);
-    camera_->position = glm::vec3{0.0f, 2.0f, 6.5f};
-    camera_->up = glm::vec3{0.0f, 1.0f, 0.0f};
-    camera_->orientation = VulkanEngine::Components::CameraOrientation::Direction;
-    camera_->forward = glm::normalize(glm::vec3{0.0f, -1.6f, -12.5f});
-    camera_->fov_degrees = 60.0f;
-    camera_->near_plane = 0.1f;
-    camera_->far_plane = 220.0f;
+    camera_entity_ = engine_game_.CreateCamera(registry);
+    if (auto* camera = engine_game_.GetCamera()) {
+        camera->position = glm::vec3{0.0f, 2.0f, 6.5f};
+        camera->up = glm::vec3{0.0f, 1.0f, 0.0f};
+        camera->orientation = VulkanEngine::Components::CameraOrientation::Direction;
+        camera->forward = glm::normalize(glm::vec3{0.0f, -1.6f, -12.5f});
+        camera->fov_degrees = 60.0f;
+        camera->near_plane = 0.1f;
+        camera->far_plane = 220.0f;
+    }
 
     // 5. Floor + player + wall pool.
     const float floor_height = 0.2f;
     const float wall_spacing = balance_.WallSpacing();
     const int wall_count = balance_.wall_count;
     CreateCubeEntity(0.0f, -(balance_.player_size / 2) - (floor_height / 2), -(wall_spacing * static_cast<float>(wall_count) + 20.0f) / 2 + 20.0f, 2.0f * balance_.corridor_half + 2.0f, floor_height, wall_spacing * static_cast<float>(wall_count) + 20.0f, floor_material_);
-    player_transform_ = CreateCubeEntity(0.0f, 0.0f, 0.0f, balance_.player_size, balance_.player_size, balance_.player_size, player_material_);
+    player_entity_ = CreateCubeEntity(0.0f, 0.0f, 0.0f, balance_.player_size, balance_.player_size, balance_.player_size, player_material_);
 
     walls_.reserve(static_cast<std::size_t>(wall_count));
     for (int i = 0; i < wall_count; ++i) {
@@ -876,9 +878,15 @@ void Game::RandomizeWall(Wall& wall) {
 void Game::ApplyWallTransform(WallSlot& slot) {
     // Render transforms are derived from the same block geometry the sweep
     // tests against, so the visuals and the hitboxes cannot drift apart.
-    const auto place = [](VulkanEngine::Components::Transform* transform, const Sweep::Aabb& box) {
-        transform->position = box.Center();
-        transform->scale = box.Size();
+    // Transform is a data component, so each wall re-fetches it by EntityId.
+    auto& registry = engine_game_.GetContext().GetComponentRegistry();
+    const auto place = [&registry](const VulkanEngine::EntityId id, const Sweep::Aabb& box) {
+        if (auto* entity = registry.TryGetEntity(id)) {
+            if (auto* transform = entity->GetComponent<VulkanEngine::Components::Transform>()) {
+                transform->position = box.Center();
+                transform->scale = box.Size();
+            }
+        }
     };
 
     place(slot.left, slot.wall.LeftBlock(balance_));
@@ -900,7 +908,12 @@ void Game::ResetRun() {
     player_x_ = 0.0f;
     score_ = 0;
     game_over_ = false;
-    player_transform_->position = glm::vec3{0.0f, 0.0f, 0.0f};
+    auto& registry = engine_game_.GetContext().GetComponentRegistry();
+    if (auto* entity = registry.TryGetEntity(player_entity_)) {
+        if (auto* transform = entity->GetComponent<VulkanEngine::Components::Transform>()) {
+            transform->position = glm::vec3{0.0f, 0.0f, 0.0f};
+        }
+    }
     ResetWalls();
 }
 
@@ -909,8 +922,15 @@ void Game::UpdatePlayer(const VulkanEngine::Application::ApplicationContext& /*c
 
     const float limit = balance_.corridor_half - balance_.player_size * 0.5f;
     player_x_ = std::clamp(player_x_ + direction * balance_.player_speed * delta_time, -limit, limit);
-    player_transform_->position = glm::vec3{player_x_, 0.0f, 0.0f};
-    camera_->position.x = player_x_;
+    auto& registry = engine_game_.GetContext().GetComponentRegistry();
+    if (auto* entity = registry.TryGetEntity(player_entity_)) {
+        if (auto* transform = entity->GetComponent<VulkanEngine::Components::Transform>()) {
+            transform->position = glm::vec3{player_x_, 0.0f, 0.0f};
+        }
+    }
+    if (auto* camera = engine_game_.GetCamera()) {
+        camera->position.x = player_x_;
+    }
 }
 
 bool Game::StepWalls(const float delta_time, const float player_x_before, const float player_dx) {
@@ -960,24 +980,21 @@ bool Game::PlayerOverlapsAnyWall() const {
     return false;
 }
 
-void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
-    const float delta_time = ctx.frame.delta_time;
+void Game::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Engine simulation. Components integrate against the fixed timestep, which
+    // equals the wall-clock delta while fixed stepping is disabled (the default),
+    // so this runs exactly once per iteration today and 0..N times once a fixed
+    // rate is configured.
+    engine_game_.FixedUpdate(ctx);
 
-    // Account work is polled every frame, modal or not, so a registration or
-    // settings update completes without blocking the frame loop.
-    PollPendingAccount();
-
-    // While the login window is open the run is paused and the game's own
-    // actions are ignored. Events are deliberately not filtered: Esc must still
-    // reach the quit action, and ImGui consumes its own text input.
+    // While the login window is open the run is paused and the game's own logic is
+    // skipped. The engine simulation above still runs so the scene stays
+    // consistent behind the modal.
     if (login_open_) {
-        engine_game_.FrameUpdate(ctx);
         return;
     }
 
-    if (ctx.input_system->WasActionStarted(restart_handle_)) {
-        ResetRun();
-    }
+    const float delta_time = ctx.frame.fixed_delta_time;
 
     if (!game_over_) {
         const float player_x_before = player_x_;
@@ -992,12 +1009,36 @@ void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ct
         }
     }
 
+    // Gameplay timer: accumulates simulated time, not wall-clock time, so the
+    // leaderboard refresh rate does not follow the render rate.
     if (leaderboard_ != nullptr) {
         leaderboard_request_timer_ += delta_time;
         if (leaderboard_request_timer_ >= 2.0f) {
             leaderboard_request_timer_ = 0.0f;
             RequestLeaderboard();
         }
+    }
+}
+
+void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    // Account work is polled every frame, modal or not, so a registration or
+    // settings update completes without blocking the frame loop.
+    PollPendingAccount();
+
+    // While the login window is open the run is paused and the game's own
+    // actions are ignored. Events are deliberately not filtered: Esc must still
+    // reach the quit action, and ImGui consumes its own text input.
+    if (login_open_) {
+        engine_game_.FrameUpdate(ctx);
+        return;
+    }
+
+    // Restart is edge-triggered, so it is sampled on the frame hook: the fixed
+    // hook may run several times in one frame, which would fire the edge once per
+    // step. It therefore takes effect from the next simulation step rather than
+    // mid-iteration.
+    if (ctx.input_system->WasActionStarted(restart_handle_)) {
+        ResetRun();
     }
 
     engine_game_.FrameUpdate(ctx);

@@ -171,42 +171,31 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                      MaterialManager::MaterialManager& material_mgr,
                                      std::uint32_t frame_index) {
     // --- Phase 1: Collect static mesh entities ---
-    std::vector<DrawEntity> static_ents;
-    static_ents.reserve(MAX_GATHER);
-    registry.ForEach<Components::MeshReference>(
-        [&](Components::MeshReference& mr) {
-            if (static_ents.size() >= MAX_GATHER) return;
-            auto* owner = mr.GetOwner();
-            if (!owner) return;
-            auto* transform = owner->GetComponent<Components::Transform>();
-            if (!transform) return;
-            static_ents.push_back({ transform, &mr });
+    static_ents_.clear();
+    EnsureGatherReserve(static_ents_, last_static_count_);
+    registry.ForEach<Components::Transform, Components::MeshReference>(
+        [&](Entity& entity, Components::Transform& transform, Components::MeshReference& mesh_ref) {
+            if (static_ents_.size() >= SceneLimits::kGatherEntityCap) return;
+            static_ents_.push_back({ &entity, &transform, &mesh_ref });
         });
 
     // --- Phase 2: Collect dynamic mesh entities ---
-    std::vector<DynamicEntity> dyn_ents;
-    dyn_ents.reserve(MAX_GATHER);
-    registry.ForEach<Components::DynamicMesh>(
-        [&](Components::DynamicMesh& dm) {
-            if (dyn_ents.size() >= MAX_GATHER) return;
-            auto* owner = dm.GetOwner();
-            if (!owner) {
-                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no owner, skipping");
-                return;
-            }
-            auto* transform = owner->GetComponent<Components::Transform>();
-            if (!transform) {
-                LOGIFACE_LOG(debug, "ProcessFrame: DynamicMesh entity has no Transform component, skipping");
-                return;
-            }
-            dyn_ents.push_back({ transform, &dm });
+    dyn_ents_.clear();
+    EnsureGatherReserve(dyn_ents_, last_dyn_count_);
+    registry.ForEach<Components::Transform, Components::DynamicMesh>(
+        [&](Entity& entity, Components::Transform& transform, Components::DynamicMesh& dyn_mesh) {
+            if (dyn_ents_.size() >= SceneLimits::kGatherEntityCap) return;
+            dyn_ents_.push_back({ &entity, &transform, &dyn_mesh });
         });
 
-    LOGIFACE_LOG(trace, "ProcessFrame: collected " + std::to_string(static_ents.size()) +
-                 " static and " + std::to_string(dyn_ents.size()) + " dynamic entities");
+    last_static_count_ = static_ents_.size();
+    last_dyn_count_ = dyn_ents_.size();
+
+    LOGIFACE_LOG(trace, "ProcessFrame: collected " + std::to_string(static_ents_.size()) +
+                 " static and " + std::to_string(dyn_ents_.size()) + " dynamic entities");
 
     // --- Phase 3: Request GPU residency for static meshes ---
-    for (auto& e : static_ents) {
+    for (auto& e : static_ents_) {
         const std::uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
         mesh_registry.RequestGpuResidency(mesh_id, mesh_mgr, renderer,
                                            vtx_heap, idx_heap);
@@ -215,7 +204,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     // --- Phase 4: Count total submesh entries ---
     std::uint32_t total_submeshes = 0;
 
-    for (auto& e : static_ents) {
+    for (auto& e : static_ents_) {
         const auto* info = mesh_registry.Get(e.mesh_ref->loaded_mesh_id);
         if (!info || !info->gpu_resident) continue;
         total_submeshes += info->submesh_count;
@@ -223,7 +212,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     {
         const std::uint32_t dyn_fif = frame_index % mesh_mgr.GetFramesInFlight();
-        for (auto& e : dyn_ents) {
+        for (auto& e : dyn_ents_) {
             const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
             if (!gpu_info) {
                 LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh gpu_handle invalid, skipping in count");
@@ -244,8 +233,26 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         }
     }
 
+    // The descriptor binding arrays cap how many submeshes this frame can hold.
+    // Clamp to the budget and truncate at a submesh boundary, deterministically,
+    // instead of letting a block array grow past its binding array (which would
+    // write descriptors out of range). Reported once per process.
+    const std::uint32_t max_submeshes = renderer.MaxSubmeshes();
+    if (total_submeshes > max_submeshes) {
+        static bool reported_overflow = false;
+        if (!reported_overflow) {
+            reported_overflow = true;
+            LOGIFACE_LOG(error, "ProcessFrame: scene has " + std::to_string(total_submeshes) +
+                " submeshes but the capacity budget is " + std::to_string(max_submeshes) +
+                " (" + std::to_string(renderer.MaxBlocks()) + " blocks x " +
+                std::to_string(SceneLimits::kEntriesPerBlock) +
+                "); the frame is truncated");
+        }
+        total_submeshes = max_submeshes;
+    }
+
     // Update streamed data for dynamic meshes
-    for (auto& e : dyn_ents) {
+    for (auto& e : dyn_ents_) {
         mesh_mgr.UpdateStreamed(e.dyn_mesh->gpu_handle, e.dyn_mesh->mesh_data, frame_index);
     }
 
@@ -255,20 +262,29 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     {
         const std::uint32_t blk_pre = frame_blocks.dynamic_entries->BlockCount();
-        frame_blocks.dynamic_entries->EnsureCapacity(total_submeshes);
+        if (!frame_blocks.dynamic_entries->EnsureCapacity(total_submeshes)) {
+            LOGIFACE_LOG(error, "ProcessFrame: dynamic_entries could not grow to " +
+                         std::to_string(total_submeshes) + " entries");
+        }
         LOGIFACE_LOG(trace, "ProcessFrame: dynamic_entries EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
                      std::to_string(frame_blocks.dynamic_entries->BlockCount()));
     }
     {
         const std::uint32_t blk_pre = frame_blocks.static_entries->BlockCount();
-        frame_blocks.static_entries->EnsureCapacity(total_submeshes);
+        if (!frame_blocks.static_entries->EnsureCapacity(total_submeshes)) {
+            LOGIFACE_LOG(error, "ProcessFrame: static_entries could not grow to " +
+                         std::to_string(total_submeshes) + " entries");
+        }
         LOGIFACE_LOG(trace, "ProcessFrame: static_entries EnsureCapacity(" + std::to_string(total_submeshes) +
                      ") blocks " + std::to_string(blk_pre) + " -> " +
                      std::to_string(frame_blocks.static_entries->BlockCount()));
     }
-    frame_blocks.bounding_spheres->EnsureCapacity(total_submeshes);
-    frame_blocks.obb_entries->EnsureCapacity(total_submeshes);
+    if (!frame_blocks.bounding_spheres->EnsureCapacity(total_submeshes) ||
+        !frame_blocks.obb_entries->EnsureCapacity(total_submeshes)) {
+        LOGIFACE_LOG(error, "ProcessFrame: bounds block arrays could not grow to " +
+                     std::to_string(total_submeshes) + " entries");
+    }
 
     // Pack ORM override factors into one u32: bits [7:0]=AO, [15:8]=roughness,
     // [23:16]=metallic, [31:24]=spare. Unorm8 per channel, must match the
@@ -348,12 +364,12 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     std::uint32_t total_vertex_span = 0;
     constexpr std::uint32_t kTechniqueCount =
         SceneRenderer::SceneRenderer::MAX_DRAW_GROUPS;
-    std::vector<std::uint32_t> tech_submeshes(kTechniqueCount, 0);
+    tech_submeshes_.fill(0);
     const auto accumulate = [&](const SubMesh& sm, std::uint32_t tech_material) {
         total_index_count += sm.index_count;
         total_vertex_span += sm.vertex_span;
         const std::uint32_t tid = tech_material & TechniqueManager::TechniquePacking::TECHNIQUE_MASK;
-        if (tid < kTechniqueCount) tech_submeshes[tid] += 1u;
+        if (tid < kTechniqueCount) tech_submeshes_[tid] += 1u;
     };
     // The 24-bit vertex index packing cannot be represented past 2^24; fail
     // loud (once) instead of silently corrupting geometry.
@@ -368,8 +384,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                "vertex_info_packed 24-bit packing overflow");
     };
 
-    // Write static mesh entries
-    for (auto& e : static_ents) {
+    // Write static mesh entries. `ci` is the global submesh slot; the budget
+    // clamp above can stop the write part-way (truncation at a submesh boundary).
+    for (auto& e : static_ents_) {
+        if (ci >= total_submeshes) break;
         const auto* loaded = mesh_registry.Get(e.mesh_ref->loaded_mesh_id);
         if (!loaded || !loaded->gpu_resident || !loaded->gpu_handle.IsValid()) continue;
 
@@ -395,15 +413,16 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         // submesh falls back to its material's own factors (resolved per submesh).
         const Components::OrmOverride* orm_override = nullptr;
         Components::MaterialOverride* material_override = nullptr;
-        if (e.mesh_ref && e.mesh_ref->GetOwner()) {
-            orm_override = e.mesh_ref->GetOwner()->GetComponent<Components::OrmOverride>();
-            material_override = e.mesh_ref->GetOwner()->GetComponent<Components::MaterialOverride>();
+        if (e.entity != nullptr) {
+            orm_override = e.entity->GetComponent<Components::OrmOverride>();
+            material_override = e.entity->GetComponent<Components::MaterialOverride>();
         }
-        const std::uint64_t entity_id = (e.mesh_ref && e.mesh_ref->GetOwner())
-            ? static_cast<std::uint64_t>(e.mesh_ref->GetOwner()->GetId())
+        const std::uint64_t entity_id = e.entity != nullptr
+            ? static_cast<std::uint64_t>(e.entity->GetId().index)
             : 0ull;
 
         for (std::uint32_t s = 0; s < loaded->submesh_count; ++s) {
+            if (ci >= total_submeshes) break;
             const std::uint32_t si = loaded->first_submesh_in_renderer + s;
             const auto sm = (si < scene_submeshes.size())
                 ? scene_submeshes[si]
@@ -490,7 +509,8 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     const std::uint32_t static_idx_count = idx_heap.GetBufferCount();
     const std::uint32_t fif = frame_index % mesh_mgr.GetFramesInFlight();
 
-    for (auto& e : dyn_ents) {
+    for (auto& e : dyn_ents_) {
+        if (ci >= total_submeshes) break;
         const auto* gpu_info = mesh_mgr.GetMeshInfo(e.dyn_mesh->gpu_handle);
         if (!gpu_info) {
             LOGIFACE_LOG(debug, "ProcessFrame: dynamic mesh gpu_handle invalid, skipping write");
@@ -530,13 +550,14 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const Components::OrmOverride* orm_override = nullptr;
         Components::MaterialOverride* material_override = nullptr;
         std::uint64_t entity_id = 0ull;
-        if (e.dyn_mesh->GetOwner() != nullptr) {
-            orm_override = e.dyn_mesh->GetOwner()->GetComponent<Components::OrmOverride>();
-            material_override = e.dyn_mesh->GetOwner()->GetComponent<Components::MaterialOverride>();
-            entity_id = static_cast<std::uint64_t>(e.dyn_mesh->GetOwner()->GetId());
+        if (e.entity != nullptr) {
+            orm_override = e.entity->GetComponent<Components::OrmOverride>();
+            material_override = e.entity->GetComponent<Components::MaterialOverride>();
+            entity_id = static_cast<std::uint64_t>(e.entity->GetId().index);
         }
 
         for (std::uint32_t s = 0; s < e.dyn_mesh->submesh_count; ++s) {
+            if (ci >= total_submeshes) break;
             const std::uint32_t si = e.dyn_mesh->first_submesh + s;
             const auto& sms = gpu_info->sub_meshes;
             const auto sm = (si < sms.size()) ? sms[si] : SubMesh{};
@@ -653,7 +674,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         .vertex_span = total_vertex_span,
         .submesh_count = total_submeshes,
     });
-    renderer.SetTechniqueCommandRegions(tech_submeshes);
+    renderer.SetTechniqueCommandRegions(tech_submeshes_);
 
     // Set entity count on renderer so subsequent passes know how many entries to process
     renderer.SetCurrentEntityCount(total_submeshes);

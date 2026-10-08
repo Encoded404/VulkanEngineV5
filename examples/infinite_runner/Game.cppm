@@ -42,6 +42,9 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    // Simulation: player and wall integration plus collision, and gameplay timers.
+    // Runs on the fixed-step hook so the run is rate-independent of the render rate.
+    void OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
@@ -50,13 +53,13 @@ private:
     // type owns the geometry; the game owns the ECS plumbing.
     struct WallSlot {
         Wall wall{};
-        VulkanEngine::Components::Transform* left = nullptr;
-        VulkanEngine::Components::Transform* right = nullptr;
+        VulkanEngine::EntityId left{};
+        VulkanEngine::EntityId right{};
     };
 
-    VulkanEngine::Components::Transform* CreateCubeEntity(float x, float y, float z,
-                                                          float sx, float sy, float sz,
-                                                          VulkanEngine::MaterialManager::MaterialRef material);
+    VulkanEngine::EntityId CreateCubeEntity(float x, float y, float z,
+                                            float sx, float sy, float sz,
+                                            VulkanEngine::MaterialManager::MaterialRef material);
 
     void RandomizeWall(Wall& wall);
     void ApplyWallTransform(WallSlot& slot);
@@ -73,6 +76,7 @@ private:
     VulkanEngine::Application::ApplicationHooks hooks_{};
 
     VulkanShared::ScopedHandle<bool(VulkanEngine::Application::ApplicationContext&)> setup_token_{};
+    VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> fixed_update_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_update_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_render_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
@@ -95,8 +99,8 @@ private:
     // the CPU resources alive for the lifetime of the run.
     std::vector<std::shared_ptr<VulkanEngine::TextureResource>> textures_{};
 
-    VulkanEngine::Components::Camera* camera_ = nullptr;
-    VulkanEngine::Components::Transform* player_transform_ = nullptr;
+    VulkanEngine::EntityId camera_entity_{};
+    VulkanEngine::EntityId player_entity_{};
     std::vector<WallSlot> walls_{};
 
     VulkanEngine::Input::Action<1> move_{};

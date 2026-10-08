@@ -192,7 +192,7 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         text.wrap = spec.wrap_width > 0.0f ? VulkanEngine::Components::TextWrap::Word
                                            : VulkanEngine::Components::TextWrap::None;
         text.max_width = spec.wrap_width;
-        world_text_entities_.push_back(WorldTextEntity{&text, &transform});
+        world_text_entities_.push_back(WorldTextEntity{entity.GetId()});
     }
 
     LOGIFACE_LOG(info, "text_demo: world text backend '" + backend_label +
@@ -236,12 +236,19 @@ void TextDemoGame::OnFrameRender(
         // frame so a buffer retired by a growth is released exactly one full
         // frames-in-flight cycle later.
         const std::uint32_t recording_frame = ctx.frame.frame_counter;
-        for (const WorldTextEntity& entity : world_text_entities_) {
-            if (entity.text == nullptr || entity.transform == nullptr) {
+        auto& registry = engine_game_.GetContext().GetComponentRegistry();
+        for (const WorldTextEntity& spawned : world_text_entities_) {
+            auto* spawned_entity = registry.TryGetEntity(spawned.entity);
+            if (spawned_entity == nullptr) {
+                continue;
+            }
+            auto* text = spawned_entity->GetComponent<VulkanEngine::Components::Text>();
+            auto* transform = spawned_entity->GetComponent<VulkanEngine::Components::Transform>();
+            if (text == nullptr || transform == nullptr) {
                 continue;
             }
             const std::shared_ptr<const VulkanEngine::Text::ShapedRun> run =
-                text_system.GetShapingCache().Shape(*face_, entity.text->content);
+                text_system.GetShapingCache().Shape(*face_, text->content);
             if (run == nullptr || run->Empty()) {
                 continue;
             }
@@ -249,7 +256,7 @@ void TextDemoGame::OnFrameRender(
                 // One design-unit blob per glyph, whatever the world size; the
                 // pass places it in its blob buffer and the shader reconstructs
                 // coverage analytically.
-                world_pass->QueueSlugRun(slug_encoder_, *entity.text, *entity.transform, *face_,
+                world_pass->QueueSlugRun(slug_encoder_, *text, *transform, *face_,
                                          *run, recording_frame);
             } else if (world_pass->AcceptsMsdfRuns()) {
                 // Resolve before queueing, exactly as SubmitScreenText does: the
@@ -260,7 +267,7 @@ void TextDemoGame::OnFrameRender(
                     (void)msdf_.Generate(*face_, glyph.glyph_id, msdf_config_);
                 }
                 (void)world_atlas_.EnsurePages(msdf_.Atlas());
-                world_pass->QueueRun(msdf_, world_atlas_, *entity.text, *entity.transform, *face_,
+                world_pass->QueueRun(msdf_, world_atlas_, *text, *transform, *face_,
                                      *run, msdf_config_);
             }
         }

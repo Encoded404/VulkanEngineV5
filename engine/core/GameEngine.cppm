@@ -26,6 +26,7 @@ export import VulkanEngine.GpuResources;
 export import VulkanEngine.Application;
 export import VulkanEngine.Input;
 export import VulkanEngine.EngineContext;
+export import VulkanEngine.ECS.SystemSchedule;
 export import VulkanEngine.Text.TextSystem;
 export import VulkanEngine.Text.Font;
 
@@ -101,9 +102,30 @@ public:
         const std::vector<std::filesystem::path>& file_paths,
         const std::vector<SceneLoader::MaterialId>* material_bindings = nullptr);
 
-    Components::Camera& CreateCamera(ComponentRegistry& registry);
-    Components::Camera* GetCamera() { return camera_; }
+    // Creates the camera entity and remembers its id. Camera is a data
+    // component, so callers re-fetch it through GetCamera() rather than caching
+    // a pointer (the storage can reallocate on any structural change).
+    EntityId CreateCamera(ComponentRegistry& registry);
+    [[nodiscard]] Components::Camera* GetCamera() {
+        Entity* entity = ctx_.component_registry.TryGetEntity(camera_entity_);
+        return entity != nullptr ? entity->GetComponent<Components::Camera>() : nullptr;
+    }
 
+    // Simulation. Runs, in order, on the on_fixed_update hook (which may fire
+    // several times per rendered frame): apply queued structural changes, run
+    // data-component systems in registration order, dispatch object-component
+    // Update, then apply structural changes queued during those phases.
+    //
+    // AddSystem is where data-component systems get an ordered home. Object
+    // components keep driving themselves through Component::Update.
+    using SystemFn = VulkanEngine::SystemSchedule::SystemFn;
+    void AddSystem(std::string name, SystemFn fn) {
+        systems_.Add(std::move(name), std::move(fn));
+    }
+    void FixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
+    // Everything that must happen exactly once per rendered frame: the text
+    // display scale and the per-frame mesh/render processing (which indexes the
+    // in-flight rings by frame counter, so it must not run per simulation step).
     void FrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void FrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void Shutdown();
@@ -169,7 +191,10 @@ private:
     VulkanBackend::Vulkan::VulkanBootstrap* vk_backend_ = nullptr;
     GameConfig config_{};
 
-    Components::Camera* camera_ = nullptr;
+    EntityId camera_entity_{};
+
+    // Data-component systems, in registration order (see AddSystem).
+    VulkanEngine::SystemSchedule systems_{};
 
     std::uint16_t main_technique_id_ = 0;
     std::uint16_t main_draw_group_ = 0;

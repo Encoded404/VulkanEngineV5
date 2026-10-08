@@ -35,6 +35,12 @@ struct PlatformState {
     bool resized = false;
     std::uint32_t drawable_width = 0;
     std::uint32_t drawable_height = 0;
+    // Physical pixels per logical point for the window's current display. The
+    // window size, every input coordinate and every UI size a caller writes are
+    // in logical points; the swapchain extent is in physical pixels, and this is
+    // the ratio between them. It is 1.0 wherever the platform reports no scale,
+    // which is also what a backend without a window must report.
+    float content_scale = 1.0f;
     PlatformStatus status = PlatformStatus::NotInitialized;
     std::string error_message; // Optional detailed error message for fatal errors
     // NOLINTEND(misc-non-private-member-variables-in-classes)
@@ -49,6 +55,12 @@ public:
     [[nodiscard]] virtual bool CreateMainWindow(const PlatformConfig& config) = 0;
     [[nodiscard]] virtual VulkanBackend::Event::EventList PumpEvents() = 0;
     [[nodiscard]] virtual SDL_Window* GetNativeWindowHandle() const = 0;
+
+    // Physical pixels per logical point on the window's current display.
+    // Defaulted rather than pure so a backend with no display to ask -- a test
+    // double, a headless shell -- reports 1.0 instead of having to answer a
+    // question it cannot.
+    [[nodiscard]] virtual float GetDisplayScale() const { return 1.0f; }
 
     virtual VulkanShared::CallbackList<void(void*)>& GetSdlEventProcessors() = 0;
 };

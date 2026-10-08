@@ -27,11 +27,8 @@ export namespace VulkanEngine::Components {
 // later changes, the override is ignored and reported once instead of being
 // applied to a different submesh layout.
 //
-// Deliberately no GetFields(): `submeshes` is a variable-length vector and is
-// not representable by the field-reflection system. This component is stored
-// through the AoS path (like DynamicMesh).
-class MaterialOverride : public VulkanEngine::Component {
-public:
+// Data component: dense storage.
+struct MaterialOverride {
     static constexpr std::uint32_t kUnboundMesh =
         std::numeric_limits<std::uint32_t>::max();
 

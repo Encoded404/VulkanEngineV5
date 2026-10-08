@@ -1,4 +1,5 @@
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 #include "technique_packing.slang"   // kCompactionMode (constant_id 0): draw-mode selector
 
 [[vk::binding(0, 1)]]
@@ -25,12 +26,12 @@ float4 main(uint vertexId : SV_VertexID,
         vertexBufferSlot = entry.vertexIndex >> 24;
         vertexIndex = entry.vertexIndex & 0xFFFFFFu;
         submeshIndex = entry.submeshIndex;
-        block = submeshIndex / 256u;
-        elementIndex = submeshIndex % 256u;
+        block = submeshIndex / kEntriesPerBlock;
+        elementIndex = submeshIndex % kEntriesPerBlock;
     } else {
         vertexIndex = vertexId;
-        block = submeshIndex / 256u;
-        elementIndex = submeshIndex % 256u;
+        block = submeshIndex / kEntriesPerBlock;
+        elementIndex = submeshIndex % kEntriesPerBlock;
         vertexBufferSlot =
             submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot;
     }

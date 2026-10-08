@@ -26,6 +26,7 @@ import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanBackend.Vulkan.VulkanBootstrapBackend;
 import VulkanEngine.Startup;
 import VulkanEngine.Application;
+import Runtime.FrameStepClock;
 
 #ifndef UINT32_MAX
 constexpr std::uint32_t UINT32_MAX =
@@ -262,11 +263,27 @@ export namespace VulkanEngine::Application {
         }
         setup_completed = true;
 
+        Runtime::FrameStepClock step_clock{};
+        step_clock.Configure(config.fixed_timestep, config.max_fixed_steps_per_frame,
+                             config.max_frame_delta);
+        bool step_budget_logged = false;
         auto previous_time = std::chrono::steady_clock::now();
         std::uint32_t rendered_frames = 0;
 
         VulkanEngine::Crash::Stage("frame loop");
         while (!platform->ShouldQuit() && !runtime->ShouldShutdown()) {
+            // Sampled once at the top of the iteration, ahead of every path that can
+            // `continue` (minimized, swapchain recreation, acquire failure). Those
+            // paths used to return before the sample, so the entire stall they
+            // absorbed was banked into the next frame's delta. Advancing the clock
+            // unconditionally here makes each of them contribute one ordinary,
+            // clamped delta instead. delta_time therefore measures iteration-start to
+            // iteration-start — the full frame period, including the current
+            // iteration's acquire and present.
+            const auto now = std::chrono::steady_clock::now();
+            const float raw_delta_time = std::chrono::duration<float>(now - previous_time).count();
+            previous_time = now;
+
             auto platform_events = platform->PollEvents();
 
             hooks.on_pre_input.Call(context);
@@ -344,6 +361,9 @@ export namespace VulkanEngine::Application {
                 if (!bootstrap->RecreateSwapchain()) {
                     return fail("Swapchain recreation failed");
                 }
+                // Recreation is unbounded work performed after this iteration's
+                // sample; re-stamp the clock so it is billed to no frame at all.
+                previous_time = std::chrono::steady_clock::now();
                 continue;
             }
             if (bootstrap_frame.status != VulkanBackend::Vulkan::BootstrapStatus::Ok) {
@@ -356,11 +376,30 @@ export namespace VulkanEngine::Application {
                 continue;
             }
 
-            const auto now = std::chrono::steady_clock::now();
-            context.frame.delta_time = std::chrono::duration<float>(now - previous_time).count();
-            previous_time = now;
+            const Runtime::FrameStep tick = step_clock.Advance(raw_delta_time);
+            context.frame.delta_time = tick.delta_time;
+            context.frame.fixed_delta_time = tick.step_delta;
+            context.frame.fixed_step_count = tick.step_count;
+            context.frame.interpolation_alpha = tick.alpha;
+
+            if (tick.budget_exhausted && !step_budget_logged) {
+                step_budget_logged = true;
+                LOGIFACE_LOG(warn, "fixed-step budget exhausted (" +
+                                       std::to_string(config.max_fixed_steps_per_frame) +
+                                       " steps in one iteration); dropping the backlog. The frame "
+                                       "rate is too low for fixed_timestep=" +
+                                       std::to_string(config.fixed_timestep) + "s");
+            }
 
             context.frame.frame_counter = bootstrap->GetSnapshot().frame_index;
+
+            for (std::uint32_t step = 0; step < tick.step_count; ++step) {
+                hooks.on_fixed_update.Call(context);
+                if (runtime->ShouldShutdown()) {
+                    // Do not simulate further once a step has asked to quit.
+                    break;
+                }
+            }
 
             hooks.on_frame_update.Call(context);
 

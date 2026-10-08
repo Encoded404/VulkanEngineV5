@@ -35,6 +35,12 @@ Cli::Cli(std::string_view app_name, std::string_view org_id, std::string_view ap
                     "Exit cleanly after this many rendered frames (0 = run until quit)")
        ->type_name("N");
 
+    // Simulation cadence. 0 keeps the variable-step loop, which is the default:
+    // on_fixed_update then runs once per frame carrying the variable delta.
+    app_.add_option("--fixed-timestep", fixed_timestep_hz_,
+                    "Run on_fixed_update at this rate in Hz (0 = variable step)")
+       ->type_name("HZ");
+
     // Storage options. Everything the application writes (settings, saves,
     // pipeline caches, logs) lives under the resolved root; these only decide
     // where that root is. --user-dir wins over --portable.
@@ -104,6 +110,9 @@ VulkanEngine::Application::ApplicationConfig Cli::MakeConfig() const {
     config.disable_portable = DisablePortable();
     config.log_level = log_level_;
     config.max_frames = max_frames_;
+    // Hz at the CLI, seconds in the config: the loop integrates seconds.
+    config.fixed_timestep =
+        fixed_timestep_hz_ > 0.0 ? static_cast<float>(1.0 / fixed_timestep_hz_) : 0.0f;
     // The config's default is build-type aware (debug: on, optimized: off);
     // explicit CLI flags override it in either direction. Both given: --validation wins.
     config.bootstrap_config.enable_validation =

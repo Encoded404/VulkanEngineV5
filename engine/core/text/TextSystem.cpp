@@ -200,8 +200,12 @@ void TextSystem::InvalidateFace(std::uint64_t face_id, std::uint32_t frame_index
     }
 }
 
-void TextSystem::SubmitScreenText(const FontFace& face, std::string_view text, float pixel_size,
-                                  float x, float y, const std::array<float, 4>& color,
+void TextSystem::SetDisplayScale(float display_scale) noexcept {
+    display_scale_ = display_scale;
+}
+
+void TextSystem::SubmitScreenText(const FontFace& face, std::string_view text, float point_size,
+                                  float x_points, float y_points, const std::array<float, 4>& color,
                                   const LayoutOptions& layout, GlyphHinting hinting,
                                   const ShapeOptions& shaping) {
     if (pass_ == nullptr) {
@@ -210,6 +214,17 @@ void TextSystem::SubmitScreenText(const FontFace& face, std::string_view text, f
         // pre-renderer case only.
         return;
     }
+
+    // Points -> pixels once, at the boundary. Everything below -- the rasterizer,
+    // the layout, the queued instances -- is in the pass's pixel space, and the
+    // atlas cache key is the pixel size, so a scale change is a different (and
+    // correctly hinted) request rather than a resampled one.
+    const ScreenTextRequest request =
+        ToPhysicalPixels(point_size, x_points, y_points, layout.max_width, display_scale_);
+    const float pixel_size = request.pixel_size;
+    const float x = request.x;
+    const float y = request.y;
+
     if (text.empty() || !(pixel_size > 0.0f)) {
         return;
     }
@@ -223,6 +238,9 @@ void TextSystem::SubmitScreenText(const FontFace& face, std::string_view text, f
     // The request's pixel size is the layout's; taking it twice invites a caller
     // to disagree with itself.
     options.pixel_size = pixel_size;
+    // max_width arrived in points and was scaled with the origin; a caller that
+    // asked for no wrapping still gets no wrapping.
+    options.max_width = request.max_width;
     const TextLayout laid_out = LayoutText(face, *run, options);
 
     // One sub-run per laid-out line: the batch builder walks a whole run from its
@@ -255,15 +273,15 @@ void TextSystem::SubmitScreenText(const FontFace& face, std::string_view text, f
     }
 }
 
-void TextSystem::SubmitScreenText(const ResourceId& id, std::string_view text, float pixel_size,
-                                  float x, float y, const std::array<float, 4>& color,
+void TextSystem::SubmitScreenText(const ResourceId& id, std::string_view text, float point_size,
+                                  float x_points, float y_points, const std::array<float, 4>& color,
                                   const LayoutOptions& layout, GlyphHinting hinting,
                                   std::uint32_t face_index, const ShapeOptions& shaping) {
     const std::shared_ptr<const FontFace> face = GetFace(id, face_index);
     if (face == nullptr) {
         return;
     }
-    SubmitScreenText(*face, text, pixel_size, x, y, color, layout, hinting, shaping);
+    SubmitScreenText(*face, text, point_size, x_points, y_points, color, layout, hinting, shaping);
 }
 
 void TextSystem::QueueLine(const FontFace& face, const ShapedRun& line_run, float pixel_size,

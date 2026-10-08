@@ -23,12 +23,13 @@ import VulkanEngine.Components.Transform;
 
 export namespace Examples::BasicScene::Components {
 
+// Object component: owns input bindings and drives its entity's Transform.
 class SimpleControllerComponent : public VulkanEngine::Component {
 public:
     explicit SimpleControllerComponent(VulkanEngine::Input::InputSystem* input_system) noexcept
         : input_system_(input_system) {}
 
-    void Initialize() override {
+    void OnAttach(VulkanEngine::Entity& /*owner*/) override {
         if (!input_system_) return;
         // One 2D action for both keyboard (WASD) and the gamepad's left stick.
         move_ = input_system_->BindAction<2>("move", VulkanEngine::Input::ActionConfig{
@@ -53,21 +54,21 @@ public:
 
         constexpr float move_speed = 1.5f;
         const auto move = move_.Value();
-        transform->position->x += move[0] * move_speed * delta_time;
-        transform->position->y += move[1] * move_speed * delta_time;
+        transform->position.x += move[0] * move_speed * delta_time;
+        transform->position.y += move[1] * move_speed * delta_time;
 
         if (!input_system_->IsActionActive(pause_spin_handle_)) {
             const auto yaw = glm::angleAxis(glm::radians(delta_time * 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             LOGIFACE_LOG(trace, "Applying rotation: " + glm::to_string(glm::eulerAngles(yaw)) + " degrees");
 #ifndef NDEBUG
-            const auto old_q = *transform->rotation;  // raw quat before
-            const auto current_euler = glm::eulerAngles(*transform->rotation);
+            const auto old_q = transform->rotation;  // raw quat before
+            const auto current_euler = glm::eulerAngles(transform->rotation);
 #endif
-            transform->rotation = yaw * *transform->rotation;
+            transform->rotation = yaw * transform->rotation;
 #ifndef NDEBUG
-            const auto new_euler = glm::eulerAngles(*transform->rotation);
+            const auto new_euler = glm::eulerAngles(transform->rotation);
             LOGIFACE_LOG(trace, "New rotation: " + glm::to_string(new_euler) + " degrees (was " + glm::to_string(current_euler) + ")");
-            const auto new_q = *transform->rotation;  // raw quat after
+            const auto new_q = transform->rotation;  // raw quat after
             LOGIFACE_LOG(trace, "Old q: " + glm::to_string(old_q) + " New q: " + glm::to_string(new_q) + " yaw: " + glm::to_string(yaw));
 #endif
         }

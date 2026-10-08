@@ -44,6 +44,27 @@ enum class BuiltinPass : std::uint8_t {
 
 inline constexpr std::size_t kBuiltinPassCount = static_cast<std::size_t>(BuiltinPass::Count);
 
+// The viewport every pass that draws the y-up scene through the camera's
+// view-projection must set.
+//
+// Vulkan's framebuffer origin is top-left and clip-space +y points *down* the
+// framebuffer, while the engine's projection matrices are GLM's OpenGL-style y-up
+// ones (GLM_FORCE_DEPTH_ZERO_TO_ONE moves z to [0, 1] and leaves y alone) and the
+// scene camera's up is (0, 1, 0). A negative viewport height is what reconciles
+// the two: it mirrors the viewport transform in y, so world +y -- and with it a
+// world-space glyph's top edge -- lands at the top of the framebuffer.
+//
+// This is the one definition the main, depth and occluder passes and the
+// world-text pass all draw through, so the scene and the text on it cannot drift
+// apart again. A screen-space pass is the opposite case: it draws y-down pixels
+// straight to clip space (see ui_text.slang) and deliberately sets a positive
+// height.
+[[nodiscard]] inline vk::Viewport SceneViewport(std::uint32_t width,
+                                                std::uint32_t height) noexcept {
+    return vk::Viewport(0.0f, static_cast<float>(height), static_cast<float>(width),
+                        -static_cast<float>(height), 0.0f, 1.0f);
+}
+
 // ── Opaque typed handles for FrameContext ──
 struct BindlessTextureSet  { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)
 struct SubmeshVertexSet    { vk::DescriptorSet handle = nullptr; }; // NOLINT(misc-non-private-member-variables-in-classes)

@@ -17,6 +17,8 @@ enum class RotationMode : std::uint8_t {
     Quaternion
 };
 
+// Object component: a debug-panel-controlled transform driver. Stored as a
+// stable object, so examples may hold a pointer to it across frames.
 class TransformControlComponent : public VulkanEngine::Component {
 public:
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
@@ -37,16 +39,6 @@ public:
                 transform->rotation = rotation_quat;
             }
         }
-    }
-
-    static auto GetFields() {
-        return VulkanEngine::make_fields(
-            VulkanEngine::field<glm::vec3>("position"),
-            VulkanEngine::field<std::uint8_t>("rotation_mode"),
-            VulkanEngine::field<glm::vec3>("rotation_euler"),
-            VulkanEngine::field<glm::quat>("rotation_quat"),
-            VulkanEngine::field<int>("texture_slot")
-        );
     }
 };
 

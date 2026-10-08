@@ -54,16 +54,9 @@ constexpr std::uint32_t kFallbackSlot = VulkanEngine::BindlessManager::kFallback
 } // namespace
 
 glm::mat4 WorldModelMatrix(const VulkanEngine::Components::Transform& transform) {
-    // FieldHandle's conversion is a user-defined conversion, which glm's
-    // by-template-parameter functions cannot deduce through; dereferencing the
-    // handle names the bound value directly. The handles must be bound (the
-    // registry's SoA emplace does that), so an unbound Transform is a caller
-    // error rather than a silently identity placement.
-    const glm::vec3& position = *transform.position;
-    const glm::quat& rotation = *transform.rotation;
-    const glm::vec3& scale = *transform.scale;
-    return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation) *
-           glm::scale(glm::mat4(1.0f), scale);
+    return glm::translate(glm::mat4(1.0f), transform.position) *
+           glm::mat4_cast(transform.rotation) *
+           glm::scale(glm::mat4(1.0f), transform.scale);
 }
 
 void BuildWorldTextInstances(VulkanEngine::Text::MsdfGenerator& generator,
@@ -538,6 +531,13 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     cmd.beginRendering(rendering);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ctx.pass_pipeline);
+    // Engine set 0 is the bindless array the MSDF fragment samples its atlas page
+    // from; the Slug fragment uses none of the engine sets. Both backends bind it
+    // anyway because the engine prefixes every pass pipeline layout with its five
+    // set layouts, and binding the app set (5) alone would leave the pipeline's
+    // statically used set 0 unbound.
+    const std::array<vk::DescriptorSet, 1> bindless{ctx.bindless_textures.handle};
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout, 0, bindless, {});
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout,
                            ctx.first_app_descriptor_set, ctx.app_descriptor_sets, {});
     if (slug) {
@@ -559,8 +559,14 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     }
     // Each queue run records into its own command buffer, so the dynamic state
     // cannot be inherited from the scene passes.
-    cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(ctx.render_width),
-                                    static_cast<float>(ctx.render_height), 0.0f, 1.0f));
+    //
+    // World text is scene content: it is placed in the y-up world and projected
+    // by the camera's view_proj, so it draws through the same y-mirroring viewport
+    // the main and depth passes use. The screen-space overlay's unflipped viewport
+    // would flip every glyph vertically (upside down), which is the bug this
+    // shared definition exists to prevent.
+    cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(ctx.render_width,
+                                                                 ctx.render_height));
     cmd.setScissor(0, vk::Rect2D{{0, 0}, ctx.render_extent});
     cmd.draw(6, count, 0, 0);
     cmd.endRendering();

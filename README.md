@@ -111,5 +111,8 @@ troubleshooting.
   (hinted A8 screen-space text, resolution-independent MSDF and Slug world
   text), the shared shaping/layout/cache pipeline and the tests that pin it,
   with the `examples/text_demo` walkthrough.
+- **[docs/display-scaling.md](docs/display-scaling.md)** — logical points versus
+  physical pixels: why the window flag is not optional, the single conversion
+  screen text goes through, and what is deliberately left unscaled.
 - [docs/render-graph-parity-checklist.md](docs/render-graph-parity-checklist.md)
 - [docs/descriptor-rewiring-contract.md](docs/descriptor-rewiring-contract.md)

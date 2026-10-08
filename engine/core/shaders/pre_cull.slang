@@ -17,6 +17,7 @@
 // Depth convention: non-reversed [0,1] (0 = near, 1 = far), every Hi-Z texel
 // stores the FARTHEST depth in its footprint (max reduction in hiz_gen).
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 
 [[vk::binding(0, 0)]]
 StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
@@ -77,8 +78,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint submeshIndex = dispatchThreadId.x;
     if (submeshIndex >= pc.elementCount) return;
 
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return; // already culled earlier this frame

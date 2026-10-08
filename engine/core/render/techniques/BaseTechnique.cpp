@@ -349,7 +349,10 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     // ── 9. Create descriptor pool and sets for custom bindings ──
     // Pre-allocate at least 1 block in each PerMaterial BlockArray so block 0 is valid.
     for (auto& ba : block_arrays_) {
-        ba.EnsureCapacity(1);
+        if (!ba.EnsureCapacity(1)) {
+            LOGIFACE_LOG(error, "BaseTechnique: could not pre-allocate block 0 for a per-material "
+                         "BlockArray; materials for that binding will not be uploadable");
+        }
     }
 
     // A PerMaterial binding needs one descriptor per block (the shader indexes

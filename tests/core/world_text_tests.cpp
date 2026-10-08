@@ -112,24 +112,14 @@ protected:
     std::unique_ptr<MsdfGenerator> generator_;
 };
 
-// The component mirrors the MeshReference registration pattern: it is
-// addressable by type through the registry and its field metadata names every
-// member, in declaration order.
-TEST_F(WorldTextTest, ComponentRegistersAndExposesFieldMetadata) {
-    const auto fields = Text::GetFields();
-    ASSERT_EQ(fields.size, 8u);
-    EXPECT_EQ(fields.Get<0>().name, "font_id");
-    EXPECT_EQ(fields.Get<1>().name, "face_index");
-    EXPECT_EQ(fields.Get<2>().name, "content");
-    EXPECT_EQ(fields.Get<3>().name, "world_height");
-    EXPECT_EQ(fields.Get<4>().name, "color");
-    EXPECT_EQ(fields.Get<5>().name, "align");
-    EXPECT_EQ(fields.Get<6>().name, "wrap");
-    EXPECT_EQ(fields.Get<7>().name, "max_width");
-
+// Text is a data component: addressable by type through the registry, defaults
+// come from member initializers, and a second add of the same type does not
+// silently replace the first.
+TEST_F(WorldTextTest, ComponentRegistersAndDefaults) {
     ComponentRegistry registry;
     Entity& entity = registry.CreateEntity();
     Text& text = registry.AddComponent<Text>(entity);
+    EXPECT_TRUE(entity.HasComponent<Text>());
     EXPECT_EQ(entity.GetComponent<Text>(), &text);
     EXPECT_EQ(text.font_id, 0u);
     EXPECT_EQ(text.world_height, 1.0f);
@@ -139,6 +129,11 @@ TEST_F(WorldTextTest, ComponentRegistersAndExposesFieldMetadata) {
 
     // A second component of the same type does not silently replace the first.
     EXPECT_THROW(registry.AddComponent<Text>(entity), std::logic_error);
+
+    // Removal clears the entity's mask bit and the stored column.
+    registry.RemoveComponent<Text>(entity);
+    EXPECT_FALSE(entity.HasComponent<Text>());
+    EXPECT_EQ(entity.GetComponent<Text>(), nullptr);
 }
 
 // A known string at a known transform produces one quad per drawable glyph, each

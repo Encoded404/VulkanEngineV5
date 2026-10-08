@@ -124,24 +124,38 @@ public:
     // that already recorded text against them keeps sampling a live image.
     void InvalidateFace(std::uint64_t face_id, std::uint32_t frame_index);
 
+    // ── Display scale ───────────────────────────────────────────────────
+    // Physical pixels per logical point that screen text is authored against.
+    // The engine pushes this from the platform once per frame, so a caller never
+    // reads a window to submit text. 1.0 -- the default, and what a device-free
+    // caller gets -- means "unscaled" and leaves every coordinate untouched.
+    void SetDisplayScale(float display_scale) noexcept;
+    [[nodiscard]] float GetDisplayScale() const noexcept { return display_scale_; }
+
     // ── Submission ─────────────────────────────────────────────────────
     // THE application-facing entry point: shapes `text` with `face`, wraps and
     // aligns it inside `layout`, resolves every glyph (which packs the atlas),
     // makes sure the GPU pages those glyphs landed on exist, and queues the
     // resulting instances into the attached TextPass for this frame.
     //
-    // `x`/`y` are the pen origin of the first line's baseline in screen pixels
-    // with a top-left origin, matching TextPass. `layout.pixel_size` is ignored
-    // in favour of `pixel_size` so the size cannot be given twice.
-    void SubmitScreenText(const FontFace& face, std::string_view text, float pixel_size, float x,
-                          float y, const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
+    // `point_size` and the pen origin `x_points`/`y_points` are in logical points
+    // with a top-left origin -- the space the window is sized in and input
+    // arrives in -- and are converted to the pass's pixel space through the
+    // display scale, so the same call gives the same apparent size on every
+    // display. `layout.pixel_size` is ignored in favour of `point_size` so the
+    // size cannot be given twice; `layout.max_width` is a distance in points and
+    // is scaled with the origin and the size.
+    void SubmitScreenText(const FontFace& face, std::string_view text, float point_size,
+                          float x_points, float y_points,
+                          const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
                           const LayoutOptions& layout = {}, GlyphHinting hinting = kDefaultGlyphHinting,
                           const ShapeOptions& shaping = {});
 
     // Convenience overload: looks the face up in the registry first. An unknown
     // id queues nothing.
-    void SubmitScreenText(const ResourceId& id, std::string_view text, float pixel_size, float x,
-                          float y, const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
+    void SubmitScreenText(const ResourceId& id, std::string_view text, float point_size,
+                          float x_points, float y_points,
+                          const std::array<float, 4>& color = {1.0f, 1.0f, 1.0f, 1.0f},
                           const LayoutOptions& layout = {}, GlyphHinting hinting = kDefaultGlyphHinting,
                           std::uint32_t face_index = 0, const ShapeOptions& shaping = {});
 
@@ -209,6 +223,9 @@ private:
     GlyphAtlasGpu gpu_atlas_{};
     bool gpu_initialized_ = false;
     SceneRenderer::TextPass* pass_ = nullptr;
+    // Logical points -> physical pixels. 1.0 until the engine pushes a platform
+    // scale, which keeps every device-free caller (and every test) unscaled.
+    float display_scale_ = 1.0f;
     std::unordered_map<RegistryKey, Entry, RegistryKeyHash> fonts_{};
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };

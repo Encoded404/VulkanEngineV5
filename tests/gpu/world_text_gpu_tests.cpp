@@ -25,6 +25,7 @@ import VulkanEngine.ResourceSystem.FontResource;
 import VulkanEngine.Components.Text;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Render.Passes.WorldTextPass;
+import VulkanEngine.PipelinePass;
 import VulkanEngine.Text.Atlas;
 import VulkanEngine.Text.Blob;
 import VulkanEngine.Text.Font;
@@ -104,10 +105,16 @@ constexpr std::array<std::uint8_t, 4> kBackground{0u, 0u, 0u, 255u};
 //   world x in [-1, 1]  -> framebuffer x in [0, 256]
 //   world y in [-1, 1]  -> framebuffer y in [0, 256], +y up the image
 //   world z             -> depth in [0, 1] (Vulkan's NDC z range)
+//
+// The matrix itself stays GLM's y-up form; the world-up-to-image-top half of the
+// mapping comes from the viewport, which is the engine's scene viewport
+// (PipelinePass::SceneViewport, a negative height). Emulating that flip in the
+// matrix instead would hide exactly the convention the pass has to share with the
+// scene, which is how the world text once shipped upside down.
 [[nodiscard]] glm::mat4 TestViewProjection() {
     glm::mat4 m{1.0f};
     m[0][0] = 1.0f;
-    m[1][1] = -1.0f;
+    m[1][1] = 1.0f;
     m[2][2] = 0.5f;
     m[3][2] = 0.5f;
     return m;
@@ -120,12 +127,14 @@ struct PixelPoint {
 };
 
 // Projects one world point through the test camera exactly as the viewport
-// transform does: perspective divide, then NDC -> framebuffer, NDC z -> depth.
+// transform does: perspective divide, then NDC -> framebuffer with the scene
+// viewport's negative height (framebuffer_y = (1 - ndc_y) * height/2), NDC z ->
+// depth.
 [[nodiscard]] PixelPoint Project(const glm::mat4& view_proj, const glm::vec3& world) {
     const glm::vec4 clip = view_proj * glm::vec4(world, 1.0f);
     const glm::vec3 ndc = glm::vec3(clip) / clip.w;
     return PixelPoint{(ndc.x + 1.0f) * 0.5f * static_cast<float>(kTargetSize),
-                      (ndc.y + 1.0f) * 0.5f * static_cast<float>(kTargetSize), ndc.z};
+                      (1.0f - ndc.y) * 0.5f * static_cast<float>(kTargetSize), ndc.z};
 }
 
 struct PixelBounds {
@@ -842,8 +851,9 @@ protected:
     }
 
     static void SetViewportAndScissor(vk::CommandBuffer cmd) {
-        cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(kTargetSize),
-                                        static_cast<float>(kTargetSize), 0.0f, 1.0f));
+        // The engine's scene viewport, not a test-local one, so this harness
+        // renders through the same convention WorldTextPass has to use.
+        cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(kTargetSize, kTargetSize));
         cmd.setScissor(0, vk::Rect2D({0, 0}, {kTargetSize, kTargetSize}));
     }
 

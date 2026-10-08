@@ -12,6 +12,7 @@
 // No sort, no scan, no ranking: any set of large real-geometry occluders is a
 // valid occluder set — selection can only miss culls, never cause false ones.
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
@@ -70,8 +71,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint submeshIndex = dispatchThreadId.x;
     if (submeshIndex >= pc.elementCount) return;
 
-    uint block = submeshIndex / 256u;
-    uint elementIndex = submeshIndex % 256u;
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
     if (entry.indexCount == 0) return;

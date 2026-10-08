@@ -213,6 +213,13 @@ void TextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     cmd.beginRendering(rendering);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ctx.pass_pipeline);
+    // The fragment samples the glyph's atlas page from the engine's bindless
+    // array, which is set 0 of every engine-built pass layout, and the vertex
+    // reads the pass's own instance buffer from its app set (5). Both are bound
+    // explicitly: the engine prefixes each pass pipeline layout with its five set
+    // layouts, and a pass that statically uses one has to bind it.
+    const std::array<vk::DescriptorSet, 1> bindless{ctx.bindless_textures.handle};
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout, 0, bindless, {});
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ctx.pipeline_layout,
                            ctx.first_app_descriptor_set, ctx.app_descriptor_sets, {});
     const std::array<float, 2> screen_size{static_cast<float>(ctx.render_width),

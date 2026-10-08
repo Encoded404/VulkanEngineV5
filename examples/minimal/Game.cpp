@@ -21,6 +21,9 @@ Game::Game(const std::filesystem::path& executable_path)
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
+    fixed_update_token_ = hooks_.on_fixed_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
+        OnFixedUpdate(ctx);
+    });
     frame_update_token_ = hooks_.on_frame_update.Register([this](VulkanEngine::Application::ApplicationContext& ctx) {
         OnFrameUpdate(ctx);
     });
@@ -74,6 +77,10 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
 
     return true;
+}
+
+void Game::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
+    engine_game_.FixedUpdate(ctx);
 }
 
 void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {

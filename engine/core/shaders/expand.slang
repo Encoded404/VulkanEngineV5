@@ -1,4 +1,5 @@
 #include "scene_entries.slang"
+#include "scene_block_layout.slang"
 #include "technique_packing.slang"
 
 [[vk::binding(0, 0)]]
@@ -87,8 +88,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint submeshIndex = dispatchThreadId.x;
     if (submeshIndex >= pushConstant.objectCount) return;
 
-    uint block = submeshIndex / 256u;    // which storage buffer block (max 256 submeshes per block)
-    uint elementIndex = submeshIndex % 256u; // index within that block
+    uint block = submeshIndex / kEntriesPerBlock;    // which storage buffer block (kEntriesPerBlock submeshes per block)
+    uint elementIndex = submeshIndex % kEntriesPerBlock; // index within that block
 
     float3 position = dynamicEntries[NonUniformResourceIndex(block)][elementIndex].pos;
     float3 scale = dynamicEntries[NonUniformResourceIndex(block)][elementIndex].scale;

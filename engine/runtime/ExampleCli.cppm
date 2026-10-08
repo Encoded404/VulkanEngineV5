@@ -99,6 +99,8 @@ private:
     std::string log_level_ = "info";
     std::string user_dir_{};
     std::uint32_t max_frames_ = 0;
+    // Fixed simulation rate in Hz; 0 keeps the variable-step default.
+    double fixed_timestep_hz_ = 0.0;
     bool force_validation_ = false;
     bool force_no_validation_ = false;
     bool force_portable_ = false;

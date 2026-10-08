@@ -297,6 +297,7 @@ add_slang_shaders(
     COMPILER    ${VKENGINE_SLANG_SPIRV_COMPILER}
     COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_entries.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_block_layout.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/technique_packing.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/hiz_helpers.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/slug_gpu.slang"
@@ -328,7 +329,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             assets/FontResource.cppm
             bootstrap/Startup.cppm
             ApplicationContext.cppm
+            ecs/Entity.cppm
             ecs/ComponentRegistry.cppm
+            ecs/SystemSchedule.cppm
             components/Transform.cppm
             components/Camera.cppm
             components/MeshReference.cppm
@@ -377,6 +380,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             gpu/MeshData.cppm
             assets/ShaderLoader.cppm
             assets/DefaultTextures.cppm
+            render/SceneLimits.cppm
             render/MeshUploadManager.cppm
             render/MeshGatherSystem.cppm
             render/MeshPipeline.cppm

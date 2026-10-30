@@ -65,6 +65,17 @@ struct WorldTextSpec {
 TextDemoGame::TextDemoGame(VulkanEngine::SceneRenderer::TextBackend backend,
                            const std::filesystem::path& executable_path)
     : backend_(backend), exe_dir_(executable_path.parent_path()) {
+    // The scene is an engine module, not a setup script: it runs at the Scene
+    // stage, after the renderer and the text system exist. Registered here (not
+    // in OnSetup) so it is configured/started by InitRenderer like any preset
+    // module.
+    engine_game_.Modules().Add(VulkanEngine::Modules::EngineModuleDesc{
+        .stage = VulkanEngine::Modules::Stage::Scene,
+        .label = "app.scene",
+        .startup = [this](VulkanEngine::Modules::ModuleContext& mctx) -> bool {
+            return BuildScene(mctx);
+        },
+    });
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -91,10 +102,19 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // The example ships no shaders of its own: the engine's standard PBR mesh
     // shader draws the occluder and the built-in text pipelines draw the text.
-    // `{}` selects the engine's standard shader pair.
-    if (!engine_game_.InitRenderer(ctx)) {
+    // `{}` selects the engine's standard shader pair. The Scene module registered
+    // in the constructor runs here, after the renderer and text system exist.
+    if (!engine_game_.InitRenderer(ctx, {})) {
         return false;
     }
+
+    ctx.quit_action_handle = ctx.input_system->BindAction(
+        "quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+    return true;
+}
+
+bool TextDemoGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
+    auto& ctx = mctx.App();
 
     face_ = engine_game_.LoadFont(exe_dir_ / std::string(kFontDir) / std::string(kFontFile));
     if (face_ == nullptr) {
@@ -103,7 +123,7 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     }
 
     auto& engine_ctx = engine_game_.GetContext();
-    auto& registry = engine_ctx.GetComponentRegistry();
+    auto& registry = mctx.Registry();
     auto* world_pass = engine_game_.GetRenderer().GetWorldTextPass();
 
     // ── world backend setup ────────────────────────────────────────────────
@@ -149,7 +169,6 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         mesh_ref.loaded_mesh_id = quad_id;
     }
 
-    engine_game_.MarkSceneValid();
     engine_game_.CreateCamera(registry);
 
     // ── world-text entities ────────────────────────────────────────────────
@@ -200,8 +219,9 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
                            std::to_string(face_->Metrics().units_per_em) + ", " +
                            std::to_string(world_text_entities_.size()) + " world-space entities");
 
-    ctx.quit_action_handle = ctx.input_system->BindAction(
-        "quit", VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+    // Required: scene_valid_ defaults false, so a Scene module that forgets this
+    // renders nothing and still exits 0.
+    engine_game_.MarkSceneValid();
     return true;
 }
 

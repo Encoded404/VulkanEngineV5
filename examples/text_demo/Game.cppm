@@ -40,6 +40,10 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    // The Scene-stage module's body: font load, world backend, occluder, camera
+    // and the world-text entities. Runs inside InitRenderer, after the renderer
+    // and the text system exist.
+    [[nodiscard]] bool BuildScene(VulkanEngine::Modules::ModuleContext& mctx);
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
@@ -58,10 +62,6 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_render_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
-    // Text is the one optional subsystem this example needs; the renderer
-    // attaches its overlay pass because the text system exists.
-    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.text = true}};
-
     // The one face both paths use. Loaded through GameEngine::LoadFont, which
     // registers it with the text system and (under hot reload) watches it.
     std::shared_ptr<const VulkanEngine::Text::FontFace> face_{};
@@ -78,6 +78,12 @@ private:
     // One-shot diagnostic: the glyph-quad count the first frame actually queued,
     // which is what proves the selected backend built a batch.
     bool reported_queue_ = false;
+
+    // Declared last: its module lambdas capture `this`, so the engine must be
+    // destroyed before the state those lambdas read. Text is the one optional
+    // subsystem this example needs; the renderer attaches its overlay pass
+    // because the text system exists.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.text = true}};
 };
 
 } // namespace Examples::TextDemo

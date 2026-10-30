@@ -24,6 +24,15 @@ namespace Examples::CustomPass::Game {
 
 CustomPassGame::CustomPassGame(const std::filesystem::path& executable_path)
     : exe_dir_(executable_path.parent_path()) {
+    // The scene (and the app passes that draw into it) is an engine module: it
+    // runs at the Scene stage, after the renderer and its render graph exist.
+    engine_game_.Modules().Add(VulkanEngine::Modules::EngineModuleDesc{
+        .stage = VulkanEngine::Modules::Stage::Scene,
+        .label = "app.scene",
+        .startup = [this](VulkanEngine::Modules::ModuleContext& mctx) -> bool {
+            return BuildScene(mctx);
+        },
+    });
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -54,15 +63,17 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
         return false;
     }
 
-    // 2. Register this example's shaders through the engine path.
+    // 2. Register this example's shaders through the engine path. The ids are
+    // stored on the game because the Scene module (which runs inside
+    // InitRenderer) creates the passes that use them.
     auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
-    const auto fullscreen_vert =
+    fullscreen_vert_ =
         Shaders::CustomPass::FullscreenVert::Register(shader_mgr, config.shader_data_dir);
-    const auto capture_frag =
+    capture_frag_ =
         Shaders::CustomPass::CaptureFrag::Register(shader_mgr, config.shader_data_dir);
-    const auto tonemap_frag =
+    tonemap_frag_ =
         Shaders::CustomPass::ToneMapFrag::Register(shader_mgr, config.shader_data_dir);
-    const auto exposure_comp =
+    exposure_comp_ =
         Shaders::CustomPass::ExposureComp::Register(shader_mgr, config.shader_data_dir);
 
     // The standard mesh pass still needs a shader pair; nothing is drawn with
@@ -78,11 +89,23 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     // Watch this example's shader directory for hot reload.
     (void)engine_game_.AddShaderDirectory(config.shader_data_dir);
 
-    // 3. A trivial scene (engine fallback quad) so the capture pass has content.
+    // 3. Runtime enable/disable of the whole custom chain (F1).
+    toggle_passes_ = ctx.input_system->BindAction("toggle-custom-passes",
+        VulkanEngine::Input::InputBinding::Key(SDLK_F1));
+
+    // 4. Quit action.
+    ctx.quit_action_handle = ctx.input_system->BindAction("quit",
+        VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+
+    return true;
+}
+
+bool CustomPassGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
+    // A trivial scene (engine fallback quad) so the capture pass has content.
     auto quad = VulkanEngine::SceneLoader::ToMeshData(VulkanEngine::SceneLoader::CreateFallbackQuad());
     const std::uint32_t quad_id = engine_game_.GetMeshRegistry().Register(quad);
 
-    auto& component_registry = engine_game_.GetContext().GetComponentRegistry();
+    auto& component_registry = mctx.Registry();
     engine_game_.CreateCamera(component_registry);
 
     auto& entity = component_registry.CreateEntity();
@@ -90,9 +113,8 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);
     mesh_ref.loaded_mesh_id = quad_id;
 
-    engine_game_.MarkSceneValid();
-
-    // 4. Register the app passes through the public engine-managed API.
+    // Register the app passes through the public engine-managed API. The
+    // renderer (and its graph) already exists at the Scene stage.
     pipeline_ = &engine_game_.GetRenderPipeline();
 
     const char* mode_env = std::getenv("CUSTOM_PASS_MODE");
@@ -103,7 +125,7 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
 
     if (want_capture) {
         auto capture = pipeline_->RegisterPass(
-            std::make_unique<CapturePass>(fullscreen_vert, capture_frag));
+            std::make_unique<CapturePass>(fullscreen_vert_, capture_frag_));
         if (!capture.has_value()) {
             LOGIFACE_LOG(error, "CustomPassGame: failed to register capture pass");
             return false;
@@ -112,7 +134,7 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     }
     if (want_compute) {
         auto exposure = pipeline_->RegisterPass(
-            std::make_unique<ExposurePass>(exposure_comp, pipeline_->IsAsyncComputeAvailable()));
+            std::make_unique<ExposurePass>(exposure_comp_, pipeline_->IsAsyncComputeAvailable()));
         if (!exposure.has_value()) {
             LOGIFACE_LOG(error, "CustomPassGame: failed to register exposure pass");
             return false;
@@ -124,7 +146,7 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     }
     if (want_tonemap) {
         auto tonemap = pipeline_->RegisterPass(
-            std::make_unique<ToneMapPass>(fullscreen_vert, tonemap_frag));
+            std::make_unique<ToneMapPass>(fullscreen_vert_, tonemap_frag_));
         if (!tonemap.has_value()) {
             LOGIFACE_LOG(error, "CustomPassGame: failed to register tonemap pass");
             return false;
@@ -135,14 +157,9 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
         }
     }
 
-    // 5. Runtime enable/disable of the whole custom chain (F1).
-    toggle_passes_ = ctx.input_system->BindAction("toggle-custom-passes",
-        VulkanEngine::Input::InputBinding::Key(SDLK_F1));
-
-    // 6. Quit action.
-    ctx.quit_action_handle = ctx.input_system->BindAction("quit",
-        VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
-
+    // Required: scene_valid_ defaults false, so a Scene module that forgets this
+    // renders nothing and still exits 0.
+    engine_game_.MarkSceneValid();
     return true;
 }
 

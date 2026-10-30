@@ -123,6 +123,10 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    // The Scene-stage module's body: meshes, camera, physics scene, vehicle,
+    // debug overlay and the camera-follow/telemetry frame systems. Runs inside
+    // InitRenderer, after the renderer and ImGui system exist.
+    [[nodiscard]] bool BuildScene(VulkanEngine::Modules::ModuleContext& mctx);
     void OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
@@ -151,10 +155,6 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    // The debug overlay draws through ImGui, and the vehicle rides on the
-    // engine's physics module.
-    VulkanEngine::GameEngine engine_game_{
-        VulkanEngine::EngineFeatures{.imgui = true, .physics = true}};
 
     std::pair<float, float> ground_extend_ = std::make_pair(200.0f, 150.0f);
 
@@ -228,7 +228,19 @@ private:
     bool logged_first_contact_ = false;
     bool logged_overlay_geometry_ = false;
     bool logged_speed_ = false;
+
+    // Frame systems registered by the Scene module: the chase camera (after
+    // frame.mesh_process) and the 60-frame PostPresent telemetry line.
+    VulkanEngine::FrameId camera_follow_system_{};
+    VulkanEngine::FrameId telemetry_system_{};
+    std::uint32_t telemetry_frame_counter_ = 0;
 #endif
+
+    // Declared last: its module lambdas capture `this`, so the engine must be
+    // destroyed before the state those lambdas read. The debug overlay draws
+    // through ImGui, and the vehicle rides on the engine's physics module.
+    VulkanEngine::GameEngine engine_game_{
+        VulkanEngine::EngineFeatures{.imgui = true, .physics = true}};
 };
 
 } // namespace Examples::PhysicsVehicle::Game

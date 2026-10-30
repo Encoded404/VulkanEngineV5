@@ -34,6 +34,10 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    // The Scene-stage module's body: texture/material/meshes, camera, physical
+    // camera and the ImGui debug panels. Runs inside InitRenderer, after the
+    // renderer and ImGui system exist.
+    [[nodiscard]] bool BuildScene(VulkanEngine::Modules::ModuleContext& mctx);
     void OnPreInput(VulkanEngine::Application::ApplicationContext& ctx);
     bool ShouldFilterMouseInput();
     bool ShouldFilterKeyboardInput();
@@ -69,12 +73,6 @@ private:
 
     // ImGui drives the debug panel; the physical camera is optional and both
     // its feature field and its use below are compile-time gated.
-#ifdef VKENGINE_PHYSICAL_CAMERA
-    VulkanEngine::GameEngine engine_game_{
-        VulkanEngine::EngineFeatures{.imgui = true, .physical_camera = true}};
-#else
-    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
-#endif
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -85,6 +83,15 @@ private:
     std::uint32_t cam_target_slot_ = 0;
     std::uint32_t cam_native_slot_ = 0;
     std::uint32_t webcam_mesh_id_ = 0;
+#endif
+
+    // Declared last: its module lambdas capture `this`, so the engine must be
+    // destroyed before the state those lambdas read.
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    VulkanEngine::GameEngine engine_game_{
+        VulkanEngine::EngineFeatures{.imgui = true, .physical_camera = true}};
+#else
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 #endif
 };
 

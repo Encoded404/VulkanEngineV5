@@ -162,6 +162,16 @@ void ApplySun(VulkanEngine::GameEngine& engine, const SunSettings& sun) {
 Game::Game(const std::filesystem::path& executable_path, EndpointOverride endpoint)
     : exe_dir_(executable_path.parent_path())
     , endpoint_override_(std::move(endpoint)) {
+    // The scene (sun, materials, cube, camera, floor/player/walls) is an engine
+    // module: it runs at the Scene stage, after the renderer exists. Input,
+    // profiles and the HUD stay on the setup hook below.
+    engine_game_.Modules().Add(VulkanEngine::Modules::EngineModuleDesc{
+        .stage = VulkanEngine::Modules::Stage::Scene,
+        .label = "app.scene",
+        .startup = [this](VulkanEngine::Modules::ModuleContext& mctx) -> bool {
+            return BuildScene(mctx);
+        },
+    });
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -203,41 +213,12 @@ VulkanEngine::EntityId Game::CreateCubeEntity(
     return entity.GetId();
 }
 
-bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
-    // Fingerprint the active ruleset once; scores are reported under it.
-    balance_hash_ = balance_.Hash();
+bool Game::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
+    auto& ctx = mctx.App();
+    auto& registry = mctx.Registry();
 
-    // Route leaderboard logging into the engine logger, and let the level be
-    // raised without a rebuild (VKENGINE_LEADERBOARD_LOG=trace|debug|info|warn|error).
-    if (const char* level = std::getenv("VKENGINE_LEADERBOARD_LOG"); level != nullptr) {
-        Leaderboard::SetLogLevel(
-            Leaderboard::ParseLogLevel(level).value_or(Leaderboard::LogLevel::Info));
-    }
-    Leaderboard::SetLogSink([](Leaderboard::LogLevel level, std::string_view message) {
-        switch (level) {
-            case Leaderboard::LogLevel::Trace: LOGIFACE_LOG(trace, std::string{message}); break;
-            case Leaderboard::LogLevel::Debug: LOGIFACE_LOG(debug, std::string{message}); break;
-            case Leaderboard::LogLevel::Info: LOGIFACE_LOG(info, std::string{message}); break;
-            case Leaderboard::LogLevel::Warn: LOGIFACE_LOG(warn, std::string{message}); break;
-            case Leaderboard::LogLevel::Error: LOGIFACE_LOG(error, std::string{message}); break;
-            case Leaderboard::LogLevel::Off: break;
-        }
-    });
-
-    // 1. Engine setup + renderer using the engine's standard PBR mesh shader.
-    VulkanEngine::GameConfig config{};
-    config.renderer_config.clear_color = {0.8f, 0.8f, 0.80f, 1.0f};
-    config.shader_data_dir = (exe_dir_ / "shaders").string();
-
-    if (!engine_game_.Setup(ctx, config)) {
-        return false;
-    }
-
-    // `{}` selects the engine's standard PBR shader pair.
-    if (!engine_game_.InitRenderer(ctx)) {
-        return false;
-    }
-
+    // 1. Sun: the engine's config defaults replaced at runtime through the
+    // scene renderer's public lighting upload.
     SunSettings sun{};
     sun.azimuth_degrees   = 180.0f;  // light from the left
     sun.elevation_degrees = 40.0f;   // low afternoon sun
@@ -277,13 +258,10 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const auto cube = VulkanEngine::SceneLoader::ToMeshData(MakeUnitCube());
     cube_mesh_id_ = engine_game_.GetMeshRegistry().Register(cube);
 
-    engine_game_.MarkSceneValid();
-
     // 4. Camera: fixed behind the player, looking down the corridor (-Z).
     // Orientation comes from `forward` rather than a look-at `target`, so the
     // camera stays parallel to the corridor instead of yawing toward a fixed
     // world point as the player moves sideways.
-    auto& registry = engine_game_.GetContext().GetComponentRegistry();
     camera_entity_ = engine_game_.CreateCamera(registry);
     if (auto* camera = engine_game_.GetCamera()) {
         camera->position = glm::vec3{0.0f, 2.0f, 6.5f};
@@ -313,7 +291,49 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         walls_.push_back(slot);
     }
 
-    // 6. Input. One 1D action takes both the keyboard keys and the gamepad's
+    // Required: scene_valid_ defaults false, so a Scene module that forgets this
+    // renders nothing and still exits 0.
+    engine_game_.MarkSceneValid();
+    return true;
+}
+
+bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
+    // Fingerprint the active ruleset once; scores are reported under it.
+    balance_hash_ = balance_.Hash();
+
+    // Route leaderboard logging into the engine logger, and let the level be
+    // raised without a rebuild (VKENGINE_LEADERBOARD_LOG=trace|debug|info|warn|error).
+    if (const char* level = std::getenv("VKENGINE_LEADERBOARD_LOG"); level != nullptr) {
+        Leaderboard::SetLogLevel(
+            Leaderboard::ParseLogLevel(level).value_or(Leaderboard::LogLevel::Info));
+    }
+    Leaderboard::SetLogSink([](Leaderboard::LogLevel level, std::string_view message) {
+        switch (level) {
+            case Leaderboard::LogLevel::Trace: LOGIFACE_LOG(trace, std::string{message}); break;
+            case Leaderboard::LogLevel::Debug: LOGIFACE_LOG(debug, std::string{message}); break;
+            case Leaderboard::LogLevel::Info: LOGIFACE_LOG(info, std::string{message}); break;
+            case Leaderboard::LogLevel::Warn: LOGIFACE_LOG(warn, std::string{message}); break;
+            case Leaderboard::LogLevel::Error: LOGIFACE_LOG(error, std::string{message}); break;
+            case Leaderboard::LogLevel::Off: break;
+        }
+    });
+
+    // 1. Engine setup + renderer using the engine's standard PBR mesh shader.
+    VulkanEngine::GameConfig config{};
+    config.renderer_config.clear_color = {0.8f, 0.8f, 0.80f, 1.0f};
+    config.shader_data_dir = (exe_dir_ / "shaders").string();
+
+    if (!engine_game_.Setup(ctx, config)) {
+        return false;
+    }
+
+    // `{}` selects the engine's standard PBR shader pair; the Scene module
+    // registered in the constructor builds the world at the end of it.
+    if (!engine_game_.InitRenderer(ctx, {})) {
+        return false;
+    }
+
+    // 2. Input. One 1D action takes both the keyboard keys and the gamepad's
     // left stick X axis, so every device feeds the same movement value.
     auto* input = ctx.input_system;
     move_ = input->BindAction<1>("move", VulkanEngine::Input::ActionConfig{

@@ -452,6 +452,16 @@ VulkanEngine::Physics::VehicleDesc Game::BuildVehicleDesc() const {
 
 Game::Game(const std::filesystem::path& executable_path)
     : exe_dir_(executable_path.parent_path()) {
+    // The scene is an engine module: it runs at the Scene stage, after the
+    // renderer and ImGui system exist, and registers the camera-follow and
+    // telemetry frame systems as a consequence of the scene it built.
+    engine_game_.Modules().Add(VulkanEngine::Modules::EngineModuleDesc{
+        .stage = VulkanEngine::Modules::Stage::Scene,
+        .label = "app.scene",
+        .startup = [this](VulkanEngine::Modules::ModuleContext& mctx) -> bool {
+            return BuildScene(mctx);
+        },
+    });
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -479,12 +489,18 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // must be part of the frame.
     config.renderer_config.clear_color = {0.1f, 0.12f, 0.15f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
+    // A steeper, cooler sun than the engine default; configuration, not an
+    // engine edit.
+    config.lighting.sun_direction = {0.2f, -0.85f, 0.45f};
+    config.lighting.sun_color = {0.85f, 0.95f, 1.0f, 2.20f};
 
     if (!engine_game_.Setup(ctx, config)) {
         return false;
     }
 
-    // 2. Register the app fragment shader and init the renderer
+    // 2. Register the app fragment shader and init the renderer. The Scene
+    // module registered in the constructor builds the meshes, camera, physics
+    // scene and debug overlay at the end of InitRenderer.
     auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
     auto frag_id = Shaders::PhysicsVehicle::CheckerFrag::Register(shader_mgr, config.shader_data_dir);
     auto vert_id = engine_game_.GetContext().GetShaderIds().main_indir_vert;
@@ -494,35 +510,7 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         return false;
     }
 
-    // 3. Meshes: authored boxes for the whole static scene and the chassis,
-    // plus the wheel disc, all with the checker shader.
-    auto& mesh_registry = engine_game_.GetMeshRegistry();
-    const auto register_box = [&mesh_registry](const glm::vec3 extents) {
-        return mesh_registry.Register(
-            VulkanEngine::SceneLoader::ToMeshData(BuildBoxMesh(extents)));
-    };
-    const std::uint32_t ground_mesh_id = register_box({ground_extend_.first, 1.0f, ground_extend_.second});
-    const std::uint32_t crate_mesh_id = register_box({1.0f, 1.0f, 1.0f});
-    const std::uint32_t block_mesh_id = register_box({2.0f, 2.0f, 2.0f});
-    const std::uint32_t ramp_mesh_id = register_box({4.0f, 0.4f, 10.0f});
-    const std::uint32_t chassis_mesh_id = register_box({1.6f, 0.5f, 3.6f});
-    // The wheel disc is authored at unit radius and unit width; each wheel
-    // entity scales it by `wheel_radius_`/`wheel_width_` (see
-    // `UpdateWheelEntity`), so the radius tunable moves the render live.
-    const std::uint32_t wheel_mesh_id = mesh_registry.Register(
-        VulkanEngine::SceneLoader::ToMeshData(BuildWheelDisc(1.0f, 1.0f)));
-
-    engine_game_.MarkSceneValid();
-
-    // 4. Camera (moved by the chase camera logic each frame)
-    auto& component_registry = engine_game_.GetContext().GetComponentRegistry();
-    engine_game_.CreateCamera(component_registry);
-    if (auto* camera = engine_game_.GetCamera()) {
-        camera->position = {0.0f, 4.0f, -14.0f};
-        camera->target = {0.0f, 1.0f, 0.0f};
-    }
-
-    // 5. Input: quit, plus the driver bindings.
+    // 3. Input: quit, plus the driver bindings.
     ctx.quit_action_handle = ctx.input_system->BindAction("quit",
         VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
 #ifdef VKENGINE_PHYSICS
@@ -551,8 +539,40 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     handbrake_.Bind(VulkanEngine::Input::InputBinding::GamepadButton(SDL_GAMEPAD_BUTTON_NORTH));
 #endif
 
+    return true;
+}
+
+bool Game::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
+    auto& ctx = mctx.App();
+    auto& component_registry = mctx.Registry();
+
+    // 1. Meshes: authored boxes for the whole static scene and the chassis,
+    // plus the wheel disc, all with the checker shader.
+    auto& mesh_registry = engine_game_.GetMeshRegistry();
+    const auto register_box = [&mesh_registry](const glm::vec3 extents) {
+        return mesh_registry.Register(
+            VulkanEngine::SceneLoader::ToMeshData(BuildBoxMesh(extents)));
+    };
+    const std::uint32_t ground_mesh_id = register_box({ground_extend_.first, 1.0f, ground_extend_.second});
+    const std::uint32_t crate_mesh_id = register_box({1.0f, 1.0f, 1.0f});
+    const std::uint32_t block_mesh_id = register_box({2.0f, 2.0f, 2.0f});
+    const std::uint32_t ramp_mesh_id = register_box({4.0f, 0.4f, 10.0f});
+    const std::uint32_t chassis_mesh_id = register_box({1.6f, 0.5f, 3.6f});
+    // The wheel disc is authored at unit radius and unit width; each wheel
+    // entity scales it by `wheel_radius_`/`wheel_width_` (see
+    // `UpdateWheelEntity`), so the radius tunable moves the render live.
+    const std::uint32_t wheel_mesh_id = mesh_registry.Register(
+        VulkanEngine::SceneLoader::ToMeshData(BuildWheelDisc(1.0f, 1.0f)));
+
+    // 2. Camera (moved by the chase camera frame system every frame)
+    engine_game_.CreateCamera(component_registry);
+    if (auto* camera = engine_game_.GetCamera()) {
+        camera->position = {0.0f, 4.0f, -14.0f};
+        camera->target = {0.0f, 1.0f, 0.0f};
+    }
+
 #ifdef VKENGINE_PHYSICS
-    // 6. Physics scene.
+    // 3. Physics scene.
     auto* world = engine_game_.GetPhysicsWorld();
     if (world == nullptr) {
         LOGIFACE_LOG(warn, "physics: world unavailable; running without simulation");
@@ -725,8 +745,49 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
             ImGui::End();
         });
     }
+
+    // 4. Chase camera and telemetry are frame systems, not per-frame game code:
+    // the camera is constrained after the engine's mesh-processing slot and the
+    // telemetry runs after the frame is presented. Ordering is an identity
+    // statement against engine slots, never an edit to the pipeline.
+    camera_follow_system_ = engine_game_.AddFrameSystemAfter(
+        VulkanEngine::FrameSlot::MeshProcessFrame,
+        [this](VulkanEngine::FramePhaseContext& /*fctx*/) {
+            auto* world = engine_game_.GetPhysicsWorld();
+            auto* camera = engine_game_.GetCamera();
+            if (world == nullptr || camera == nullptr || !chassis_body_.IsValid()) return;
+            const auto pose = world->GetPose(chassis_body_);
+            camera->position = pose.position + pose.rotation * glm::vec3{0.0f, 3.2f, -8.5f};
+            camera->target = pose.position + glm::vec3{0.0f, 0.6f, 0.0f};
+        },
+        "app.camera_follow");
+    if (!camera_follow_system_.IsValid()) {
+        LOGIFACE_LOG(error, "vehicle: chase-camera frame system could not be registered");
+        return false;
+    }
+
+    // Post-present telemetry, one line every 60 rendered frames: after the
+    // frame is submitted, so it never observes mid-frame solver state.
+    telemetry_system_ = engine_game_.AddFrameSystem(
+        VulkanEngine::FramePhase::PostPresent,
+        [this](VulkanEngine::FramePhaseContext& /*fctx*/) {
+            if (++telemetry_frame_counter_ < 60) return;
+            telemetry_frame_counter_ = 0;
+            const auto* world = engine_game_.GetPhysicsWorld();
+            LOGIFACE_LOG(info, std::format("vehicle: telemetry: {} physics steps, {} bodies",
+                                           world != nullptr ? world->StepCount() : 0,
+                                           world != nullptr ? world->BodyCount() : 0));
+        },
+        "app.telemetry");
+    if (!telemetry_system_.IsValid()) {
+        LOGIFACE_LOG(error, "vehicle: telemetry frame system could not be registered");
+        return false;
+    }
 #endif
 
+    // Required: scene_valid_ defaults false, so a Scene module that forgets this
+    // renders nothing and still exits 0.
+    engine_game_.MarkSceneValid();
     return true;
 }
 
@@ -799,14 +860,9 @@ void Game::OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ct
 void Game::OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx) {
     engine_game_.FrameUpdate(ctx);
 #ifdef VKENGINE_PHYSICS
-    // Chase camera: behind and above the chassis, looking at its mid-height.
-    auto* world = engine_game_.GetPhysicsWorld();
-    auto* camera = engine_game_.GetCamera();
-    if (world != nullptr && camera != nullptr && chassis_body_.IsValid()) {
-        const auto pose = world->GetPose(chassis_body_);
-        camera->position = pose.position + pose.rotation * glm::vec3{0.0f, 3.2f, -8.5f};
-        camera->target = pose.position + glm::vec3{0.0f, 0.6f, 0.0f};
-    }
+    // The chase camera is the `app.camera_follow` frame system (registered in
+    // BuildScene), not a write here: a second write after FrameUpdate would
+    // overwrite the system's result every frame.
     for (std::uint32_t i = 0; i < wheel_entities_.size(); ++i) {
         UpdateWheelEntity(i);
     }

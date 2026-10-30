@@ -183,14 +183,16 @@ struct ModuleContext {
 };
 
 /// Registration descriptor. `label` is diagnostics only and must have static
-/// storage duration (pass a string literal). The functions may be empty.
+/// storage duration (pass a string literal). The functions may be empty; the
+/// default initializers keep `{.stage = ..., .startup = ...}` free of
+/// -Wmissing-designated-field-initializers warnings.
 struct EngineModuleDesc {
     Stage stage = Stage::Startup;
     std::string_view label = {};          // diagnostics only; static duration
     ModuleSlot slot = ModuleSlot::None;   // binds an engine-owned identity
-    std::function<void(GameConfig&)> configure;
-    std::function<bool(ModuleContext&)> startup;
-    std::function<void(ModuleContext&)> shutdown;
+    std::function<void(GameConfig&)> configure{};
+    std::function<bool(ModuleContext&)> startup{};
+    std::function<void(ModuleContext&)> shutdown{};
 };
 
 /// Ordered engine-module registry, one sequence resolved per registration and

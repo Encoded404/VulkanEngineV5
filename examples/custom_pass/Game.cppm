@@ -6,6 +6,7 @@ import std;
 
 export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
+import VulkanEngine.ShaderManager;
 
 export namespace Examples::CustomPass::Game {
 
@@ -26,6 +27,9 @@ public:
 
 private:
     bool OnSetup(VulkanEngine::Application::ApplicationContext& ctx);
+    // The Scene-stage module's body: the fallback-quad scene, the camera and the
+    // three app passes. Runs inside InitRenderer, after the render graph exists.
+    [[nodiscard]] bool BuildScene(VulkanEngine::Modules::ModuleContext& mctx);
     void OnFixedUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameUpdate(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
@@ -39,8 +43,13 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    // ImGui is required: ToneMapPass anchors itself to the engine's ImGui pass.
-    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
+
+    // App shader ids, registered in OnSetup and consumed by the Scene module
+    // (which runs inside InitRenderer, after app shaders exist).
+    VulkanEngine::ShaderSystem::ShaderId fullscreen_vert_{VulkanEngine::ShaderSystem::kInvalidShaderId};
+    VulkanEngine::ShaderSystem::ShaderId capture_frag_{VulkanEngine::ShaderSystem::kInvalidShaderId};
+    VulkanEngine::ShaderSystem::ShaderId tonemap_frag_{VulkanEngine::ShaderSystem::kInvalidShaderId};
+    VulkanEngine::ShaderSystem::ShaderId exposure_comp_{VulkanEngine::ShaderSystem::kInvalidShaderId};
 
     VulkanEngine::RenderPipeline::RenderPipeline* pipeline_ = nullptr;
     VulkanEngine::RenderGraph::PassHandle capture_handle_{};
@@ -51,6 +60,11 @@ private:
     // a later pass read a transient that was never written.
     bool passes_enabled_ = true;
     VulkanEngine::Input::ActionHandle toggle_passes_{};
+
+    // Declared last: its module lambdas capture `this`, so the engine must be
+    // destroyed before the state those lambdas read. ImGui is required because
+    // ToneMapPass anchors itself to the engine's ImGui pass.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 };
 
 } // namespace Examples::CustomPass::Game

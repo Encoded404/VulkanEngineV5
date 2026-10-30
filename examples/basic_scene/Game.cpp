@@ -41,6 +41,16 @@ DemoGame::DemoGame(const RenderMode render_mode, const std::filesystem::path& ex
     , texture_path_(std::move(texture_path))
     , gpl_policy_(gpl_policy)
     , gpl_structure_(gpl_structure) {
+    // The scene is an engine module: it runs at the Scene stage, after the
+    // renderer and the ImGui system exist, and registers the debug panels as a
+    // consequence of the scene it built.
+    engine_game_.Modules().Add(VulkanEngine::Modules::EngineModuleDesc{
+        .stage = VulkanEngine::Modules::Stage::Scene,
+        .label = "app.scene",
+        .startup = [this](VulkanEngine::Modules::ModuleContext& mctx) -> bool {
+            return BuildScene(mctx);
+        },
+    });
     setup_token_ = hooks_.on_setup.Register([this](VulkanEngine::Application::ApplicationContext& ctx) -> bool {
         return OnSetup(ctx);
     });
@@ -108,6 +118,16 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         return false;
     }
 
+    // 3. Bind quit action
+    ctx.quit_action_handle = ctx.input_system->BindAction("quit",
+        VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
+
+    return true;
+}
+
+bool DemoGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
+    auto& ctx = mctx.App();
+
     // 3. Create a custom material for the viking room
     const std::uint32_t tex_slot = engine_game_.LoadTexture(
         ctx, exe_dir_ / "textures" / "viking_room.png",
@@ -140,11 +160,8 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     const std::uint32_t viking_id = mesh_registry.Register(viking_mesh);
     const std::uint32_t monkey_id = mesh_registry.Register(monkey_mesh);
 
-    // Mark scene as valid so rendering begins
-    engine_game_.MarkSceneValid();
-
     // 5. Create camera
-    auto& component_registry = engine_game_.GetContext().GetComponentRegistry();
+    auto& component_registry = mctx.Registry();
     engine_game_.CreateCamera(component_registry);
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -298,10 +315,9 @@ bool DemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 #endif
     }
 
-    // 8. Bind quit action
-    ctx.quit_action_handle = ctx.input_system->BindAction("quit",
-        VulkanEngine::Input::InputBinding::Key(SDLK_ESCAPE));
-
+    // Required: scene_valid_ defaults false, so a Scene module that forgets this
+    // renders nothing and still exits 0.
+    engine_game_.MarkSceneValid();
     return true;
 }
 

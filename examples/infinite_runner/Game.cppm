@@ -51,6 +51,11 @@ private:
     void OnFrameRender(const VulkanEngine::Application::ApplicationContext& ctx);
     void OnShutdown(VulkanEngine::Application::ApplicationContext& ctx);
 
+    // The Scene-stage module's body: sun, materials, cube, camera and the
+    // floor/player/wall pool. Runs inside InitRenderer, after the renderer
+    // exists.
+    [[nodiscard]] bool BuildScene(VulkanEngine::Modules::ModuleContext& mctx);
+
     // A wall's simulated state plus the render handles it drives. The value
     // type owns the geometry; the game owns the ECS plumbing.
     struct WallSlot {
@@ -88,8 +93,6 @@ private:
 
     std::filesystem::path exe_dir_{};
     EndpointOverride endpoint_override_{};
-    // The debug panels are ImGui; nothing else optional is used.
-    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 
     // Single source of truth for every gameplay-affecting value. Rehashed once
     // at setup and submitted with the score to select the right leaderboard.
@@ -161,6 +164,11 @@ private:
     bool game_over_ = false;
     std::mt19937 rng_{std::random_device{}()};
     float prevGapCenter_ = 0.0f;
+
+    // Declared last: its module lambdas capture `this`, so the engine must be
+    // destroyed before the state those lambdas read. The debug panels are ImGui;
+    // nothing else optional is used.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 };
 
 } // namespace Examples::InfiniteRunner::Game

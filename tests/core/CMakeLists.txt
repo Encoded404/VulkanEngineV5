@@ -55,6 +55,7 @@ add_executable(engine_tests
   thread_pool_teardown_tests.cpp
   ecs_profile_tests.cpp
   engine_modules_tests.cpp
+  engine_features_tests.cpp
   prefab_tests.cpp
 )
 target_link_libraries(engine_tests PRIVATE ${ENGINE_TARGET} ${BACKEND_TARGET})

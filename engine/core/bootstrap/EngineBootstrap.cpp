@@ -62,12 +62,6 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     VulkanShared::JobScheduler::Global().Configure(
         VulkanShared::JobBudget{.workers = config.job_workers});
 
-    // Record the shaping/rasterization library identity once at startup. These
-    // two dependencies are the usual explanation for a glyph or layout
-    // difference in a bug report, and the linked version is not otherwise
-    // observable from a shipped build.
-    LOGIFACE_LOG(info, "text stack: " + Text::FormatLibraryVersions());
-
     ctx.missing_texture = DefaultTextureFactory::CreateCheckerboard(ctx.resource_manager);
     // The checkerboard must be registered so ctx.fallback_handle resolves
     // (ResourceHandle::IsValid is a manager lookup, not a truthiness check).
@@ -169,36 +163,6 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     }
 #endif
 
-    // Text pipeline. The registry, shaping, layout, rasterization and the pure
-    // atlas are device-free; the GPU glyph-atlas layer needs the bindless
-    // manager, image heap, sampler cache and staging pool, all of which exist by
-    // here. Text is optional, so a device whose glyph-atlas layer cannot come up
-    // still boots -- it simply never draws text.
-    ctx.text_system = std::make_unique<Text::TextSystem>();
-    ctx.text_system->SetResourceManager(ctx.resource_manager);
-    {
-        auto s = DebugSection("engineinit.text_system");
-        if (!ctx.text_system->InitializeGpu(vk_backend, ctx.image_heap, ctx.staging_pool,
-                                            *ctx.bindless_mgr, &ctx.sampler_cache)) {
-            LOGIFACE_LOG(warn, "EngineBootstrap: glyph atlas GPU layer unavailable; text stays CPU-only");
-        }
-    }
-
-#ifdef VKENGINE_HOT_RELOAD
-    // Font hot reload mirrors the texture pair: the watcher starts empty and
-    // GameEngine registers each font file it loads through the text system.
-    ctx.font_watcher = std::make_unique<Text::FontWatcher>();
-    {
-        auto s = DebugSection("engineinit.font_reloader");
-        ctx.font_reloader = std::make_unique<Text::FontReloader>();
-        ctx.font_reloader->Initialize(*ctx.font_watcher, *ctx.text_system);
-    }
-    {
-        auto s = DebugSection("engineinit.font_watcher");
-        ctx.font_watcher->Start();
-    }
-#endif
-
     {
         auto s = DebugSection("engineinit.dynamic_heaps");
         GpuResources::HeapConfig dynamic_heap_config{};
@@ -251,20 +215,85 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         }
     }
 
+    return true;
+}
+
+bool EngineBootstrap::InitializeText(EngineContext& ctx,
+                                     const GameConfig& /*config*/,
+                                     VulkanBackend::Vulkan::VulkanBootstrap& backend) {
+    // A text module started before the device module would have nothing to
+    // upload into; that is a registration error, not an optional-subsystem
+    // failure.
+    if (ctx.bindless_mgr == nullptr) {
+        LOGIFACE_LOG(error, "EngineBootstrap: text requires the device module to start first");
+        return false;
+    }
+
+    // Record the shaping/rasterization library identity once at startup. These
+    // two dependencies are the usual explanation for a glyph or layout
+    // difference in a bug report, and the linked version is not otherwise
+    // observable from a shipped build.
+    LOGIFACE_LOG(info, "text stack: " + Text::FormatLibraryVersions());
+
+    // The registry, shaping, layout, rasterization and the pure atlas are
+    // device-free; the GPU glyph-atlas layer needs the bindless manager, image
+    // heap, sampler cache and staging pool, all of which exist by here. Text is
+    // optional, so a device whose glyph-atlas layer cannot come up still boots
+    // -- it simply never draws text.
+    ctx.text_system = std::make_unique<Text::TextSystem>();
+    ctx.text_system->SetResourceManager(ctx.resource_manager);
+    {
+        auto s = DebugSection("engineinit.text_system");
+        if (!ctx.text_system->InitializeGpu(backend.GetBackend(), ctx.image_heap, ctx.staging_pool,
+                                            *ctx.bindless_mgr, &ctx.sampler_cache)) {
+            LOGIFACE_LOG(warn, "EngineBootstrap: glyph atlas GPU layer unavailable; text stays CPU-only");
+        }
+    }
+
+#ifdef VKENGINE_HOT_RELOAD
+    // Font hot reload mirrors the texture pair: the watcher starts empty and
+    // GameEngine registers each font file it loads through the text system.
+    ctx.font_watcher = std::make_unique<Text::FontWatcher>();
+    {
+        auto s = DebugSection("engineinit.font_reloader");
+        ctx.font_reloader = std::make_unique<Text::FontReloader>();
+        ctx.font_reloader->Initialize(*ctx.font_watcher, *ctx.text_system);
+    }
+    {
+        auto s = DebugSection("engineinit.font_watcher");
+        ctx.font_watcher->Start();
+    }
+#endif
+    return true;
+}
+
+bool EngineBootstrap::InitializePhysicalCamera(EngineContext& ctx,
+                                               const GameConfig& /*config*/,
+                                               VulkanBackend::Vulkan::VulkanBootstrap& backend) {
 #ifdef VKENGINE_PHYSICAL_CAMERA
-    if (config.enable_physical_camera) {
+    if (ctx.bindless_mgr == nullptr || ctx.shader_manager == nullptr ||
+        ctx.pipeline_factory == nullptr) {
+        LOGIFACE_LOG(error, "EngineBootstrap: physical camera requires the device module to start first");
+        return false;
+    }
+    {
         auto s = DebugSection("engineinit.physical_camera");
         ctx.physical_camera = std::make_unique<PhysicalCamera::PhysicalCameraSystem>();
-        if (!ctx.physical_camera->Initialize(vk_backend, *ctx.bindless_mgr, ctx.image_heap,
-                                             ctx.sampler_cache,
+        if (!ctx.physical_camera->Initialize(backend.GetBackend(), *ctx.bindless_mgr,
+                                             ctx.image_heap, ctx.sampler_cache,
                                              *ctx.shader_manager, *ctx.pipeline_factory,
                                              ctx.shader_ids.physical_camera_composite_vert,
                                              ctx.shader_ids.physical_camera_composite_frag)) {
+            // The subsystem is optional: a machine with no usable capture
+            // device or no composite shaders boots normally, without a camera.
+            LOGIFACE_LOG(warn, "EngineBootstrap: physical camera unavailable; continuing without it");
             ctx.physical_camera.reset();
         }
     }
+#else
+    (void)ctx;
+    (void)backend;
 #endif
-
     return true;
 }
 

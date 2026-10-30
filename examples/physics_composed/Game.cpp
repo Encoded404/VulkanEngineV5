@@ -42,7 +42,6 @@ Game::~Game() = default;
 bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // ── Configuration: where a game overrides engine defaults ──
     VulkanEngine::GameConfig config{};
-    config.enable_imgui = false;
     config.renderer_config.clear_color = {0.08f, 0.09f, 0.12f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
     // The engine preset's lighting is configuration now (rung 2); this scene

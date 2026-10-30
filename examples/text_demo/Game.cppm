@@ -58,7 +58,9 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> frame_render_token_{};
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
-    VulkanEngine::GameEngine engine_game_{};
+    // Text is the one optional subsystem this example needs; the renderer
+    // attaches its overlay pass because the text system exists.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.text = true}};
 
     // The one face both paths use. Loaded through GameEngine::LoadFont, which
     // registers it with the text system and (under hot reload) watches it.

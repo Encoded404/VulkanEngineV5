@@ -73,7 +73,8 @@ enum class Stage : std::uint8_t {
 /// game orders its own modules against these with AddAfter / AddBefore.
 enum class ModuleSlot : std::uint16_t {
     None = 0,          // not bound to a slot
-    Device,            // the device bootstrap (heaps, bindless, text core...)
+    Device,            // the device bootstrap (heaps, bindless, uploaders, meshes)
+    Text,              // the optional text pipeline (system + font hot reload)
     Physics,           // the Jolt world and its ECS frame contract
     ResourceHooks,     // engine-owned resource release hooks
     PhysicalCamera,    // optional webcam subsystem lifecycle + event routing
@@ -84,6 +85,7 @@ enum class ModuleSlot : std::uint16_t {
 [[nodiscard]] constexpr std::string_view ModuleSlotName(ModuleSlot slot) noexcept {
     switch (slot) {
         case ModuleSlot::Device:         return "engine.device";
+        case ModuleSlot::Text:           return "engine.text";
         case ModuleSlot::Physics:        return "engine.physics";
         case ModuleSlot::ResourceHooks:  return "engine.resource_hooks";
         case ModuleSlot::PhysicalCamera: return "engine.physical_camera";
@@ -287,6 +289,16 @@ public:
     [[nodiscard]] bool AllStopped() const noexcept { return started_.empty(); }
 
     [[nodiscard]] std::size_t Size() const noexcept { return entries_.size(); }
+
+    /// Whether a module is currently bound to an engine-owned slot identity.
+    /// Preset selection is observable here without starting anything (and thus
+    /// without a device): a feature that was not requested leaves its slot
+    /// unbound.
+    [[nodiscard]] bool HasSlot(ModuleSlot slot) const noexcept {
+        const auto slot_index = static_cast<std::size_t>(slot);
+        return slot != ModuleSlot::None && slot_index < slots_.size() &&
+               slots_[slot_index] != 0;
+    }
 
     /// Drop every module (only meaningful before startup). Handles taken
     /// before the call are invalidated.

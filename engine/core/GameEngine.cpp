@@ -269,10 +269,11 @@ void GameEngine::RegisterFramePipeline() {
         "frame.render_submit");
 }
 
-GameEngine::GameEngine() {
+GameEngine::GameEngine(EngineFeatures features) : features_(features) {
     // The default preset registers at construction, with no runtime state
     // needed: a composed game therefore composes against the preset's identity
-    // slots (engine.device, engine.physics, ...) any time before Setup.
+    // slots (engine.device, engine.text, engine.physics, ...) any time before
+    // Setup. The preset is selected by EngineFeatures and fixed from here on.
     RegisterEngineDefaultModules();
 }
 
@@ -321,13 +322,7 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     // Modules drive the rest of setup. The default preset registered at
     // construction — through the same public EngineModules surface a composed
     // game uses — now runs its configures and startups in resolved order.
-    Modules::ModuleContext mctx{};
-    mctx.app = &ctx;
-    mctx.engine = &ctx_;
-    mctx.registry = &ctx_.component_registry;
-    mctx.fixed_systems = &systems_;
-    mctx.frame_systems = &frames_;
-    mctx.config = &config_;
+    Modules::ModuleContext mctx = MakeModuleContext(&ctx);
 
     modules_.ConfigureAll(config_);
     if (!modules_.StartupAll(Modules::Stage::Startup, mctx)) {
@@ -395,10 +390,27 @@ void GameEngine::RegisterEngineDefaultModules() {
         },
     });
 
-    // 2. Physics lifecycle: the world's construction is bracketed by the
+    // 2. Text pipeline (system + GPU glyph-atlas layer + font hot reload),
+    //    only when the game asked for text. The whole bring-up lives in one
+    //    module so a game that never draws text never constructs it.
+    if (features_.text) {
+        modules_.AddAfter(
+            ModuleSlot::Device,
+            EngineModuleDesc{
+                .stage = Stage::Startup,
+                .label = "engine.text",
+                .slot = ModuleSlot::Text,
+                .startup = [this](ModuleContext& mctx) {
+                    return bootstrap_.InitializeText(mctx.Ctx(), mctx.Config(),
+                                                     *mctx.App().bootstrap);
+                },
+            });
+    }
+
+    // 3. Physics lifecycle: the world's construction is bracketed by the
     //    schedule, hooks and shutdown that own its frame contract.
 #ifdef VKENGINE_PHYSICS
-    {
+    if (features_.physics) {
         // The disk half of the cooked-shape cache is off unless a host names a
         // directory: an empty directory is the "cook everything" default, so an
         // engine that was never told where caches live never writes one. The
@@ -530,7 +542,7 @@ void GameEngine::RegisterEngineDefaultModules() {
     }
 #endif
 
-    // 3. Engine-owned resource release hooks. DynamicMesh allocations are
+    // 4. Engine-owned resource release hooks. DynamicMesh allocations are
     //    streamed GPU resources, and data components carry no destructor hook,
     //    so release goes through registry callbacks.
     modules_.Add(EngineModuleDesc{
@@ -549,9 +561,10 @@ void GameEngine::RegisterEngineDefaultModules() {
     });
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
-    // 4. Physical camera: the optional webcam subsystem's SDL event routing.
-    //    The module owns its registration token; teardown releases it.
-    {
+    // 5. Physical camera: only when the game asked for it. The module owns the
+    //    subsystem bring-up and its SDL event-routing token; teardown releases
+    //    the token (the device teardown graph owns the GPU object).
+    if (features_.physical_camera) {
         auto sdl_token = std::make_shared<VulkanShared::ScopedHandle<void(void*)>>();
         modules_.AddAfter(
             ModuleSlot::Device,
@@ -560,6 +573,10 @@ void GameEngine::RegisterEngineDefaultModules() {
                 .label = "engine.physical_camera",
                 .slot = ModuleSlot::PhysicalCamera,
                 .startup = [this, sdl_token](ModuleContext& mctx) {
+                    if (!bootstrap_.InitializePhysicalCamera(mctx.Ctx(), mctx.Config(),
+                                                             *mctx.App().bootstrap)) {
+                        return false;
+                    }
                     if (!mctx.Ctx().physical_camera) return true;
                     *sdl_token = mctx.App().platform->GetBackend().GetSdlEventProcessors().Register(
                         [this](void* sdl_event) {
@@ -576,7 +593,7 @@ void GameEngine::RegisterEngineDefaultModules() {
     }
 #endif
 
-    // 5. The rendered-frame phase seeds: every call the old direct path made,
+    // 6. The rendered-frame phase seeds: every call the old direct path made,
     //    now a registrable FrameSchedule surface the game extends with
     //    AddFrameSystemAfter/Before.
     modules_.Add(EngineModuleDesc{
@@ -755,6 +772,11 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
                               ShaderSystem::ShaderManager* shader_mgr) {
     auto& backend = ctx.bootstrap->GetBackend();
 
+    // The public selector for the overlay is EngineFeatures::imgui; the
+    // renderer's config flag is the internal plumbing it drives. Keeping the
+    // two in sync here means a game never sets the pass flag itself.
+    config_.renderer_config.enable_imgui = features_.imgui;
+
     // Initial indexed-drawing capacity. The gather pass grows these from the
     // real frame totals (EnsureSceneCapacity), so this is only a starting hint.
     const SceneRenderer::SceneCapacity initial_capacity{
@@ -852,7 +874,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         });
     }
 
-    if (config_.enable_imgui) {
+    if (features_.imgui) {
         auto s = DebugSection("engineinit.imgui_system");
         {
             auto s_backend = DebugSection("engineinit.imgui_backend");
@@ -920,6 +942,18 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     return true;
 }
 
+Modules::ModuleContext GameEngine::MakeModuleContext(
+    VulkanEngine::Application::ApplicationContext* app) {
+    Modules::ModuleContext mctx{};
+    // Shutdown passes null: module shutdowns must not read the application loop.
+    mctx.app = app;
+    mctx.engine = &ctx_;
+    mctx.registry = &ctx_.component_registry;
+    mctx.fixed_systems = &systems_;
+    mctx.frame_systems = &frames_;
+    mctx.config = &config_;
+    return mctx;
+}
 
 /// The engine's built-in technique set, exactly as init hardcoded it. Served
 /// through GameEngine::SetTechniqueRegistrar when a game replaces it with its
@@ -1212,16 +1246,11 @@ void GameEngine::Shutdown() {
     if (!initialized_) return;
 
     // Registered modules tear down in the exact reverse of their start order
-    // across all stages: camera event routing, resource hooks, the physics
-    // world, then the device teardown graph. The shutdown context carries no
-    // application loop (Shutdown has no ApplicationContext), so module
-    // shutdowns must not read it.
-    Modules::ModuleContext mctx{};
-    mctx.engine = &ctx_;
-    mctx.registry = &ctx_.component_registry;
-    mctx.fixed_systems = &systems_;
-    mctx.frame_systems = &frames_;
-    mctx.config = &config_;
+    // across all stages: the Scene stage, then camera event routing, resource
+    // hooks, the physics world, and finally the device teardown graph. The
+    // shutdown context carries no application loop (Shutdown has no
+    // ApplicationContext), so module shutdowns must not read it.
+    Modules::ModuleContext mctx = MakeModuleContext(nullptr);
     modules_.ShutdownAll(mctx);
     RestoreDefaultModules(); // a fresh Setup re-registers the preset cleanly
 

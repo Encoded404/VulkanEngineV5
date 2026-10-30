@@ -475,8 +475,8 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
     VulkanEngine::GameConfig config{};
     // The physics debug overlay draws through ImGui's draw list, so the ImGui
-    // system and its pass must be part of the frame.
-    config.enable_imgui = true;
+    // system (requested through EngineFeatures by the constructor) and its pass
+    // must be part of the frame.
     config.renderer_config.clear_color = {0.1f, 0.12f, 0.15f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
 

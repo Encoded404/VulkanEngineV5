@@ -88,7 +88,8 @@ private:
 
     std::filesystem::path exe_dir_{};
     EndpointOverride endpoint_override_{};
-    VulkanEngine::GameEngine engine_game_{};
+    // The debug panels are ImGui; nothing else optional is used.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 
     // Single source of truth for every gameplay-affecting value. Rehashed once
     // at setup and submitted with the score to select the right leaderboard.

@@ -151,7 +151,10 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    VulkanEngine::GameEngine engine_game_{};
+    // The debug overlay draws through ImGui, and the vehicle rides on the
+    // engine's physics module.
+    VulkanEngine::GameEngine engine_game_{
+        VulkanEngine::EngineFeatures{.imgui = true, .physics = true}};
 
     std::pair<float, float> ground_extend_ = std::make_pair(200.0f, 150.0f);
 

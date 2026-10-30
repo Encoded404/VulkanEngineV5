@@ -61,27 +61,84 @@ using VulkanEngine::Textures::TextureSemantic;
 using VulkanEngine::Textures::TextureNormalEncoding;
 using VulkanEngine::Textures::SamplerDesc;
 
+/// Which engine subsystems the default preset registers. The fields are the
+/// API: an aggregate of named booleans, like PipelineFlags and RendererConfig,
+/// so a game declares the features it uses with designated initializers.
+///
+/// `EngineFeatures{}` is the direct-mode template: device core plus the
+/// default renderer, no optional subsystem. `All()` is the GameEngine default
+/// argument and reproduces the historical preset.
+///
+/// A subsystem that is compiled out is a compile error when requested, not a
+/// silent no-op: the member's type is a placeholder that no initializer
+/// converts to, so `{.physics = true}` in a VKENGINE_PHYSICS=OFF build fails
+/// with a diagnostic naming the CMake option. Keep the initializers that name
+/// such a field behind their `#ifdef`.
+struct EngineFeatures {
+    // The text pipeline (TextSystem + font hot reload). Off by default: a
+    // game that never draws text should not pay for the shaping/raster stack.
+    bool text = false;
+    // The ImGui overlay system and its SDL event route. Requires the renderer
+    // InitRenderer brings up: that is the object which attaches the ImGui pass.
+    bool imgui = false;
+
+#if defined(VKENGINE_PHYSICS)
+    bool physics = false;
+#else
+    // Requesting physics when it is compiled out is a compile error whose
+    // diagnostic names the option, not a silent no-op.
+    struct PhysicsRequires_VKENGINE_PHYSICS_On {};
+    PhysicsRequires_VKENGINE_PHYSICS_On physics{};
+#endif
+
+#if defined(VKENGINE_PHYSICAL_CAMERA)
+    bool physical_camera = false;
+#else
+    struct PhysicalCameraRequires_VKENGINE_PHYSICAL_CAMERA_On {};
+    PhysicalCameraRequires_VKENGINE_PHYSICAL_CAMERA_On physical_camera{};
+#endif
+
+    // Every optional subsystem.
+    [[nodiscard]] static constexpr EngineFeatures All() noexcept {
+        EngineFeatures features;
+        features.text = true;
+        features.imgui = true;
+#if defined(VKENGINE_PHYSICS)
+        features.physics = true;
+#endif
+#if defined(VKENGINE_PHYSICAL_CAMERA)
+        features.physical_camera = true;
+#endif
+        return features;
+    }
+};
+
 class GameEngine {
 public:
-    GameEngine();
+    explicit GameEngine(EngineFeatures features = EngineFeatures::All());
     ~GameEngine();
     GameEngine(const GameEngine&) = delete;
     GameEngine& operator=(const GameEngine&) = delete;
+
+    /// The preset selected at construction. Read-only: the module registry is
+    /// fixed once Setup has run.
+    [[nodiscard]] EngineFeatures Features() const noexcept { return features_; }
 
     bool Setup(VulkanEngine::Application::ApplicationContext& ctx, const GameConfig& config);
 
     // ── Engine modules ──
     // The lifecycle seam: modules registered here are configured/started by
-    // Setup (Stage::Startup) and after the renderer comes up
-    // (Stage::Scene), and torn down in the exact reverse of the start order
-    // by Shutdown. The engine's default preset — device bootstrap, physics,
-    // resource hooks, physical camera, the frame-phase seeds — is registered
-    // through the same public surface a composed game uses, so a game adds
-    // its own engines modules with identity-based ordering and never edits
-    // the engine.
+    // Setup (Stage::Startup) and after the renderer comes up (Stage::Scene),
+    // and torn down in the exact reverse of the start order by Shutdown. The
+    // engine's default preset — device bootstrap, text, physics, resource
+    // hooks, physical camera, the frame-phase seeds — selected by EngineFeatures,
+    // is registered through the same public surface a composed game uses, so a
+    // game adds its own engine modules with identity-based ordering and never
+    // edits the engine.
     //
-    // Register app modules before Setup; the registry is filled by Setup's
-    // default-preset registration (and cleared first).
+    // The preset registers in the constructor, so a composed game can order
+    // against the preset slots any time before Setup. Register app modules
+    // before Setup.
     Modules::EngineModules& Modules() { return modules_; }
     [[nodiscard]] const Modules::EngineModules& Modules() const { return modules_; }
 
@@ -250,10 +307,11 @@ public:
 
     // Subsystem accessors delegate to EngineContext
     ResourceManager& GetResourceManager() { return ctx_.resource_manager; }
-    // The text pipeline's single submission entry point and font registry. The
-    // render pass it queues into is attached during InitRenderer, so submit
-    // draws from the frame that calls it onward.
-    Text::TextSystem& GetTextSystem() { return *ctx_.text_system; }
+    // The text pipeline's single submission entry point and font registry.
+    // Null when the Text feature was not requested; the render pass it queues
+    // into is attached during InitRenderer, so submit draws from the frame that
+    // calls it onward.
+    Text::TextSystem* GetTextSystem() { return ctx_.text_system.get(); }
     BindlessManager::BindlessManager& GetBindlessManager() { return *ctx_.bindless_mgr; }
     SceneRenderer::SceneRenderer& GetSceneRenderer() { return *ctx_.scene_renderer; }
     TechniqueManager::TechniqueManager& GetTechniqueManager() { return *ctx_.technique_mgr; }
@@ -318,16 +376,23 @@ private:
     // warning. Report the transition into it once; MarkSceneValid re-arms it.
     void ReportSceneInvalidOnce();
 
-    // The engine's default module preset: device bootstrap, physics, resource
-    // hooks, physical camera and the frame-phase seeds — registered through
-    // the same public EngineModules surface a composed game uses. Called by
-    // the constructor (no runtime state is needed to register), so a composed
-    // game composes against the preset slots any time before Setup.
+    // The engine's default module preset, selected by EngineFeatures: device
+    // bootstrap always, text/physics/physical camera only when requested,
+    // resource hooks and the frame-phase seeds always. Registered through the
+    // same public EngineModules surface a composed game uses.
+    // Called by the constructor (no runtime state is needed to register), so a
+    // composed game composes against the preset slots any time before Setup.
     void RegisterEngineDefaultModules();
 
     // Wipes the registry and re-registers the preset: the teardown of a
     // Shutdown or a failed startup leaves a fresh engine ready for Setup.
     void RestoreDefaultModules();
+
+    // The six-field ModuleContext both Setup (with the app context) and
+    // Shutdown (without it, which module shutdowns must not read) hand to the
+    // registry.
+    [[nodiscard]] Modules::ModuleContext MakeModuleContext(
+        VulkanEngine::Application::ApplicationContext* app);
 
     // The engine's built-in technique set (DefaultMesh + its uv/mask variant
     // matrix, plus Unlit): the default TechniqueRegistrar body.
@@ -344,6 +409,10 @@ private:
 
     EngineContext ctx_;
     EngineBootstrap bootstrap_;
+
+    // The preset selected at construction, consumed by
+    // RegisterEngineDefaultModules (also after a Shutdown restores the preset).
+    EngineFeatures features_{};
 
     VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
 

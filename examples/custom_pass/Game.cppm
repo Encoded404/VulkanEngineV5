@@ -39,7 +39,8 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    VulkanEngine::GameEngine engine_game_{};
+    // ImGui is required: ToneMapPass anchors itself to the engine's ImGui pass.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
 
     VulkanEngine::RenderPipeline::RenderPipeline* pipeline_ = nullptr;
     VulkanEngine::RenderGraph::PassHandle capture_handle_{};

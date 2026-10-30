@@ -226,7 +226,6 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // 1. Engine setup + renderer using the engine's standard PBR mesh shader.
     VulkanEngine::GameConfig config{};
-    config.enable_imgui = true;
     config.renderer_config.clear_color = {0.8f, 0.8f, 0.80f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
 

@@ -78,7 +78,6 @@ TextDemoGame::~TextDemoGame() = default;
 
 bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     VulkanEngine::GameConfig config{};
-    config.enable_imgui = false;
     // The world-text backend is chosen here, on RendererConfig, because the
     // engine's world-text built-in is built with one graphics pipeline; see
     // TextDemoConfig.
@@ -210,26 +209,33 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
 void TextDemoGame::OnFrameRender(
     const VulkanEngine::Application::ApplicationContext& ctx) {
-    auto& text_system = engine_game_.GetTextSystem();
+    // The example requests .text, so this is non-null in practice; if it were
+    // missing, skip text submission but still run the frame (a text-less frame
+    // is a normal degraded state, not a reason to render nothing).
+    auto* text_system = engine_game_.GetTextSystem();
 
     // Screen-space path: this single call shapes, wraps, aligns, rasterizes
     // hinted and queues into the overlay pass. The wrapped body is what proves
     // the layout stage runs through the same seam.
-    text_system.SubmitScreenText(*face_, kScreenTitle, 28.0f, 24.0f, 48.0f,
-                                 std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f});
-    text_system.SubmitScreenText(*face_, kScreenBody, 18.0f, 24.0f, 110.0f,
-                                 std::array<float, 4>{0.75f, 0.82f, 0.92f, 1.0f},
-                                 VulkanEngine::Text::LayoutOptions{
-                                     .max_width = 460.0f,
-                                     .align = VulkanEngine::Text::TextAlign::Center,
-                                     .line_height_scale = 1.15f});
+    if (text_system != nullptr) {
+        text_system->SubmitScreenText(*face_, kScreenTitle, 28.0f, 24.0f, 48.0f,
+                                      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f});
+        text_system->SubmitScreenText(*face_, kScreenBody, 18.0f, 24.0f, 110.0f,
+                                      std::array<float, 4>{0.75f, 0.82f, 0.92f, 1.0f},
+                                      VulkanEngine::Text::LayoutOptions{
+                                          .max_width = 460.0f,
+                                          .align = VulkanEngine::Text::TextAlign::Center,
+                                          .line_height_scale = 1.15f});
+    }
 
     // World-space path: the configured backend's pass draws the entities'
     // components against the scene depth buffer. The pass routes on its own
     // Backend(), so the example asks for the queue method that matches the
     // backend it selected at startup; the other method is a deliberate no-op.
+    // Queueing needs the text system's shaping cache; the pass itself can exist
+    // without it (it is a renderer built-in), so both are checked.
     auto* world_pass = engine_game_.GetRenderer().GetWorldTextPass();
-    if (world_pass != nullptr) {
+    if (world_pass != nullptr && text_system != nullptr) {
         // The frame the caller is about to record. This is the monotonic counter
         // the pass's Execute() also drains the blob buffer's retire ring with,
         // not the frames-in-flight ring slot: the ring is keyed by recording
@@ -248,7 +254,7 @@ void TextDemoGame::OnFrameRender(
                 continue;
             }
             const std::shared_ptr<const VulkanEngine::Text::ShapedRun> run =
-                text_system.GetShapingCache().Shape(*face_, text->content);
+                text_system->GetShapingCache().Shape(*face_, text->content);
             if (run == nullptr || run->Empty()) {
                 continue;
             }

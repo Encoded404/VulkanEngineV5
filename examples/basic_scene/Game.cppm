@@ -67,7 +67,14 @@ private:
     std::vector<ControllableObject> controllable_objects_{};
     int selected_object_ = 0;
 
-    VulkanEngine::GameEngine engine_game_{};
+    // ImGui drives the debug panel; the physical camera is optional and both
+    // its feature field and its use below are compile-time gated.
+#ifdef VKENGINE_PHYSICAL_CAMERA
+    VulkanEngine::GameEngine engine_game_{
+        VulkanEngine::EngineFeatures{.imgui = true, .physical_camera = true}};
+#else
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.imgui = true}};
+#endif
     VulkanShared::ScopedHandle<void()> imgui_draw_handle_{};
 
 #ifdef VKENGINE_PHYSICAL_CAMERA

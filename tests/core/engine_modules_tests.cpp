@@ -69,7 +69,7 @@ TEST(EngineModulesTest, ConfigureRunsBeforeStartupInResolvedOrder) {
         .configure = [&](GameConfig& config) {
             calls.push_back("config.a");
             // declare a default the game may later override (it will not)
-            config.enable_imgui = true;
+            config.job_workers = 2;
         },
         .startup = [&](ModuleContext&) { calls.push_back("start.a"); return true; },
     });
@@ -260,8 +260,25 @@ TEST(EngineModulesTest, ModulesRegisterSystemsOntoBothScheduleSurfaces) {
 
 TEST(EngineModulesTest, ModuleSlotNamesAreTheDiagnosticSpelling) {
     EXPECT_EQ(ModuleSlotName(ModuleSlot::Device), "engine.device");
+    EXPECT_EQ(ModuleSlotName(ModuleSlot::Text), "engine.text");
     EXPECT_EQ(ModuleSlotName(ModuleSlot::Physics), "engine.physics");
     EXPECT_EQ(ModuleSlotName(ModuleSlot::None), "<none>");
     EXPECT_EQ(StageName(Stage::Startup), "startup");
     EXPECT_EQ(StageName(Stage::Scene), "scene");
+}
+
+TEST(EngineModulesTest, HasSlotTracksTheBoundIdentityOnly) {
+    EngineModules modules;
+    EXPECT_FALSE(modules.HasSlot(ModuleSlot::Device));
+    // None is the "unbound" identity and never reports as bound.
+    EXPECT_FALSE(modules.HasSlot(ModuleSlot::None));
+
+    modules.Add(EngineModuleDesc{
+        .stage = Stage::Startup, .label = "device", .slot = ModuleSlot::Device,
+    });
+    EXPECT_TRUE(modules.HasSlot(ModuleSlot::Device));
+    EXPECT_FALSE(modules.HasSlot(ModuleSlot::Text));
+
+    modules.Clear();
+    EXPECT_FALSE(modules.HasSlot(ModuleSlot::Device));
 }

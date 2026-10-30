@@ -47,7 +47,6 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     // 1. Engine subsystems. ImGui is enabled so the built-in ImGui pass exists
     // and the tonemap can order itself before it via the anchor.
     VulkanEngine::GameConfig config{};
-    config.enable_imgui = true;
     config.renderer_config.clear_color = {0.05f, 0.05f, 0.06f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
 

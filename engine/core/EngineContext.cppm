@@ -81,7 +81,6 @@ struct GameConfig {
     // path onto the calling thread, which is the bit-identical deterministic
     // debugging mode.
     unsigned int job_workers = VulkanShared::JobBudget::kAuto;
-    bool enable_imgui = true;
     std::string shader_data_dir;
     // Empty means "the resolved per-user cache root" (see GameEngine::Setup).
     // Never give this a CWD-relative default: a pipeline cache must survive
@@ -94,9 +93,6 @@ struct GameConfig {
     LightingDefaults lighting{};
     VulkanEngine::ShaderSystem::GplPolicy gpl_policy = VulkanEngine::ShaderSystem::GplPolicy::Auto;
     VulkanEngine::ShaderSystem::GplStructurePolicy gpl_structure = VulkanEngine::ShaderSystem::GplStructurePolicy::Auto;
-#ifdef VKENGINE_PHYSICAL_CAMERA
-    bool enable_physical_camera = true;
-#endif
 };
 
 struct EngineContext {
@@ -136,12 +132,12 @@ struct EngineContext {
 
     // Text pipeline: font registry, shaping cache, hinted-glyph rasterizer and
     // the pure glyph atlas, plus an optional GPU layer added once the device
-    // resources exist. The device-free core is constructed unconditionally;
-    // InitializeGpu() adds the layer.
+    // resources exist. Constructed by the engine's text module; null when the
+    // Text feature was not requested.
     std::unique_ptr<Text::TextSystem> text_system;
     // Font hot reload: watches source font files and rebuilds faces frame-safely
-    // (new UniqueId, cache invalidation, ring-drained page retirement). Gated by
-    // VKENGINE_HOT_RELOAD like the texture hot-reload pair.
+    // (new UniqueId, cache invalidation, ring-drained page retirement). Part of
+    // the optional Text feature (VKENGINE_HOT_RELOAD like the texture pair).
     std::unique_ptr<Text::FontWatcher> font_watcher;
     std::unique_ptr<Text::FontReloader> font_reloader;
     std::unique_ptr<SceneRenderer::SceneRenderer> scene_renderer;
@@ -197,7 +193,8 @@ struct EngineContext {
     auto& GetShaderManager() { return *shader_manager; }
     auto& GetPipelineFactory() { return *pipeline_factory; }
     auto& GetShaderIds() { return shader_ids; }
-    auto& GetTextSystem() { return *text_system; }
+    // Null when the Text feature was not requested (see EngineFeatures).
+    Text::TextSystem* GetTextSystem() { return text_system.get(); }
     Text::FontWatcher* GetFontWatcher() { return font_watcher.get(); }
     Text::FontReloader* GetFontReloader() { return font_reloader.get(); }
 

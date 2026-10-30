@@ -40,7 +40,6 @@ Game::~Game() = default;
 bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // 1. Configure and init engine subsystems
     VulkanEngine::GameConfig config{};
-    config.enable_imgui = false;
     config.renderer_config.clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
     config.shader_data_dir = (exe_dir_ / "shaders").string();
 

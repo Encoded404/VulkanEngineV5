@@ -51,7 +51,9 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    VulkanEngine::GameEngine engine_game_{};
+    // Physics is the only optional subsystem this example uses; its scene and
+    // telemetry are Scene-stage modules registered before Setup.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{.physics = true}};
 
     // Scene state (owned by plain composition of the engine's surfaces).
     glm::vec3 camera_offset_{0.0f, 6.0f, 10.0f};

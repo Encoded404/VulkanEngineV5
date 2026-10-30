@@ -37,7 +37,9 @@ private:
     VulkanShared::ScopedHandle<void(VulkanEngine::Application::ApplicationContext&)> shutdown_token_{};
 
     std::filesystem::path exe_dir_{};
-    VulkanEngine::GameEngine engine_game_{};
+    // Direct-mode template: device core + default renderer only. No text,
+    // ImGui, physics, or physical camera.
+    VulkanEngine::GameEngine engine_game_{VulkanEngine::EngineFeatures{}};
 };
 
 } // namespace Examples::Minimal::Game

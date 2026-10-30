@@ -91,10 +91,8 @@ bool TextDemoGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // The example ships no shaders of its own: the engine's standard PBR mesh
     // shader draws the occluder and the built-in text pipelines draw the text.
-    auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
-    const auto& shader_ids = engine_game_.GetContext().GetShaderIds();
-    if (!engine_game_.InitRenderer(ctx, shader_ids.main_indir_vert, shader_ids.standard_mesh_frag,
-                                   &shader_mgr)) {
+    // `{}` selects the engine's standard shader pair.
+    if (!engine_game_.InitRenderer(ctx)) {
         return false;
     }
 

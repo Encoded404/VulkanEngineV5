@@ -319,6 +319,11 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
                                                   "vulkanengine_v5" / "cache");
     }
 
+    // A fresh Setup starts with no renderer: InitRenderer resolves its shader
+    // pair again, and the Render/Scene stages run again.
+    renderer_initialized_ = false;
+    ctx_.renderer_shaders = {};
+
     // Modules drive the rest of setup. The default preset registered at
     // construction — through the same public EngineModules surface a composed
     // game uses — now runs its configures and startups in resolved order.
@@ -605,6 +610,73 @@ void GameEngine::RegisterEngineDefaultModules() {
             return true;
         },
     });
+
+    // 7. The default renderer's Render-stage modules, started by InitRenderer in
+    //    this order: ImGui (the overlay system the renderer's pass draws), then
+    //    Renderer (the render graph compiles here, so the pass must be attached
+    //    while the graph is built), then ShaderWatch. They are registered in the
+    //    constructor like every other preset module, so a game can order against
+    //    ModuleSlot::Renderer/ImGui from its own constructor.
+    if (features_.default_renderer) {
+        if (features_.imgui) {
+            auto sdl_token = std::make_shared<VulkanShared::ScopedHandle<void(void*)>>();
+            modules_.Add(EngineModuleDesc{
+                .stage = Stage::Render,
+                .label = "engine.imgui",
+                .slot = ModuleSlot::ImGui,
+                .startup = [this, sdl_token](ModuleContext& mctx) {
+                    if (!InitializeImGui(mctx.App())) {
+                        return false;
+                    }
+                    *sdl_token =
+                        mctx.App().platform->GetBackend().GetSdlEventProcessors().Register(
+                            [this](void* sdl_event) {
+                                if (ctx_.imgui_system && ctx_.imgui_system->IsInitialized()) {
+                                    ctx_.imgui_system->ProcessSDLEvent(sdl_event);
+                                }
+                            });
+                    return true;
+                },
+                // CPU-side teardown only: the SDL route token. The ImGui backend
+                // and system are device-scoped and released by the device
+                // teardown graph after the device-idle barrier.
+                .shutdown = [sdl_token](ModuleContext& /*mctx*/) { *sdl_token = {}; },
+            });
+        }
+
+        EngineModuleDesc renderer_desc{
+            .stage = Stage::Render,
+            .label = "engine.renderer",
+            .slot = ModuleSlot::Renderer,
+            .startup = [this](ModuleContext& mctx) {
+                return InitializeRendererCore(mctx.App());
+            },
+            // No shutdown body on purpose: this module owns no CPU state. The
+            // scene renderer, material/technique managers, renderer and their
+            // GPU resources are device-scoped and torn down by the device
+            // module's graph after the device-idle barrier.
+        };
+        if (features_.imgui) {
+            modules_.AddAfter(ModuleSlot::ImGui, renderer_desc);
+        } else {
+            modules_.Add(renderer_desc);
+        }
+
+        modules_.AddAfter(ModuleSlot::Renderer, EngineModuleDesc{
+            .stage = Stage::Render,
+            .label = "engine.shader_watch",
+            .slot = ModuleSlot::ShaderWatch,
+            .startup = [this](ModuleContext& /*mctx*/) { return InitializeShaderWatch(); },
+            .shutdown = [this](ModuleContext& /*mctx*/) {
+                // CPU-side teardown only: quiesce the watcher thread (StopDetached
+                // also hands the efsw join to a detached thread) before the device
+                // graph destroys the shader manager it reads.
+                if (ctx_.shader_watcher) {
+                    ShaderSystem::ShaderWatcher::StopDetached(std::move(ctx_.shader_watcher));
+                }
+            },
+        });
+    }
 }
 
 uint32_t GameEngine::UploadTextureToBindless(VulkanEngine::Application::ApplicationContext& /*ctx*/,
@@ -767,15 +839,84 @@ std::shared_ptr<const VulkanEngine::Text::FontFace> GameEngine::LoadFont(
 }
 
 bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
-                              ShaderSystem::ShaderId vert_id,
-                              ShaderSystem::ShaderId frag_id,
-                              ShaderSystem::ShaderManager* shader_mgr) {
-    auto& backend = ctx.bootstrap->GetBackend();
+                              ShaderSystem::RendererShaders shaders) {
+    if (renderer_initialized_) {
+        return true;
+    }
 
-    // The public selector for the overlay is EngineFeatures::imgui; the
-    // renderer's config flag is the internal plumbing it drives. Keeping the
-    // two in sync here means a game never sets the pass flag itself.
-    config_.renderer_config.enable_imgui = features_.imgui;
+    // `{}` asks for the engine's standard pair. Anything else must be complete:
+    // a partially specified struct is a logged error, never a null dereference
+    // in the technique registration.
+    const bool engine_pair = shaders.manager == nullptr &&
+                             shaders.vert == ShaderSystem::kInvalidShaderId &&
+                             shaders.frag == ShaderSystem::kInvalidShaderId;
+    if (engine_pair) {
+        shaders.manager = ctx_.shader_manager.get();
+        shaders.vert = ctx_.shader_ids.main_indir_vert;
+        shaders.frag = ctx_.shader_ids.standard_mesh_frag;
+        if (!shaders.IsValid()) {
+            LOGIFACE_LOG(error, "GameEngine::InitRenderer: the engine renderer shaders are not "
+                                "registered; check GameConfig::shader_data_dir ('" +
+                                    config_.shader_data_dir + "')");
+            return false;
+        }
+    } else if (!shaders.IsValid()) {
+        LOGIFACE_LOG(error, "GameEngine::InitRenderer: RendererShaders must name a shader manager "
+                            "and both a vertex and a fragment shader, or be {} for the engine's "
+                            "standard pair");
+        return false;
+    }
+    ctx_.renderer_shaders = shaders;
+
+    Modules::ModuleContext mctx = MakeModuleContext(&ctx);
+
+    // The Render stage: ImGui → Renderer → ShaderWatch, all registered by the
+    // preset in the constructor. App shaders are registered by now, which is
+    // what the renderer and the shader watcher need.
+    modules_.ConfigureStage(Modules::Stage::Render, config_);
+    if (!modules_.StartupAll(Modules::Stage::Render, mctx)) {
+        LOGIFACE_LOG(error, "GameEngine::InitRenderer: a render-stage module failed to start");
+        modules_.ShutdownAll(mctx);
+        RestoreDefaultModules();
+        ctx_.renderer_shaders = {};
+        return false;
+    }
+
+    // A game that set default_renderer = false must have registered its own
+    // renderer module. Fail loudly here instead of dereferencing a null renderer
+    // once the Scene stage runs.
+    if (!modules_.HasSlot(Modules::ModuleSlot::Renderer)) {
+        LOGIFACE_LOG(error, "GameEngine::InitRenderer: no module is bound to ModuleSlot::Renderer; "
+                            "EngineFeatures::default_renderer is false, so register a renderer "
+                            "module that populates renderer, scene_renderer and technique_mgr "
+                            "before the Scene stage");
+        modules_.ShutdownAll(mctx);
+        RestoreDefaultModules();
+        ctx_.renderer_shaders = {};
+        return false;
+    }
+
+    // Scene-stage modules start here: the renderer and its resources exist.
+    modules_.ConfigureStage(Modules::Stage::Scene, config_);
+    if (!modules_.StartupAll(Modules::Stage::Scene, mctx)) {
+        modules_.ShutdownAll(mctx);
+        RestoreDefaultModules();
+        ctx_.renderer_shaders = {};
+        return false;
+    }
+
+    renderer_initialized_ = true;
+    return true;
+}
+
+bool GameEngine::InitializeRendererCore(VulkanEngine::Application::ApplicationContext& ctx) {
+    auto& backend = ctx.bootstrap->GetBackend();
+    const ShaderSystem::RendererShaders shaders = ctx_.renderer_shaders;
+    if (!shaders.IsValid()) {
+        LOGIFACE_LOG(error, "GameEngine::InitializeRendererCore: no renderer shader pair was "
+                            "resolved before the Render stage");
+        return false;
+    }
 
     // Initial indexed-drawing capacity. The gather pass grows these from the
     // real frame totals (EnsureSceneCapacity), so this is only a starting hint.
@@ -797,7 +938,7 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     }
 
     ctx_.technique_mgr = std::make_unique<TechniqueManager::TechniqueManager>();
-    if (!RegisterTechniques(ctx, shader_mgr, vert_id, frag_id)) {
+    if (!RegisterTechniques(ctx, shaders.manager, shaders.vert, shaders.frag)) {
         return false;
     }
 
@@ -850,15 +991,21 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     {
         auto s = DebugSection("engineinit.renderer");
         ctx_.renderer = std::make_unique<Renderer::Renderer>();
-        ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config, *ctx_.scene_renderer,
-                                  &ctx_.GetShaderManager(), &ctx_.GetPipelineFactory(),
-                                  &ctx_.GetShaderIds());
+        // Pass attachment follows the subsystem objects the earlier Render-stage
+        // modules created: the ImGui pass exists iff imgui_system is non-null, the
+        // text/world-text passes iff text_system is non-null and the text shaders
+        // are registered.
+        if (!ctx_.renderer->Initialize(*ctx.bootstrap, config_.renderer_config,
+                                       *ctx_.scene_renderer, shaders.manager,
+                                       &ctx_.GetPipelineFactory(), &ctx_.GetShaderIds(),
+                                       ctx_.text_system.get(), ctx_.imgui_system.get())) {
+            LOGIFACE_LOG(error, "GameEngine::InitializeRendererCore: Renderer::Initialize failed");
+            return false;
+        }
 
         // The text system's single submission entry point queues into the renderer's
-        // built-in text pass. Attaching it here -- after the renderer owns the pass,
-        // before the first frame records -- is the one seam that keeps submission
-        // one call without the text layer owning render-graph state. Until this
-        // runs, SubmitScreenText is deliberately a no-op.
+        // built-in text pass. Until this runs, SubmitScreenText is deliberately a
+        // no-op.
         if (ctx_.text_system && ctx_.renderer) {
             ctx_.text_system->SetTextPass(ctx_.renderer->GetTextPass());
         }
@@ -874,38 +1021,50 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
         });
     }
 
-    if (features_.imgui) {
-        auto s = DebugSection("engineinit.imgui_system");
-        {
-            auto s_backend = DebugSection("engineinit.imgui_backend");
-            ctx_.imgui_backend = VulkanBackend::ImGui::CreateImGuiBackend();
-        }
-        ctx_.imgui_system = std::make_unique<ImGui::ImGuiSystem>(ctx_.imgui_backend);
+    return true;
+}
 
-        const auto surface_format = backend.GetSurfaceFormat();
-        VulkanBackend::ImGui::ImGuiBackendConfig imgui_backend_config{};
-        imgui_backend_config.image_count = ctx.bootstrap->GetSnapshot().swapchain_image_count;
-        imgui_backend_config.swapchain_format = static_cast<vk::Format>(surface_format.format);
 
-        ImGui::ImGuiSystemInitInfo imgui_init_info{};
-        imgui_init_info.sdl_window = ctx.window;
-        imgui_init_info.backend_config = imgui_backend_config;
-        imgui_init_info.instance = backend.GetInstance();
-        imgui_init_info.physical_device = backend.GetPhysicalDevice();
-        imgui_init_info.device = backend.GetDevice();
-        imgui_init_info.queue_family = backend.GetGraphicsQueueFamily();
-        imgui_init_info.queue = backend.GetGraphicsQueue();
-        imgui_init_info.api_version = vk::ApiVersion13;
+bool GameEngine::InitializeImGui(VulkanEngine::Application::ApplicationContext& ctx) {
+    auto& backend = ctx.bootstrap->GetBackend();
 
-        [[maybe_unused]] const bool imgui_ok = ctx_.imgui_system->Initialize(imgui_init_info);
+    auto s = DebugSection("engineinit.imgui_system");
+    {
+        auto s_backend = DebugSection("engineinit.imgui_backend");
+        ctx_.imgui_backend = VulkanBackend::ImGui::CreateImGuiBackend();
+    }
+    ctx_.imgui_system = std::make_unique<ImGui::ImGuiSystem>(ctx_.imgui_backend);
 
-        auto& platform_backend = ctx.platform->GetBackend();
-        imgui_event_token_ = platform_backend.GetSdlEventProcessors().Register(
-            [this](void* sdl_event) {
-                if (ctx_.imgui_system && ctx_.imgui_system->IsInitialized()) {
-                    ctx_.imgui_system->ProcessSDLEvent(sdl_event);
-                }
-            });
+    const auto surface_format = backend.GetSurfaceFormat();
+    VulkanBackend::ImGui::ImGuiBackendConfig imgui_backend_config{};
+    imgui_backend_config.image_count = ctx.bootstrap->GetSnapshot().swapchain_image_count;
+    imgui_backend_config.swapchain_format = static_cast<vk::Format>(surface_format.format);
+
+    ImGui::ImGuiSystemInitInfo imgui_init_info{};
+    imgui_init_info.sdl_window = ctx.window;
+    imgui_init_info.backend_config = imgui_backend_config;
+    imgui_init_info.instance = backend.GetInstance();
+    imgui_init_info.physical_device = backend.GetPhysicalDevice();
+    imgui_init_info.device = backend.GetDevice();
+    imgui_init_info.queue_family = backend.GetGraphicsQueueFamily();
+    imgui_init_info.queue = backend.GetGraphicsQueue();
+    imgui_init_info.api_version = vk::ApiVersion13;
+
+    // The overlay is optional: a failed system init leaves imgui_system non-null
+    // (the renderer still attaches the pass, which draws nothing while
+    // IsInitialized() is false), so the run continues as it always has.
+    if (!ctx_.imgui_system->Initialize(imgui_init_info)) {
+        LOGIFACE_LOG(warn, "GameEngine::InitializeImGui: overlay initialization failed; "
+                           "continuing without an ImGui UI");
+    }
+    return true;
+}
+
+bool GameEngine::InitializeShaderWatch() {
+    if (!ctx_.shader_manager) {
+        LOGIFACE_LOG(error, "GameEngine::InitializeShaderWatch: shader manager is not initialized "
+                            "(the device module must start first)");
+        return false;
     }
 
     // ── Flush pipeline cache (warm data persists across runs) ──
@@ -915,30 +1074,14 @@ bool GameEngine::InitRenderer(VulkanEngine::Application::ApplicationContext& ctx
     }
 
     // ── Start shader file watching (watches all registered slang directories) ──
-    // Directories registered after this (e.g. application shaders) are picked up
-    // by RefreshShaderWatcher()/AddShaderDirectory().
+    // Directories registered after this (e.g. application shaders registered
+    // before InitRenderer) are picked up by RefreshShaderWatcher() /
+    // AddShaderDirectory().
     {
         auto s = DebugSection("engineinit.shader_watcher");
         ctx_.shader_watcher = std::make_unique<ShaderSystem::ShaderWatcher>(*ctx_.shader_manager);
         ctx_.shader_watcher->Start();
     }
-
-    // Renderer init is done, so scene-stage modules (scene building, resource
-    // loads, cameras) start here through the module registry the game filled
-    // before Setup.
-    Modules::ModuleContext mctx{};
-    mctx.app = &ctx;
-    mctx.engine = &ctx_;
-    mctx.registry = &ctx_.component_registry;
-    mctx.fixed_systems = &systems_;
-    mctx.frame_systems = &frames_;
-    mctx.config = &config_;
-    if (!modules_.StartupAll(Modules::Stage::Scene, mctx)) {
-        modules_.ShutdownAll(mctx);
-        RestoreDefaultModules();
-        return false;
-    }
-
     return true;
 }
 
@@ -1246,15 +1389,17 @@ void GameEngine::Shutdown() {
     if (!initialized_) return;
 
     // Registered modules tear down in the exact reverse of their start order
-    // across all stages: the Scene stage, then camera event routing, resource
-    // hooks, the physics world, and finally the device teardown graph. The
-    // shutdown context carries no application loop (Shutdown has no
-    // ApplicationContext), so module shutdowns must not read it.
+    // across all stages: the Scene stage, the shader watcher and the ImGui SDL
+    // route, then camera event routing, resource hooks, the physics world, and
+    // finally the device teardown graph. The shutdown context carries no
+    // application loop (Shutdown has no ApplicationContext), so module
+    // shutdowns must not read it.
     Modules::ModuleContext mctx = MakeModuleContext(nullptr);
     modules_.ShutdownAll(mctx);
     RestoreDefaultModules(); // a fresh Setup re-registers the preset cleanly
 
-    imgui_event_token_ = {};
+    ctx_.renderer_shaders = {};
+    renderer_initialized_ = false;
 
     scene_valid_ = false;
     scene_invalid_reported_ = false;

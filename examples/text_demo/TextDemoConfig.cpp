@@ -49,9 +49,6 @@ VulkanEngine::Renderer::RendererConfig MakeRendererConfig(
     VulkanEngine::SceneRenderer::TextBackend backend) {
     VulkanEngine::Renderer::RendererConfig config{};
     config.text_backend = backend;
-    // The screen-space overlay registers either way; it is a separate pass with
-    // its own hinted-A8 pipeline and is not what the world backend selects.
-    config.enable_text = true;
     return config;
 }
 

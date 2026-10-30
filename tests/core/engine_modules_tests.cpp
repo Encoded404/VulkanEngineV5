@@ -107,6 +107,11 @@ TEST(EngineModulesTest, ShutdownIsTheExactReverseOfStartupAcrossStages) {
         .shutdown = [&](ModuleContext&) { calls.push_back("stop.physics"); },
     });
     modules.Add(EngineModuleDesc{
+        .stage = Stage::Render, .label = "renderer", .slot = ModuleSlot::Renderer,
+        .startup = [&](ModuleContext&) { calls.push_back("start.renderer"); return true; },
+        .shutdown = [&](ModuleContext&) { calls.push_back("stop.renderer"); },
+    });
+    modules.Add(EngineModuleDesc{
         .stage = Stage::Scene, .label = "scene",
         .startup = [&](ModuleContext&) { calls.push_back("start.scene"); return true; },
         .shutdown = [&](ModuleContext&) { calls.push_back("stop.scene"); },
@@ -114,16 +119,47 @@ TEST(EngineModulesTest, ShutdownIsTheExactReverseOfStartupAcrossStages) {
 
     ModuleContext mctx = FreshContext();
     ASSERT_TRUE(modules.StartupAll(Stage::Startup, mctx));
+    ASSERT_TRUE(modules.StartupAll(Stage::Render, mctx));
     ASSERT_TRUE(modules.StartupAll(Stage::Scene, mctx));
     calls.clear();
     modules.ShutdownAll(mctx);
 
-    // Exact reverse of the full start history: scene, physics, device.
-    EXPECT_EQ(calls, (std::vector<std::string>{"stop.scene", "stop.physics", "stop.device"}));
+    // Exact reverse of the full start history: scene, renderer, physics, device.
+    EXPECT_EQ(calls, (std::vector<std::string>{
+                         "stop.scene", "stop.renderer", "stop.physics", "stop.device"}));
 
     // Idempotent: a second ShutdownAll must not double-stop anyone.
     modules.ShutdownAll(mctx);
-    EXPECT_EQ(calls, (std::vector<std::string>{"stop.scene", "stop.physics", "stop.device"}));
+    EXPECT_EQ(calls, (std::vector<std::string>{
+                         "stop.scene", "stop.renderer", "stop.physics", "stop.device"}));
+}
+
+TEST(EngineModulesTest, StartupRunsOnlyTheRequestedStage) {
+    std::vector<std::string> started;
+    EngineModules modules;
+    for (const Stage stage : {Stage::Startup, Stage::Render, Stage::Scene}) {
+        modules.Add(EngineModuleDesc{
+            .stage = stage,
+            .label = StageName(stage),
+            .startup = [&started, stage](ModuleContext&) {
+                started.push_back(std::string(StageName(stage)));
+                return true;
+            },
+        });
+    }
+
+    ModuleContext mctx = FreshContext();
+    ASSERT_TRUE(modules.StartupAll(Stage::Startup, mctx));
+    ASSERT_TRUE(modules.StartupAll(Stage::Render, mctx));
+    ASSERT_TRUE(modules.StartupAll(Stage::Scene, mctx));
+    // The stage sequence is the caller's structure (Setup -> InitRenderer's
+    // Render -> Scene); the registry only orders within a stage.
+    EXPECT_EQ(started, (std::vector<std::string>{"startup", "render", "scene"}));
+
+    // A repeated stage start does not re-run anyone.
+    started.clear();
+    ASSERT_TRUE(modules.StartupAll(Stage::Render, mctx));
+    EXPECT_TRUE(started.empty());
 }
 
 TEST(EngineModulesTest, StartedOnlyModulesAreUnwoundOnStartupFailure) {
@@ -199,6 +235,13 @@ TEST(EngineModulesTest, ConstraintCrossingAStageBoundaryIsRejected) {
                         .stage = Stage::Scene, .label = "crossed",
                     }), std::logic_error);
     EXPECT_EQ(modules.Size(), 1u);
+
+    // The same rule guards the Render stage: a renderer module cannot claim to
+    // start after the device bootstrap.
+    EXPECT_THROW(modules.AddAfter(ModuleSlot::Device, EngineModuleDesc{
+                        .stage = Stage::Render, .label = "crossed-render",
+                    }), std::logic_error);
+    EXPECT_EQ(modules.Size(), 1u);
 }
 
 TEST(EngineModulesTest, DuplicateSlotIsRejectedAndLeavesTheRegistryIntact) {
@@ -258,13 +301,72 @@ TEST(EngineModulesTest, ModulesRegisterSystemsOntoBothScheduleSurfaces) {
     EXPECT_EQ(frames.PhaseSize(FramePhase::Bridge), 1u);
 }
 
+TEST(EngineModulesTest, ConfigureAllRunsEveryStageBeforeAnyStartup) {
+    std::vector<std::string> calls;
+    EngineModules modules;
+    modules.Add(EngineModuleDesc{
+        .stage = Stage::Scene, .label = "scene",
+        .configure = [&](GameConfig&) { calls.push_back("config.scene"); },
+        .startup = [&](ModuleContext&) { calls.push_back("start.scene"); return true; },
+    });
+    modules.Add(EngineModuleDesc{
+        .stage = Stage::Startup, .label = "device",
+        .configure = [&](GameConfig&) { calls.push_back("config.device"); },
+        .startup = [&](ModuleContext&) { calls.push_back("start.device"); return true; },
+    });
+
+    GameConfig config{};
+    ModuleContext mctx = FreshContext();
+    modules.ConfigureAll(config);
+    ASSERT_TRUE(modules.StartupAll(Stage::Startup, mctx));
+    ASSERT_TRUE(modules.StartupAll(Stage::Scene, mctx));
+
+    // ConfigureAll walks resolved stage order, so every default declaration —
+    // including the Scene module's — precedes the first startup.
+    EXPECT_EQ(calls, (std::vector<std::string>{
+                         "config.device", "config.scene", "start.device", "start.scene"}));
+}
+
+TEST(EngineModulesTest, ConfigureStageRunsALateModuleExactlyOnceBeforeItsStartup) {
+    EngineModules modules;
+    std::vector<std::string> calls;
+    modules.Add(EngineModuleDesc{
+        .stage = Stage::Startup, .label = "device",
+        .configure = [&](GameConfig&) { calls.push_back("config.device"); },
+        .startup = [&](ModuleContext&) { calls.push_back("start.device"); return true; },
+    });
+
+    ModuleContext mctx = FreshContext();
+    modules.ConfigureAll(*mctx.config);
+    ASSERT_TRUE(modules.StartupAll(Stage::Startup, mctx));
+    calls.clear();
+
+    // Registered after Setup (a late Render module, e.g. an app renderer
+    // replacement): its configure must still run, exactly once, before it starts.
+    modules.Add(EngineModuleDesc{
+        .stage = Stage::Render, .label = "late-renderer",
+        .configure = [&](GameConfig&) { calls.push_back("config.late"); },
+        .startup = [&](ModuleContext&) { calls.push_back("start.late"); return true; },
+    });
+    modules.ConfigureStage(Stage::Render, *mctx.config);
+    modules.ConfigureStage(Stage::Render, *mctx.config);
+    ASSERT_TRUE(modules.StartupAll(Stage::Render, mctx));
+
+    EXPECT_EQ(calls, (std::vector<std::string>{"config.late", "start.late"}));
+}
+
 TEST(EngineModulesTest, ModuleSlotNamesAreTheDiagnosticSpelling) {
     EXPECT_EQ(ModuleSlotName(ModuleSlot::Device), "engine.device");
     EXPECT_EQ(ModuleSlotName(ModuleSlot::Text), "engine.text");
     EXPECT_EQ(ModuleSlotName(ModuleSlot::Physics), "engine.physics");
+    EXPECT_EQ(ModuleSlotName(ModuleSlot::Renderer), "engine.renderer");
+    EXPECT_EQ(ModuleSlotName(ModuleSlot::ImGui), "engine.imgui");
+    EXPECT_EQ(ModuleSlotName(ModuleSlot::ShaderWatch), "engine.shader_watch");
     EXPECT_EQ(ModuleSlotName(ModuleSlot::None), "<none>");
     EXPECT_EQ(StageName(Stage::Startup), "startup");
+    EXPECT_EQ(StageName(Stage::Render), "render");
     EXPECT_EQ(StageName(Stage::Scene), "scene");
+    EXPECT_EQ(static_cast<std::size_t>(Stage::Count), 3u);
 }
 
 TEST(EngineModulesTest, HasSlotTracksTheBoundIdentityOnly) {

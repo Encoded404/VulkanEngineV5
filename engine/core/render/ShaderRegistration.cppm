@@ -39,43 +39,46 @@ export namespace VulkanEngine {
 
 struct EngineShaderIds {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-    ShaderSystem::ShaderId expand_comp;
-    ShaderSystem::ShaderId occlusion_cull_comp;
-    ShaderSystem::ShaderId occluder_select_comp;
-    ShaderSystem::ShaderId pre_cull_comp;
-    ShaderSystem::ShaderId hiz_gen_comp;
-    ShaderSystem::ShaderId collect_count_compact_comp;
-    ShaderSystem::ShaderId collect_write_comp;
-    ShaderSystem::ShaderId main_indir_vert;
+    // Unset is kInvalidShaderId, not id 0: Register hands out sequential ids
+    // starting at 0, so 0 is a valid first shader. A default-constructed
+    // EngineShaderIds therefore honestly means "nothing registered yet".
+    ShaderSystem::ShaderId expand_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId occlusion_cull_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId occluder_select_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId pre_cull_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId hiz_gen_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId collect_count_compact_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId collect_write_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId main_indir_vert = ShaderSystem::kInvalidShaderId;
     // Out-of-line UV1 interface variant rows (named entry point main_uv1).
-    ShaderSystem::ShaderId main_indir_vert_uv1;
-    ShaderSystem::ShaderId depth_indir_vert;
-    ShaderSystem::ShaderId standard_mesh_frag;
-    ShaderSystem::ShaderId standard_mesh_frag_uv1;
+    ShaderSystem::ShaderId main_indir_vert_uv1 = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId depth_indir_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId standard_mesh_frag = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId standard_mesh_frag_uv1 = ShaderSystem::kInvalidShaderId;
     // MASK interface-variant rows (named entry points main_mask /
     // main_mask_uv1). Paired with the existing vertex shaders by the default
     // mesh technique's variant table.
-    ShaderSystem::ShaderId standard_mesh_frag_mask;
-    ShaderSystem::ShaderId standard_mesh_frag_mask_uv1;
-    ShaderSystem::ShaderId depth_prepass_frag;
-    ShaderSystem::ShaderId unlit_frag;
+    ShaderSystem::ShaderId standard_mesh_frag_mask = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId standard_mesh_frag_mask_uv1 = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId depth_prepass_frag = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId unlit_frag = ShaderSystem::kInvalidShaderId;
     // Screen-space text overlay: the vertex pulls the quad from SV_VertexID and
     // reads per-glyph instances; the fragment samples the R8 atlas page.
-    ShaderSystem::ShaderId ui_text_vert;
-    ShaderSystem::ShaderId ui_text_frag;
+    ShaderSystem::ShaderId ui_text_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId ui_text_frag = ShaderSystem::kInvalidShaderId;
     // Depth-tested world-space text: the vertex pulls the quad from
     // SV_VertexID and the world-space basis from a per-glyph instance; the
     // fragment reconstructs coverage from the RGBA8 MSDF page.
-    ShaderSystem::ShaderId world_text_vert;
-    ShaderSystem::ShaderId world_text_frag;
+    ShaderSystem::ShaderId world_text_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId world_text_frag = ShaderSystem::kInvalidShaderId;
     // The Slug (hb-gpu) world-text backend: the vertex pulls the quad from
     // SV_VertexID and the em-space box plus a flat blob offset from a per-glyph
     // instance; the fragment reconstructs coverage analytically from the blob.
-    ShaderSystem::ShaderId slug_text_vert;
-    ShaderSystem::ShaderId slug_text_frag;
+    ShaderSystem::ShaderId slug_text_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId slug_text_frag = ShaderSystem::kInvalidShaderId;
 #ifdef VKENGINE_PHYSICAL_CAMERA
-    ShaderSystem::ShaderId physical_camera_composite_vert;
-    ShaderSystem::ShaderId physical_camera_composite_frag;
+    ShaderSystem::ShaderId physical_camera_composite_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId physical_camera_composite_frag = ShaderSystem::kInvalidShaderId;
 #endif
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 
@@ -111,3 +114,22 @@ struct EngineShaderIds {
 };
 
 } // namespace VulkanEngine
+
+export namespace VulkanEngine::ShaderSystem {
+
+/// The shader pair the renderer's built-in main pass and its techniques are
+/// built from. `{}` (every member unset) asks GameEngine::InitRenderer for the
+/// engine's standard pair; any partially specified value is invalid and is
+/// rejected rather than mixing a caller's fragment shader with a missing
+/// manager. kInvalidShaderId, not 0, is the unset marker.
+struct RendererShaders {
+    ShaderId vert = kInvalidShaderId;
+    ShaderId frag = kInvalidShaderId;
+    ShaderManager* manager = nullptr;
+
+    [[nodiscard]] constexpr bool IsValid() const noexcept {
+        return vert != kInvalidShaderId && frag != kInvalidShaderId && manager != nullptr;
+    }
+};
+
+} // namespace VulkanEngine::ShaderSystem

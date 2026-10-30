@@ -51,7 +51,9 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
     auto frag_id = Shaders::Minimal::CheckerFrag::Register(shader_mgr, config.shader_data_dir);
     auto vert_id = engine_game_.GetContext().GetShaderIds().main_indir_vert;
-    if (!engine_game_.InitRenderer(ctx, vert_id, frag_id, &shader_mgr)) {
+    if (!engine_game_.InitRenderer(
+            ctx, VulkanEngine::ShaderSystem::RendererShaders{
+                     .vert = vert_id, .frag = frag_id, .manager = &shader_mgr})) {
         return false;
     }
 

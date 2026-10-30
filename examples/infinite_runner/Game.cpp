@@ -233,10 +233,8 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
         return false;
     }
 
-    auto& shader_mgr = engine_game_.GetContext().GetShaderManager();
-    auto& shader_ids = engine_game_.GetContext().GetShaderIds();
-    if (!engine_game_.InitRenderer(ctx, shader_ids.main_indir_vert,
-                                   shader_ids.standard_mesh_frag, &shader_mgr)) {
+    // `{}` selects the engine's standard PBR shader pair.
+    if (!engine_game_.InitRenderer(ctx)) {
         return false;
     }
 

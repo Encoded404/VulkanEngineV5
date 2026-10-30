@@ -69,7 +69,9 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
     // it below except the fallback quad.
     const auto mesh_vert = engine_game_.GetContext().GetShaderIds().main_indir_vert;
     const auto mesh_frag = engine_game_.GetContext().GetShaderIds().standard_mesh_frag;
-    if (!engine_game_.InitRenderer(ctx, mesh_vert, mesh_frag, &shader_mgr)) {
+    if (!engine_game_.InitRenderer(
+            ctx, VulkanEngine::ShaderSystem::RendererShaders{
+                     .vert = mesh_vert, .frag = mesh_frag, .manager = &shader_mgr})) {
         return false;
     }
 

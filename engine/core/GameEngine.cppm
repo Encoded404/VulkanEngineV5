@@ -30,6 +30,7 @@ export import VulkanEngine.EngineContext;
 export import VulkanEngine.ECS.SystemSchedule;
 export import VulkanEngine.ECS.FrameSchedule;
 export import VulkanEngine.Modules.EngineModules;
+export import VulkanEngine.ShaderRegistration;
 export import VulkanEngine.Text.TextSystem;
 export import VulkanEngine.Text.Font;
 
@@ -75,11 +76,17 @@ using VulkanEngine::Textures::SamplerDesc;
 /// with a diagnostic naming the CMake option. Keep the initializers that name
 /// such a field behind their `#ifdef`.
 struct EngineFeatures {
+    // Selects the engine's default renderer modules (Renderer, and ImGui and
+    // ShaderWatch with it). On by default: a game that does not replace the
+    // renderer must not have to opt in to having one. Setting it false leaves
+    // ModuleSlot::Renderer/ImGui/ShaderWatch unbound so a game can register
+    // its own renderer module bound to ModuleSlot::Renderer instead.
+    bool default_renderer = true;
     // The text pipeline (TextSystem + font hot reload). Off by default: a
     // game that never draws text should not pay for the shaping/raster stack.
     bool text = false;
-    // The ImGui overlay system and its SDL event route. Requires the renderer
-    // InitRenderer brings up: that is the object which attaches the ImGui pass.
+    // The ImGui overlay system and its SDL event route. Requires the default
+    // renderer: the engine's renderer module attaches the ImGui pass.
     bool imgui = false;
 
 #if defined(VKENGINE_PHYSICS)
@@ -98,9 +105,9 @@ struct EngineFeatures {
     PhysicalCameraRequires_VKENGINE_PHYSICAL_CAMERA_On physical_camera{};
 #endif
 
-    // Every optional subsystem.
+    // Every optional subsystem plus the default renderer.
     [[nodiscard]] static constexpr EngineFeatures All() noexcept {
-        EngineFeatures features;
+        EngineFeatures features;             // default_renderer is already true
         features.text = true;
         features.imgui = true;
 #if defined(VKENGINE_PHYSICS)
@@ -128,13 +135,14 @@ public:
 
     // ── Engine modules ──
     // The lifecycle seam: modules registered here are configured/started by
-    // Setup (Stage::Startup) and after the renderer comes up (Stage::Scene),
-    // and torn down in the exact reverse of the start order by Shutdown. The
-    // engine's default preset — device bootstrap, text, physics, resource
-    // hooks, physical camera, the frame-phase seeds — selected by EngineFeatures,
-    // is registered through the same public surface a composed game uses, so a
-    // game adds its own engine modules with identity-based ordering and never
-    // edits the engine.
+    // Setup (Stage::Startup plus pending configures), by InitRenderer
+    // (Stage::Render, then Stage::Scene), and torn down in the exact reverse of
+    // the start order by Shutdown. The engine's default preset — device
+    // bootstrap, text, physics, resource hooks, physical camera, the frame-phase
+    // seeds, and the renderer/ImGui/shader-watch trio, selected by
+    // EngineFeatures — is registered through the same public surface a composed
+    // game uses, so a game adds its own engine modules with identity-based
+    // ordering and never edits the engine.
     //
     // The preset registers in the constructor, so a composed game can order
     // against the preset slots any time before Setup. Register app modules
@@ -182,10 +190,22 @@ public:
                                            TextureNormalEncoding normal_encoding,
                                            const SamplerDesc& sampler,
                                            const std::filesystem::path& asset_dir = {});
+    // Brings up device-side render resources and then starts the Scene stage.
+    // `shaders` selects the pair the built-in main pass and its techniques are
+    // built from: `{}` means the engine's standard pair (main_indir_vert +
+    // standard_mesh_frag, from GameConfig::shader_data_dir); any other value
+    // must be complete (manager + both ids), and an incomplete value is a logged
+    // error, not UB.
+    //
+    // InitRenderer is a stage runner, not a choreography: the ImGui, Renderer
+    // and ShaderWatch modules it starts were registered by the preset in the
+    // constructor (ImGui → Renderer → ShaderWatch). With
+    // EngineFeatures::default_renderer = false the game must register its own
+    // module bound to ModuleSlot::Renderer, which has to populate
+    // EngineContext::renderer/scene_renderer/technique_mgr before Scene starts;
+    // a missing Renderer slot is a logged error and a failed InitRenderer.
     bool InitRenderer(VulkanEngine::Application::ApplicationContext& ctx,
-                      ShaderSystem::ShaderId vert_id = 0,
-                      ShaderSystem::ShaderId frag_id = 0,
-                      ShaderSystem::ShaderManager* shader_mgr = nullptr);
+                      ShaderSystem::RendererShaders shaders = {});
 
     // Loads a font file into the text system's registry and, when hot reload is
     // built in, registers the source file with the font watcher so an edit to it
@@ -378,8 +398,9 @@ private:
 
     // The engine's default module preset, selected by EngineFeatures: device
     // bootstrap always, text/physics/physical camera only when requested,
-    // resource hooks and the frame-phase seeds always. Registered through the
-    // same public EngineModules surface a composed game uses.
+    // resource hooks and the frame-phase seeds always, and the Render-stage
+    // renderer/ImGui/shader-watch trio under `default_renderer`. Registered
+    // through the same public EngineModules surface a composed game uses.
     // Called by the constructor (no runtime state is needed to register), so a
     // composed game composes against the preset slots any time before Setup.
     void RegisterEngineDefaultModules();
@@ -388,11 +409,18 @@ private:
     // Shutdown or a failed startup leaves a fresh engine ready for Setup.
     void RestoreDefaultModules();
 
-    // The six-field ModuleContext both Setup (with the app context) and
-    // Shutdown (without it, which module shutdowns must not read) hand to the
-    // registry.
+    // The six-field ModuleContext both Setup/InitRenderer (with the app context)
+    // and Shutdown (without it, which module shutdowns must not read) hand to
+    // the registry.
     [[nodiscard]] Modules::ModuleContext MakeModuleContext(
         VulkanEngine::Application::ApplicationContext* app);
+
+    // Render-stage startup bodies, run by the engine.renderer/engine.imgui and
+    // engine.shader_watch modules. Each is the extracted half of the old
+    // monolithic InitRenderer; none of them registers modules.
+    bool InitializeRendererCore(VulkanEngine::Application::ApplicationContext& ctx);
+    bool InitializeImGui(VulkanEngine::Application::ApplicationContext& ctx);
+    bool InitializeShaderWatch();
 
     // The engine's built-in technique set (DefaultMesh + its uv/mask variant
     // matrix, plus Unlit): the default TechniqueRegistrar body.
@@ -413,8 +441,6 @@ private:
     // The preset selected at construction, consumed by
     // RegisterEngineDefaultModules (also after a Shutdown restores the preset).
     EngineFeatures features_{};
-
-    VulkanShared::ScopedHandle<void(void*)> imgui_event_token_{};
 
     VulkanBackend::Vulkan::VulkanBootstrap* vk_backend_ = nullptr;
     GameConfig config_{};
@@ -439,6 +465,9 @@ private:
     bool scene_valid_ = false;
     bool scene_invalid_reported_ = false;
     bool initialized_ = false;
+    // Whether the Render stage has run. InitRenderer is idempotent while true
+    // and re-resolves its shader pair after a failure or Shutdown.
+    bool renderer_initialized_ = false;
 };
 
 } // namespace VulkanEngine

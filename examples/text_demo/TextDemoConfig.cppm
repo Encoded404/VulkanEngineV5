@@ -35,9 +35,9 @@ export namespace Examples::TextDemo {
 // The backend is the only field the choice changes, and it changes it on
 // RendererConfig rather than per component because the engine's world-text
 // built-in owns exactly one graphics pipeline: the selector picks which shader
-// pair (and which instance layout) that pass is built with. Screen-space text
-// is unaffected -- it is always the hinted greyscale overlay -- so `enable_text`
-// stays on either way.
+// pair (and which instance layout) that pass is built with. Whether the text
+// passes exist at all follows the `Text` feature, not a renderer flag; the
+// screen-space overlay is always the hinted greyscale pass when it does.
 [[nodiscard]] VulkanEngine::Renderer::RendererConfig MakeRendererConfig(
     VulkanEngine::SceneRenderer::TextBackend backend);
 

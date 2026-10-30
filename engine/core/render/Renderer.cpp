@@ -113,7 +113,9 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                                   VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
                                   ShaderSystem::ShaderManager* shader_manager,
                                   ShaderSystem::PipelineFactory* pipeline_factory,
-                                  const VulkanEngine::EngineShaderIds* shader_ids) {
+                                  const VulkanEngine::EngineShaderIds* shader_ids,
+                                  VulkanEngine::Text::TextSystem* text_system,
+                                  VulkanEngine::ImGui::ImGuiSystem* imgui_system) {
     bootstrap_ = &bootstrap;
     scene_renderer_ = &scene_renderer;
     logged_multi_queue_runs_ = 0;
@@ -202,17 +204,18 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         std::make_unique<VulkanEngine::SceneRenderer::MainPass>(scene_renderer, config.clear_color));
 
     VulkanEngine::RenderGraph::PassHandle imgui_handle{};
-    if (config.enable_imgui) {
+    if (imgui_system != nullptr) {
         imgui_handle = register_builtin(
             std::make_unique<VulkanEngine::SceneRenderer::ImGuiPass>(&bootstrap));
     }
 
     // Screen-space text sits above the scene and below the ImGui overlay, so an
-    // app can order an effect between the two. It needs the registered engine
-    // shader handles; without them there is no pipeline to build.
+    // app can order an effect between the two. It needs both the text system
+    // (the object that submits runs) and the registered engine shader handles;
+    // without either there is no pipeline to build.
     VulkanEngine::RenderGraph::PassHandle text_handle{};
     VulkanEngine::RenderGraph::PassHandle world_text_handle{};
-    if (config.enable_text && shader_ids != nullptr) {
+    if (text_system != nullptr && shader_ids != nullptr) {
         auto text_pass = std::make_unique<VulkanEngine::SceneRenderer::TextPass>(
             &bootstrap.GetBackend(), shader_ids->ui_text_vert, shader_ids->ui_text_frag);
         text_pass_ = text_pass.get();

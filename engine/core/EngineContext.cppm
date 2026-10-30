@@ -165,6 +165,11 @@ struct EngineContext {
     std::unique_ptr<ShaderSystem::PipelineFactory> pipeline_factory;
     std::unique_ptr<ShaderSystem::ShaderWatcher> shader_watcher;
     EngineShaderIds shader_ids{};
+    // The renderer's shader pair: resolved by GameEngine::InitRenderer from its
+    // RendererShaders argument (or the engine standard pair) before the Render
+    // stage runs, and consumed by the engine.renderer module. Reset on a failed
+    // InitRenderer and on Shutdown, so a later InitRenderer resolves afresh.
+    ShaderSystem::RendererShaders renderer_shaders;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
     // Webcam capture + compositing (inert until a camera is opened)

@@ -24,10 +24,14 @@
 //
 // Stages are the lifecycle's own structure, resolved at different points:
 // a module registers for `Stage::Startup` (run by GameEngine::Setup),
-// `Stage::Scene` (run once device-side render resources exist, after
-// InitRenderer's core work — where scene building belongs), or both are
-// independent registration points, not one ordering decision. Ordering
-// constraints are only resolvable among modules of the same stage.
+// `Stage::Render` (renderer/ImGui/shader-watch bring-up, run by
+// GameEngine::InitRenderer before any scene exists), or `Stage::Scene` (run
+// once device-side render resources exist — where scene building belongs).
+// They are independent registration points, not one ordering decision, and
+// their sequence is the frame's structure: a Render module cannot be ordered
+// against a Startup module, and a Scene module cannot run before the renderer
+// exists. Ordering constraints are only resolvable among modules of the same
+// stage.
 
 module;
 
@@ -57,14 +61,18 @@ export namespace VulkanEngine::Modules {
 enum class Stage : std::uint8_t {
     // NOLINTBEGIN(readability-identifier-naming)
     Startup = 0,  // GameEngine::Setup, after config resolution
-    Scene = 1,    // after renderer init: scene building, resources, cameras
+    Render = 1,   // renderer/ImGui/shader-watch bring-up, after app shaders exist
+    Scene = 2,    // after renderer init: scene building, resources, cameras
+    Count,        // implicit, as in every sibling enum
     // NOLINTEND(readability-identifier-naming)
 };
 
 [[nodiscard]] constexpr std::string_view StageName(Stage stage) noexcept {
     switch (stage) {
         case Stage::Startup: return "startup";
+        case Stage::Render:  return "render";
         case Stage::Scene:   return "scene";
+        case Stage::Count:   break;
     }
     return "unknown";
 }
@@ -79,6 +87,9 @@ enum class ModuleSlot : std::uint16_t {
     ResourceHooks,     // engine-owned resource release hooks
     PhysicalCamera,    // optional webcam subsystem lifecycle + event routing
     FramePipeline,     // the rendered-frame phase seeds
+    Renderer,          // the default renderer's render-graph bring-up
+    ImGui,             // the ImGui overlay system and its SDL event route
+    ShaderWatch,       // shader-cache flush + hot-reload watcher lifecycle
     Count,
 };
 
@@ -90,6 +101,9 @@ enum class ModuleSlot : std::uint16_t {
         case ModuleSlot::ResourceHooks:  return "engine.resource_hooks";
         case ModuleSlot::PhysicalCamera: return "engine.physical_camera";
         case ModuleSlot::FramePipeline:  return "engine.frame_pipeline";
+        case ModuleSlot::Renderer:       return "engine.renderer";
+        case ModuleSlot::ImGui:          return "engine.imgui";
+        case ModuleSlot::ShaderWatch:    return "engine.shader_watch";
         case ModuleSlot::None:           return "<none>";
         case ModuleSlot::Count:          break;
     }
@@ -244,20 +258,36 @@ public:
     }
 
     /// Run every module's Configure in resolved stage order. Runs all stages'
-    /// configures together: default-declaration precedes every override.
+    /// configures together: default-declaration precedes every override. Each
+    /// module is configured at most once; a module registered after this call
+    /// is configured by ConfigureStage / StartupAll before its stage starts.
     void ConfigureAll(GameConfig& config) {
         for (const std::uint32_t index : order_) {
-            if (entries_[index].configure) {
-                entries_[index].configure(config);
+            ConfigureEntry(entries_[index], config);
+        }
+    }
+
+    /// Configure the not-yet-configured modules of one stage, in resolved
+    /// order. This is the point that makes late registration (a module added
+    /// after Setup, before its stage starts) safe: its configure cannot be
+    /// skipped, and it cannot run twice.
+    void ConfigureStage(Stage stage, GameConfig& config) {
+        for (const std::uint32_t index : order_) {
+            Entry& entry = entries_[index];
+            if (entry.stage == stage) {
+                ConfigureEntry(entry, config);
             }
         }
     }
 
-    /// Start the modules of one stage, in resolved order. A module whose
-    /// startup returns false stops the stage; already-started modules remain
-    /// started so ShutdownAll() can unwind them.
+    /// Start the modules of one stage, in resolved order. The stage's pending
+    /// configures run first (exactly once; ConfigureAll may already have run
+    /// them), so a module registered after Setup still declares its defaults
+    /// before it starts. A module whose startup returns false stops the stage;
+    /// already-started modules remain started so ShutdownAll() can unwind them.
     /// Returns false when a startup failed.
     bool StartupAll(Stage stage, ModuleContext& mctx) {
+        ConfigureStage(stage, mctx.Config());
         for (const std::uint32_t index : order_) {
             Entry& entry = entries_[index];
             if (entry.stage != stage || entry.started) continue;
@@ -330,8 +360,19 @@ private:
         std::function<void(GameConfig&)> configure;
         std::function<bool(ModuleContext&)> startup;
         std::function<void(ModuleContext&)> shutdown;
+        bool configured = false;
         bool started = false;
     };
+
+    /// Run one entry's Configure (if any) and remember that it ran. Configure
+    /// is a default-declaration, never a repeated action.
+    static void ConfigureEntry(Entry& entry, GameConfig& config) {
+        if (entry.configured) return;
+        entry.configured = true;
+        if (entry.configure) {
+            entry.configure(config);
+        }
+    }
 
     /// One ordering edge: `before` starts before `after` (registration indices).
     struct Edge {
@@ -445,7 +486,7 @@ private:
 
         std::vector<bool> emitted(count, false);
         const auto last = static_cast<std::uint32_t>(count);
-        for (const auto stage_value : std::views::iota(0u, 2u)) {
+        for (const auto stage_value : std::views::iota(0u, static_cast<unsigned>(Stage::Count))) {
             const Stage stage = static_cast<Stage>(stage_value);
             const std::size_t in_stage =
                 static_cast<std::size_t>(std::ranges::count_if(entries_,

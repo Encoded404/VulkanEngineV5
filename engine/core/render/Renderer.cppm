@@ -36,6 +36,7 @@ import VulkanEngine.Render.Passes.TextPass;
 // Re-exported because RendererConfig names SceneRenderer::TextBackend.
 export import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.ShaderRegistration;
+import VulkanEngine.Text.TextSystem;
 import VulkanBackend.Vulkan.GpuPassTimer;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
@@ -45,11 +46,6 @@ import VulkanEngine.PhysicalCameraSystem;
 export namespace VulkanEngine::Renderer {
 
 struct RendererConfig {
-    bool enable_imgui = true;
-    // Registers the screen-space text overlay built-in. It draws nothing (and
-    // costs one empty pass) until a caller queues a run through
-    // Renderer::GetTextPass().
-    bool enable_text = true;
     // Which rasterizer the depth-tested world-text built-in draws with. The MSDF
     // backend is the default; Slug selects the analytic hb-gpu backend, which
     // must have its blobs queued through WorldTextPass::QueueSlugRun instead.
@@ -74,14 +70,19 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     // `shader_ids` carries the registered engine shader handles the built-in
-    // pass pipelines are built from. When null (or when the text overlay
-    // shaders are not registered) the text built-in is not added.
+    // pass pipelines are built from. Pass attachment follows the subsystem
+    // objects, not a flag: the text overlay and the depth-tested world text are
+    // registered when `text_system` is non-null (and the text shaders are
+    // registered), and the ImGui pass when `imgui_system` is non-null. The
+    // object exists iff the module that creates it ran.
     bool Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                     const RendererConfig& config,
                     VulkanEngine::SceneRenderer::SceneRenderer& scene_renderer,
-                    ShaderSystem::ShaderManager* shader_manager = nullptr,
-                    ShaderSystem::PipelineFactory* pipeline_factory = nullptr,
-                    const VulkanEngine::EngineShaderIds* shader_ids = nullptr);
+                    ShaderSystem::ShaderManager* shader_manager,
+                    ShaderSystem::PipelineFactory* pipeline_factory,
+                    const VulkanEngine::EngineShaderIds* shader_ids,
+                    VulkanEngine::Text::TextSystem* text_system = nullptr,
+                    VulkanEngine::ImGui::ImGuiSystem* imgui_system = nullptr);
 
     // The text overlay pass, or null when it was not registered. A caller queues
     // shaped runs here for the frame; the queue is consumed by the frame that
@@ -91,7 +92,7 @@ public:
     }
 
     // The depth-tested world-space text pass, or null when it was not registered
-    // (the same enable_text + registered-shader condition as the overlay). A
+    // (the same text-system + registered-shader condition as the overlay). A
     // caller queues a Text component plus its Transform here for the frame; the
     // queue is consumed by the frame that draws it.
     [[nodiscard]] VulkanEngine::SceneRenderer::WorldTextPass* GetWorldTextPass() const {

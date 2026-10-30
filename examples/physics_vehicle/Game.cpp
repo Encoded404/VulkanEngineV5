@@ -13,6 +13,7 @@ import std;
 import logiface;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.ECS.Prefabs;
 import VulkanEngine.GpuResources.MeshData;
 import Shaders.Engine.StandardMeshFrag;
 import Shaders.PhysicsVehicle.CheckerFrag;
@@ -626,13 +627,29 @@ bool Game::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
         // Obstacles on the far side: a heavy block and a small crate stack.
         spawn_static_with_mesh({-3.0f, 1.0f, 22.0f}, glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
                                {2.0f, 2.0f, 2.0f}, block_mesh_id);
+        // The crate stack goes through the prefab seam (rung 3): one composed
+        // bundle — pose + renderable mesh + physics body — is the whole spawn
+        // call, instead of a hand-rolled Transform/RigidBody/MeshReference
+        // sequence. The body still attaches through the physics module's OnAdd
+        // hook, exactly like the hand-written path, so this exercises the same
+        // engine contract with less per-spawn factory code.
         for (std::uint32_t i = 0; i < 3; ++i) {
-            auto* spawned = spawn_body({3.0f, 0.55f + static_cast<float>(i) * 1.05f, 22.0f},
-                                       glm::quat{1.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f},
-                                       BodyMotionType::Dynamic, 30.0f, 0.6f);
-            auto& mesh_ref =
-                component_registry.AddComponent<VulkanEngine::Components::MeshReference>(*spawned);
-            mesh_ref.loaded_mesh_id = crate_mesh_id;
+            VulkanEngine::Physics::RigidBody crate_body{};
+            crate_body.shape.type = VulkanEngine::Physics::ShapeType::Box;
+            crate_body.shape.box_extent = {1.0f, 1.0f, 1.0f};
+            crate_body.motion = BodyMotionType::Dynamic;
+            crate_body.mass = 30.0f;
+            crate_body.friction = 0.6f;
+
+            VulkanEngine::Prefabs::Prefab crate{};
+            crate.name = "crate";
+            crate.position = {3.0f, 0.55f + static_cast<float>(i) * 1.05f, 22.0f};
+            crate.mesh_id = crate_mesh_id;
+            crate.rigid_body = crate_body;
+            // The returned entity is not needed: physics and rendering find the
+            // crate by component, never by handle.
+            [[maybe_unused]] auto& crate_entity =
+                VulkanEngine::Prefabs::Spawn(component_registry, crate);
         }
 
         // The chassis: an ordinary dynamic entity with a mesh, so the renderer

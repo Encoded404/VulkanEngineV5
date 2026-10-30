@@ -132,8 +132,8 @@ TEST(PrefabTest, AFullBundleComposesOnOneEntity) {
         .rigid_body = BoxBody({1.0f, 1.0f, 1.0f}, BodyMotionType::Dynamic),
         .character = Character{.desc = character_desc},
     };
-    // (A body and a character on one entity only for the composition check; the
-    // composed example uses one or the other.)
+    // (A body and a character on one entity only for the composition check;
+    // the engine and example prefabs take one bundle or the other.)
 
     Entity& entity = Prefabs::Spawn(registry, prefab);
     const EntityId id = entity.GetId();

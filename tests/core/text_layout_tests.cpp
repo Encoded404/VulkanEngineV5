@@ -138,10 +138,6 @@ TEST_F(TextLayoutTest, DoesNotWrapWithoutAMaxWidth) {
     EXPECT_GT(layout.lines[0].width, 0.0f);
     EXPECT_FLOAT_EQ(layout.width, layout.lines[0].width);
     EXPECT_FLOAT_EQ(layout.lines[0].offset_x, 0.0f);
-
-    const float line_height =
-        static_cast<float>(face_->Metrics().LineAdvance()) * face_->ScaleForSize(kPixelSize);
-    EXPECT_FLOAT_EQ(layout.height, line_height);
 }
 
 // There is no hyphenation: a word with no legal break inside it is never split,

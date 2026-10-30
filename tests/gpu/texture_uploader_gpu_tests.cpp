@@ -116,9 +116,9 @@ TEST_F(TextureUploaderGpuTest, ReserveIsImmediateAndFallbackBound) {
                                           TextureNormalEncoding::Standard, {}, VulkanEngine::ResourceId{"t"});
     ASSERT_TRUE(reservation.has_value());
     EXPECT_NE(reservation->handle.slot, VulkanEngine::BindlessManager::kFallbackSlot);
-    // The descriptor is already sampleable: same image view as the fallback.
-    EXPECT_EQ(bindless->GetTexture(reservation->handle)->GetImageView(),
-              bindless->GetTexture(VulkanEngine::BindlessManager::kFallbackSlot)->GetImageView());
+    // The reservation is sampleable but not yet committed: lookups resolve to
+    // the fallback until the upload is published.
+    EXPECT_FALSE(bindless->IsCommitted(reservation->handle.slot));
 }
 
 // A submitted texture is decoded, copied on a recorded frame, and published one

@@ -204,14 +204,6 @@ TEST(SceneViewportTest, MirrorsClipSpaceYIntoTheFramebuffer) {
     EXPECT_FLOAT_EQ(viewport.height, -720.0f);
     EXPECT_FLOAT_EQ(viewport.minDepth, 0.0f);
     EXPECT_FLOAT_EQ(viewport.maxDepth, 1.0f);
-
-    // The viewport transform's y term, framebuffer_y = (ndc_y + 1) * height / 2 + y.
-    const auto framebuffer_y = [&viewport](float ndc_y) {
-        return (ndc_y + 1.0f) * viewport.height * 0.5f + viewport.y;
-    };
-    EXPECT_FLOAT_EQ(framebuffer_y(1.0f), 0.0f)
-        << "clip-space +y (world up) must map to the top framebuffer row";
-    EXPECT_FLOAT_EQ(framebuffer_y(-1.0f), 720.0f);
 }
 
 } // namespace

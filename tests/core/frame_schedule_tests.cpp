@@ -51,7 +51,6 @@ TEST(FrameScheduleTest, EmptyPhaseRunsNothing) {
     EXPECT_EQ(frames.Size(), 0u);
     EXPECT_EQ(frames.PhaseSize(FramePhase::PostPresent), 0u);
     EXPECT_EQ(frames.PhaseSize(FramePhase::Bridge), 0u);
-    SUCCEED();
 }
 
 TEST(FrameScheduleTest, AddAfterAndAddBeforeConstrainTheOrder) {
@@ -193,30 +192,6 @@ TEST(FrameScheduleTest, ConstraintToAnUnregisteredSlotIsRejected) {
     EXPECT_THROW(frames.AddAfter(FrameSlot::MaterialFlush, Recorder(order, "x"), "dangling"),
                  std::out_of_range);
     EXPECT_EQ(frames.Size(), 0u);
-}
-
-TEST(FrameScheduleTest, CycleDetectionLeavesThePreviousOrderIntact) {
-    EngineContext engine{};
-    Application::ApplicationContext app{};
-    FramePhaseContext fctx{&app, &engine};
-
-    std::vector<std::string> order;
-    FrameSchedule frames;
-    frames.Add(FramePhase::Bridge, Recorder(order, "a"), "a");
-    frames.Add(FramePhase::Bridge, Recorder(order, "b"), "b");
-    frames.Run(FramePhase::Bridge, fctx);
-    EXPECT_EQ(order, (std::vector<std::string>{"a", "b"}));
-
-    // Two fresh registrations with conflicting edges build a cycle.
-    // a -> x, y -> b and b -> edge... one-system-one-edge means the cycle needs
-    // at least two constrained systems: register x after b, then y before x
-    // while x is also after... With single edges, construct the smallest cycle:
-    // x after b (b -> x), then y before b while y ... y-before-b (y -> b), no
-    // edge from x to y exists, so this cannot form a cycle. The resolver's
-    // acyclicity assert is therefore exercised by the fixed-step schedule's
-    // own tests; frame-system cycles are unreachable because every
-    // registration carries at most one edge.
-    SUCCEED();
 }
 
 TEST(FrameScheduleTest, ClearInvalidatesHandles) {

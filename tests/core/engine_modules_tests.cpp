@@ -43,12 +43,11 @@ ModuleContext FreshContext() {
 
 TEST(EngineModulesTest, StartupRunsInRegistrationOrder) {
     std::vector<std::string> started;
-    int result = 1;
     EngineModules modules;
     modules.Add(EngineModuleDesc{
         .stage = Stage::Startup,
         .label = "first",
-        .startup = [&](ModuleContext&) { started.push_back("first"); result *= 1; return true; },
+        .startup = [&](ModuleContext&) { started.push_back("first"); return true; },
     });
     modules.Add(EngineModuleDesc{
         .stage = Stage::Startup,
@@ -59,7 +58,6 @@ TEST(EngineModulesTest, StartupRunsInRegistrationOrder) {
     ModuleContext mctx = FreshContext();
     ASSERT_TRUE(modules.StartupAll(Stage::Startup, mctx));
     EXPECT_EQ(started, (std::vector<std::string>{"first", "second"}));
-    EXPECT_EQ(result, 1);
 }
 
 TEST(EngineModulesTest, ConfigureRunsBeforeStartupInResolvedOrder) {
@@ -221,12 +219,10 @@ TEST(EngineModulesTest, DuplicateSlotIsRejectedAndLeavesTheRegistryIntact) {
 
 TEST(EngineModulesTest, ConstraintToAnUnregisteredSlotIsRejected) {
     EngineModules modules;
-    std::vector<std::string> started;
     EXPECT_THROW(modules.AddAfter(ModuleSlot::FramePipeline, EngineModuleDesc{
         .stage = Stage::Startup, .label = "dangling",
     }), std::out_of_range);
     EXPECT_EQ(modules.Size(), 0u);
-    (void)started;
 }
 
 TEST(EngineModulesTest, ModulesRegisterSystemsOntoBothScheduleSurfaces) {

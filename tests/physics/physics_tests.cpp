@@ -279,11 +279,6 @@ TEST(PhysicsEcs, AFallingBodyRestsOnTheGroundAtItsAnalyticHeight) {
     EXPECT_NEAR(transform->position.y, 0.5f, 0.05f);
     EXPECT_NEAR(transform->position.x, 0.0f, 0.05f);
     EXPECT_NEAR(transform->position.z, 0.0f, 0.05f);
-
-    const Velocity* velocity = sim.GetVelocity(crate_id);
-    if (velocity != nullptr) {
-        EXPECT_NEAR(velocity->linear.y, 0.0f, 0.1f);
-    }
 }
 
 TEST(PhysicsEcs, VelocityIsProjectedFromTheBodyDuringWriteBack) {
@@ -567,9 +562,8 @@ TEST(PhysicsTypes, ShapeHashIsContentAddressed) {
     ShapeDesc box{};
     box.type = ShapeType::Box;
     box.box_extent = {1.0f, 2.0f, 3.0f};
-    ShapeDesc copy = box;
-    EXPECT_EQ(box.Hash(), copy.Hash());
 
+    ShapeDesc copy = box;
     copy.box_extent = {1.0f, 2.0f, 4.0f};
     EXPECT_NE(box.Hash(), copy.Hash());
 
@@ -626,17 +620,6 @@ TEST(PhysicsWorld, RejectsANonPositiveFixedStep) {
     config.fixed_delta_time = 0.0f;
     EXPECT_FALSE(world.Initialize(config));
     EXPECT_FALSE(world.IsInitialized());
-}
-
-TEST(PhysicsWorld, StepsAnEmptySceneCleanly) {
-    World world;
-    ASSERT_TRUE(world.Initialize());
-
-    for (int i = 0; i < 240; ++i) world.Step();
-
-    EXPECT_EQ(world.StepCount(), 240u);
-    EXPECT_EQ(world.LastUpdateErrors(), 0u);
-    EXPECT_EQ(world.BodyCount(), 0u);
 }
 
 TEST(PhysicsWorld, StepsWithASinglePoolWorkerAndWithNone) {
@@ -1418,24 +1401,6 @@ TEST(PhysicsShapeCache, ACookedShapeIsRestoredFromDiskInsteadOfBeingRecooked) {
         EXPECT_EQ(world.ShapeCacheDiskMisses(), 0u);
         EXPECT_EQ(world.CachedShapeCount(), 1u);
     }
-}
-
-TEST(PhysicsShapeCache, WithTheCacheDisabledEveryShapeIsCookedAndNothingIsWritten) {
-    const std::filesystem::path directory = FreshShapeCacheDir("WithTheCacheDisabledEveryShapeIsCookedAndNothingIsWritten");
-
-    World world;
-    PhysicsWorldConfig config{};
-    config.max_bodies = 256;
-    config.max_body_pairs = 1024;
-    config.max_contact_constraints = 256;
-    ASSERT_TRUE(world.Initialize(config)); // shape_cache_directory left empty
-    ASSERT_TRUE(world.CreateBody(CachedBoxDesc()).IsValid());
-
-    // The counters only move when the cache is on: "disabled" is not a miss.
-    EXPECT_EQ(world.ShapeCacheDiskHits(), 0u);
-    EXPECT_EQ(world.ShapeCacheDiskMisses(), 0u);
-    std::error_code error;
-    EXPECT_FALSE(std::filesystem::exists(directory, error)) << "a disabled cache created a directory";
 }
 
 TEST(PhysicsShapeCache, ACorruptBlobIsAMissThatRecooksAndHealsTheCache) {

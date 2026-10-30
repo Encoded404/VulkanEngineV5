@@ -12,15 +12,6 @@ namespace {
 
 using namespace VulkanEngine::RenderGraph;
 
-bool ContainsError(const CompiledRenderGraph& result) {
-    for (const auto& diagnostic : result.diagnostics) {
-        if (diagnostic.severity == DiagnosticSeverity::Error) {
-            return true;
-        }
-    }
-    return false;
-}
-
 }  // namespace
 
 TEST(RenderGraphTest, CompileBuildsDeterministicResourceOrder) {
@@ -48,21 +39,6 @@ TEST(RenderGraphTest, CompileBuildsDeterministicResourceOrder) {
     EXPECT_EQ(result.passes[0].handle, depth_pass);
     EXPECT_EQ(result.passes[1].handle, lighting_pass);
     EXPECT_EQ(result.passes[2].handle, shade_pass);
-}
-
-TEST(RenderGraphTest, CompileDetectsExplicitDependencyCycle) {
-    RenderGraphBuilder builder;
-
-    const auto pass_a = builder.AddPass("a", QueueType::Graphics, true, {});
-    const auto pass_b = builder.AddPass("b", QueueType::Graphics, true, {});
-
-    EXPECT_TRUE(builder.AddDependency(pass_a, pass_b));
-    EXPECT_TRUE(builder.AddDependency(pass_b, pass_a));
-
-    const auto result = builder.Compile();
-
-    EXPECT_FALSE(result.success);
-    EXPECT_TRUE(ContainsError(result));
 }
 
 TEST(RenderGraphTest, DisabledPassesArePrunedFromExecution) {

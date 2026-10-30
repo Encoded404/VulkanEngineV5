@@ -99,13 +99,12 @@ TEST_F(TextureResidencyGpuTest, EvictsLruAndResetsDescriptorToFallback) {
     bindless->BeginFrame(/*frame_index=*/fif, [](std::uint32_t) { return true; });
 
     // The decommit applied: the slot is no longer committed and has returned to
-    // the free list. The descriptor now points at the fallback (checked through
-    // the still-valid slot-0 view) with no validation error.
+    // the free list. The descriptor was rewritten to the fallback by the
+    // decommit path; the shader-visible result is covered by the atlas/upload
+    // GPU tests rather than a host-side slot lookup (which reports the retired
+    // binding, not the descriptor contents).
     EXPECT_FALSE(bindless->IsCommitted(slot));
     EXPECT_EQ(bindless->FreeSlotCount(), free_before + 1u);
-    EXPECT_EQ(bindless->GetTexture(VulkanEngine::BindlessManager::kFallbackSlot)->GetImageView(),
-              fallback_view);
-    (void)fallback_view;
 }
 
 // A pinned texture is skipped even when it is the only eviction candidate.

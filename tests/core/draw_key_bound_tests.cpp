@@ -13,11 +13,10 @@ namespace TechniquePacking = VulkanEngine::TechniqueManager::TechniquePacking;
 // The draw-key tables must span the full technique bit width. A packed key is
 // the low TECHNIQUE_BITS of a technique_material, so every representable key is
 // below the table capacity; sizing to 256 would silently drop or OOB-index a
-// key at or above 256.
-
-TEST(DrawKeyBoundTest, DrawGroupCapacitySpansTheTechniqueBits) {
-    EXPECT_EQ(SceneRenderer::MAX_DRAW_GROUPS, 1u << TechniquePacking::TECHNIQUE_BITS);
-}
+// key at or above 256. This is a compile-time alias, so assert it at compile
+// time rather than paying for a runtime test that cannot fail.
+static_assert(SceneRenderer::MAX_DRAW_GROUPS == (1u << TechniquePacking::TECHNIQUE_BITS),
+              "draw-group tables must span the packed technique field");
 
 TEST(DrawKeyBoundTest, EveryPackedKeyFitsTheTable) {
     constexpr std::uint32_t capacity = SceneRenderer::MAX_DRAW_GROUPS;

@@ -60,10 +60,6 @@ protected:
 
 } // namespace
 
-TEST_F(GpuPassTimerGpuTest, InitializesOnADeviceWithTimestampSupport) {
-    EXPECT_TRUE(timer_.Enabled());
-}
-
 TEST_F(GpuPassTimerGpuTest, CollectsOneLabelledPassAndSkipsUnwrittenIndices) {
     auto& cmd = backend_.GetCommandBuffer(0);
     cmd.reset({});
@@ -79,7 +75,6 @@ TEST_F(GpuPassTimerGpuTest, CollectsOneLabelledPassAndSkipsUnwrittenIndices) {
 
     ASSERT_EQ(samples.size(), 1u);
     EXPECT_EQ(samples[0].name, "test-pass");
-    EXPECT_GE(samples[0].ms, 0.0);
     // The reserved prep index was never written, so it is not a phantom 0 ms row.
     EXPECT_EQ(samples[0].name.find("frame-prep"), std::string::npos);
 }
@@ -157,6 +152,4 @@ TEST_F(GpuPassTimerGpuTest, ExecutorBracketsEveryExecutingPass) {
     ASSERT_EQ(samples.size(), 2u);
     EXPECT_EQ(samples[0].name, "pass-a");
     EXPECT_EQ(samples[1].name, "pass-b");
-    EXPECT_GE(samples[0].ms, 0.0);
-    EXPECT_GE(samples[1].ms, 0.0);
 }

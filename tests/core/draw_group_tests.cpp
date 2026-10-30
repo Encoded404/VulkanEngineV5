@@ -51,11 +51,6 @@ TEST(DrawGroupTest, DefaultRenderStateKeyIsZero) {
     EXPECT_EQ(RenderStateKey(MaterialDesc{}), 0u);
 }
 
-TEST(DrawGroupTest, RenderStateKeyIsStable) {
-    const MaterialDesc desc{.blend = BlendMode::Cutout, .double_sided = true, .depth_write = false};
-    EXPECT_EQ(RenderStateKey(desc), RenderStateKey(desc));
-}
-
 // ── Draw-group interning ──
 
 TEST(DrawGroupTest, BaseGroupMatchesTechniqueId) {
@@ -97,15 +92,6 @@ TEST(DrawGroupTest, InterningIsDenseAndIdempotent) {
     EXPECT_NE(gb, g);
     EXPECT_LT(gb, TechniquePacking::MAX_DRAW_GROUPS);
     EXPECT_EQ(mgr.GetDrawGroupTechnique(gb), b.value);
-}
-
-TEST(DrawGroupTest, EveryInterredGroupFitsTheKeyField) {
-    TechniqueManager mgr;
-    const auto id = mgr.Register(std::make_unique<TestTechnique>());
-    for (std::uint32_t key = 1; key < 64u; ++key) {
-        const std::uint16_t g = mgr.InternDrawGroup(id.value, 0, key);
-        EXPECT_LT(g, TechniquePacking::MAX_DRAW_GROUPS);
-    }
 }
 
 TEST(DrawGroupTest, OutOfRangeGroupLookupsAreSafe) {

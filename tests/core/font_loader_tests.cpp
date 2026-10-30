@@ -133,12 +133,4 @@ TEST(FontLoaderTest, AcceptsTheVendoredTestFont) {
     EXPECT_LT(info.table_count, 64u);
 }
 
-TEST(FontLoaderTest, NamesEveryContainer) {
-    for (const FontContainer container :
-         {FontContainer::Unknown, FontContainer::TrueType, FontContainer::OpenTypeCff,
-          FontContainer::TrueTypeCollection}) {
-        EXPECT_FALSE(VulkanEngine::FileLoaders::Fonts::FontContainerName(container).empty());
-    }
-}
-
 } // namespace

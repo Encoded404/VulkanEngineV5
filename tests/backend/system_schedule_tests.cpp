@@ -44,14 +44,6 @@ TEST(SystemScheduleTest, RunsSystemsInRegistrationOrder) {
     EXPECT_EQ(registry.GetComponent<Counter>(entity)->value, 1);
 }
 
-TEST(SystemScheduleTest, EmptyScheduleRunsNothing) {
-    ComponentRegistry registry;
-    SystemSchedule schedule;
-    EXPECT_EQ(schedule.Size(), 0u);
-    schedule.Run(registry, 0.016f); // must not crash
-    SUCCEED();
-}
-
 TEST(SystemScheduleTest, ClearRemovesEverySystem) {
     SystemSchedule schedule;
     schedule.Add([](ComponentRegistry&, float) {}, "a");

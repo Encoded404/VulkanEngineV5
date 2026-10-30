@@ -60,7 +60,6 @@ protected:
 // comment suggests, and what the GPU readback test then checks end to end.
 TEST_F(TextBlobTest, EncodedBlobsAreWholeEightByteUnits) {
     GlyphBlobEncoder encoder;
-    std::size_t multiple_of_eight = 0;
     std::size_t not_multiple_of_sixteen = 0;
     for (const char character : {'H', 'o', '.', '8', 'W'}) {
         const auto blob = encoder.Get(*face_, Glyph(character));
@@ -68,13 +67,10 @@ TEST_F(TextBlobTest, EncodedBlobsAreWholeEightByteUnits) {
         ASSERT_FALSE(blob->Empty()) << "no ink for '" << character << "'";
         EXPECT_EQ(blob->bytes.size() % 8U, 0U)
             << "the blob is not a whole number of 8-byte units";
-        EXPECT_EQ(blob->UnitCount(), blob->bytes.size() / 8U);
-        ++multiple_of_eight;
         if (blob->bytes.size() % 16U != 0U) {
             ++not_multiple_of_sixteen;
         }
     }
-    EXPECT_EQ(multiple_of_eight, 5u);
     // The 16-byte-stride mistake is only observable if at least one measured
     // glyph is 8 mod 16; otherwise "always a multiple of 16" would also pass.
     EXPECT_GT(not_multiple_of_sixteen, 0u);

@@ -188,21 +188,4 @@ TEST_F(NormalMappingGpuTest, StandardAndFullDecodeDifferAndMatchGolden) {
         << "Full normal decode hash changed (observed 0x" << std::hex << full_hash << ")";
 }
 
-TEST_F(NormalMappingGpuTest, NoNormalTextureLeavesTheBaseNormal) {
-    // With normal_texture == 0 the decode branch must be skipped; this is the
-    // baseline the two encoded renders are compared against conceptually.
-    auto albedo = MakeConstantTexture(200, 200, 200);
-    ASSERT_TRUE(albedo.IsValid());
-
-    TestSupport::HarnessMaterialData material{};
-    material.flags = 0u;
-    const auto scene = TestScene();
-    const auto light = TestLight();
-
-    const auto pixels = harness_.RenderAndReadBack(albedo, {}, {}, material, scene, light);
-    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kSize) * kSize * 4U);
-    // The flags==0 readback completes; the encoded renders below are checked
-    // against real output rather than this baseline.
-}
-
 }  // namespace

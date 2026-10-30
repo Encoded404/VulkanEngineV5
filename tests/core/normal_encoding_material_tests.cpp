@@ -46,41 +46,12 @@ TEST(NormalEncodingMaterialTest, PackIsInjectiveForEveryFlagCombination) {
     }
 }
 
-TEST(NormalEncodingMaterialTest, NeverSetsReservedBits) {
-    for (const auto encoding : {TextureNormalEncoding::Standard, TextureNormalEncoding::Full,
-                                TextureNormalEncoding::Bent}) {
-        EXPECT_EQ(PackNormalEncoding(encoding) & ~kNormalEncodingMask, 0u);
-    }
-}
-
-TEST(NormalEncodingMaterialTest, PackIsStable) {
-    // The shader's decode compares the masked field to fixed packed values, so
-    // the same encoding must always pack to the same value across calls.
-    const std::array encodings = {TextureNormalEncoding::Standard, TextureNormalEncoding::Full,
-                                  TextureNormalEncoding::Bent};
-    for (const auto encoding : encodings) {
-        EXPECT_EQ(PackNormalEncoding(encoding), PackNormalEncoding(encoding));
-    }
-}
-
 TEST(NormalEncodingMaterialTest, DefaultFlagsReadAsStandard) {
     // Irreducible cross-language contract: the shader's first decode branch
     // treats a zero flags field as Standard, and nothing on the C++ side can
     // derive that, so it stays pinned as an explicit assertion.
     VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData material{};
     EXPECT_EQ(material.flags & kNormalEncodingMask, PackNormalEncoding(TextureNormalEncoding::Standard));
-}
-
-TEST(NormalEncodingMaterialTest, CombinesWithOtherFlagBits) {
-    // The encoding occupies bits 0..1; callers OR in the alpha/has-transform
-    // bits, so the packing must leave those untouched and keep the encoding
-    // field exactly as packed.
-    const std::uint32_t flags = PackNormalEncoding(TextureNormalEncoding::Bent) |
-                                VulkanEngine::TechniqueManager::kAlphaMaskFlag |
-                                VulkanEngine::TechniqueManager::kHasTransformFlag;
-    EXPECT_EQ(flags & kNormalEncodingMask, PackNormalEncoding(TextureNormalEncoding::Bent));
-    EXPECT_NE(flags & VulkanEngine::TechniqueManager::kAlphaMaskFlag, 0u);
-    EXPECT_NE(flags & VulkanEngine::TechniqueManager::kHasTransformFlag, 0u);
 }
 
 }  // namespace

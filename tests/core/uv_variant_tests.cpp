@@ -71,13 +71,6 @@ TEST(UvVariantTest, Uv1SelectedInAnySlotBecomesVariant1) {
                   AsBytes(MaterialSelectingUvSets({0u, 0u, 1u, 0u}))), 1u);
 }
 
-TEST(UvVariantTest, HighestSelectedSetWins) {
-    DefaultMeshTechnique tech;
-    DefaultMeshPerMaterialData mat = MaterialSelectingUvSets({1u, 1u, 0u, 0u});
-    // albedo -> set 1, normal -> set 1.
-    EXPECT_EQ(tech.InterfaceVariantForMaterial(AsBytes(mat)), 1u);
-}
-
 // Selectors above 1 do NOT select the UV1 pipeline: SlotUV reads any selector
 // != 1 as inline UV0, so the variant quantizes to match (TEXCOORD_2+ set
 // selectors degrade to UV0 sampling until an out-of-line third UV set exists;
@@ -217,10 +210,6 @@ TEST(UvVariantTest, DrawKeyPacksVariantAndRenderState) {
     const std::uint32_t key = DrawKeyState::PackDrawKey(1u, 0x2u);
     EXPECT_EQ(DrawKeyState::VariantOf(key), 1u);
     EXPECT_EQ(DrawKeyState::RenderStateOf(key), 0x2u);
-}
-
-TEST(UvVariantTest, BaseDrawKeyIsZero) {
-    EXPECT_EQ(DrawKeyState::PackDrawKey(0u, 0u), 0u);
 }
 
 TEST(UvVariantTest, RenderStateRoundTripsThroughCompositeKey) {

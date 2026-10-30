@@ -18,10 +18,6 @@ TEST(BalanceConfigTest, DefaultRulesetFingerprintIsStable) {
     EXPECT_EQ(BalanceConfig{}.Hash(), kGoldenV1);
 }
 
-TEST(BalanceConfigTest, FingerprintIsDeterministic) {
-    EXPECT_EQ(BalanceConfig{}.Hash(), BalanceConfig{}.Hash());
-}
-
 // INTENTIONAL: every gameplay-affecting field must participate in the
 // fingerprint; a field that silently stopped being hashed would merge two
 // different rulesets onto one leaderboard. This per-field sweep is a deliberate

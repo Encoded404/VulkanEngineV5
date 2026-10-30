@@ -508,12 +508,10 @@ TEST_F(TextRenderGpuTest, InkAppearsInsideTheExpectedRegion) {
         }
     }
 
-    // Coverage composited over opaque black: red is the coverage (<= 255 by
-    // construction) and alpha stays the destination's opaque 255.
+    // Alpha stays the destination's opaque 255 across the ink bounds.
     for (std::uint32_t y = ink.min_y; y <= ink.max_y; ++y) {
         for (std::uint32_t x = ink.min_x; x <= ink.max_x; ++x) {
             const auto pixel = Pixel(pixels, x, y);
-            EXPECT_LE(pixel[0], 255u);
             EXPECT_EQ(pixel[3], 255u);
         }
     }

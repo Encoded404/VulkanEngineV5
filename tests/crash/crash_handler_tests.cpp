@@ -82,15 +82,16 @@ void ExpectCapturedContext(const ProbeRun& run) {
     EXPECT_NE(run.session.find("MARKER-LINE-12345"), std::string::npos);
 }
 
-// The report must carry the OS-reported signal number itself (on Windows the
-// mapped structured-exception code); how it labels it is presentation.
+// The report must carry the OS-reported signal number on the line the handler
+// writes ("signal: N"). Searching for the bare number would also match the
+// report timestamp and backtrace addresses, so it would pass without the line.
 void ExpectSignalReported(const ProbeRun& run, int expected_number) {
 #ifdef _WIN32
     static_cast<void>(expected_number);
 #else
-    const std::string number = std::to_string(expected_number);
-    EXPECT_NE(run.report.find(number), std::string::npos)
-        << "report does not mention OS-reported signal number " << number;
+    const std::string line = "signal: " + std::to_string(expected_number);
+    EXPECT_NE(run.report.find(line), std::string::npos)
+        << "report does not contain '" << line << "'";
 #endif
 }
 

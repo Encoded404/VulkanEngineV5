@@ -70,23 +70,6 @@ TEST(FontLibraryTest, ReportsLinkedFreeTypeAndHarfBuzz) {
         << summary;
 }
 
-// A second read must agree with the first: GetLibraryVersions() owns the
-// temporary FreeType library it creates, so it is safe to call repeatedly and
-// leaves no process-global state behind.
-TEST(FontLibraryTest, VersionReadIsRepeatableAndSideEffectFree) {
-    const VulkanEngine::Text::LibraryVersions first =
-        VulkanEngine::Text::GetLibraryVersions();
-    const VulkanEngine::Text::LibraryVersions second =
-        VulkanEngine::Text::GetLibraryVersions();
-
-    EXPECT_EQ(first.freetype_runtime_major, second.freetype_runtime_major);
-    EXPECT_EQ(first.freetype_runtime_minor, second.freetype_runtime_minor);
-    EXPECT_EQ(first.freetype_runtime_patch, second.freetype_runtime_patch);
-    EXPECT_EQ(first.harfbuzz_major, second.harfbuzz_major);
-    EXPECT_EQ(first.harfbuzz_minor, second.harfbuzz_minor);
-    EXPECT_EQ(first.harfbuzz_micro, second.harfbuzz_micro);
-}
-
 // The encoder and the shader sources the Slug backend is built on must exist in
 // the linked library. HLSL is the variant the engine feeds to Slang.
 TEST(FontLibraryTest, HbGpuEncoderAndHlslShaderSourcesAreAvailable) {

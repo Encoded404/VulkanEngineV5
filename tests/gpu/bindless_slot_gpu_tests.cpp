@@ -184,8 +184,7 @@ TEST_F(BindlessFallbackGpuTest, ShutdownClearsSlotsAndFallback) {
     EXPECT_EQ(bindless->GetTexture(kFallbackSlot), nullptr);
     EXPECT_EQ(bindless->GetTexture(1U), nullptr);
     bindless.reset();
-    heap.Shutdown(); // must not crash with textures already freed
-    SUCCEED();
+    heap.Shutdown(); // teardown with already-released textures must not crash
 }
 
 } // namespace

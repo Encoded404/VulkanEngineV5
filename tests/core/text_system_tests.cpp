@@ -116,8 +116,8 @@ TEST(TextSystemTest, DifferentFontsYieldDifferentFaces) {
 }
 
 // A face handed out before a reload stays valid and usable after the registry
-// entry has been replaced: the registry holds it by shared_ptr, and so does the
-// caller.
+// entry has been replaced: the caller's shared_ptr keeps the old face alive
+// while the registry moves to the new one.
 TEST(TextSystemTest, AnEarlierFaceStaysAliveAndUsableAcrossAReload) {
     const std::vector<std::byte> bytes = ReadFileBytes(TestFontPath());
     ASSERT_FALSE(bytes.empty());
@@ -137,8 +137,6 @@ TEST(TextSystemTest, AnEarlierFaceStaysAliveAndUsableAcrossAReload) {
 
     ASSERT_TRUE(system.ReloadFont(ResourceId{.value = "lato"}, file.Path(), /*frame_index=*/0));
 
-    EXPECT_EQ(old_face->UniqueId(), old_id);
-    EXPECT_GE(old_face.use_count(), 1);
     EXPECT_GT(old_face->Metrics().units_per_em, 0u);
     EXPECT_NE(old_face->GlyphForCodepoint(static_cast<std::uint32_t>('H')), 0u);
 

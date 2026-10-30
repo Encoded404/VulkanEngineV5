@@ -97,7 +97,6 @@ TEST_F(UnlitMaterialTest, RenderStateResolvesToADrawGroup) {
     const auto* cutout_state = materials_.GetRenderState(MaterialId{cutout.Id()});
     ASSERT_NE(opaque_state, nullptr);
     ASSERT_NE(cutout_state, nullptr);
-    EXPECT_EQ(*opaque_state, DeriveRenderState(MaterialDesc{.blend = BlendMode::Opaque}));
     EXPECT_TRUE(cutout_state->alpha_mask);
     EXPECT_TRUE(cutout_state->double_sided);
 
@@ -105,8 +104,6 @@ TEST_F(UnlitMaterialTest, RenderStateResolvesToADrawGroup) {
     // while the cutout material selects its own.
     const MaterialId opaque_id{opaque.Id()};
     const MaterialId cutout_id{cutout.Id()};
-    EXPECT_EQ(materials_.GetGroupForMaterial(opaque_id),
-              materials_.GetGroupForMaterial(opaque_id));
     EXPECT_NE(materials_.GetGroupForMaterial(opaque_id),
               materials_.GetGroupForMaterial(cutout_id));
 }

@@ -12,6 +12,10 @@
 
 #include <csignal>
 
+#if defined(_MSC_VER)
+#  include <intrin.h>
+#endif
+
 #include "engine/core/bootstrap/Crash.hpp"
 #include "crash_scenario.hpp"
 
@@ -42,7 +46,11 @@ void EmitContext() {
         volatile int quotient = one / zero;
         static_cast<void>(quotient);
     } else if (type == "ill") {
+#if defined(_MSC_VER)
+        __ud2(); // Illegal instruction (MSVC has no __builtin_trap).
+#else
         __builtin_trap();
+#endif
     }
 #ifdef SIGBUS
     else if (type == "bus") {

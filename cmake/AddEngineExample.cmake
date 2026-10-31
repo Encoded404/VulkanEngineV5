@@ -172,24 +172,22 @@ function(add_engine_example NAME)
 
 
     # ---- C++ module registration ----
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        target_sources(${NAME} PUBLIC
-            FILE_SET CXX_MODULES
-            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-            FILES ${AEG_MODULES}
-        )
+    target_sources(${NAME} PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+        FILES ${AEG_MODULES}
+    )
 
-        # Register generated slang shader module files (only when this example
-        # declared its own shaders; engine-only examples have no shader target).
-        if(TARGET ${NAME}_shaders)
-            get_target_property(_gen_shader_mods ${NAME}_shaders SLANG_CPPM_FILES)
-            if(_gen_shader_mods)
-                target_sources(${NAME} PUBLIC
-                    FILE_SET CXX_MODULES
-                    BASE_DIRS ${_shader_gen_dir}
-                    FILES ${_gen_shader_mods}
-                )
-            endif()
+    # Register generated slang shader module files (only when this example
+    # declared its own shaders; engine-only examples have no shader target).
+    if(TARGET ${NAME}_shaders)
+        get_target_property(_gen_shader_mods ${NAME}_shaders SLANG_CPPM_FILES)
+        if(_gen_shader_mods)
+            target_sources(${NAME} PUBLIC
+                FILE_SET CXX_MODULES
+                BASE_DIRS ${_shader_gen_dir}
+                FILES ${_gen_shader_mods}
+            )
         endif()
     endif()
 
@@ -214,15 +212,7 @@ function(add_engine_example NAME)
         $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
     )
 
-    if(CMAKE_CONFIGURATION_TYPES)
-        target_compile_options(${NAME} PRIVATE
-            "$<$<CONFIG:Debug>:-g>"
-            "$<$<CONFIG:Debug>:-O0>"
-            "$<$<CONFIG:RelWithDebInfo>:-g>"
-            "$<$<CONFIG:RelWithDebInfo>:-O2>"
-            "$<$<CONFIG:Release>:-O3>"
-        )
-    endif()
+    vkengine_target_config_flags(${NAME})
 
     if(TARGET project_sanitizers)
         target_link_libraries(${NAME} PRIVATE project_sanitizers)
@@ -255,6 +245,10 @@ function(add_engine_example NAME)
     # crash trace useful.
     target_link_options(${NAME} PRIVATE
         $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-Wl,--strip-all>)
+
+    if(COMMAND vkengine_check_steam_runtime_abi)
+        vkengine_check_steam_runtime_abi(${NAME})
+    endif()
 
     if(COMMAND enable_target_clang_tidy)
         enable_target_clang_tidy(${NAME})

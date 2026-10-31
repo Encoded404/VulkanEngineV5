@@ -15,14 +15,12 @@ add_executable(backend_tests
 )
 target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET} ${ENGINE_TARGET})
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_sources(backend_tests PRIVATE
-    FILE_SET CXX_MODULES
-    BASE_DIRS ${CMAKE_SOURCE_DIR}/tests/runtime
-    FILES
-      ${CMAKE_SOURCE_DIR}/tests/runtime/test_logging.cppm
+FILE_SET CXX_MODULES
+BASE_DIRS ${CMAKE_SOURCE_DIR}/tests/runtime
+FILES
+  ${CMAKE_SOURCE_DIR}/tests/runtime/test_logging.cppm
   )
-endif()
 
 enable_test_support_modules(backend_tests)
 

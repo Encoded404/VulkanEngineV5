@@ -31,26 +31,16 @@ target_compile_options(${SECURITY_TARGET} PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(${SECURITY_TARGET} PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(${SECURITY_TARGET})
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(${SECURITY_TARGET} PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            DataCipher.cppm
-            PasswordHash.cppm
-            KeyExchange.cppm
-    )
-endif()
+target_sources(${SECURITY_TARGET} PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        DataCipher.cppm
+        PasswordHash.cppm
+        KeyExchange.cppm
+)
 
 if(TARGET project_sanitizers)
     target_link_libraries(${SECURITY_TARGET} PRIVATE project_sanitizers)

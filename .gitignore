@@ -33,7 +33,10 @@
 
 # build directories
 /build/
+/build-msvc/
 /build-windows/
+/.vcpkg-local/
+/.home/
 /md-files
 /.cache
 
@@ -60,3 +63,5 @@ examples/*/secrets/*
 leaderboard_server.identity
 leaderboard_server.accounts.json
 *.accounts.json
+/build-gcc
+/build-gcc16

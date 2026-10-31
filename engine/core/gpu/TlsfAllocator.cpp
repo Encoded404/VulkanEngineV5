@@ -48,7 +48,7 @@ void TlsfAllocator::Mapping(uint64_t size, std::uint32_t& fl, std::uint32_t& sl)
         size = (1ULL << FL_INDEX_SHIFT);
     }
 
-    fl = static_cast<std::uint32_t>(63ULL - static_cast<uint64_t>(__builtin_clzll(size)));
+    fl = static_cast<std::uint32_t>(63U - static_cast<std::uint32_t>(std::countl_zero(size)));
 
     if (fl > MAX_FL) {
         fl = MAX_FL;
@@ -68,7 +68,7 @@ uint32_t TlsfAllocator::FindSuitableBlock(std::uint32_t fl, std::uint32_t sl) {
     // Search within the current first-level index
     const std::uint32_t sl_map = sl_bitmaps_[fl - FL_INDEX_SHIFT] >> sl;
     if (sl_map != 0) {
-        const std::uint32_t matched_sl = sl + static_cast<std::uint32_t>(__builtin_ctz(sl_map));
+        const std::uint32_t matched_sl = sl + static_cast<std::uint32_t>(std::countr_zero(sl_map));
         const std::uint32_t list = ListIndex(fl, matched_sl);
         if (heads_[list] != UINT32_MAX) {
             return heads_[list];
@@ -79,10 +79,10 @@ uint32_t TlsfAllocator::FindSuitableBlock(std::uint32_t fl, std::uint32_t sl) {
     if (fl < 31U) {
         const std::uint32_t fl_map = fl_bitmap_ >> (fl + 1);
         if (fl_map != 0) {
-            fl = fl + 1 + static_cast<std::uint32_t>(__builtin_ctz(fl_map));
+            fl = fl + 1 + static_cast<std::uint32_t>(std::countr_zero(fl_map));
             const std::uint32_t sl_bitmap = sl_bitmaps_[fl - FL_INDEX_SHIFT];
             if (sl_bitmap != 0) {
-                sl = static_cast<std::uint32_t>(__builtin_ctz(sl_bitmap));
+                sl = static_cast<std::uint32_t>(std::countr_zero(sl_bitmap));
                 const std::uint32_t list = ListIndex(fl, sl);
                 if (heads_[list] != UINT32_MAX) {
                     return heads_[list];

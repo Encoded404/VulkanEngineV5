@@ -31,38 +31,28 @@ target_compile_options(infinite_runner_leaderboard PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(infinite_runner_leaderboard PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(infinite_runner_leaderboard)
 
 if(WIN32)
     # Winsock, used by the placeholder transport.
     target_link_libraries(infinite_runner_leaderboard PUBLIC ws2_32)
 endif()
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(infinite_runner_leaderboard PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            Config.cppm
-            Account.cppm
-            AccountStore.cppm
-            Log.cppm
-            Protocol.cppm
-            Transport.cppm
-            SessionCrypto.cppm
-            Store.cppm
-            Client.cppm
-            Server.cppm
-    )
-endif()
+target_sources(infinite_runner_leaderboard PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        Config.cppm
+        Account.cppm
+        AccountStore.cppm
+        Log.cppm
+        Protocol.cppm
+        Transport.cppm
+        SessionCrypto.cppm
+        Store.cppm
+        Client.cppm
+        Server.cppm
+)
 
 if(TARGET project_sanitizers)
     target_link_libraries(infinite_runner_leaderboard PRIVATE project_sanitizers)
@@ -106,6 +96,10 @@ target_compile_options(leaderboard_server PRIVATE
     $<$<CXX_COMPILER_ID:Clang>:-Wall -Wextra>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
+
+if(COMMAND vkengine_check_steam_runtime_abi)
+    vkengine_check_steam_runtime_abi(leaderboard_server)
+endif()
 
 if(OUTPUT_PATH)
     set_target_properties(leaderboard_server PROPERTIES

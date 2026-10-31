@@ -8,38 +8,28 @@ target_link_libraries(${RUNTIME_TARGET} PUBLIC ${ENGINE_TARGET} ${BACKEND_TARGET
 target_include_directories(${RUNTIME_TARGET} PUBLIC ${CMAKE_SOURCE_DIR})
 
 target_compile_options(${RUNTIME_TARGET} PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(${RUNTIME_TARGET} PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(${RUNTIME_TARGET})
 
 target_sources(${RUNTIME_TARGET} PRIVATE
     Overrides.cpp
     ExampleCli.cpp
 )
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(${RUNTIME_TARGET} PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            RunApplication.cppm
-            Overrides.cppm
-            ExampleCli.cppm
-            FrameStepClock.cppm
-            FrameProfiler.cppm
-    )
-endif()
+target_sources(${RUNTIME_TARGET} PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        RunApplication.cppm
+        Overrides.cppm
+        ExampleCli.cppm
+        FrameStepClock.cppm
+        FrameProfiler.cppm
+)
 
 if(COMMAND enable_target_clang_tidy)
     enable_target_clang_tidy(${RUNTIME_TARGET})

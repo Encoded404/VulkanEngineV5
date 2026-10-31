@@ -34,15 +34,13 @@ enable_test_support_modules(gpu_tests)
 
 # Headless real-device backend + offscreen graphics harness for the texture
 # subresource and render tests (gpu label).
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_sources(gpu_tests PRIVATE
-    FILE_SET CXX_MODULES
-    BASE_DIRS ${TEST_SUPPORT_DIR}
-    FILES
-      ${TEST_SUPPORT_DIR}/test_vulkan_backend.cppm
-      ${TEST_SUPPORT_DIR}/test_texture_render_harness.cppm
+FILE_SET CXX_MODULES
+BASE_DIRS ${TEST_SUPPORT_DIR}
+FILES
+  ${TEST_SUPPORT_DIR}/test_vulkan_backend.cppm
+  ${TEST_SUPPORT_DIR}/test_texture_render_harness.cppm
   )
-endif()
 target_sources(gpu_tests PRIVATE
   ${TEST_SUPPORT_DIR}/test_vulkan_backend.cpp
   ${TEST_SUPPORT_DIR}/test_texture_render_harness.cpp

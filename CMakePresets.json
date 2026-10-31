@@ -9,25 +9,56 @@
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CMAKE_CXX_COMPILER": "clang++",
         "BUILD_TESTING": "ON"
       }
     },
     {
       "name": "default",
       "inherits": "base",
-      "displayName": "Default (vcpkg + Ninja Multi-Config)",
-      "description": "Default cross-platform build using vcpkg and Ninja Multi-Config",
+      "displayName": "Clang + libc++ (vcpkg + Ninja Multi-Config)",
+      "description": "Default Linux build: Clang with libc++ and the libc++ standard module.",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_TOOLCHAIN_FILE": {
           "type": "FILEPATH",
           "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         },
         "USE_LIBCPP": "ON",
+        "VKENGINE_STATIC_LIBCPP": "ON",
         "CLANG_TIDY_ENABLED": "OFF",
         "VCPKG_TARGET_TRIPLET": "x64-linux-libcxx",
         "CMAKE_CXX_COMPILER_LAUNCHER": ""
+      },
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      },
+      "condition": {
+        "type": "notEquals",
+        "lhs": "$env{VCPKG_ROOT}",
+        "rhs": ""
+      }
+    },
+    {
+      "name": "msvc",
+      "displayName": "MSVC + Microsoft STL (vcpkg + Ninja Multi-Config)",
+      "description": "Native Windows x64 build using MSVC. Run from a Visual Studio Developer PowerShell so cl.exe and the C++ Modules component are visible. import std requires Ninja, not the Visual Studio generator.",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build-msvc",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "USE_LIBCPP": "OFF",
+        "VKENGINE_STEAM_RUNTIME": "off",
+        "VKENGINE_WERROR": "OFF",
+        "CLANG_TIDY_ENABLED": "OFF",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "",
+        "ENABLE_SANITIZERS": "OFF",
+        "VKENGINE_HOT_RELOAD": "ON"
       },
       "environment": {
         "CCACHE_DISABLE": "1"
@@ -57,6 +88,7 @@
         "VCPKG_TARGET_TRIPLET": "x64-mingw-libcxx",
         "USE_LIBCPP": "ON",
         "VKENGINE_HOT_RELOAD": "OFF",
+        "VKENGINE_WERROR": "ON",
         "ENABLE_SANITIZERS": "OFF",
         "CLANG_TIDY_ENABLED": "OFF",
         "BUILD_TESTING": "OFF",
@@ -75,7 +107,7 @@
   "buildPresets": [
     {
       "name": "debug",
-      "displayName": "Build Debug",
+      "displayName": "Build Clang + libc++ Debug",
       "configurePreset": "default",
       "configuration": "Debug",
       "environment": {
@@ -84,7 +116,7 @@
     },
     {
       "name": "release",
-      "displayName": "Build Release",
+      "displayName": "Build Clang + libc++ Release",
       "configurePreset": "default",
       "configuration": "Release",
       "environment": {
@@ -93,8 +125,35 @@
     },
     {
       "name": "relwithdebinfo",
-      "displayName": "Build RelWithDebInfo",
+      "displayName": "Build Clang + libc++ RelWithDebInfo",
       "configurePreset": "default",
+      "configuration": "RelWithDebInfo",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "msvc-debug",
+      "displayName": "Build MSVC Debug",
+      "configurePreset": "msvc",
+      "configuration": "Debug",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "displayName": "Build MSVC Release",
+      "configurePreset": "msvc",
+      "configuration": "Release",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "msvc-relwithdebinfo",
+      "displayName": "Build MSVC RelWithDebInfo",
+      "configurePreset": "msvc",
       "configuration": "RelWithDebInfo",
       "environment": {
         "CCACHE_DISABLE": "1"
@@ -133,43 +192,114 @@
       "name": "debug",
       "configurePreset": "default",
       "configuration": "Debug",
-      "filter": { "exclude": { "label": "gpu" } }
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
     },
     {
       "name": "release",
       "configurePreset": "default",
       "configuration": "Release",
-      "filter": { "exclude": { "label": "gpu" } }
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
     },
     {
       "name": "relwithdebinfo",
       "configurePreset": "default",
       "configuration": "RelWithDebInfo",
-      "filter": { "exclude": { "label": "gpu" } }
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "msvc-debug",
+      "configurePreset": "msvc",
+      "configuration": "Debug",
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc",
+      "configuration": "Release",
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "msvc-relwithdebinfo",
+      "configurePreset": "msvc",
+      "configuration": "RelWithDebInfo",
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
     },
     {
       "name": "debug-gpu",
       "configurePreset": "default",
       "configuration": "Debug",
-      "displayName": "Debug (GPU tests only)",
-      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
-      "filter": { "include": { "label": "gpu" } }
+      "displayName": "Clang + libc++ Debug (GPU tests only)",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
     },
     {
       "name": "release-gpu",
       "configurePreset": "default",
       "configuration": "Release",
-      "displayName": "Release (GPU tests only)",
-      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
-      "filter": { "include": { "label": "gpu" } }
+      "displayName": "Clang + libc++ Release (GPU tests only)",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
     },
     {
       "name": "relwithdebinfo-gpu",
       "configurePreset": "default",
       "configuration": "RelWithDebInfo",
-      "displayName": "RelWithDebInfo (GPU tests only)",
-      "environment": { "ASAN_OPTIONS": "detect_leaks=0" },
-      "filter": { "include": { "label": "gpu" } }
+      "displayName": "Clang + libc++ RelWithDebInfo (GPU tests only)",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "msvc-debug-gpu",
+      "configurePreset": "msvc",
+      "configuration": "Debug",
+      "displayName": "MSVC Debug (GPU tests only)",
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
     }
   ]
 }

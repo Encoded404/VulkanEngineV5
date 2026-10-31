@@ -18,7 +18,8 @@ cmake_minimum_required(VERSION 3.30)
 # names the release it was verified against, and a release outside every band
 # stops with instructions instead of silently reusing another release's value.
 #
-# Verified values: 3.31.11, 4.3.1 and 4.4.0. When adding a band, verify it by
+# Verified values: 3.31.11, 4.3.1, 4.4.0 and 4.5 (stable, no activation
+# value). When adding a band, verify it by
 # configuring with that CMake; passing -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<v>
 # from the command line still overrides everything here.
 if( NOT CMAKE_EXPERIMENTAL_CXX_IMPORT_STD )
@@ -31,17 +32,21 @@ if( NOT CMAKE_EXPERIMENTAL_CXX_IMPORT_STD )
     elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 3.30 AND CMAKE_VERSION VERSION_LESS 3.32 )
         message("enabling import std for CMake 3.30-3.31 (verified on 3.31.11)")
         set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
-    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 4.5 )
+    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 4.5 AND CMAKE_VERSION VERSION_LESS 5.0 )
+        # CMake 4.5 made `import std` a non-experimental feature, so there is
+        # no activation value to set. Keep this band so the next CMake release
+        # that changes the mechanism again is noticed here instead of failing
+        # in the generate step with a misleading toolchain-support error.
+        message("enabling import std for CMake 4.5 (stable feature)")
+    elseif( CMAKE_VERSION VERSION_GREATER_EQUAL 5.0 )
         message(FATAL_ERROR
-            "CMake ${CMAKE_VERSION} is newer than any release whose `import std` activation "
-            "value this project has verified. Set CMAKE_EXPERIMENTAL_CXX_IMPORT_STD to the "
-            "value documented for CxxImportStd in this CMake's Help/dev/experimental.rst:\n"
-            "  cmake -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<value> ...\n"
-            "then add a band for CMake ${CMAKE_VERSION} to this block.")
+            "CMake ${CMAKE_VERSION} is newer than any release whose `import std` support "
+            "this project has verified. Add a band for CMake ${CMAKE_VERSION} to this "
+            "block after checking Help/dev/experimental.rst or the release notes.")
     else()
         message(FATAL_ERROR
             "CMake ${CMAKE_VERSION} is outside the verified range for `import std;`, which "
-            "this project requires. Use CMake 3.30-3.31, 4.3 or 4.4, or set "
+            "this project requires. Use CMake 3.30-3.31 or 4.3-4.5, or set "
             "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD from this CMake's "
             "Help/dev/experimental.rst.")
     endif()
@@ -166,15 +171,63 @@ unset(_no_ccache_real_name)
 # targets via their .modmap files (-fmodule-file=std=.../std.pcm).
 # Without the ON flag, consumer targets won't know where to find the
 # std module and will fail with "module 'std' not found".
-#
-# When USE_LIBCPP is OFF, we simply set ON and let CMake auto-detect
-# libstdc++'s bits/std.cc — which is the correct default.
 set(CMAKE_CXX_MODULE_STD ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Require C++23 for import std; and vulkan module support
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ── Warning policy ──────────────────────────────────────────────────────
+# Clang has historically been the project's warning gate; MSVC gets its own
+# warning baseline without starting out as /WX. Enable VKENGINE_WERROR after
+# the baseline is clean.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(_vkengine_werror_default ON)
+else()
+    set(_vkengine_werror_default OFF)
+endif()
+option(VKENGINE_WERROR "Treat compiler warnings as errors" ${_vkengine_werror_default})
+unset(_vkengine_werror_default)
+
+# ── Steam Linux Runtime compatibility profile ──────────────────────────
+# Steam Runtime 4 ships its own libstdc++/libgcc and Valve expects games to
+# link those dynamically (the steamrt4 SDK changed the default from static to
+# dynamic). The runtime's libstdc++ may be older than the build host's, so a
+# binary that requires a newer GLIBCXX_* symbol version will fail to start
+# even though the link succeeded. This profile makes the build check the
+# shipped executables' dynamic symbol versions and fail loudly when they
+# exceed the target runtime. "off" disables the check for development builds.
+set(VKENGINE_STEAM_RUNTIME "off" CACHE STRING
+    "Steam Linux Runtime ABI target for post-link compatibility checks (off, scout, sniper, steamrt4)")
+set_property(CACHE VKENGINE_STEAM_RUNTIME PROPERTY STRINGS off scout sniper steamrt4)
+if(NOT VKENGINE_STEAM_RUNTIME MATCHES "^(off|scout|sniper|steamrt4)$")
+    message(FATAL_ERROR "VKENGINE_STEAM_RUNTIME must be off, scout, sniper or steamrt4")
+endif()
+
+# ── MSVC language/toolchain baseline ────────────────────────────────────
+# - /utf-8: the sources contain UTF-8 string literals (em dashes, section
+#   signs); without it MSVC interprets them in the system code page.
+# - /Zc:__cplusplus: third-party headers feature-test the real standard.
+# - /Zc:preprocessor: conforming preprocessor, required by modern headers.
+# - /permissive-: two-phase lookup and other conformance rules.
+# - /bigobj: large module interfaces exceed the default COFF section limit.
+# - /external:W0: do not let /W4 /WX fail on vcpkg dependency headers.
+if(MSVC)
+    # Mixing include-before-import with the standard module was fixed in
+    # MSVC 19.40 (VS 2022 17.10). Older toolsets produce C2011/C2572.
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.40)
+        message(FATAL_ERROR
+            "MSVC ${CMAKE_CXX_COMPILER_VERSION} is too old. C++23 `import std;` "
+            "mixed with ordinary includes needs MSVC 19.40 / VS 2022 17.10 or newer.")
+    endif()
+    add_compile_options(/utf-8 /Zc:__cplusplus /Zc:preprocessor /permissive- /bigobj)
+    add_compile_options(/external:anglebrackets /external:W0)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+if(WIN32)
+    add_compile_definitions(NOMINMAX)
+endif()
 
 # ── Hot-reload (in-process Slang) configuration ─────────────────────────
 # Declared here instead of in engine/core because the static-libc++ decision
@@ -183,12 +236,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # libc++ link, because slang's official shared libraries are built against
 # libstdc++ and pulling it into a process that also carries a statically
 # linked libc++ would be exactly the "more than one C++ runtime copy in the
-# process" situation Steam's Linux runtime forbids. Release therefore never
+# process" situation Steam's Linux runtime warns about. Release therefore never
 # gets slang (shaders are precompiled to .spv by the build-time host tool in
 # every configuration); RelWithDebInfo gets it only while
 # VKENGINE_HOT_RELOAD_RELWITHDEBINFO is ON, so a RelWithDebInfo build can
 # also be shipped slang-free.
-if(WIN32)
+#
+# The official Slang Windows archive is MSVC ABI, so native MSVC can use it
+# (the vcpkg overlay exports the release libraries as the Debug configuration
+# too). MinGW cannot link that archive, so the cross build keeps it off.
+if(MSVC)
+    set(_vkengine_hot_reload_default ON)
+elseif(WIN32)
     set(_vkengine_hot_reload_default OFF)
 else()
     set(_vkengine_hot_reload_default ON)
@@ -324,20 +383,20 @@ if(USE_LIBCPP)
 			# derives its own remap genex from them.
 		else()
 			message(STATUS "libc++ NOT available — falling back to libstdc++")
-			# Undo the pre-project() changes so the default libstdc++ is used
+			# Undo the pre-project() changes so the default libstdc++ link is
+			# used. Keep CMAKE_CXX_MODULE_STD ON: GCC and MSVC provide their
+			# own `std` module and must keep import std support.
 			string(REPLACE "-stdlib=libc++" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-			unset(CMAKE_CXX_MODULE_STD)
 		endif()
 	else()
 		message(WARNING "USE_LIBCPP=ON but compiler is not Clang — ignoring")
 		string(REPLACE "-stdlib=libc++" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-		unset(CMAKE_CXX_MODULE_STD)
 	endif()
 endif()
 
 # Require compiler support for modules
-if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  message(FATAL_ERROR "C++ modules required but the compiler (${CMAKE_CXX_COMPILER_ID}) is not supported. Use Clang or GCC.")
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|MSVC")
+  message(FATAL_ERROR "C++ modules required but the compiler (${CMAKE_CXX_COMPILER_ID}) is not supported. Use Clang or MSVC; GCC's module implementation cannot build this project yet.")
 endif()
 
 # find vulkan
@@ -375,54 +434,76 @@ endif()
 
 find_package( Vulkan 1.3.0 QUIET )
 
-# manually create module target if it was not previously provided
+# manually create the Vulkan-Hpp target if it was not previously provided
 if( NOT TARGET Vulkan::HppModule )
 	message("could not find vulkan target with find, adding manually")
-	add_library( Vulkan-HppModule OBJECT )
-	add_library( Vulkan::HppModule ALIAS Vulkan-HppModule )
-	target_sources( Vulkan-HppModule PUBLIC
-			FILE_SET CXX_MODULES
-			BASE_DIRS ${Vulkan_INCLUDE_DIR}
-			FILES
-			${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm
-			# ${Vulkan_INCLUDE_DIR}/vulkan/vulkan_video.cppm # no vulkan_video.cppm used and it sometimes gives errors so begone
-	)
-	target_compile_features( Vulkan-HppModule PUBLIC cxx_std_23 )
-	set_target_properties( Vulkan-HppModule PROPERTIES CXX_MODULE_STD ON )
-	target_include_directories( Vulkan-HppModule PUBLIC ${Vulkan_INCLUDE_DIR} )
+		add_library( Vulkan-HppModule OBJECT )
+		add_library( Vulkan::HppModule ALIAS Vulkan-HppModule )
+		target_sources( Vulkan-HppModule PUBLIC
+				FILE_SET CXX_MODULES
+				BASE_DIRS ${Vulkan_INCLUDE_DIR}
+				FILES
+				${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm
+				# ${Vulkan_INCLUDE_DIR}/vulkan/vulkan_video.cppm # no vulkan_video.cppm used and it sometimes gives errors so begone
+		)
+		target_compile_features( Vulkan-HppModule PUBLIC cxx_std_23 )
+		set_target_properties( Vulkan-HppModule PROPERTIES CXX_MODULE_STD ON )
+		target_include_directories( Vulkan-HppModule PUBLIC ${Vulkan_INCLUDE_DIR} )
+		target_compile_definitions( Vulkan-HppModule PUBLIC
+			VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
+			# Silence the "experimental named module" warning inside vulkan.cppm (new
+			# headers, >= 1.4.363); the module is used deliberately here.
+			VULKAN_HPP_CXX_MODULE_EXPERIMENTAL_WARNING=1 )
 endif()
-
-target_compile_definitions( Vulkan-HppModule PUBLIC
-	VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
-	# Silence the "experimental named module" warning inside vulkan.cppm (new
-	# headers, >= 1.4.363); the module is used deliberately here.
-	VULKAN_HPP_CXX_MODULE_EXPERIMENTAL_WARNING=1 )
 
 # Enable CTest at the top level so `ctest` discovers tests
 include(CTest)
 
 # Include custom CMake modules path (for other helpers)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(VkengineCompilerFlags)
+
+# Steam Runtime ABI checks (only meaningful for ELF/GNU libstdc++ builds).
+if(NOT VKENGINE_STEAM_RUNTIME STREQUAL "off")
+    include(CheckSteamRuntimeAbi)
+endif()
 
 # Sanitizers interface for Debug builds (applied to the engine libs and to
 # every example via add_engine_example).
-option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer in Debug mode" ON)
-# Windows/MinGW targets: llvm-mingw's default runtimes do not include the
-# sanitizer runtimes (there is no UBSan for MinGW, and the Windows ASan runtime
-# is only available in the MSVC/ASan configuration), so force it off rather
-# than emitting flags the linker cannot satisfy.
-if(ENABLE_SANITIZERS AND WIN32)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer (and UBSan where available) in Debug mode" ON)
+# MinGW targets: llvm-mingw's default runtimes do not include the sanitizer
+# runtimes (there is no UBSan for MinGW, and the Windows ASan runtime is only
+# available in the MSVC/ASan configuration), so force it off rather than
+# emitting flags the linker cannot satisfy. Native MSVC does have ASan (x64),
+# so it keeps the option.
+if(ENABLE_SANITIZERS AND WIN32 AND NOT MSVC)
     message(STATUS "Sanitizers are not available for Windows/MinGW targets — forcing ENABLE_SANITIZERS=OFF")
     set(ENABLE_SANITIZERS OFF)
 endif()
 if(ENABLE_SANITIZERS)
     add_library(project_sanitizers INTERFACE)
-    target_compile_options(project_sanitizers INTERFACE
-        $<$<CONFIG:Debug>:-fsanitize=address,undefined>
-    )
-    target_link_options(project_sanitizers INTERFACE
-        $<$<CONFIG:Debug>:-fsanitize=address,undefined>
-    )
+    if(MSVC)
+        # MSVC has no UBSan; ASan is supported for x64 from VS 2019 16.9 on.
+        # CMake's Debug defaults add /RTC1 (incompatible with ASan: D8016) and
+        # incremental linking (ASan requires it off), so strip the former from
+        # the per-config flags and disable the latter.
+        string(REPLACE "/RTC1" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+        string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+        target_compile_options(project_sanitizers INTERFACE
+            $<$<CONFIG:Debug>:/fsanitize=address>
+        )
+        target_link_options(project_sanitizers INTERFACE
+            $<$<CONFIG:Debug>:/INCREMENTAL:NO>
+            $<$<CONFIG:Debug>:/fsanitize=address>
+        )
+    else()
+        target_compile_options(project_sanitizers INTERFACE
+            $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+        )
+        target_link_options(project_sanitizers INTERFACE
+            $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+        )
+    endif()
 endif()
 
 # ── Linker selection: use LLD when the host has it ─────────────────────
@@ -442,12 +523,14 @@ endif()
 # without having to delete the build directory by hand.
 include(CheckLinkerFlag)
 unset(VKENGINE_HAVE_LLD CACHE)
-check_linker_flag(CXX "-fuse-ld=lld" VKENGINE_HAVE_LLD)
+if(NOT MSVC)
+    check_linker_flag(CXX "-fuse-ld=lld" VKENGINE_HAVE_LLD)
+endif()
 if(VKENGINE_HAVE_LLD)
     message(STATUS "lld found — linking with -fuse-ld=lld")
     add_link_options(-fuse-ld=lld)
 else()
-    message(STATUS "lld not found — using the default linker")
+    message(STATUS "lld not found (or not applicable) — using the default linker")
 endif()
 
 # ── Sanitized static libc++ archives (silences ICF noise, nothing else) ─
@@ -616,9 +699,13 @@ add_library(project_sections INTERFACE)
 target_compile_options(project_sections INTERFACE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffunction-sections>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fdata-sections>
+    $<$<CXX_COMPILER_ID:MSVC>:/Gy>
+    $<$<CXX_COMPILER_ID:MSVC>:/Gw>
 )
 target_link_options(project_sections INTERFACE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,--gc-sections>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/OPT:REF>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/OPT:ICF>
 )
 
 # ── Size knobs that cost nothing in debuggability ──────────────────────

@@ -54,12 +54,6 @@ void AttachParentConsoleIfPresent() {
 
 } // namespace
 
-[[gnu::weak]] int VulkanEngine::AppMain(int, char* const[]) {
-    VulkanEngine::Crash::Report("no VulkanEngine::AppMain defined",
-                                "the application did not define VulkanEngine::AppMain");
-    return 70;
-}
-
 int main(int argc, char** argv) {
     VulkanEngine::Crash::Boot(nullptr);
     return RunApplicationEntry(argc, argv);

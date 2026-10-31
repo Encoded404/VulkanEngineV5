@@ -23,8 +23,8 @@ patch_fastgltf_submodule(
     PATCHED_DIR_VAR _patched_fastgltf_dir
 )
 set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "")
-set(FASTGLTF_ENABLE_CPP_MODULES ON CACHE BOOL "")
-set(FASTGLTF_USE_STD_MODULE ON CACHE BOOL "")
+set(FASTGLTF_ENABLE_CPP_MODULES ON CACHE BOOL "" FORCE)
+set(FASTGLTF_USE_STD_MODULE ON CACHE BOOL "" FORCE)
 # KHR_physics_rigid_bodies: fastgltf ships typed support for the extension but
 # leaves it off by default. Enabling it is what lets the scene importer read
 # collider hints into engine `ShapeDesc`s instead of hand-parsing extension JSON.
@@ -89,7 +89,9 @@ target_link_libraries(${ENGINE_TARGET} PRIVATE
 #
 #   * Windows/MinGW: the only available Slang build is the MSVC-produced release
 #     archive, which is not usable as a MinGW link input here, so hot reload is
-#     off entirely for that target.
+#     off entirely for that target. Native MSVC can use that same archive (the
+#     overlay port exports its release libraries for the Debug configuration),
+#     so MSVC keeps hot reload enabled by default.
 #   * Release: a shipped client never recompiles shaders, and libslang-compiler
 #     is a 31 MB shared library that is itself built against libstdc++. Linking
 #     it would force both it and libstdc++ into the client's runtime closure
@@ -234,20 +236,12 @@ target_compile_definitions(${ENGINE_TARGET} PRIVATE
 )
 
 target_compile_options(${ENGINE_TARGET} PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(${ENGINE_TARGET} PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(${ENGINE_TARGET})
 
 target_sources(${ENGINE_TARGET} PRIVATE
     input/InputSystem.cpp
@@ -256,7 +250,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/FileLoaders/Mesh/GltfMaterialImport.cpp
     assets/FileLoaders/Mesh/GltfMeshAssembler.cpp
     assets/FileLoaders/Textures/TextureLoaders.cpp
-    assets/FileLoaders/Textures/TextureLoaders.cppm
     assets/FileLoaders/Fonts/FontLoader.cpp
     assets/TextureFormat.cpp
     assets/ResourceCache.cpp
@@ -326,16 +319,6 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/ImGuiPass.cpp
     render/passes/TextPass.cpp
     render/passes/WorldTextPass.cpp
-    render/passes/ExpandPass.cppm
-    render/passes/HiZPass.cppm
-    render/passes/OcclusionPass.cppm
-    render/passes/CollectPass.cppm
-    render/passes/OccluderSelectPass.cppm
-    render/passes/OccluderPrePass.cppm
-    render/passes/PreCullPass.cppm
-    render/passes/DepthPrePass.cppm
-    render/passes/MainPass.cppm
-    render/passes/ImGuiPass.cppm
     render_graph/RenderGraph.cpp
     render_graph/RenderGraphCompile.cpp
 )
@@ -401,161 +384,159 @@ set_property(GLOBAL PROPERTY VKENGINE_ENGINE_SHADER_DIR "${_shader_gen_dir}")
 
 get_target_property(_gen_shader_mods ${ENGINE_TARGET}_shaders SLANG_CPPM_FILES)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+target_sources(${ENGINE_TARGET} PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        input/InputSystem.cppm
+        assets/MeshTypes.cppm
+        assets/NormalEncoding.cppm
+        assets/TextureTypes.cppm
+        assets/TextureFormat.cppm
+        assets/TextureUploadScheduler.cppm
+        assets/ResourceCache.cppm
+        assets/TextureResource.cppm
+        assets/FontResource.cppm
+        bootstrap/Startup.cppm
+        ApplicationContext.cppm
+        ecs/Entity.cppm
+        ecs/ComponentContext.cppm
+        ecs/ComponentRegistry.cppm
+        ecs/SystemSchedule.cppm
+        ecs/FrameSchedule.cppm
+        ecs/Prefabs.cppm
+        modules/EngineModules.cppm
+        components/Transform.cppm
+        components/Camera.cppm
+        components/MeshReference.cppm
+        components/Text.cppm
+        components/DynamicMesh.cppm
+        components/OrmOverride.cppm
+        components/MaterialOverride.cppm
+        components/TransformOverride.cppm
+        assets/FileLoaders/Mesh/BinMeshAssembler.cppm
+        assets/FileLoaders/Mesh/GltfMaterialImport.cppm
+        assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
+        assets/FileLoaders/Mesh/MeshLoaderBase.cppm
+        assets/FileLoaders/Mesh/ObjMeshAssembler.cppm
+        assets/FileLoaders/Mesh/MeshMagicLoader.cppm
+        assets/FileLoaders/Mesh/TangentGenerator.cppm
+        assets/FileLoaders/Textures/TextureLoaders.cppm
+        assets/FileLoaders/Fonts/FontLoader.cppm
+        ui/ImGuiSystem.cppm
+        text/FontLibrary.cppm
+        text/Font.cppm
+        text/Shaping.cppm
+        text/Layout.cppm
+        text/Atlas.cppm
+        text/GlyphRaster.cppm
+        text/Blob.cppm
+        text/GlyphAtlasGpu.cppm
+        text/GpuTextBlobBuffer.cppm
+        text/Msdf.cppm
+        text/FontWatcher.cppm
+        text/FontReloader.cppm
+        text/TextSystem.cppm
+        render/Pipeline.cppm
+        render/PipelinePass.cppm
+        render/DescriptorDecl.cppm
+        gpu/GpuResources.cppm
+        gpu/Buffer.cppm
+        gpu/BlockArray.cppm
+        gpu/Texture.cppm
+        gpu/DescriptorSet.cppm
+        gpu/StagingPool.cppm
+        gpu/SamplerCache.cppm
+        gpu/BufferHeap.cppm
+        gpu/ImageHeap.cppm
+        gpu/FrameRing.cppm
+        gpu/TlsfAllocator.cppm
+        gpu/TransientAllocator.cppm
+        gpu/MeshData.cppm
+        assets/ShaderLoader.cppm
+        assets/DefaultTextures.cppm
+        render/SceneLimits.cppm
+        render/MeshUploadManager.cppm
+        render/MeshGatherSystem.cppm
+        render/MeshPipeline.cppm
+        assets/SceneImport.cppm
+        assets/MeshCache.cppm
+        render/Renderer.cppm
+        render/techniques/TechniqueManager.cppm
+        render/techniques/BaseTechnique.cppm
+        render/techniques/DefaultMeshTechnique.cppm
+        render/techniques/UnlitTextureTechnique.cppm
+        render/techniques/TechniqueId.cppm
+        render/materials/MaterialManager.cppm
+        render/materials/MaterialId.cppm
+        render/materials/MaterialHandle.cppm
+        render/SceneRenderer.cppm
+        render/DrawMode.cppm
+        render/bindless/BindlessManager.cppm
+        render/bindless/TextureSlot.cppm
+        render/bindless/TextureUploader.cppm
+        render/bindless/TextureResidency.cppm
+        render/bindless/TextureReloader.cppm
+        render/TextureWatcher.cppm
+        render/ResidencyPolicy.cppm
+        render/ShaderManager.cppm
+        render/CompilerEngine.cppm
+        render/GplPolicy.cppm
+        render/GpuStats.cppm
+        render/PipelineFactory.cppm
+        render/PipelineTemplates.cppm
+        render/PipelineCompiler.cppm
+        render/ShaderWatcher.cppm
+        render/ShaderRegistration.cppm
+        GameEngine.cppm
+        EngineContext.cppm
+        bootstrap/EngineBootstrap.cppm
+        render_graph/RenderGraph.cppm
+        render/passes/ExpandPass.cppm
+        render/passes/OccluderSelectPass.cppm
+        render/passes/OccluderPrePass.cppm
+        render/passes/PreCullPass.cppm
+        render/passes/HiZPass.cppm
+        render/passes/OcclusionPass.cppm
+        render/passes/CollectPass.cppm
+        render/passes/DepthPrePass.cppm
+        render/passes/MainPass.cppm
+        render/passes/ImGuiPass.cppm
+        render/passes/TextPass.cppm
+        render/passes/WorldTextPass.cppm
+)
+if(VKENGINE_PHYSICAL_CAMERA)
     target_sources(${ENGINE_TARGET} PUBLIC
         FILE_SET CXX_MODULES
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
-            input/InputSystem.cppm
-            assets/MeshTypes.cppm
-            assets/NormalEncoding.cppm
-            assets/TextureTypes.cppm
-            assets/TextureFormat.cppm
-            assets/TextureUploadScheduler.cppm
-            assets/ResourceCache.cppm
-            assets/TextureResource.cppm
-            assets/FontResource.cppm
-            bootstrap/Startup.cppm
-            ApplicationContext.cppm
-            ecs/Entity.cppm
-            ecs/ComponentContext.cppm
-            ecs/ComponentRegistry.cppm
-            ecs/SystemSchedule.cppm
-            ecs/FrameSchedule.cppm
-            ecs/Prefabs.cppm
-            modules/EngineModules.cppm
-            components/Transform.cppm
-            components/Camera.cppm
-            components/MeshReference.cppm
-            components/Text.cppm
-            components/DynamicMesh.cppm
-            components/OrmOverride.cppm
-            components/MaterialOverride.cppm
-            components/TransformOverride.cppm
-            assets/FileLoaders/Mesh/BinMeshAssembler.cppm
-            assets/FileLoaders/Mesh/GltfMaterialImport.cppm
-            assets/FileLoaders/Mesh/GltfMeshAssembler.cppm
-            assets/FileLoaders/Mesh/MeshLoaderBase.cppm
-            assets/FileLoaders/Mesh/ObjMeshAssembler.cppm
-            assets/FileLoaders/Mesh/MeshMagicLoader.cppm
-            assets/FileLoaders/Mesh/TangentGenerator.cppm
-            assets/FileLoaders/Textures/TextureLoaders.cppm
-            assets/FileLoaders/Fonts/FontLoader.cppm
-            ui/ImGuiSystem.cppm
-            text/FontLibrary.cppm
-            text/Font.cppm
-            text/Shaping.cppm
-            text/Layout.cppm
-            text/Atlas.cppm
-            text/GlyphRaster.cppm
-            text/Blob.cppm
-            text/GlyphAtlasGpu.cppm
-            text/GpuTextBlobBuffer.cppm
-            text/Msdf.cppm
-            text/FontWatcher.cppm
-            text/FontReloader.cppm
-            text/TextSystem.cppm
-            render/Pipeline.cppm
-            render/PipelinePass.cppm
-            render/DescriptorDecl.cppm
-            gpu/GpuResources.cppm
-            gpu/Buffer.cppm
-            gpu/BlockArray.cppm
-            gpu/Texture.cppm
-            gpu/DescriptorSet.cppm
-            gpu/StagingPool.cppm
-            gpu/SamplerCache.cppm
-            gpu/BufferHeap.cppm
-            gpu/ImageHeap.cppm
-            gpu/FrameRing.cppm
-            gpu/TlsfAllocator.cppm
-            gpu/TransientAllocator.cppm
-            gpu/MeshData.cppm
-            assets/ShaderLoader.cppm
-            assets/DefaultTextures.cppm
-            render/SceneLimits.cppm
-            render/MeshUploadManager.cppm
-            render/MeshGatherSystem.cppm
-            render/MeshPipeline.cppm
-            assets/SceneImport.cppm
-            assets/MeshCache.cppm
-            render/Renderer.cppm
-            render/techniques/TechniqueManager.cppm
-            render/techniques/BaseTechnique.cppm
-            render/techniques/DefaultMeshTechnique.cppm
-            render/techniques/UnlitTextureTechnique.cppm
-            render/techniques/TechniqueId.cppm
-            render/materials/MaterialManager.cppm
-            render/materials/MaterialId.cppm
-            render/materials/MaterialHandle.cppm
-            render/SceneRenderer.cppm
-            render/DrawMode.cppm
-            render/bindless/BindlessManager.cppm
-            render/bindless/TextureSlot.cppm
-            render/bindless/TextureUploader.cppm
-            render/bindless/TextureResidency.cppm
-            render/bindless/TextureReloader.cppm
-            render/TextureWatcher.cppm
-            render/ResidencyPolicy.cppm
-            render/ShaderManager.cppm
-            render/CompilerEngine.cppm
-            render/GplPolicy.cppm
-            render/GpuStats.cppm
-            render/PipelineFactory.cppm
-            render/PipelineTemplates.cppm
-            render/PipelineCompiler.cppm
-            render/ShaderWatcher.cppm
-            render/ShaderRegistration.cppm
-            GameEngine.cppm
-            EngineContext.cppm
-            bootstrap/EngineBootstrap.cppm
-            render_graph/RenderGraph.cppm
-            render/passes/ExpandPass.cppm
-            render/passes/OccluderSelectPass.cppm
-            render/passes/OccluderPrePass.cppm
-            render/passes/PreCullPass.cppm
-            render/passes/HiZPass.cppm
-            render/passes/OcclusionPass.cppm
-            render/passes/CollectPass.cppm
-            render/passes/DepthPrePass.cppm
-            render/passes/MainPass.cppm
-            render/passes/ImGuiPass.cppm
-            render/passes/TextPass.cppm
-            render/passes/WorldTextPass.cppm
+            physical_camera/PhysicalCameraTypes.cppm
+            physical_camera/PhysicalCameraSystem.cppm
     )
-    if(VKENGINE_PHYSICAL_CAMERA)
-        target_sources(${ENGINE_TARGET} PUBLIC
-            FILE_SET CXX_MODULES
-            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-            FILES
-                physical_camera/PhysicalCameraTypes.cppm
-                physical_camera/PhysicalCameraSystem.cppm
-        )
-    endif()
-    if(VKENGINE_PHYSICS)
-        target_sources(${ENGINE_TARGET} PUBLIC
-            FILE_SET CXX_MODULES
-            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-            FILES
-                physics/PhysicsTypes.cppm
-                physics/PhysicsEvents.cppm
-                physics/PhysicsComponents.cppm
-                physics/PhysicsWorld.cppm
-                physics/PhysicsBodyBridge.cppm
-                physics/PhysicsCharacter.cppm
-                physics/PhysicsDebugOverlay.cppm
-                physics/PhysicsConstraints.cppm
-                physics/PhysicsVehicle.cppm
-                physics/PhysicsRagdoll.cppm
-        )
-    endif()
-    if(_gen_shader_mods)
-        target_sources(${ENGINE_TARGET} PUBLIC
-            FILE_SET CXX_MODULES
-            BASE_DIRS ${_shader_gen_dir}
-            FILES ${_gen_shader_mods}
-        )
-    endif()
+endif()
+if(VKENGINE_PHYSICS)
+    target_sources(${ENGINE_TARGET} PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+        FILES
+            physics/PhysicsTypes.cppm
+            physics/PhysicsEvents.cppm
+            physics/PhysicsComponents.cppm
+            physics/PhysicsWorld.cppm
+            physics/PhysicsBodyBridge.cppm
+            physics/PhysicsCharacter.cppm
+            physics/PhysicsDebugOverlay.cppm
+            physics/PhysicsConstraints.cppm
+            physics/PhysicsVehicle.cppm
+            physics/PhysicsRagdoll.cppm
+    )
+endif()
+if(_gen_shader_mods)
+    target_sources(${ENGINE_TARGET} PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${_shader_gen_dir}
+        FILES ${_gen_shader_mods}
+    )
 endif()
 
 target_link_libraries(${ENGINE_TARGET} PUBLIC slang_shared_reflection)
@@ -574,13 +555,15 @@ target_link_libraries(${ENGINE_TARGET} PUBLIC slang_shared_reflection)
 # selected, so there is no duplicate-symbol conflict.
 add_library(${ENTRY_TARGET} STATIC)
 target_compile_features(${ENTRY_TARGET} PUBLIC cxx_std_23)
-target_sources(${ENTRY_TARGET} PRIVATE bootstrap/EntryPoint.cpp)
+target_sources(${ENTRY_TARGET} PRIVATE
+    bootstrap/EntryPoint.cpp
+    bootstrap/EntryPointFallback.cpp)
 target_link_libraries(${ENTRY_TARGET} PUBLIC ${ENGINE_TARGET})
 
 target_compile_options(${ENTRY_TARGET} PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
 
 if(TARGET project_sanitizers)

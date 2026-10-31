@@ -12,29 +12,27 @@ target_include_directories(VulkanShared PUBLIC
 )
 
 target_compile_options(VulkanShared PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(VulkanShared PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            CallbackList.cppm
-            DeviceScope.cppm
-            FileIO.cppm
-            Jobs.cppm
-            ScopedTimer.cppm
-            Storage.cppm
-            SystemProfile.cppm
-            Teardown.cppm
-            Timer.cppm
-            UserPaths.cppm
-            render_graph/RenderGraphTypes.cppm
-    )
-endif()
+target_sources(VulkanShared PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        CallbackList.cppm
+        DeviceScope.cppm
+        FileIO.cppm
+        Jobs.cppm
+        ScopedTimer.cppm
+        Storage.cppm
+        SystemProfile.cppm
+        Teardown.cppm
+        Timer.cppm
+        UserPaths.cppm
+        render_graph/RenderGraphTypes.cppm
+)
 
 target_sources(VulkanShared PRIVATE
     Jobs.cpp

@@ -9,29 +9,19 @@ target_link_libraries(custom_pass_core PUBLIC ${ENGINE_TARGET})
 target_include_directories(custom_pass_core PUBLIC ${CMAKE_SOURCE_DIR})
 
 target_compile_options(custom_pass_core PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(custom_pass_core PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(custom_pass_core)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(custom_pass_core PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            Passes.cppm
-    )
-endif()
+target_sources(custom_pass_core PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        Passes.cppm
+)
 
 if(TARGET project_sanitizers)
     target_link_libraries(custom_pass_core PRIVATE project_sanitizers)

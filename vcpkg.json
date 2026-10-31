@@ -44,7 +44,7 @@
         "efsw",
         {
             "name": "shader-slang",
-            "platform": "!windows"
+            "platform": "!mingw"
         },
         "harfbuzz",
         {

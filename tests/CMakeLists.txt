@@ -7,31 +7,21 @@ set(TEST_SUPPORT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/support)
 
 # Shared options and helper shared by all test subdirectories
 set(TEST_COMPILE_OPTS
-  $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror>
-  $<$<CXX_COMPILER_ID:Clang>:-Wall -Werror>
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+  $<$<CXX_COMPILER_ID:GNU>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+  $<$<CXX_COMPILER_ID:Clang>:-Wall $<$<BOOL:${VKENGINE_WERROR}>:-Werror>>
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 $<$<BOOL:${VKENGINE_WERROR}>:/WX>>
 )
-set(TEST_COMPILE_OPTS_DEBUG
-  "$<$<CONFIG:Debug>:-g>"
-  "$<$<CONFIG:Debug>:-O0>"
-  "$<$<CONFIG:RelWithDebInfo>:-g>"
-  "$<$<CONFIG:RelWithDebInfo>:-O2>"
-  "$<$<CONFIG:Release>:-O3>"
-)
-
 # Adds the shared test-support modules to a test target's CXX_MODULES file set.
 # Compiled per target (rather than linked as a library) to avoid BMI/link
 # ordering issues across test executables.
 function(enable_test_support_modules TARGET)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(${TARGET} PRIVATE
-      FILE_SET CXX_MODULES
-      BASE_DIRS ${TEST_SUPPORT_DIR}
-      FILES
-        ${TEST_SUPPORT_DIR}/test_vulkan_fakes.cppm
-        ${TEST_SUPPORT_DIR}/test_gpu.cppm
-    )
-  endif()
+  target_sources(${TARGET} PRIVATE
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${TEST_SUPPORT_DIR}
+    FILES
+      ${TEST_SUPPORT_DIR}/test_vulkan_fakes.cppm
+      ${TEST_SUPPORT_DIR}/test_gpu.cppm
+  )
 endfunction()
 
 function(setup_test_target TARGET)
@@ -39,9 +29,7 @@ function(setup_test_target TARGET)
   target_link_libraries(${TARGET} PRIVATE GTest::gtest GTest::gtest_main)
   target_compile_definitions(${TARGET} PRIVATE LOGIFACE_ENABLE_LOGGING=1)
   target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS})
-  if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(${TARGET} PRIVATE ${TEST_COMPILE_OPTS_DEBUG})
-  endif()
+  vkengine_target_config_flags(${TARGET})
   target_compile_options(${TARGET} PRIVATE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffunction-sections>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fdata-sections>

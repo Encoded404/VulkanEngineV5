@@ -9,8 +9,8 @@ makes `import std;` work on the Windows target.
 ## 1. Prerequisites
 
 - Linux x86_64 build host
-- CMake 3.30–3.31, 4.3 or 4.4 (those are the releases whose `import std;`
-  activation value `CMakeLists.txt` has verified). 4.2 introduced
+- CMake 3.30–3.31, 4.3, 4.4 or 4.5 (4.5 makes `import std;` stable;
+  the older releases use the activation value `CMakeLists.txt` has verified). 4.2 introduced
   `CMAKE_CXX_STDLIB_MODULES_JSON`, which the cross toolchain uses to point CMake
   at the *target* libc++ module metadata. Any other release stops at configure
   with a message naming the variable to set, rather than failing later; if you
@@ -134,3 +134,22 @@ normal noise.
 - `cmake/triplets/x64-mingw-libcxx.cmake` — the vcpkg triplet
 - `cmake/CopyRuntimeDlls.cmake` — runtime DLL deployment
 - `CMakePresets.json` — the `windows` configure preset and `windows-*` build presets
+
+## Native Windows/MSVC
+
+This document covers the Linux → Windows cross build. For a native Windows
+build with MSVC, use the `msvc` preset from a Visual Studio Developer
+PowerShell:
+
+```powershell
+cmake --preset msvc
+cmake --build --preset msvc-debug
+ctest --preset msvc-debug
+```
+
+Requirements: MSVC 19.40+ (VS 2022 17.10+), the **C++ Modules for the Standard
+Library** component, Ninja, and `VCPKG_ROOT`. The preset uses
+`x64-windows` (MSVC ABI, dynamic CRT/libstdc++-equivalent) and Ninja
+Multi-Config; the Visual Studio generator cannot build the imported `std` BMI.
+The official Slang Windows archive is MSVC ABI, so hot reload is available in
+the MSVC preset (unlike llvm-mingw).

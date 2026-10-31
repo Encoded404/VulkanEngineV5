@@ -21,24 +21,14 @@ target_compile_options(infinite_runner_account PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-if(CMAKE_CONFIGURATION_TYPES)
-    target_compile_options(infinite_runner_account PRIVATE
-        "$<$<CONFIG:Debug>:-g>"
-        "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:RelWithDebInfo>:-g>"
-        "$<$<CONFIG:RelWithDebInfo>:-O2>"
-        "$<$<CONFIG:Release>:-O3>"
-    )
-endif()
+vkengine_target_config_flags(infinite_runner_account)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_sources(infinite_runner_account PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES
-            ProfileStore.cppm
-    )
-endif()
+target_sources(infinite_runner_account PUBLIC
+    FILE_SET CXX_MODULES
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+    FILES
+        ProfileStore.cppm
+)
 
 if(TARGET project_sanitizers)
     target_link_libraries(infinite_runner_account PRIVATE project_sanitizers)

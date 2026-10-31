@@ -12,13 +12,31 @@ cmake --build --preset debug
 ctest --preset debug
 ```
 
-- Build presets: `debug`, `release`, `relwithdebinfo`.
-- Test presets: `debug`, `release`, `relwithdebinfo` (device-free; they exclude
-  the `gpu` label), plus `debug-gpu`, `release-gpu`, `relwithdebinfo-gpu` for the
+- Build presets: `debug`, `release`, `relwithdebinfo` (Clang + libc++),
+  `msvc-debug`, `msvc-release`, `msvc-relwithdebinfo` (MSVC + Microsoft STL),
+  and the `windows-*` cross presets.
+- Test presets mirror them (device-free; they exclude the `gpu` label), plus
+  `debug-gpu`, `release-gpu`, `relwithdebinfo-gpu` and `msvc-debug-gpu` for the
   opt-in GPU tests.
 - The `windows` preset sets `BUILD_TESTING=OFF` and `VKENGINE_HOT_RELOAD=OFF`.
-- Compiler is Clang only; C++23 modules (`import std;`) are used throughout, with
-  libc++ (`USE_LIBCPP=ON` in the default preset).
+- C++23 modules (`import std;`) are used throughout. Supported compilers:
+  Clang with libc++ (`USE_LIBCPP=ON`, the `default` preset; static libc++ in
+  Release) and MSVC 19.40+ with the Microsoft STL. The `msvc` preset needs
+  Ninja Multi-Config (the Visual Studio generators cannot build the imported
+  `std` BMI) and the *C++ Modules for the Standard Library* VS component.
+  Clang against libstdc++ (`-DUSE_LIBCPP=OFF`) does not build: Clang 21 rejects
+  libstdc++ 15's `<unordered_map>` ("cannot befriend target of using
+  declaration").
+- GCC is not supported: 15.3 ICEs in its module implementation on this
+  project's module interfaces, and 16.2.1 produces corrupt BMIs (`bad file
+  data` while reading a `.gcm`) and rejects the standard-header mixing in the
+  glTF module. Do not add a `gcc` preset back until that is fixed; the
+  Steam-runtime ABI (`GLIBCXX_3.4.33`) also rules out GCC 15/16 binaries.
+- `VKENGINE_STEAM_RUNTIME` (`off|scout|sniper|steamrt4`) turns on a post-link
+  check that fails shipped executables requiring a newer `GLIBCXX_*`,
+  `CXXABI_*` or `GLIBC_*` symbol version than the target runtime, or linking
+  libstdc++ statically. libc++ builds are skipped (they do not load the
+  runtime's libstdc++), so today only the `GLIBC_*` ceiling is exercised.
 - Slang/hot-reload is gated by two knobs: `VKENGINE_HOT_RELOAD` (Debug always,
   when ON) and `VKENGINE_HOT_RELOAD_RELWITHDEBINFO` (default ON; set OFF to
   ship a slang-free RelWithDebInfo). Slang-free configurations

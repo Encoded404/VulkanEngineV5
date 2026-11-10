@@ -55,6 +55,18 @@ namespace {
         return result;
     }
 
+    // Every Mesh -> LoadedMeshData conversion carries the skeletal asset data.
+    // One helper keeps the three entry points from drifting: a dropped field here
+    // is invisible until a mesh renders in bind pose.
+    void CopySkeletalData(const VulkanEngine::Mesh& mesh, LoadedMeshData& data) {
+        data.bone_weights = mesh.bone_weights;
+        data.bone_weights_extra = mesh.bone_weights_extra;
+        data.influence_sets = mesh.influence_sets;
+        data.skeletons = mesh.skeletons;
+        data.skins = mesh.skins;
+        data.animations = mesh.animations;
+    }
+
 }
 
 LoadedMeshData CreateFallbackQuad() {
@@ -105,6 +117,7 @@ LoadedMeshData LoadMeshFromFile(const std::filesystem::path& models_dir,
                 data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;
                 data.submeshes = mesh->subMeshes;
+                CopySkeletalData(*mesh, data);
                 return data;
             }
         } catch (const std::exception& e) {
@@ -136,6 +149,7 @@ LoadedMeshData LoadMeshFromFilePath(const std::filesystem::path& file_path,
             data.tangent_handedness = mesh->tangent_handedness;
             data.indices = mesh->indices;
             data.submeshes = mesh->subMeshes;
+            CopySkeletalData(*mesh, data);
             return data;
         }
     } catch (const std::exception& e) {
@@ -180,6 +194,7 @@ bool LoadAllMeshes(const std::filesystem::path& models_dir,
                 data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;
                 data.submeshes = mesh->subMeshes;
+                CopySkeletalData(*mesh, data);
                 out_meshes.push_back(std::move(data));
                 out_names.push_back(path.stem().string());
             }
@@ -395,6 +410,12 @@ VulkanEngine::GpuResources::MeshData ToMeshData(
     result.vertices = ConvertToVertices(loaded);
     result.indices = loaded.indices;
     result.sub_meshes = loaded.submeshes;
+    result.bone_weights = loaded.bone_weights;
+    result.bone_weights_extra = loaded.bone_weights_extra;
+    result.influence_sets = loaded.influence_sets;
+    result.skeletons = loaded.skeletons;
+    result.skins = loaded.skins;
+    result.animations = loaded.animations;
     // UV1 arrives in the engine's orientation, exactly like the UV0 that
     // ConvertToVertices copies out of `uvs`, so both are copied across
     // verbatim. Flipping here as well would double-flip this set alone.

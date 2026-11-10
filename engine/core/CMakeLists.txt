@@ -274,8 +274,10 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/MeshGatherSystem.cpp
     render/MeshPipeline.cpp
     assets/SceneImport.cpp
+    assets/SkeletalAnimation.cpp
     assets/MeshCache.cpp
     components/DynamicMesh.cpp
+    components/SkeletonPose.cpp
     render/Renderer.cpp
     render/techniques/TechniqueManager.cpp
     render/materials/MaterialManager.cpp
@@ -390,6 +392,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
     FILES
         input/InputSystem.cppm
         assets/MeshTypes.cppm
+        assets/SkeletalAnimation.cppm
         assets/NormalEncoding.cppm
         assets/TextureTypes.cppm
         assets/TextureFormat.cppm
@@ -411,6 +414,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         components/MeshReference.cppm
         components/Text.cppm
         components/DynamicMesh.cppm
+        components/SkeletonPose.cppm
         components/OrmOverride.cppm
         components/MaterialOverride.cppm
         components/TransformOverride.cppm

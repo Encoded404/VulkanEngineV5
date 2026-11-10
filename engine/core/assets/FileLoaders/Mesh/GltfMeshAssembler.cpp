@@ -11,6 +11,7 @@ import logiface;
 import fastgltf;
 
 import VulkanEngine.Mesh.MeshTypes;
+import VulkanEngine.Mesh.SkeletalAnimation;
 import VulkanEngine.Physics.Types;
 import VulkanEngine.FileLoaders.Mesh.MeshLoaderBase;
 import VulkanEngine.FileLoaders.Mesh.GltfMaterialImport;
@@ -76,6 +77,358 @@ namespace {
     m = fastgltf::math::rotate(m, trs.rotation);
     m = fastgltf::math::scale(m, trs.scale);
     return m;
+}
+
+// Reads one accessor into a plain vector (defined below; the skeletal builders
+// use it before that definition appears).
+template <typename T>
+[[nodiscard]] std::vector<T> ReadAccessor(const fastgltf::Asset& asset, std::size_t accessor_index);
+
+// ── skeletal import ─────────────────────────────────────────────────────────
+
+constexpr std::size_t kNoNode = std::numeric_limits<std::size_t>::max();
+
+[[nodiscard]] constexpr std::array<float, 16> IdentityMat() noexcept {
+    return {1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f};
+}
+
+// fastgltf stores matrices column-major, which is exactly the convention the
+// engine's Skeleton/Skin/Pose arrays use: copy the 16 floats verbatim.
+[[nodiscard]] std::array<float, 16> ToColumnMajor(const fastgltf::math::fmat4x4& m) {
+    std::array<float, 16> out{};
+    std::copy_n(m.data(), 16, out.begin());
+    return out;
+}
+
+[[nodiscard]] std::vector<std::size_t> BuildParentMap(const fastgltf::Asset& asset) {
+    std::vector<std::size_t> parents(asset.nodes.size(), kNoNode);
+    for (std::size_t i = 0; i < asset.nodes.size(); ++i) {
+        for (const std::size_t child : asset.nodes[i].children) {
+            if (child < parents.size() && parents[child] == kNoNode) parents[child] = i;
+        }
+    }
+    return parents;
+}
+
+// Memoized world transforms from the scene root. A skin's inverse-bind matrices
+// are expressed in the space below the armature node, so the accumulated
+// transform from the root down to a root joint's *parent* is what starts a
+// SkeletonRoot. Using a shallower ancestor (for example only `skin.skeleton`)
+// would drop intermediate node transforms between it and the joint.
+class NodeWorldCache
+{
+public:
+    NodeWorldCache(const fastgltf::Asset& asset, std::vector<std::size_t> parents)
+        : asset_(asset), parents_(std::move(parents)), world_(asset.nodes.size()) {}
+
+    [[nodiscard]] fastgltf::math::fmat4x4 World(const std::size_t node) {
+        if (node >= world_.size()) return fastgltf::math::fmat4x4{};
+        if (world_[node].has_value()) return *world_[node];
+
+        std::vector<std::size_t> chain;
+        std::size_t current = node;
+        while (current != kNoNode && current < world_.size() && !world_[current].has_value()) {
+            chain.push_back(current);
+            current = parents_[current];
+        }
+        fastgltf::math::fmat4x4 accumulated =
+            (current != kNoNode && current < world_.size()) ? *world_[current]
+                                                            : fastgltf::math::fmat4x4{};
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            accumulated = accumulated * LocalMatrix(asset_.nodes[*it]);
+            world_[*it] = accumulated;
+        }
+        return world_[node].value_or(fastgltf::math::fmat4x4{});
+    }
+
+private:
+    const fastgltf::Asset& asset_;
+    std::vector<std::size_t> parents_;
+    std::vector<std::optional<fastgltf::math::fmat4x4>> world_;
+};
+
+// Which skeleton/joint(s) a glTF node drives. glTF animation channels target
+// scene nodes, not joint indices, so this map is what turns a channel into
+// SampleClip-safe (skeleton, joint) pairs. A node can belong to several
+// skeletons when their joint lists overlap without being identical (for example
+// [spine, neck, head] and [spine, neck]); each of those skeletons needs the
+// channel, or the entity posed by the later skeleton would stay in bind pose.
+struct SkinImport
+{
+    std::unordered_map<std::size_t,
+                       std::vector<std::pair<std::uint32_t, std::uint32_t>>> node_to_joint;
+};
+
+// Builds Mesh::skeletons and Mesh::skins from asset.skins. Skeletons are deduped
+// by their ordered joint-node list: two skins over the same joints share one
+// Skeleton, so a single SkeletonPose (one skeleton_index) covers both. Two
+// genuinely different joint sets stay two skeletons.
+[[nodiscard]] SkinImport BuildSkeletonsAndSkins(const fastgltf::Asset& asset,
+                                                const std::vector<std::size_t>& parents,
+                                                NodeWorldCache& world,
+                                                VulkanEngine::Mesh& mesh) {
+    SkinImport imported;
+    mesh.skins.resize(asset.skins.size());
+    std::map<std::vector<std::size_t>, std::uint32_t> by_joint_nodes;
+
+    for (std::size_t skin_index = 0; skin_index < asset.skins.size(); ++skin_index) {
+        const fastgltf::Skin& source = asset.skins[skin_index];
+        // The skin's joint list is positional: JOINTS_n values index it and the
+        // inverse-bind matrices align with it. Dropping an invalid entry would
+        // shift every later joint and mis-bind the whole skin, so a skin with any
+        // invalid joint node is rejected whole instead.
+        std::vector<std::size_t> joint_nodes;
+        joint_nodes.reserve(source.joints.size());
+        std::optional<std::size_t> invalid_joint;
+        for (const std::size_t joint_node : source.joints) {
+            if (joint_node >= asset.nodes.size()) {
+                invalid_joint = joint_node;
+                break;
+            }
+            joint_nodes.push_back(joint_node);
+        }
+        if (invalid_joint.has_value()) {
+            LOGIFACE_LOG(warn, "GltfMeshAssembler: skin " + std::to_string(skin_index) +
+                                   " references joint node " + std::to_string(*invalid_joint) +
+                                   ", which does not exist; the skin is not imported");
+            continue;
+        }
+        if (joint_nodes.empty()) {
+            LOGIFACE_LOG(warn, "GltfMeshAssembler: skin " + std::to_string(skin_index) +
+                                   " has no valid joints; it is imported empty");
+            continue;
+        }
+        if (joint_nodes.size() > std::numeric_limits<std::uint16_t>::max()) {
+            LOGIFACE_LOG(warn, "GltfMeshAssembler: skin " + std::to_string(skin_index) +
+                                   " has " + std::to_string(joint_nodes.size()) +
+                                   " joints; at most 65535 are addressable, so the skin is not imported");
+            continue;
+        }
+
+        std::uint32_t skeleton_index = kNoSkeleton;
+        if (const auto found = by_joint_nodes.find(joint_nodes); found != by_joint_nodes.end()) {
+            skeleton_index = found->second;
+        } else {
+            skeleton_index = static_cast<std::uint32_t>(mesh.skeletons.size());
+            VulkanEngine::Skeleton skeleton;
+            skeleton.joints.resize(joint_nodes.size());
+            skeleton.names.reserve(joint_nodes.size());
+            std::unordered_map<std::size_t, std::uint32_t> joint_of_node;
+            for (std::uint32_t j = 0; j < joint_nodes.size(); ++j) {
+                joint_of_node.emplace(joint_nodes[j], j);
+                skeleton.joints[j].local_bind = LocalTrs(asset.nodes[joint_nodes[j]]);
+                const auto& name = asset.nodes[joint_nodes[j]].name;
+                skeleton.names.emplace_back(name.data(), name.size());
+            }
+            for (std::uint32_t j = 0; j < joint_nodes.size(); ++j) {
+                const std::size_t parent_node = parents[joint_nodes[j]];
+                const auto parent_joint = (parent_node == kNoNode)
+                    ? joint_of_node.end()
+                    : joint_of_node.find(parent_node);
+                if (parent_joint != joint_of_node.end()) {
+                    skeleton.joints[j].parent = parent_joint->second;
+                    continue;
+                }
+                VulkanEngine::SkeletonRoot root{};
+                root.joint = j;
+                root.transform = (parent_node == kNoNode)
+                    ? IdentityMat()
+                    : ToColumnMajor(world.World(parent_node));
+                skeleton.roots.push_back(root);
+            }
+            mesh.skeletons.push_back(std::move(skeleton));
+            by_joint_nodes.emplace(joint_nodes, skeleton_index);
+            for (std::uint32_t j = 0; j < joint_nodes.size(); ++j) {
+                imported.node_to_joint[joint_nodes[j]].emplace_back(skeleton_index, j);
+            }
+        }
+
+        VulkanEngine::Skin& skin = mesh.skins[skin_index];
+        skin.skeleton = skeleton_index;
+        // The skeleton's joint array was built from this exact ordered node list,
+        // so the skin-local -> skeleton-joint map is the identity.
+        skin.joints.resize(joint_nodes.size());
+        for (std::uint32_t k = 0; k < joint_nodes.size(); ++k) {
+            skin.joints[k] = static_cast<std::uint16_t>(k);
+        }
+        skin.inverse_bind.assign(joint_nodes.size(), IdentityMat());
+        if (source.inverseBindMatrices.has_value() &&
+            *source.inverseBindMatrices < asset.accessors.size() &&
+            asset.accessors[*source.inverseBindMatrices].type == fastgltf::AccessorType::Mat4) {
+            const std::vector<fastgltf::math::fmat4x4> inverse_bind =
+                ReadAccessor<fastgltf::math::fmat4x4>(asset, *source.inverseBindMatrices);
+            const std::size_t count = std::min(inverse_bind.size(), skin.inverse_bind.size());
+            for (std::size_t k = 0; k < count; ++k) {
+                skin.inverse_bind[k] = ToColumnMajor(inverse_bind[k]);
+            }
+            if (inverse_bind.size() < skin.inverse_bind.size()) {
+                LOGIFACE_LOG(warn, "GltfMeshAssembler: skin " + std::to_string(skin_index) +
+                                       " has fewer inverse-bind matrices than joints; the missing "
+                                       "entries fall back to identity");
+            }
+        } else {
+            LOGIFACE_LOG(warn, "GltfMeshAssembler: skin " + std::to_string(skin_index) +
+                                   " has no usable (MAT4) inverseBindMatrices accessor; identity "
+                                   "matrices are used");
+        }
+    }
+    return imported;
+}
+
+// Builds Mesh::animations from asset.animations. A glTF channel targets a scene
+// node; it is resolved to (skeleton, joint) through the skin import map and
+// dropped when its node is not a joint of any imported skeleton. An animation
+// that targets several skeletons is split into one clip per skeleton, named
+// `<name>#<skeleton-index>`, so SampleClip indexes `out_local[joint]` safely.
+void BuildAnimations(const fastgltf::Asset& asset,
+                     const SkinImport& imported,
+                     VulkanEngine::Mesh& mesh) {
+    for (const fastgltf::Animation& source : asset.animations) {
+        std::vector<VulkanEngine::AnimationClip> groups(mesh.skeletons.size());
+        std::vector<bool> used(mesh.skeletons.size(), false);
+        bool warned_non_joint = false;
+        bool warned_cubic = false;
+        bool warned_weights = false;
+
+        for (const fastgltf::AnimationChannel& channel : source.channels) {
+            if (channel.path == fastgltf::AnimationPath::Weights) {
+                if (!warned_weights) {
+                    warned_weights = true;
+                    LOGIFACE_LOG(warn, "GltfMeshAssembler: animation '" +
+                                           std::string(source.name.c_str()) +
+                                           "' animates morph-target weights, which are not "
+                                           "imported; those channels are dropped");
+                }
+                continue;
+            }
+            if (!channel.nodeIndex.has_value()) continue;
+            const auto found = imported.node_to_joint.find(*channel.nodeIndex);
+            if (found == imported.node_to_joint.end()) {
+                if (!warned_non_joint) {
+                    warned_non_joint = true;
+                    LOGIFACE_LOG(warn, "GltfMeshAssembler: animation '" +
+                                           std::string(source.name.c_str()) + "' targets node " +
+                                           std::to_string(*channel.nodeIndex) +
+                                           ", which is not a joint of any imported skin; the "
+                                           "channel is dropped");
+                }
+                continue;
+            }
+            if (channel.samplerIndex >= source.samplers.size()) continue;
+            const fastgltf::AnimationSampler& sampler = source.samplers[channel.samplerIndex];
+            if (sampler.inputAccessor >= asset.accessors.size() ||
+                sampler.outputAccessor >= asset.accessors.size()) {
+                continue;
+            }
+            if (asset.accessors[sampler.inputAccessor].type != fastgltf::AccessorType::Scalar) {
+                continue;
+            }
+
+            const bool cubic = sampler.interpolation == fastgltf::AnimationInterpolation::CubicSpline;
+            if (cubic && !warned_cubic) {
+                warned_cubic = true;
+                LOGIFACE_LOG(warn, "GltfMeshAssembler: animation '" +
+                                       std::string(source.name.c_str()) +
+                                       "' uses cubic-spline interpolation; its keys keep the "
+                                       "spline value (the middle output of each triple) and are "
+                                       "stored as linear");
+            }
+
+            VulkanEngine::AnimationChannel out;
+            out.interpolation = (sampler.interpolation == fastgltf::AnimationInterpolation::Step)
+                ? VulkanEngine::AnimationInterpolation::Step
+                : VulkanEngine::AnimationInterpolation::Linear;
+            switch (channel.path) {
+                case fastgltf::AnimationPath::Translation:
+                    out.path = VulkanEngine::AnimationPath::Translation;
+                    break;
+                case fastgltf::AnimationPath::Rotation:
+                    out.path = VulkanEngine::AnimationPath::Rotation;
+                    break;
+                case fastgltf::AnimationPath::Scale:
+                    out.path = VulkanEngine::AnimationPath::Scale;
+                    break;
+                default:
+                    continue;
+            }
+            // The accessor element type must match the path: rotation output is
+            // VEC4, translation/scale output is VEC3. ReadAccessor asserts this in
+            // a debug build and over-reads without asserts, so reject mismatches.
+            const fastgltf::AccessorType expected_type =
+                (out.path == VulkanEngine::AnimationPath::Rotation)
+                    ? fastgltf::AccessorType::Vec4
+                    : fastgltf::AccessorType::Vec3;
+            if (asset.accessors[sampler.outputAccessor].type != expected_type) {
+                continue;
+            }
+
+            const std::vector<float> times = ReadAccessor<float>(asset, sampler.inputAccessor);
+            if (times.empty()) continue;
+
+            if (out.path == VulkanEngine::AnimationPath::Rotation) {
+                const std::vector<fastgltf::math::fvec4> values =
+                    ReadAccessor<fastgltf::math::fvec4>(asset, sampler.outputAccessor);
+                out.keys.reserve(times.size());
+                for (std::size_t k = 0; k < times.size(); ++k) {
+                    const std::size_t value_index = cubic ? 3U * k + 1U : k;
+                    if (value_index >= values.size()) break;
+                    VulkanEngine::AnimationKey key{};
+                    key.time = std::max(0.0f, times[k]);
+                    key.value = {values[value_index].x(), values[value_index].y(),
+                                 values[value_index].z(), values[value_index].w()};
+                    out.keys.push_back(key);
+                }
+            } else {
+                const std::vector<fastgltf::math::fvec3> values =
+                    ReadAccessor<fastgltf::math::fvec3>(asset, sampler.outputAccessor);
+                out.keys.reserve(times.size());
+                for (std::size_t k = 0; k < times.size(); ++k) {
+                    const std::size_t value_index = cubic ? 3U * k + 1U : k;
+                    if (value_index >= values.size()) break;
+                    VulkanEngine::AnimationKey key{};
+                    key.time = std::max(0.0f, times[k]);
+                    key.value = {values[value_index].x(), values[value_index].y(),
+                                 values[value_index].z(), 0.0f};
+                    out.keys.push_back(key);
+                }
+            }
+            if (out.keys.empty()) continue;
+            std::ranges::sort(out.keys, [](const VulkanEngine::AnimationKey& a,
+                                           const VulkanEngine::AnimationKey& b) {
+                return a.time < b.time;
+            });
+            // Emit one channel per skeleton that owns the target node. For the
+            // common single-skeleton case this is exactly one copy.
+            for (const auto& [skeleton_index, joint] : found->second) {
+                VulkanEngine::AnimationChannel channel_copy = out; // shared key stream
+                channel_copy.joint = joint;
+                groups[skeleton_index].channels.push_back(std::move(channel_copy));
+                used[skeleton_index] = true;
+            }
+        }
+
+        std::size_t used_count = 0;
+        for (const bool entry : used) used_count += entry ? 1U : 0U;
+        const std::string base_name = source.name.empty() ? std::string("animation")
+                                                          : std::string(source.name.c_str());
+        for (std::size_t skeleton_index = 0; skeleton_index < groups.size(); ++skeleton_index) {
+            if (!used[skeleton_index]) continue;
+            VulkanEngine::AnimationClip& clip = groups[skeleton_index];
+            clip.skeleton = static_cast<std::uint32_t>(skeleton_index);
+            clip.name = (used_count > 1)
+                ? base_name + "#" + std::to_string(skeleton_index)
+                : base_name;
+            for (const VulkanEngine::AnimationChannel& channel : clip.channels) {
+                if (!channel.keys.empty()) {
+                    clip.duration = std::max(clip.duration, channel.keys.back().time);
+                }
+            }
+            mesh.animations.push_back(std::move(clip));
+        }
+    }
 }
 
 // Shear test for an accumulated world matrix. The engine's TRS placement (and
@@ -345,36 +698,61 @@ struct LocalBounds {
 
 // The dedup key: every attribute that is actually consumed. Two vertices merge
 // only when they agree on all of them, which is what keeps UV or tangent seams
-// split instead of smearing one corner's values across the seam.
+// split instead of smearing one corner's values across the seam. Skinned
+// vertices must also agree on their influences: two corners at the same
+// position but bound to different joints are different vertices.
 struct VertexKey {
     std::array<float, 3> position{};
     std::array<float, 3> normal{};
     std::array<float, 2> uv0{};
     std::array<float, 2> uv1{};
     std::array<float, 4> tangent{};
+    std::array<std::uint32_t, 8> joints{};  // 4 + 4, zero when unskinned
+    std::array<std::uint8_t, 8> weights{};  // quantized, zero when unskinned
     bool has_tangent = false;
 
     bool operator==(const VertexKey& o) const {
         return position == o.position && normal == o.normal && uv0 == o.uv0 &&
-               uv1 == o.uv1 && tangent == o.tangent && has_tangent == o.has_tangent;
+               uv1 == o.uv1 && tangent == o.tangent && joints == o.joints &&
+               weights == o.weights && has_tangent == o.has_tangent;
     }
 };
 
 struct VertexKeyHash {
     std::size_t operator()(const VertexKey& key) const {
         std::size_t h = 1469598103934665603ull;
-        const auto mix = [&h](const float value) {
-            std::uint32_t bits = 0;
-            std::memcpy(&bits, &value, sizeof(bits));
-            h ^= bits;
+        const auto mix = [&h](const std::uint32_t value) {
+            h ^= value;
             h *= 1099511628211ull;
         };
-        for (const float v : key.position) mix(v);
-        for (const float v : key.normal) mix(v);
-        for (const float v : key.uv0) mix(v);
-        for (const float v : key.uv1) mix(v);
-        for (const float v : key.tangent) mix(v);
-        mix(key.has_tangent ? 1.0f : 0.0f);
+        for (const float v : key.position) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            mix(bits);
+        }
+        for (const float v : key.normal) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            mix(bits);
+        }
+        for (const float v : key.uv0) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            mix(bits);
+        }
+        for (const float v : key.uv1) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            mix(bits);
+        }
+        for (const float v : key.tangent) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            mix(bits);
+        }
+        for (const std::uint32_t v : key.joints) mix(v);
+        for (const std::uint8_t v : key.weights) mix(v);
+        mix(key.has_tangent ? 1U : 0U);
         return h;
     }
 };
@@ -384,6 +762,8 @@ struct VertexKeyHash {
                                 const MeshVertexVec2& uv0,
                                 const MeshVertexVec2& uv1,
                                 const float tangent[4],
+                                const std::array<std::uint32_t, 8>& joints,
+                                const std::array<std::uint8_t, 8>& weights,
                                 const bool has_tangent) {
     VertexKey key{};
     key.position = {position.x, position.y, position.z};
@@ -391,6 +771,8 @@ struct VertexKeyHash {
     key.uv0 = {uv0.u, uv0.v};
     key.uv1 = {uv1.u, uv1.v};
     key.tangent = {tangent[0], tangent[1], tangent[2], tangent[3]};
+    key.joints = joints;
+    key.weights = weights;
     key.has_tangent = has_tangent;
     return key;
 }
@@ -419,20 +801,40 @@ struct ConversionState {
     bool warned_unsupported_mode = false;
     bool warned_extra_uv_set = false;
     bool warned_material = false;
-    bool warned_skinning = false;
+    bool warned_too_many_influences = false;
+    bool warned_joint_range = false;
 };
+
+// Makes the per-vertex influence streams parallel. Once any primitive of the
+// mesh is skinned, every vertex carries a BoneWeight (zeros for unskinned
+// primitives), matching the existing uv_extra rule. Existing vertices are
+// backfilled when the first skinned primitive or the first JOINTS_1 set appears.
+void EnsureSkinStreams(ConversionState& state, const bool want_extra) {
+    auto& mesh = state.mesh;
+    if (mesh.influence_sets == 0) {
+        mesh.influence_sets = 1;
+        mesh.bone_weights.resize(mesh.vertices.size());
+    }
+    if (want_extra && mesh.influence_sets < 2) {
+        mesh.influence_sets = 2;
+        mesh.bone_weights.resize(mesh.vertices.size());
+        mesh.bone_weights_extra.resize(mesh.vertices.size());
+    }
+}
 
 // Appends one vertex and returns its mesh-local index. Every parallel array is
 // kept parallel: a set that appears in any primitive is populated for all
 // vertices (zeros where the primitive does not author it), because downstream
-// consumers index uvs/tangents by vertex.
+// consumers index uvs/tangents/weights by vertex.
 [[nodiscard]] std::uint32_t EmitVertex(ConversionState& state,
                                        const MeshVertexVec3& position,
                                        const MeshVertexVec3& normal,
                                        const MeshVertexVec2& uv0,
                                        const MeshVertexVec2& uv1,
                                        const MeshVertexVec3& tangent,
-                                       const float handedness) {
+                                       const float handedness,
+                                       const BoneWeight& base_weights,
+                                       const BoneWeight& extra_weights) {
     auto& mesh = state.mesh;
     const auto index = static_cast<std::uint32_t>(mesh.vertices.size());
     mesh.vertices.push_back(position);
@@ -443,6 +845,12 @@ struct ConversionState {
     }
     mesh.tangents.push_back(tangent);
     mesh.tangent_handedness.push_back(handedness);
+    if (mesh.influence_sets > 0) {
+        mesh.bone_weights.push_back(base_weights);
+    }
+    if (mesh.influence_sets >= 2) {
+        mesh.bone_weights_extra.push_back(extra_weights);
+    }
     return index;
 }
 
@@ -505,8 +913,11 @@ struct ConversionState {
 // state.geometry, or nothing when the primitive has nothing to draw. The
 // placement transform is deliberately not applied here: the same geometry is
 // reused by every node that references the mesh, so it is stored unplaced.
+// `gltf_mesh`/`primitive_index` only name the source in diagnostics.
 [[nodiscard]] std::optional<std::size_t> ConvertPrimitive(ConversionState& state,
-                                                          const fastgltf::Primitive& primitive) {
+                                                          const fastgltf::Primitive& primitive,
+                                                          const std::size_t gltf_mesh,
+                                                          const std::size_t primitive_index) {
     auto& mesh = state.mesh;
     const auto& asset = state.asset;
 
@@ -543,6 +954,97 @@ struct ConversionState {
     const std::vector<fastgltf::math::fvec4> tangents = tangent_it != primitive.attributes.end()
         ? ReadAccessor<fastgltf::math::fvec4>(asset, tangent_it->accessorIndex)
         : std::vector<fastgltf::math::fvec4>{};
+
+    // JOINTS_n/WEIGHTS_n are read as 32-bit/float views. fastgltf converts the
+    // accessor's own component type (u8/u16 joints, normalized u8/u16 or f32
+    // weights), so no per-type branch is needed. The stored joint index stays
+    // skin-local: Skin::joints maps skin joint k to the skeleton joint whose
+    // palette entry the shader indexes.
+    const auto read_influences = [&asset, &primitive](const char* joints_name,
+                                                      const char* weights_name)
+        -> std::pair<std::vector<fastgltf::math::u32vec4>, std::vector<fastgltf::math::fvec4>> {
+        const auto joints_it = primitive.findAttribute(joints_name);
+        const auto weights_it = primitive.findAttribute(weights_name);
+        if (joints_it == primitive.attributes.end() || weights_it == primitive.attributes.end()) {
+            return {};
+        }
+        if (joints_it->accessorIndex >= asset.accessors.size() ||
+            weights_it->accessorIndex >= asset.accessors.size()) {
+            return {};
+        }
+        if (asset.accessors[joints_it->accessorIndex].type != fastgltf::AccessorType::Vec4 ||
+            asset.accessors[weights_it->accessorIndex].type != fastgltf::AccessorType::Vec4) {
+            return {};
+        }
+        return {ReadAccessor<fastgltf::math::u32vec4>(asset, joints_it->accessorIndex),
+                ReadAccessor<fastgltf::math::fvec4>(asset, weights_it->accessorIndex)};
+    };
+    auto [joints0, weights0] = read_influences("JOINTS_0", "WEIGHTS_0");
+    auto [joints1, weights1] = read_influences("JOINTS_1", "WEIGHTS_1");
+    const bool has_skin0 = weights0.size() >= positions.size() && joints0.size() >= positions.size();
+    const bool has_skin1 = has_skin0 &&
+        weights1.size() >= positions.size() && joints1.size() >= positions.size();
+    if (!has_skin0) {
+        joints0.clear();
+        weights0.clear();
+    }
+    if (!has_skin1) {
+        joints1.clear();
+        weights1.clear();
+    }
+    if (!state.warned_too_many_influences &&
+        (primitive.findAttribute("JOINTS_2") != primitive.attributes.end() ||
+         primitive.findAttribute("WEIGHTS_2") != primitive.attributes.end())) {
+        state.warned_too_many_influences = true;
+        LOGIFACE_LOG(warn, "GltfMeshAssembler: mesh " + std::to_string(gltf_mesh) + " primitive " +
+                               std::to_string(primitive_index) +
+                               " declares JOINTS_2/WEIGHTS_2; the engine supports at most 8 "
+                               "influences, so the extra set is ignored");
+    }
+    if (has_skin0) EnsureSkinStreams(state, has_skin1);
+
+    // Converts one corner's glTF influences into the two engine streams. Weights
+    // are normalized and quantized across all eight influences, so the two sets
+    // together sum to 1; the stored joint index stays skin-local.
+    const auto build_weights = [&](const std::uint32_t index) {
+        BoneWeight base{};
+        BoneWeight extra{};
+        if (!has_skin0) return std::pair{base, extra};
+        std::array<float, 8> weights{};
+        std::array<std::uint32_t, 8> joints{};
+        for (std::size_t k = 0; k < 4; ++k) {
+            weights[k] = weights0[index][k];
+            joints[k] = joints0[index][k];
+            if (has_skin1) {
+                weights[4 + k] = weights1[index][k];
+                joints[4 + k] = joints1[index][k];
+            }
+        }
+        if (!NormalizeAndQuantizeWeights(weights)) return std::pair{base, extra};
+        const auto quantize = [](const float weight) {
+            return static_cast<std::uint8_t>(
+                std::lround(std::clamp(weight, 0.0f, 1.0f) * 255.0f));
+        };
+        const auto to_joint = [&state](const std::uint32_t joint) {
+            if (joint > std::numeric_limits<std::uint16_t>::max()) {
+                if (!state.warned_joint_range) {
+                    state.warned_joint_range = true;
+                    LOGIFACE_LOG(warn, "GltfMeshAssembler: a JOINTS attribute stores an index above "
+                                       "65535; the influence record is 16-bit, so the index is "
+                                       "clamped to 0 to keep the palette read in range");
+                }
+                return std::uint16_t{0};
+            }
+            return static_cast<std::uint16_t>(joint);
+        };
+        for (std::size_t k = 0; k < 4; ++k) {
+            base.weights[k] = quantize(weights[k]);
+            extra.weights[k] = quantize(weights[4 + k]);
+            base.bone_indices[k] = to_joint(joints[k]);
+            extra.bone_indices[k] = to_joint(joints[4 + k]);
+        }
+        return std::pair{base, extra};
+    };
 
     // Sets 2 and 3 have no home while MAX_UV_SETS is 2. The shader resolves a
     // material's absent set to UV0, so dropping them degrades instead of breaks.
@@ -613,11 +1115,21 @@ struct ConversionState {
                 handedness = tangents[index].w();
             }
             const float tangent4[4] = {tangent.x, tangent.y, tangent.z, handedness};
+            const auto [base_weights, extra_weights] = build_weights(index);
+            std::array<std::uint32_t, 8> key_joints{};
+            std::array<std::uint8_t, 8> key_weights{};
+            for (std::size_t k = 0; k < 4; ++k) {
+                key_joints[k] = base_weights.bone_indices[k];
+                key_weights[k] = base_weights.weights[k];
+                key_joints[4 + k] = extra_weights.bone_indices[k];
+                key_weights[4 + k] = extra_weights.weights[k];
+            }
 
             const auto [it, inserted] = dedup.try_emplace(
-                MakeKey(position, normal, tex0, tex1, tangent4, has_tangents), 0u);
+                MakeKey(position, normal, tex0, tex1, tangent4, key_joints, key_weights, has_tangents), 0u);
             if (inserted) {
-                it->second = EmitVertex(state, position, normal, tex0, tex1, tangent, handedness);
+                it->second = EmitVertex(state, position, normal, tex0, tex1, tangent, handedness,
+                                        base_weights, extra_weights);
             }
             mesh.indices.push_back(it->second);
         }
@@ -647,8 +1159,10 @@ struct ConversionState {
                     tangent = MeshVertexVec3{tangents[corner].x(), tangents[corner].y(), tangents[corner].z()};
                     handedness = tangents[corner].w();
                 }
+                const auto [base_weights, extra_weights] = build_weights(corner);
                 mesh.indices.push_back(
-                    EmitVertex(state, ToVec3(positions[corner]), normal, tex0, tex1, tangent, handedness));
+                    EmitVertex(state, ToVec3(positions[corner]), normal, tex0, tex1, tangent, handedness,
+                               base_weights, extra_weights));
             }
         }
     }
@@ -736,6 +1250,13 @@ void ConvertAsset(const fastgltf::Asset& asset,
                   VulkanEngine::Mesh& mesh) {
     ConversionState state{asset, bindings, mesh};
 
+    // Skeletons and skins are independent of the node traversal: they are built
+    // from asset.skins and the node hierarchy first, so a skinned placement can
+    // resolve its skin_index and the animation pass can map channel targets.
+    const std::vector<std::size_t> node_parents = BuildParentMap(asset);
+    NodeWorldCache node_world(asset, node_parents);
+    const SkinImport skin_import = BuildSkeletonsAndSkins(asset, node_parents, node_world, mesh);
+
     // Which nodes are reachable as roots: the default scene when it names one,
     // else scene 0, else every node that is nobody's child. An asset with no
     // scenes (legal) still imports.
@@ -790,9 +1311,28 @@ void ConvertAsset(const fastgltf::Asset& asset,
                                "represent it, so this node is placed approximately");
         }
 
-        if (node.skinIndex.has_value() && !state.warned_skinning) {
-            state.warned_skinning = true;
-            LOGIFACE_LOG(warn, "GltfMeshAssembler: the asset contains a skinned node; skinning is not imported");
+        // A skinned node's own transform is ignored by glTF: the skeleton drives
+        // the vertices. The placement therefore stays identity and the object/
+        // skeleton root transform is applied through the entity Transform or the
+        // SkeletonRoot, never through the submesh placement.
+        std::optional<std::uint32_t> placement_skin;
+        if (node.skinIndex.has_value()) {
+            const std::size_t skin_index = *node.skinIndex;
+            // `mesh.skins` is sized from asset.skins, so a skipped skin (invalid or
+            // oversized joint list) is in range but has no skeleton. Requiring a
+            // resolved skeleton keeps that malformed asset on the unskinned path,
+            // with its node transform, instead of identity-placing geometry whose
+            // skin has no palette.
+            if (skin_index < mesh.skins.size() &&
+                mesh.skins[skin_index].skeleton != kNoSkeleton &&
+                !mesh.skins[skin_index].joints.empty()) {
+                placement_skin = static_cast<std::uint32_t>(skin_index);
+            } else {
+                LOGIFACE_LOG(warn, "GltfMeshAssembler: node " + std::to_string(parent.node) +
+                                       " references skin " + std::to_string(skin_index) +
+                                       ", which is missing or was not imported; the node is placed "
+                                       "unskinned");
+            }
         }
 
         // KHR_physics_rigid_bodies lives on the node, so every submesh placed
@@ -810,12 +1350,17 @@ void ConvertAsset(const fastgltf::Asset& asset,
             const std::size_t gltf_mesh = *node.meshIndex;
             // glTF instances a mesh by referencing it from several nodes. The
             // geometry is emitted once and then placed once per reference, so a
-            // mesh shared by eight pawns costs one copy, not eight.
+            // mesh shared by eight pawns costs one copy, not eight. The same
+            // holds for instances with different skins: the vertex stream is
+            // shared because stored joint indices are skin-local.
             auto cached = state.mesh_geometry.find(gltf_mesh);
             if (cached == state.mesh_geometry.end()) {
                 std::vector<std::size_t> emitted;
-                for (const fastgltf::Primitive& primitive : asset.meshes[gltf_mesh].primitives) {
-                    if (const auto index = ConvertPrimitive(state, primitive)) {
+                const auto& primitives = asset.meshes[gltf_mesh].primitives;
+                for (std::size_t primitive_index = 0; primitive_index < primitives.size();
+                     ++primitive_index) {
+                    if (const auto index =
+                            ConvertPrimitive(state, primitives[primitive_index], gltf_mesh, primitive_index)) {
                         emitted.push_back(*index);
                     }
                 }
@@ -823,8 +1368,9 @@ void ConvertAsset(const fastgltf::Asset& asset,
             }
             for (const std::size_t index : cached->second) {
                 VulkanEngine::SubMesh placed = state.geometry[index].submesh;
-                placed.transform = node_trs;
+                placed.transform = placement_skin.has_value() ? SubMeshTransform{} : node_trs;
                 placed.physics = node_physics;
+                placed.skin_index = placement_skin.value_or(kNoSkin);
                 mesh.subMeshes.push_back(placed);
             }
         }
@@ -835,6 +1381,7 @@ void ConvertAsset(const fastgltf::Asset& asset,
         }
     }
 
+    BuildAnimations(asset, skin_import, mesh);
     FinalizeTangents(state);
 }
 

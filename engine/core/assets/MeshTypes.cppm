@@ -22,6 +22,9 @@ export namespace VulkanEngine
     // consumer is an array over MAX_UV_SETS.
     inline constexpr std::uint32_t MAX_UV_SETS = 2;
 
+    // SubMesh::skin_index sentinel: the submesh is not skinned.
+    inline constexpr std::uint32_t kNoSkin = 0xFFFFFFFFu;
+
     class MeshVertexVec3
     {
     public:
@@ -169,6 +172,11 @@ export namespace VulkanEngine
         // submesh (glTF `KHR_physics_rigid_bodies`). Absent for every other
         // format and for nodes that do not use the extension.
         std::optional<PhysicsHint> physics{}; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Index into `Mesh::skins` for a skinned placement, kNoSkin otherwise.
+        // The joint indices stored per vertex are skin-local, so the same vertex
+        // stream renders correctly under several skins: gather selects each
+        // placement's palette from this skin.
+        std::uint32_t skin_index{kNoSkin}; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
     // Computes SubMesh::vertex_window_base / vertex_span from the mesh-local
@@ -195,10 +203,113 @@ export namespace VulkanEngine
         sm.vertex_span = max_index - min_index + 1;
     }
 
+    // ── skeletal animation ──────────────────────────────────────────────────
+    //
+    // The asset-side types below are deliberately plain data: they carry no
+    // pointer to the renderer and no GPU handle, so a device-free test can build
+    // a skeleton, sample a clip and compose a palette without a Vulkan device.
+    //
+    // Four influences are carried inline in `BoneWeight`; a glTF primitive that
+    // authors JOINTS_1/WEIGHTS_1 gets a second, optional stream. This bound is a
+    // data-format property, not a shader one: the deform shader loops over
+    // `influence_sets` (0/1/2).
+
+    inline constexpr std::uint32_t kMaxInfluenceSets = 2; // 4 + 4
+    inline constexpr std::uint32_t kNoSkeleton = 0xFFFFFFFFu;
+
     struct BoneWeight
     {
         std::array<std::uint16_t, 4> bone_indices{}; //NOLINT(misc-non-private-member-variables-in-classes)
         std::array<std::uint8_t, 4> weights{}; //NOLINT(misc-non-private-member-variables-in-classes)
+    };
+
+    // The GPU-facing 12-byte influence record. Joint indices and weights are
+    // packed into 32-bit words so no 16-bit/8-bit storage-buffer feature is
+    // needed; `BoneWeight` stays the CPU/import type.
+    struct GpuBoneInfluence
+    {
+        std::uint32_t joints01 = 0; // j0 | (j1 << 16)
+        std::uint32_t joints23 = 0; // j2 | (j3 << 16)
+        std::uint32_t weights = 0;  // w0 | (w1 << 8) | (w2 << 16) | (w3 << 24)
+    };
+    static_assert(sizeof(GpuBoneInfluence) == 12);
+
+    [[nodiscard]] inline GpuBoneInfluence ToGpuInfluence(const BoneWeight& in) noexcept {
+        return GpuBoneInfluence{
+            .joints01 = static_cast<std::uint32_t>(in.bone_indices[0]) |
+                        (static_cast<std::uint32_t>(in.bone_indices[1]) << 16),
+            .joints23 = static_cast<std::uint32_t>(in.bone_indices[2]) |
+                        (static_cast<std::uint32_t>(in.bone_indices[3]) << 16),
+            .weights = static_cast<std::uint32_t>(in.weights[0]) |
+                       (static_cast<std::uint32_t>(in.weights[1]) << 8) |
+                       (static_cast<std::uint32_t>(in.weights[2]) << 16) |
+                       (static_cast<std::uint32_t>(in.weights[3]) << 24),
+        };
+    }
+
+    // One joint of a skeleton. `parent` is an index into the skeleton's joint
+    // array, or kNoSkeleton for a root joint. glTF's `skin.joints` is an
+    // unordered node list, so `joints` may store a child before its parent;
+    // ComputeWorld resolves the hierarchy from `parent`, never from array order.
+    struct SkeletonJoint
+    {
+        std::uint32_t parent = kNoSkeleton; //NOLINT(misc-non-private-member-variables-in-classes)
+        SubMeshTransform local_bind{}; //NOLINT(misc-non-private-member-variables-in-classes) bind-pose local TRS
+    };
+
+    // A joint that has no joint parent. `transform` is the column-major world
+    // transform of the node that sits above it (the armature/skeleton root),
+    // which glTF inverse-bind matrices assume. ComputeWorld starts each root
+    // with this transform.
+    struct SkeletonRoot
+    {
+        std::uint32_t joint = 0; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<float, 16> transform{}; //NOLINT(misc-non-private-member-variables-in-classes) column-major
+    };
+
+    struct Skeleton
+    {
+        std::vector<SkeletonJoint> joints; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<SkeletonRoot> roots; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<std::string> names; //NOLINT(misc-non-private-member-variables-in-classes)
+    };
+
+    struct Skin
+    {
+        std::uint32_t skeleton = kNoSkeleton; //NOLINT(misc-non-private-member-variables-in-classes)
+        // skin-local joint index -> skeleton joint index
+        std::vector<std::uint16_t> joints; //NOLINT(misc-non-private-member-variables-in-classes)
+        // column-major, one per skin joint
+        std::vector<std::array<float, 16>> inverse_bind; //NOLINT(misc-non-private-member-variables-in-classes)
+    };
+
+    enum class AnimationPath : std::uint8_t { Translation, Rotation, Scale };
+    enum class AnimationInterpolation : std::uint8_t { Step, Linear };
+
+    struct AnimationKey
+    {
+        float time = 0.0f; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Translation/scale xyz; rotation xyzw. `w` is 0 for translation/scale.
+        std::array<float, 4> value{}; //NOLINT(misc-non-private-member-variables-in-classes)
+    };
+
+    struct AnimationChannel
+    {
+        std::uint32_t joint = 0; //NOLINT(misc-non-private-member-variables-in-classes)
+        AnimationPath path = AnimationPath::Translation; //NOLINT(misc-non-private-member-variables-in-classes)
+        AnimationInterpolation interpolation = AnimationInterpolation::Linear; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<AnimationKey> keys; //NOLINT(misc-non-private-member-variables-in-classes) sorted by time
+    };
+
+    struct AnimationClip
+    {
+        std::string name; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Index into Mesh::skeletons. Every channel's joint is an index into this
+        // skeleton's joint array; a glTF animation that targets several skeletons
+        // is split into one clip per skeleton by the importer.
+        std::uint32_t skeleton = kNoSkeleton; //NOLINT(misc-non-private-member-variables-in-classes)
+        float duration = 0.0f; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<AnimationChannel> channels; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
     class Mesh
@@ -218,11 +329,23 @@ export namespace VulkanEngine
         std::vector<float> tangent_handedness; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<std::uint32_t> indices; //NOLINT(misc-non-private-member-variables-in-classes)
         std::vector<SubMesh> subMeshes; //NOLINT(misc-non-private-member-variables-in-classes)
+
+        // Base 4 influences, parallel to `vertices` when `influence_sets > 0`.
+        std::vector<BoneWeight> bone_weights; //NOLINT(misc-non-private-member-variables-in-classes)
+        // Optional second 4 influences, parallel to `vertices` when
+        // `influence_sets >= 2`; empty when absent.
+        std::vector<BoneWeight> bone_weights_extra; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::uint32_t influence_sets = 0; //NOLINT(misc-non-private-member-variables-in-classes) 0/1/2
+        std::vector<Skeleton> skeletons; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<Skin> skins; //NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<AnimationClip> animations; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
+    // Compatibility shim for the BIN loader. Kept solely so `BinSkinnedMeshAssembler`
+    // still parses its weights: BIN carries no hierarchy, inverse-bind matrices or
+    // clips, so it cannot drive animation and is not wired into the renderer.
     struct SkinnedMesh : public Mesh
     {
-        std::vector<BoneWeight> bone_weights; //NOLINT(misc-non-private-member-variables-in-classes)
     };
 
     // Computes a bounding sphere (Ritter's algorithm) and an oriented bounding

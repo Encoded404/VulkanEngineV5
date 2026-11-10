@@ -17,6 +17,17 @@ struct MeshData {
     std::vector<std::uint32_t> indices;
     std::vector<SubMesh> sub_meshes;
 
+    // Skeletal asset data carried with the mesh. `MeshData` is copied into
+    // `MeshRegistry::LoadedMeshInfo::cpu_data`, so the runtime can resolve skins
+    // and clips without a second registry. The weight streams are uploaded; the
+    // skeleton/skin/clip vectors stay CPU-side.
+    std::vector<BoneWeight> bone_weights;
+    std::vector<BoneWeight> bone_weights_extra;
+    std::uint32_t influence_sets = 0;
+    std::vector<Skeleton> skeletons;
+    std::vector<Skin> skins;
+    std::vector<AnimationClip> animations;
+
     // Highest out-of-line set index present (0 when every slot uses UV0). This
     // is the mesh's variant slot: the technique pipeline that carries that UV
     // interpolant.

@@ -48,6 +48,17 @@ struct LoadedMeshData {
     // `Physics::RigidBody`/`Collider` components when it builds entities.
     // Nothing on this path creates a body.
     std::vector<VulkanEngine::SubMesh> submeshes;
+
+    // Skeletal asset data, copied from the loader's Mesh. Every conversion site
+    // (directory, single-file and multi-file) must carry these six fields or the
+    // runtime never sees a skin or a clip. The weight streams are uploaded; the
+    // skeleton/skin/clip vectors stay CPU-side.
+    std::vector<VulkanEngine::BoneWeight> bone_weights;
+    std::vector<VulkanEngine::BoneWeight> bone_weights_extra;
+    std::uint32_t influence_sets = 0;
+    std::vector<VulkanEngine::Skeleton> skeletons;
+    std::vector<VulkanEngine::Skin> skins;
+    std::vector<VulkanEngine::AnimationClip> animations;
 };
 
 struct MeshInfo {

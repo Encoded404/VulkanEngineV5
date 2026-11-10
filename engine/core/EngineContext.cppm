@@ -30,6 +30,7 @@ import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.StandardMeshPipeline;
 import VulkanEngine.MaterialManager;
+import VulkanEngine.ModifierManager;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.GplPolicy;
@@ -107,6 +108,10 @@ struct EngineContext {
     // Out-of-line UV set 1 (optional). Same block-growth model as the vertex
     // heap; a mesh that authors no out-of-line set allocates nothing here.
     GpuResources::DeviceBufferHeap uv_heap;
+    // Skin influence streams (GpuBoneInfluence, one element per vertex). Held in
+    // its own element space like the UV heap, so a shader re-bases a vertex index
+    // with skin_region_base instead of sharing the vertex heap's addressing.
+    GpuResources::DeviceBufferHeap skin_heap;
     // Sub-allocated images (asset textures, camera streams/targets). Must
     // outlive bindless_mgr in shutdown (textures free their heap images).
     GpuResources::GpuImageHeap image_heap;
@@ -160,6 +165,11 @@ struct EngineContext {
     // Material manager (no singleton — owned by context)
     VulkanEngine::MaterialManager::MaterialManager material_mgr{};
 
+    // Vertex-modifier registry (CPU-only; no device object). Owned here so the
+    // renderer can resolve modifier ids into compute pipelines and so an app can
+    // register a modifier without reaching into the renderer.
+    Modifiers::ModifierManager modifier_mgr{};
+
     // Shader system
     std::unique_ptr<ShaderSystem::ShaderManager> shader_manager;
     std::unique_ptr<ShaderSystem::PipelineFactory> pipeline_factory;
@@ -194,6 +204,7 @@ struct EngineContext {
     auto& GetMeshRegistry() { return mesh_registry; }
     auto& GetComponentRegistry() { return component_registry; }
     auto& GetMaterialManager() { return material_mgr; }
+    auto& GetModifierManager() { return modifier_mgr; }
     auto& GetResourceManager() { return resource_manager; }
     auto& GetShaderManager() { return *shader_manager; }
     auto& GetPipelineFactory() { return *pipeline_factory; }
@@ -206,6 +217,7 @@ struct EngineContext {
     GpuResources::DeviceBufferHeap& GetVertexHeap() { return vertex_heap; }
     GpuResources::DeviceBufferHeap& GetIndexHeap() { return index_heap; }
     GpuResources::DeviceBufferHeap& GetUvHeap() { return uv_heap; }
+    GpuResources::DeviceBufferHeap& GetSkinHeap() { return skin_heap; }
     GpuResources::GpuImageHeap& GetImageHeap() { return image_heap; }
     GpuResources::SamplerCache& GetSamplerCache() { return sampler_cache; }
     GpuResources::StagingPool& GetStagingPool() { return staging_pool; }

@@ -271,6 +271,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/ShaderLoader.cpp
     assets/DefaultTextures.cpp
     render/MeshUploadManager.cpp
+    render/ModifierManager.cpp
     render/MeshGatherSystem.cpp
     render/MeshPipeline.cpp
     assets/SceneImport.cpp
@@ -415,6 +416,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         components/Text.cppm
         components/DynamicMesh.cppm
         components/SkeletonPose.cppm
+        components/GeometryModifier.cppm
         components/OrmOverride.cppm
         components/MaterialOverride.cppm
         components/TransformOverride.cppm
@@ -460,6 +462,8 @@ target_sources(${ENGINE_TARGET} PUBLIC
         assets/ShaderLoader.cppm
         assets/DefaultTextures.cppm
         render/SceneLimits.cppm
+        render/ModifierId.cppm
+        render/ModifierManager.cppm
         render/MeshUploadManager.cppm
         render/MeshGatherSystem.cppm
         render/MeshPipeline.cppm

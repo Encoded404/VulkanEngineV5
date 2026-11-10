@@ -24,6 +24,7 @@ import VulkanEngine.Text.FontReloader;
 import VulkanEngine.GpuResources;
 import VulkanEngine.DefaultTextureFactory;
 import VulkanEngine.MeshManager;
+import VulkanEngine.SceneLimits;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.MaterialManager;
@@ -72,15 +73,18 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         auto s = DebugSection("engineinit.bindless_manager");
         // Subtract every other update-after-bind pool's descriptor count so the
         // bindless pool cannot exceed the global update-after-bind budget. The
-        // engine's vertex-buffer, index-buffer and indirection sets are
-        // allocated per frame in flight (see SceneRenderer::Initialize).
+        // engine's vertex-buffer, UV, index-buffer and indirection sets are
+        // allocated per frame in flight (see SceneRenderer::Initialize), as are
+        // the deform pass's two skin-influence tables.
         const std::uint32_t fif = vk_backend.GetFramesInFlight();
-        constexpr std::uint32_t kVertexBuffers = 64;
-        constexpr std::uint32_t kIndexBuffers = 64;
+        constexpr std::uint32_t kVertexBuffers = SceneLimits::kMaxVertexBuffers;
+        constexpr std::uint32_t kUvBuffers = SceneLimits::kMaxUvBuffers;
+        constexpr std::uint32_t kIndexBuffers = SceneLimits::kMaxIndexBuffers;
+        constexpr std::uint32_t kSkinBuffers = SceneLimits::kMaxSkinBuffers;
         BindlessManager::BindlessCapacityConfig capacity_config{};
         capacity_config.app_capacity = config.bindless_capacity;
         capacity_config.other_update_after_bind_descriptors =
-            fif * (kVertexBuffers + kIndexBuffers + 1U);
+            fif * (kVertexBuffers + kUvBuffers + kIndexBuffers + 1U + kSkinBuffers * 2U);
         if (!ctx.bindless_mgr->Initialize(vk_backend, capacity_config)) {
             return false;
         }
@@ -93,6 +97,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         if (!ctx.vertex_heap.Initialize(vk_backend, heap_config, "vertex")) return false;
         if (!ctx.index_heap.Initialize(vk_backend, heap_config, "index")) return false;
         if (!ctx.uv_heap.Initialize(vk_backend, heap_config, "uv")) return false;
+        if (!ctx.skin_heap.Initialize(vk_backend, heap_config, "skin")) return false;
     }
     {
         auto s = DebugSection("engineinit.image_heap");
@@ -187,6 +192,7 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
         auto s = DebugSection("engineinit.mesh_manager");
         if (!ctx.mesh_manager->Initialize(vk_backend, &ctx.vertex_heap, &ctx.index_heap,
                                           &ctx.uv_heap,
+                                          &ctx.skin_heap,
                                           &ctx.staging_pool,
                                           ctx.dynamic_vertex_heaps.data(),
                                           ctx.dynamic_index_heaps.data(),
@@ -589,6 +595,7 @@ void EngineBootstrap::Shutdown(EngineContext& ctx,
             ctx.vertex_heap.Shutdown();
             ctx.index_heap.Shutdown();
             ctx.uv_heap.Shutdown();
+            ctx.skin_heap.Shutdown();
         }, std::move(deps));
     }
 

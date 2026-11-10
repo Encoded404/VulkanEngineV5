@@ -13,6 +13,13 @@ export namespace VulkanEngine::Components {
 // Data component: a streamed mesh owned by this entity. Dense storage; the
 // engine releases `gpu_handle` through a registry OnRemove hook, because the
 // component does not own a MeshManager.
+//
+// Streamed meshes are vertex+index only. Their geometry is double-buffered per
+// frame in flight, while a skin-influence table and a modifier stack are single
+// resident resources the deform stage addresses by absolute element index, so a
+// streamed mesh cannot carry either: `MeshManager::RegisterStreamed` drops
+// `MeshData::influence_sets` (with one warning) and gather ignores a
+// GeometryModifier on the entity. Both render through the plain vertex path.
 struct DynamicMesh {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     MeshManager::Handle gpu_handle;

@@ -22,6 +22,8 @@ export import VulkanEngine.GpuResources;
 export import VulkanEngine.GpuResources.BlockArray;
 export import VulkanEngine.SceneLimits;
 export import VulkanEngine.DrawMode;
+export import VulkanEngine.ModifierId;
+import VulkanEngine.ModifierManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.ShaderRegistration;
@@ -57,6 +59,134 @@ struct alignas(16) SceneHeader {
 constexpr std::uint32_t LIGHTS_PER_BLOCK = 256;
 constexpr std::uint32_t MAX_LIGHT_BLOCKS = 16;
 
+// ── Deform addressing contract (mirrored in shaders/skin_layout.slang) ──
+//
+// One `SkinEntry` per submesh tells the deform stage where that submesh's skin
+// influences live, where its bone palette starts, and which two contiguous
+// regions of the deformed-vertex buffer it may ping-pong between. It is written
+// by gather before the frame records and, for `deform_base`, by expand on the
+// GPU (the only place that owns the per-frame region allocator).
+inline constexpr std::uint32_t kNoSkinSlot = 0xFFFFFFFFu;
+// `VertexEntry::deformBias` sentinel: the vertex is read from the source table,
+// not from a deformed region. Also pinned in shaders/scene_entries.slang.
+inline constexpr std::int32_t kNoDeform = std::numeric_limits<std::int32_t>::min();
+
+inline constexpr std::uint32_t kDeformActive = 1u << 0;  // expand allocated a region
+inline constexpr std::uint32_t kDeformNoOccluder = 1u << 1;
+inline constexpr std::uint32_t kDeformNoCullTest = 1u << 2;
+inline constexpr std::uint32_t kSkinned = 1u << 3;       // skin tables are valid
+inline constexpr std::uint32_t kFinalRegionB = 1u << 4;  // stack parity
+
+struct SkinEntry {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t palette_base = 0;    // global matrix index into bone_palettes
+    std::uint32_t skin_slot = 0;       // slot in the skin-influence table
+    std::int32_t skin_bias = 0;        // skin_region_base - source base element
+    std::uint32_t extra_slot = 0;      // kNoSkinSlot when the mesh has one set
+    std::int32_t extra_bias = 0;
+    std::uint32_t influence_sets = 0;  // 0/1/2
+    std::uint32_t flags = 0;           // kDeform*/kSkinned/kFinalRegionB
+    std::uint32_t deform_base = 0;     // written by expand, read by the deform pass
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(SkinEntry) == 32, "SkinEntry must match the Slang mirror (32 B)");
+
+// One compute dispatch in a submesh's modifier stack, in execution order.
+// CPU-only: it is never uploaded, so it carries no GPU layout constraints.
+struct ModifierDispatch {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t submesh_index = 0;  // global renderer submesh index
+    std::uint32_t stage = 0;          // 0-based position in the effective stack
+    Modifiers::ModifierId modifier{};
+    std::uint32_t vertex_count = 0;   // submesh tight-window span
+    std::uint32_t src_slot = 0;       // vertex/skin table slot for stage 0
+    std::uint32_t src_base = 0;       // absolute source element index
+    std::uint32_t param_offset = 0;   // byte offset into modifier_params
+    std::uint32_t param_size = 0;
+    std::uint32_t workgroup_size = 64;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+// Push constants of every modifier dispatch (32 B, all 32-bit words).
+struct ModifierPC {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t submesh_index;
+    std::uint32_t stage;
+    std::uint32_t src_slot;
+    std::uint32_t src_base;
+    std::uint32_t vertex_count;
+    std::uint32_t param_offset;
+    std::uint32_t param_size;
+    std::uint32_t region_span;  // T: elements per deform region, not 2T
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(ModifierPC) == 32, "ModifierPC must match the shader push constant");
+
+// ── Deform addressing helpers ──
+//
+// The addressing convention has exactly one definition here, used by gather, the
+// tests and (by construction) the shader mirror, instead of being re-derived as
+// inline shifts in every caller. All arguments are element indices, never byte
+// offsets.
+
+// Re-bases an absolute source element index into a table whose region starts at
+// `region_base`: `table[DeformBias(region_base, source_base) + source_index]`
+// names the same element. Signed because a region may start below the source
+// base (the second block of a heap), and a negative bias is legitimate.
+[[nodiscard]] constexpr std::int32_t DeformBias(const std::uint32_t region_base,
+                                               const std::uint32_t source_base) noexcept {
+    return static_cast<std::int32_t>(region_base) - static_cast<std::int32_t>(source_base);
+}
+
+// Base element of the region that stage `stage` writes: even stages write A
+// (`deform_base`), odd stages B (`deform_base + region_span`).
+[[nodiscard]] constexpr std::uint32_t DeformStageRegion(const std::uint32_t deform_base,
+                                                        const std::uint32_t region_span,
+                                                        const std::uint32_t stage) noexcept {
+    return (stage & 1u) != 0u ? deform_base + region_span : deform_base;
+}
+
+// Base element of the region the vertex shader reads after `stage_count` stages:
+// an even stack ends in B, an odd stack in A. A zero stage count means no deform,
+// and the result is unused.
+[[nodiscard]] constexpr std::uint32_t DeformFinalRegion(const std::uint32_t deform_base,
+                                                        const std::uint32_t region_span,
+                                                        const std::uint32_t stage_count) noexcept {
+    return (stage_count & 1u) == 0u ? deform_base + region_span : deform_base;
+}
+
+// Minimum alignment of a modifier parameter block.
+inline constexpr std::uint32_t kDeformParamMinAlignment = 16;
+
+// Start offset of a modifier parameter block at `cursor`. `alignment` must be a
+// power of two; ModifierManager rejects anything else, so the round-up is exact.
+[[nodiscard]] constexpr std::uint32_t DeformParamOffset(
+    const std::uint32_t cursor, const std::uint32_t alignment) noexcept {
+    const std::uint32_t align = alignment > kDeformParamMinAlignment
+        ? alignment
+        : kDeformParamMinAlignment;
+    return (cursor + align - 1u) & ~(align - 1u);
+}
+
+// StaticEntry packing: the high 8 bits carry the heap table slot, the low 24 the
+// element offset. The vertex path requires base + windowBase + span < 2^24; the
+// index path relies on the same layout but does not assert it.
+inline constexpr std::uint32_t kEntrySlotShift = 24;
+inline constexpr std::uint32_t kEntryElementMask = (1u << 24) - 1u;
+
+[[nodiscard]] constexpr std::uint32_t PackEntry(const std::uint32_t slot,
+                                                const std::uint32_t element) noexcept {
+    return (slot << kEntrySlotShift) | element;
+}
+
+[[nodiscard]] constexpr std::uint32_t EntrySlot(const std::uint32_t packed) noexcept {
+    return packed >> kEntrySlotShift;
+}
+
+[[nodiscard]] constexpr std::uint32_t EntryElement(const std::uint32_t packed) noexcept {
+    return packed & kEntryElementMask;
+}
+
 // ── GPU technique flag-table bit layout ──
 // SceneRenderer::UpdateTechniqueFlags packs BaseTechnique::PipelineFlags into a
 // uint[MAX_DRAW_GROUPS] storage buffer consumed by the occluder-select,
@@ -81,6 +211,15 @@ struct SceneCapacity {
     std::uint32_t index_count = 0;   // Σ submesh index_count over the frame
     std::uint32_t vertex_span = 0;   // Σ submesh tight vertex-window span
     std::uint32_t submesh_count = 0; // Σ submeshes (alive + culled) over the frame
+    // Σ tight-window span of the submeshes that run a deform stack. The deformed
+    // vertex buffer holds two of these regions per submesh (A and B), so its
+    // element count is 2 * deform_vertex_span.
+    std::uint32_t deform_vertex_span = 0;
+    // Σ joint count of the active skins, i.e. the number of mat4 entries in the
+    // flat bone-palette buffer.
+    std::uint32_t palette_matrix_count = 0;
+    // Aligned modifier-parameter bytes for the frame.
+    std::uint32_t modifier_param_bytes = 0;
 };
 
 class SceneRenderer {
@@ -97,6 +236,10 @@ public:
     // model as the vertex table; a mesh without out-of-line UVs stores a
     // sentinel in its vertex entry and never indexes this table.
     static constexpr std::uint32_t MAX_UV_BUFFERS = SceneLimits::kMaxUvBuffers;
+    // Skin-influence table size (deform set bindings 0 and 1). Same block-growth
+    // model as the vertex table: a skinned mesh allocates one block in this heap
+    // and addresses it by slot.
+    static constexpr std::uint32_t MAX_SKIN_BUFFERS = SceneLimits::kMaxSkinBuffers;
     // Entries per storage-buffer block. Single source: SceneLimits; mirrored in
     // shaders/scene_block_layout.slang.
     static constexpr std::uint32_t BLOCK_ENTRIES = SceneLimits::kEntriesPerBlock;
@@ -135,7 +278,9 @@ public:
                     ShaderSystem::PipelineFactory& pipeline_factory,
                     const EngineShaderIds& shader_ids,
                     std::uint32_t frames_in_flight,
-                    DrawMode draw_mode = DrawMode::CID);
+                    DrawMode draw_mode,
+                    Modifiers::ModifierManager& modifier_mgr);
+
     void Shutdown();
 
     // Grows (never shrinks) the indexed-drawing frame ring to cover the given
@@ -194,6 +339,42 @@ public:
     void UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
     void UpdateAllFrameUvBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
     void UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    // Skin-influence tables (deform set, bindings 0 and 1). Written as mesh skin
+    // streams become resident, exactly like the vertex/UV tables: the deform set
+    // outlives the frame buffers, so a newly allocated skin block has to be
+    // published to every frame in flight.
+    void UpdateSkinBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    void UpdateAllFrameSkinBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    void UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    void UpdateAllFrameSkinExtraBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+
+    // ── Per-frame deform state, produced by gather ──
+    // The SkinEntry block array for `frame_index`. Gather grows it with
+    // EnsureCapacity(total_submeshes) before writing: the array's Get() returns
+    // nullptr past BlockCount(), and PrepareCompute runs after gather.
+    [[nodiscard]] VulkanEngine::GpuResources::BlockArray& GetFrameSkinEntries(std::uint32_t frame_index);
+    // The mapped flat bone-palette buffer for `frame_index` (one entry per
+    // palette matrix). Empty when the buffer could not be mapped.
+    [[nodiscard]] std::span<std::array<float, 16>> MapFrameBonePalettes(std::uint32_t frame_index);
+    void UnmapFrameBonePalettes(std::uint32_t frame_index);
+    // The mapped flat modifier-parameter buffer, or an empty span when it could
+    // not be mapped (gather then drops app modifiers for the frame).
+    [[nodiscard]] std::span<std::byte> MapFrameModifierParams(std::uint32_t frame_index);
+    void UnmapFrameModifierParams(std::uint32_t frame_index);
+    // Copies the frame's dispatch list. It is never uploaded; the deform stage
+    // iterates it on the CPU.
+    void SetModifierDispatches(std::uint32_t frame_index, std::span<const ModifierDispatch> dispatches);
+    [[nodiscard]] std::span<const ModifierDispatch> GetModifierDispatches(std::uint32_t frame_index) const;
+    // True once a modifier's compute pipeline exists and is usable. Always false
+    // until the deform pipelines are created; gather then emits no stages.
+    [[nodiscard]] bool IsModifierReady(Modifiers::ModifierId id) const;
+    [[nodiscard]] Modifiers::ModifierId SkinningModifier() const;
+    // The registry this renderer resolves modifier ids against.
+    [[nodiscard]] Modifiers::ModifierManager& GetModifierManager() { return *modifier_mgr_; }
+    // True when the frame carries at least one deform dispatch. Expand reads it
+    // to keep an unskinned scene off the skin-entry descriptors entirely.
+    [[nodiscard]] bool HasActiveDeform() const { return has_active_deform_; }
+    void SetHasActiveDeform(const bool active) { has_active_deform_ = active; }
 
     void PrepareCompute(vk::CommandBuffer cmd,
                         VulkanEngine::ComponentRegistry& registry,
@@ -316,6 +497,9 @@ private:
         VulkanEngine::GpuResources::BlockArray obb_entries{};
         VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
         VulkanEngine::GpuResources::BlockArray cull_entries{};
+        // Per-submesh deform addressing (expand set binding 7, deform set binding
+        // 3). Written by gather; expand fills its `deform_base`.
+        VulkanEngine::GpuResources::BlockArray skin_entries{};
 
         // Descriptor-write cursors for the block arrays above. They grow in
         // lockstep and only ever grow, so the descriptors for blocks that
@@ -343,6 +527,10 @@ private:
             occlusion_bounding_spheres,
             occlusion_obb,
             collect_cull,
+            // The skin-entry table is bound into both sets that can read it, and
+            // each binding owns its own cursor for the same reason as the rest.
+            expand_skin_entries,
+            deform_skin_entries,
             count,
         };
         struct BlockBindingCache {
@@ -388,6 +576,16 @@ private:
         VulkanEngine::GpuResources::GpuBuffer technique_counts{};
         VulkanEngine::GpuResources::GpuBuffer technique_results{};
 
+        // ── Deform inputs ──
+        // Flat bone-palette matrices, addressed by one global index
+        // (`SkinEntry::palette_base + joint`). Deliberately not a BlockArray: a
+        // descriptor array is one descriptor per block, so a palette that starts
+        // mid-block or spans two blocks could not be addressed as one buffer.
+        VulkanEngine::GpuResources::GpuBuffer bone_palettes{};
+        // Flat modifier-parameter blocks. Host-visible/coherent and mapped during
+        // gather; sized by SceneCapacity::modifier_param_bytes.
+        VulkanEngine::GpuResources::GpuBuffer modifier_params{};
+
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
         VulkanEngine::GpuResources::GpuDescriptorSet occlusion_set{};
@@ -400,6 +598,10 @@ private:
         vk::raii::DescriptorSet indirection_raw_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet vertex_buffers_set = vk::raii::DescriptorSet(nullptr);
         vk::raii::DescriptorSet index_buffers_set = vk::raii::DescriptorSet(nullptr);
+        // Deform input set (set 1 of the deform pipeline). Allocated once at
+        // Initialize; its skin tables are rewritten as skin streams become
+        // resident, so it must outlive the capacity-dependent frame buffers.
+        vk::raii::DescriptorSet deform_set = vk::raii::DescriptorSet(nullptr);
         VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
 
         vk::raii::Image hiz_image = vk::raii::Image(nullptr);
@@ -432,6 +634,7 @@ private:
     // frame loop can re-create pipelines when a shader's version changes.
     ShaderSystem::ShaderManager* shader_mgr_ = nullptr;
     ShaderSystem::PipelineFactory* pipeline_factory_ = nullptr;
+    Modifiers::ModifierManager* modifier_mgr_ = nullptr;
     EngineShaderIds shader_ids_{};
 
     // Set 1: SubmeshVertexEntries blocks
@@ -514,6 +717,17 @@ private:
     // Bindless index buffer table (used by expand at set 5)
     std::unique_ptr<vk::raii::DescriptorSetLayout> index_buffers_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> index_buffers_pool_;
+
+    // Deform input set (set 1 of the deform pipeline): skin tables, bone palette,
+    // skin entries, deformed vertices and modifier parameters. Created here rather
+    // than with the frame ring because the skin tables are written by the mesh
+    // upload path, which must not target buffers that capacity growth re-creates.
+    std::unique_ptr<vk::raii::DescriptorSetLayout> deform_layout_{};
+    std::unique_ptr<vk::raii::DescriptorPool> deform_pool_{};
+
+    // Per-frame modifier dispatch list (CPU-only, never uploaded).
+    std::vector<std::vector<ModifierDispatch>> frame_modifier_dispatches_{};
+    bool has_active_deform_ = false;
 
     // Lighting system (set 4)
     VulkanEngine::GpuResources::GpuBuffer scene_header{};

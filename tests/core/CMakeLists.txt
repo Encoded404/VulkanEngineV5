@@ -16,6 +16,10 @@ add_executable(engine_tests
   scene_import_uv_tests.cpp
   scene_import_skin_tests.cpp
   skeletal_animation_tests.cpp
+  deform_addressing_tests.cpp
+  modifier_stack_tests.cpp
+  modifier_registry_tests.cpp
+  modifier_dispatch_tests.cpp
   mesh_transform_compose_tests.cpp
   transform_override_tests.cpp
   draw_key_bound_tests.cpp

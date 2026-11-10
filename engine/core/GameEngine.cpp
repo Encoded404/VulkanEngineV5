@@ -931,7 +931,7 @@ bool GameEngine::InitializeRendererCore(VulkanEngine::Application::ApplicationCo
         if (!ctx_.scene_renderer->Initialize(backend, ctx_.vertex_heap, initial_capacity,
                                              ctx_.GetShaderManager(), ctx_.GetPipelineFactory(),
                                              ctx_.GetShaderIds(), backend.GetFramesInFlight(),
-                                             config_.draw_mode)) {
+                                             config_.draw_mode, ctx_.modifier_mgr)) {
             LOGIFACE_LOG(error, "SceneRenderer::Initialize failed");
             return false;
         }
@@ -1232,6 +1232,8 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
     std::unordered_set<std::uint32_t> vertex_buffers_updated;
     std::unordered_set<std::uint32_t> index_buffers_updated;
     std::unordered_set<std::uint32_t> uv_buffers_updated;
+    std::unordered_set<std::uint32_t> skin_buffers_updated;
+    std::unordered_set<std::uint32_t> skin_extra_buffers_updated;
 
     for (const auto& mesh_data : meshes) {
         auto handle = ctx_.mesh_manager->UploadPersistent(mesh_data);
@@ -1294,6 +1296,27 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
                     info->uv_allocation.buffer_index,
                     ctx_.uv_heap.GetBuffer(info->uv_allocation.buffer_index),
                     ctx_.uv_heap.GetConfig().block_size);
+            }
+        }
+        // Skin-influence tables: one descriptor per heap block, published to every
+        // frame's deform set as the block becomes resident. The extra table only
+        // exists for meshes that author a second influence set.
+        if (info->influence_sets > 0 &&
+            skin_buffers_updated.insert(info->skin_allocation.buffer_index).second) {
+            if (info->skin_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
+                ctx_.scene_renderer->UpdateAllFrameSkinBufferArrayElements(
+                    info->skin_allocation.buffer_index,
+                    ctx_.skin_heap.GetBuffer(info->skin_allocation.buffer_index),
+                    ctx_.skin_heap.GetConfig().block_size);
+            }
+        }
+        if (info->has_extra_skin &&
+            skin_extra_buffers_updated.insert(info->skin_extra_allocation.buffer_index).second) {
+            if (info->skin_extra_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
+                ctx_.scene_renderer->UpdateAllFrameSkinExtraBufferArrayElements(
+                    info->skin_extra_allocation.buffer_index,
+                    ctx_.skin_heap.GetBuffer(info->skin_extra_allocation.buffer_index),
+                    ctx_.skin_heap.GetConfig().block_size);
             }
         }
     }

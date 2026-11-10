@@ -9,6 +9,8 @@ import std.compat;
 
 import logiface;
 
+import vulkan;
+
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.MeshManager;
 import VulkanEngine.SceneRenderer;
@@ -118,6 +120,26 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
             gpu_info->index_allocation.buffer_index,
             idx_heap.GetBuffer(gpu_info->index_allocation.buffer_index),
             idx_heap.GetConfig().block_size);
+    }
+    // Skin-influence tables. The deform set outlives capacity growth, so a block
+    // that becomes resident while frames are in flight still has to be published
+    // to every frame.
+    if (gpu_info->influence_sets > 0) {
+        const vk::Buffer skin_buffer = mgr.GetSkinBuffer(gpu_info->skin_allocation.buffer_index);
+        if (skin_buffer) {
+            renderer.UpdateAllFrameSkinBufferArrayElements(
+                gpu_info->skin_allocation.buffer_index, skin_buffer,
+                mgr.GetSkinBlockSize());
+        }
+    }
+    if (gpu_info->has_extra_skin) {
+        const vk::Buffer extra_buffer =
+            mgr.GetSkinExtraBuffer(gpu_info->skin_extra_allocation.buffer_index);
+        if (extra_buffer) {
+            renderer.UpdateAllFrameSkinExtraBufferArrayElements(
+                gpu_info->skin_extra_allocation.buffer_index, extra_buffer,
+                mgr.GetSkinBlockSize());
+        }
     }
 
     info.gpu_resident = true;

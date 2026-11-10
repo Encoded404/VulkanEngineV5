@@ -36,6 +36,21 @@ public:
         // index: uv = uvBuffers[uv_buffer_index][uv_region_base + local].
         std::uint32_t uv_region_base = 0;
         bool has_uv1 = false;
+        // Skin-influence streams, one GpuBoneInfluence element per vertex, in the
+        // skin heap's own element space. `skin_region_base` is the element offset
+        // of the mesh's region, so the shader re-bases the absolute vertex index
+        // the same way it does for UVs. `skin_extra_allocation` is invalid unless
+        // the mesh authors a second influence set.
+        VulkanEngine::GpuResources::HeapAllocation skin_allocation{};
+        VulkanEngine::GpuResources::HeapAllocation skin_extra_allocation{};
+        std::uint32_t skin_buffer_index = 0;
+        std::uint32_t skin_extra_buffer_index = 0;
+        std::uint32_t skin_region_base = 0;
+        std::uint32_t skin_extra_region_base = 0;
+        bool has_extra_skin = false;
+        // Number of influence sets actually resident (0/1/2). 0 means the mesh is
+        // unskinned no matter what its asset data says.
+        std::uint32_t influence_sets = 0;
         // Sized to the runtime frames in flight (see Initialize/RegisterStreamed);
         // one mirrored allocation per FIF slot so each in-flight frame writes and
         // reads an independent copy of the streamed geometry.
@@ -63,6 +78,7 @@ public:
                     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                     VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap,
+                    VulkanEngine::GpuResources::DeviceBufferHeap* skin_heap,
                     VulkanEngine::GpuResources::StagingPool* staging_mgr,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
@@ -83,6 +99,13 @@ public:
     [[nodiscard]] const GpuMeshInfo* GetMeshInfo(Handle handle) const;
 
     [[nodiscard]] vk::Buffer GetUvBuffer(std::uint32_t buffer_index) const;
+    // Skin-influence tables (deform set bindings 0 and 1). Both stream kinds live
+    // in the same heap; the second table exists only for meshes that author two
+    // influence sets.
+    [[nodiscard]] vk::Buffer GetSkinBuffer(std::uint32_t buffer_index) const;
+    [[nodiscard]] vk::Buffer GetSkinExtraBuffer(std::uint32_t buffer_index) const;
+    [[nodiscard]] std::uint64_t GetSkinBlockSize() const;
+    [[nodiscard]] std::uint32_t GetSkinBlockCount() const;
 
     [[nodiscard]] vk::Buffer GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
     [[nodiscard]] vk::Buffer GetDynamicIndexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const;
@@ -111,6 +134,7 @@ private:
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap_ = nullptr;
+    VulkanEngine::GpuResources::DeviceBufferHeap* skin_heap_ = nullptr;
     VulkanEngine::GpuResources::StagingPool* staging_mgr_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps_ = nullptr;

@@ -1,5 +1,7 @@
 module;
 
+#include <cassert>
+
 #include <logging/logging_macros.hpp>
 
 module VulkanEngine.MeshManager;
@@ -16,6 +18,7 @@ import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.StandardMeshPipeline;
+import VulkanEngine.SceneLimits;
 
 namespace VulkanEngine {
 
@@ -27,11 +30,13 @@ bool MeshManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* index_heap,
                               VulkanEngine::GpuResources::DeviceBufferHeap* uv_heap,
+                              VulkanEngine::GpuResources::DeviceBufferHeap* skin_heap,
                               VulkanEngine::GpuResources::StagingPool* staging_mgr,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_vertex_heaps,
                               VulkanEngine::GpuResources::DeviceBufferHeap* dynamic_index_heaps,
                               std::uint32_t frames_in_flight) {
-    if (!vertex_heap || !index_heap || !uv_heap || !staging_mgr || !dynamic_vertex_heaps || !dynamic_index_heaps) {
+    if (!vertex_heap || !index_heap || !uv_heap || !skin_heap || !staging_mgr ||
+        !dynamic_vertex_heaps || !dynamic_index_heaps) {
         LOGIFACE_LOG(error, "MeshManager: null dependencies");
         return false;
     }
@@ -39,6 +44,7 @@ bool MeshManager::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
     vertex_heap_ = vertex_heap;
     index_heap_ = index_heap;
     uv_heap_ = uv_heap;
+    skin_heap_ = skin_heap;
     staging_mgr_ = staging_mgr;
     dynamic_vertex_heaps_ = dynamic_vertex_heaps;
     dynamic_index_heaps_ = dynamic_index_heaps;
@@ -106,13 +112,27 @@ MeshManager::Handle MeshManager::UploadPersistent(
         uv_region_base = static_cast<std::uint32_t>(uv_alloc.offset / sizeof(MeshVertexVec2));
     }
 
+    VulkanEngine::GpuResources::HeapAllocation skin_alloc{};
+    VulkanEngine::GpuResources::HeapAllocation skin_extra_alloc{};
+
+    // Every failure path after the first recorded copy has to submit that copy
+    // before the heap ranges go back to the allocator: StagingPool executes a
+    // recorded copy only on the next flush, so freeing first lets it write into a
+    // range another mesh already owns. Flush then free, in that order.
+    const auto abort_upload = [&] {
+        staging_mgr_->FlushImmediate();
+        vertex_heap_->Free(vertex_alloc);
+        index_heap_->Free(index_alloc);
+        if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
+        if (skin_alloc.IsValid()) skin_heap_->Free(skin_alloc);
+        if (skin_extra_alloc.IsValid()) skin_heap_->Free(skin_extra_alloc);
+    };
+
     {
         auto slice = staging_mgr_->Allocate(vertex_data_size);
         if (!slice.has_value()) {
-            vertex_heap_->Free(vertex_alloc);
-            index_heap_->Free(index_alloc);
-            if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex staging allocation failed");
+            abort_upload();
             return handle;
         }
         std::memcpy(slice->mapped_ptr, data.vertices.data(), vertex_data_size);
@@ -123,10 +143,8 @@ MeshManager::Handle MeshManager::UploadPersistent(
     {
         auto slice = staging_mgr_->Allocate(index_data_size);
         if (!slice.has_value()) {
-            vertex_heap_->Free(vertex_alloc);
-            index_heap_->Free(index_alloc);
-            if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: index staging allocation failed");
+            abort_upload();
             return handle;
         }
         std::memcpy(slice->mapped_ptr, data.indices.data(), index_data_size);
@@ -138,15 +156,103 @@ MeshManager::Handle MeshManager::UploadPersistent(
         const std::uint64_t uv_bytes = data.uv_extra[0].size() * sizeof(MeshVertexVec2);
         auto slice = staging_mgr_->Allocate(uv_bytes);
         if (!slice.has_value()) {
-            vertex_heap_->Free(vertex_alloc);
-            index_heap_->Free(index_alloc);
-            uv_heap_->Free(uv_alloc);
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: UV staging allocation failed");
+            abort_upload();
             return handle;
         }
         std::memcpy(slice->mapped_ptr, data.uv_extra[0].data(), uv_bytes);
         staging_mgr_->RecordBufferCopy(*slice,
             uv_heap_->GetBuffer(uv_alloc.buffer_index), uv_alloc.offset);
+    }
+
+    // Optional skin-influence streams. `GpuBoneInfluence` is 12 B, so a 16-byte
+    // alignment alone would leave an offset that is not a whole number of
+    // elements: `skin_region_base = offset / 12` would then truncate and every
+    // vertex of the mesh would read shifted influence records. 48 = LCM(12, 16)
+    // makes both hold at once, exactly like the vertex path's 240 = LCM(24, 16).
+    // The extra set is allocated only when the mesh really authors one.
+    constexpr std::uint64_t kSkinAlignment = 48ULL;
+    static_assert(kSkinAlignment % sizeof(GpuBoneInfluence) == 0);
+    // A stream shorter than the vertex array would leave the deform stage reading
+    // past its allocation: the shader indexes the influence table with the same
+    // absolute vertex index it uses for the vertex table.
+    const bool has_base_skin = data.influence_sets >= 1 &&
+                               data.bone_weights.size() >= data.vertices.size();
+    const bool want_extra_skin = data.influence_sets >= 2 &&
+                                 data.bone_weights_extra.size() >= data.vertices.size();
+    std::uint32_t influence_sets =
+        has_base_skin ? (want_extra_skin ? 2u : 1u) : 0u;
+    if (data.influence_sets >= 1 && !has_base_skin) {
+        LOGIFACE_LOG(warn, "MeshManager::UploadPersistent: mesh declares skin influences but "
+                     "its influence stream covers " +
+                     std::to_string(data.bone_weights.size()) + " of " +
+                     std::to_string(data.vertices.size()) +
+                     " vertices; the mesh is treated as unskinned");
+    } else if (data.influence_sets >= 2 && !want_extra_skin) {
+        LOGIFACE_LOG(warn, "MeshManager::UploadPersistent: mesh declares 2 influence "
+                     "sets but carries no second stream; uploading one set");
+    }
+    std::uint32_t skin_region_base = 0;
+    std::uint32_t skin_extra_region_base = 0;
+    const auto upload_skin_set = [&](const std::vector<BoneWeight>& weights,
+                                     VulkanEngine::GpuResources::HeapAllocation& alloc,
+                                     std::uint32_t& region_base) {
+        const std::uint64_t bytes = weights.size() * sizeof(GpuBoneInfluence);
+        alloc = skin_heap_->Allocate(bytes, kSkinAlignment);
+        if (!alloc.IsValid()) {
+            LOGIFACE_LOG(error, "MeshManager::UploadPersistent: skin heap allocation failed");
+            return false;
+        }
+        // Verify the invariant instead of trusting the alignment policy: a
+        // truncated region base silently shifts every influence record.
+        assert(alloc.offset % sizeof(GpuBoneInfluence) == 0 &&
+               "skin allocation not element-aligned; skin_region_base would truncate");
+        region_base = static_cast<std::uint32_t>(alloc.offset / sizeof(GpuBoneInfluence));
+        auto slice = staging_mgr_->Allocate(bytes);
+        if (!slice.has_value()) {
+            LOGIFACE_LOG(error, "MeshManager::UploadPersistent: skin staging allocation failed");
+            return false;
+        }
+        // The staging range is mapped host memory: repack straight into it, so
+        // the CPU-side BoneWeight never has to be materialized as a second vector.
+        auto* dst = static_cast<GpuBoneInfluence*>(slice->mapped_ptr);
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            dst[i] = ToGpuInfluence(weights[i]);
+        }
+        staging_mgr_->RecordBufferCopy(*slice,
+            skin_heap_->GetBuffer(alloc.buffer_index), alloc.offset);
+        return true;
+    };
+    if (influence_sets >= 1 && !upload_skin_set(data.bone_weights, skin_alloc, skin_region_base)) {
+        abort_upload();
+        return handle;
+    }
+    if (influence_sets >= 2 &&
+        !upload_skin_set(data.bone_weights_extra, skin_extra_alloc, skin_extra_region_base)) {
+        abort_upload();
+        return handle;
+    }
+
+    // The deform set binds at most SceneLimits::kMaxSkinBuffers skin tables, and a
+    // newly allocated block past that index cannot be published to them. Keep the
+    // mesh unskinned (bind pose) instead of writing a descriptor outside the
+    // binding array; the heap block itself is returned.
+    if (influence_sets > 0 &&
+        (skin_alloc.buffer_index >= SceneLimits::kMaxSkinBuffers ||
+         (skin_extra_alloc.IsValid() &&
+          skin_extra_alloc.buffer_index >= SceneLimits::kMaxSkinBuffers))) {
+        LOGIFACE_LOG(error, "MeshManager::UploadPersistent: skin heap grew past the " +
+                     std::to_string(SceneLimits::kMaxSkinBuffers) +
+                     "-block deform table; the mesh renders in bind pose");
+        skin_heap_->Free(skin_alloc);
+        skin_alloc = {};
+        if (skin_extra_alloc.IsValid()) {
+            skin_heap_->Free(skin_extra_alloc);
+            skin_extra_alloc = {};
+        }
+        skin_region_base = 0;
+        skin_extra_region_base = 0;
+        influence_sets = 0;
     }
 
     staging_mgr_->FlushImmediate();
@@ -173,6 +279,14 @@ MeshManager::Handle MeshManager::UploadPersistent(
     entry.info.uv_buffer_index = uv_alloc.buffer_index;
     entry.info.uv_region_base = uv_region_base;
     entry.info.has_uv1 = has_uv1;
+    entry.info.skin_allocation = skin_alloc;
+    entry.info.skin_extra_allocation = skin_extra_alloc;
+    entry.info.skin_buffer_index = skin_alloc.buffer_index;
+    entry.info.skin_extra_buffer_index = skin_extra_alloc.buffer_index;
+    entry.info.skin_region_base = skin_region_base;
+    entry.info.skin_extra_region_base = skin_extra_region_base;
+    entry.info.has_extra_skin = skin_extra_alloc.IsValid();
+    entry.info.influence_sets = influence_sets;
     auto normalized = data;
     VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
     entry.info.sub_meshes = std::move(normalized.sub_meshes);
@@ -204,6 +318,14 @@ MeshManager::Handle MeshManager::RegisterStreamed(
                  std::to_string(index_bytes) + " bytes), " +
                  std::to_string(initial_data.sub_meshes.size()) + " submeshes, " +
                  std::to_string(frames_in_flight_) + " FIFs");
+
+    // Per-FIF skin streams are not implemented: the influence table is a single
+    // resident allocation per mesh, so a streamed mesh would have to double-buffer
+    // it like its vertex stream. Until then a streamed mesh renders in bind pose.
+    if (initial_data.influence_sets != 0) {
+        LOGIFACE_LOG(warn, "MeshManager::RegisterStreamed: streamed meshes do not support "
+                     "skin influence streams; the mesh is treated as unskinned (bind pose)");
+    }
 
     // Vertex allocations must be aligned to a multiple of sizeof(Vertex) (24):
     // see the note in UploadPersistent. 240 = LCM(24, 16).
@@ -376,6 +498,16 @@ void MeshManager::Remove(Handle handle) {
                 entry.info.uv_allocation, uv_heap_, frames_wait
             });
         }
+        if (entry.info.skin_allocation.IsValid()) {
+            deferred_free_queue_.push_back({
+                entry.info.skin_allocation, skin_heap_, frames_wait
+            });
+        }
+        if (entry.info.skin_extra_allocation.IsValid()) {
+            deferred_free_queue_.push_back({
+                entry.info.skin_extra_allocation, skin_heap_, frames_wait
+            });
+        }
     } else if (entry.strategy == Strategy::Streamed) {
         for (std::uint32_t fif = 0; fif < frames_in_flight_; ++fif) {
             auto& valloc = entry.info.streamed_vertex_alloc[fif];
@@ -421,6 +553,25 @@ const MeshManager::GpuMeshInfo* MeshManager::GetMeshInfo(Handle handle) const {
 vk::Buffer MeshManager::GetUvBuffer(std::uint32_t buffer_index) const {
     if (!uv_heap_) return nullptr;
     return uv_heap_->GetBuffer(buffer_index);
+}
+
+vk::Buffer MeshManager::GetSkinBuffer(std::uint32_t buffer_index) const {
+    if (!skin_heap_) return nullptr;
+    return skin_heap_->GetBuffer(buffer_index);
+}
+
+vk::Buffer MeshManager::GetSkinExtraBuffer(std::uint32_t buffer_index) const {
+    // Both influence tables live in the skin heap; only the descriptor binding
+    // differs. Kept as a separate name so call sites read symmetrically.
+    return GetSkinBuffer(buffer_index);
+}
+
+std::uint64_t MeshManager::GetSkinBlockSize() const {
+    return skin_heap_ ? skin_heap_->GetConfig().block_size : 0;
+}
+
+std::uint32_t MeshManager::GetSkinBlockCount() const {
+    return skin_heap_ ? skin_heap_->GetBufferCount() : 0;
 }
 
 vk::Buffer MeshManager::GetDynamicVertexBuffer(std::uint32_t fif_index, std::uint32_t buffer_index) const {

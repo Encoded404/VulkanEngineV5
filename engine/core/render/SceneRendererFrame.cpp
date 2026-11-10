@@ -208,6 +208,9 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
     sync_blocks(FrameResources::BlockBindingSlot::expand_cull,
                 fr.expand_set.GetHandle(), 3, fr.cull_entries,
                 vk::DescriptorType::eStorageBuffer);
+    sync_blocks(FrameResources::BlockBindingSlot::expand_skin_entries,
+                fr.expand_set.GetHandle(), 7, fr.skin_entries,
+                vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.expand_set.GetHandle(), 4, fr.vertex_indirection, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 5, fr.draw_indices, dev);
     WriteBuffer(fr.expand_set.GetHandle(), 6, fr.expand_counter, dev);
@@ -293,6 +296,17 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         WriteBuffer(fr.collect_write_set.GetHandle(), 0, fr.technique_results, dev);
         WriteBuffer(fr.collect_write_set.GetHandle(), 1, fr.technique_draw_commands, dev);
     }
+
+    // Deform input set: the skin-entry block array and the two capacity-sized
+    // flat buffers. They are re-created by EnsureSceneCapacity, so they are
+    // re-pointed every frame; the skin-influence tables (bindings 0/1) are written
+    // by the upload path when a skin stream becomes resident, and the deformed
+    // vertex output (binding 4) is bound with the deform pass that allocates it.
+    sync_blocks(FrameResources::BlockBindingSlot::deform_skin_entries,
+                *fr.deform_set, 3, fr.skin_entries,
+                vk::DescriptorType::eStorageBuffer);
+    WriteBuffer(*fr.deform_set, 2, fr.bone_palettes, dev);
+    WriteBuffer(*fr.deform_set, 5, fr.modifier_params, dev);
 
     // Single shared indirection set (set 3) bound to vertex_indirection.
     {

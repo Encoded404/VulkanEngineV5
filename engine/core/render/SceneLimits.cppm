@@ -47,9 +47,18 @@ inline constexpr std::uint32_t kGatherEntityCap = 1u << 20;
 inline constexpr std::uint32_t kInitialGatherCapacity = 4096;
 
 // Fixed-size descriptor tables that do not scale with the block budget.
+// `kMaxSkinBuffers` mirrors `kMaxVertexBuffers`: the deform pass binds the skin
+// influence streams as a fixed descriptor array whose length is independent of
+// the vertex heap's runtime block count.
 inline constexpr std::uint32_t kMaxVertexBuffers = 64;
 inline constexpr std::uint32_t kMaxIndexBuffers = 64;
 inline constexpr std::uint32_t kMaxUvBuffers = 64;
+inline constexpr std::uint32_t kMaxSkinBuffers = 64;
+
+// Initial capacity of the flat modifier-parameter buffer, in bytes. The buffer
+// grows geometrically; this is only the floor, so the first frame that carries a
+// modifier does not have to grow (and device-idle) before it can record.
+inline constexpr std::uint32_t kInitialModifierParamBytes = 1u << 20;
 
 // ── Descriptor-set plans ──
 //
@@ -69,9 +78,18 @@ struct SetPlan {
 };
 
 inline constexpr SetPlan kSubmeshVertexPlan{"submesh-vertex", 1, 0, 0, 0};
-// Set 4: expand -- 4 block arrays + vertex_indirection, draw_indices,
-// expand_counter.
-inline constexpr SetPlan kExpandPlan{"expand", 4, 3, 0, 0};
+// Set 4: expand -- 5 block arrays + vertex_indirection, draw_indices,
+// expand_counter. The fifth block array (the per-submesh SkinEntry table) sits at
+// binding 7, above the three singles at 4-6, because it was added after the
+// singles were fixed; binding numbers need not be contiguous.
+inline constexpr SetPlan kExpandPlan{"expand", 5, 3, 0, 0};
+// Set 1 of the deform pipeline: the skin-influence table, the extra-influence
+// table (both fixed descriptor arrays), the flat bone palette, the SkinEntry
+// block array, the deformed-vertex output and the flat modifier parameters.
+// The two `kMaxSkinBuffers` arrays count as 128 descriptors, not 2: a descriptor
+// array reserves one descriptor per element in the pool.
+inline constexpr SetPlan kDeformPlan{
+    "deform", 1, kMaxSkinBuffers * 2 + 3, 0, 0};
 // Set 5: occlusion -- submesh vertex/cull/sphere/obb blocks (4) plus the
 // pre-cull survivor bindings (4) and one Hi-Z combined image sampler.
 inline constexpr SetPlan kOcclusionPlan{"occlusion", 4, 4, 1, 1};
@@ -80,18 +98,19 @@ inline constexpr SetPlan kOccluderSelectPlan{"occluder-select", 3, 5, 0, 0};
 // Set 6: collect -- cull blocks (1) + 5 singles.
 inline constexpr SetPlan kCollectPlan{"collect", 1, 5, 0, 0};
 // The depth/main graphics pipelines bind submesh-vertex (blocks) together with
-// the vertex (+UV) and index/implicit tables on one stage. This row models that
-// per-stage sum so the per-stage limit is checked too.
+// the vertex, UV and index/implicit tables plus the deformed-vertex output on one
+// stage. This row models that per-stage sum so the per-stage limit is checked too.
 inline constexpr SetPlan kDepthGraphicsStagePlan{
-    "depth-graphics-stage", 1, kMaxVertexBuffers + kMaxUvBuffers, 0, 0};
+    "depth-graphics-stage", 1, kMaxVertexBuffers + kMaxUvBuffers + 1, 0, 0};
 
-inline constexpr std::array<SetPlan, 6> kSceneSetPlans{{
+inline constexpr std::array<SetPlan, 7> kSceneSetPlans{{
     kSubmeshVertexPlan,
     kExpandPlan,
     kOcclusionPlan,
     kOccluderSelectPlan,
     kCollectPlan,
     kDepthGraphicsStagePlan,
+    kDeformPlan,
 }};
 
 // Storage buffers in one descriptor set for a plan at `blocks` blocks.

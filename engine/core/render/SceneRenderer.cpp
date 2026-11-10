@@ -36,10 +36,12 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                                 ShaderSystem::PipelineFactory& pipeline_factory,
                                 const EngineShaderIds& shader_ids,
                                 const std::uint32_t frames_in_flight,
-                                DrawMode draw_mode) {
+                                DrawMode draw_mode,
+                                Modifiers::ModifierManager& modifier_mgr) {
     backend_ = &be;
     shader_mgr_ = &shader_mgr;
     pipeline_factory_ = &pipeline_factory;
+    modifier_mgr_ = &modifier_mgr;
     shader_ids_ = shader_ids;
     const auto& dev = be.GetDevice();
     draw_indirect_count_supported_ =
@@ -86,15 +88,23 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         }
     }
     scene_capacity_ = SceneCapacity{
-        std::max(initial_capacity.index_count, 1u),
-        std::max(initial_capacity.vertex_span, 1u),
-        std::max(initial_capacity.submesh_count, 1u),
+        .index_count = std::max(initial_capacity.index_count, 1u),
+        .vertex_span = std::max(initial_capacity.vertex_span, 1u),
+        .submesh_count = std::max(initial_capacity.submesh_count, 1u),
+        .deform_vertex_span = initial_capacity.deform_vertex_span,
+        .palette_matrix_count = initial_capacity.palette_matrix_count,
+        // The parameter buffer's floor is a constant, not the (usually zero)
+        // init-time estimate: growing it later device-idles in the middle of a
+        // frame, and the first frame that carries a modifier should not pay that.
+        .modifier_param_bytes = std::max(initial_capacity.modifier_param_bytes,
+                                         SceneLimits::kInitialModifierParamBytes),
     };
 
     // Size the per-frame resource ring to the configured pipeline depth. All
     // descriptor pools and per-frame GPU resources scale with this count.
     frames_in_flight_ = std::max(frames_in_flight, 1u);
     frames_.resize(frames_in_flight_);
+    frame_modifier_dispatches_.assign(frames_in_flight_, {});
     empty_sets_.clear();
     empty_sets_.reserve(frames_in_flight_);
 
@@ -137,11 +147,19 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[0].descriptorCount = MAX_VERTEX_BUFFERS;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+        // Compute is included so the deform pipeline can bind this table as its
+        // own set 0: the skinning stage reads the undeformed source vertices from
+        // it, and a vertex-only stage mask would make the same set invalid there.
+        bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex |
+                           vk::ShaderStageFlagBits::eCompute;
         bs[1].binding = 1;
         bs[1].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[1].descriptorCount = MAX_UV_BUFFERS;
-        bs[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
+        // The UV table is unused by the deform stage, but the binding lives in the
+        // same layout; leaving it vertex-only would make the two bindings disagree
+        // about the set's stage visibility for no benefit.
+        bs[1].stageFlags = vk::ShaderStageFlagBits::eVertex |
+                           vk::ShaderStageFlagBits::eCompute;
         const std::array<vk::DescriptorBindingFlags, 2> flags = {
             vk::DescriptorBindingFlagBits::ePartiallyBound |
                 vk::DescriptorBindingFlagBits::eUpdateAfterBind,
@@ -288,10 +306,67 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         }
     }
 
-    // Set 4: Expand layout (7 bindings: 4 block arrays + vertex_indirection +
-    // draw_indices + expand counter)
+    // Deform input set (set 1 of the deform pipeline): skin-influence table,
+    // extra-influence table, flat bone palette, per-submesh SkinEntry block array,
+    // deformed-vertex output and the flat modifier parameters.
+    //
+    // The two skin tables are fixed-size descriptor arrays with the same
+    // partially-bound/update-after-bind flags as the vertex table: a mesh upload
+    // publishes a newly allocated skin block from the middle of the frame loop,
+    // while earlier frames may still be reading the set.
     {
-        std::array<vk::DescriptorSetLayoutBinding, 7> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
+        for (std::uint32_t i = 0; i < bs.size(); ++i) {
+            bs[i].binding = i;
+            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            bs[i].descriptorCount = 1;
+            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
+        }
+        bs[0].descriptorCount = MAX_SKIN_BUFFERS;
+        bs[1].descriptorCount = MAX_SKIN_BUFFERS;
+        // Binding 3 is the SkinEntry block array, one descriptor per block.
+        bs[3].descriptorCount = max_blocks_;
+        const std::array<vk::DescriptorBindingFlags, 6> flags = {
+            vk::DescriptorBindingFlagBits::ePartiallyBound |
+                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+            vk::DescriptorBindingFlagBits::ePartiallyBound |
+                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+            vk::DescriptorBindingFlags{},
+            vk::DescriptorBindingFlags{},
+            vk::DescriptorBindingFlags{},
+            vk::DescriptorBindingFlags{},
+        };
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
+        bind_flags.bindingCount = static_cast<std::uint32_t>(flags.size());
+        bind_flags.pBindingFlags = flags.data();
+        vk::DescriptorSetLayoutCreateInfo layout_ci{};
+        layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
+        layout_ci.pNext = &bind_flags;
+        layout_ci.bindingCount = static_cast<std::uint32_t>(bs.size());
+        layout_ci.pBindings = bs.data();
+        deform_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *deform_layout_, "deform-layout");
+
+        const vk::DescriptorPoolSize ps{
+            vk::DescriptorType::eStorageBuffer,
+            frames_in_flight_ *
+                SceneLimits::StorageBuffersForPlan(SceneLimits::kDeformPlan, max_blocks_)};
+        vk::DescriptorPoolCreateInfo pool_ci{};
+        pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
+                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        pool_ci.maxSets = frames_in_flight_;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes = &ps;
+        deform_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *deform_pool_, "deform-pool");
+    }
+
+    // Set 4: Expand layout (8 bindings: 5 block arrays + vertex_indirection +
+    // draw_indices + expand counter). The fifth block array -- the per-submesh
+    // SkinEntry table -- sits at binding 7 so the three single bindings keep the
+    // numbers the shader already uses.
+    {
+        std::array<vk::DescriptorSetLayoutBinding, 8> bs{};
         for (std::uint32_t i = 0; i < 4; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -304,6 +379,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             bs[i].descriptorCount = 1;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
+        bs[7].binding = 7;
+        bs[7].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bs[7].descriptorCount = max_blocks_;
+        bs[7].stageFlags = vk::ShaderStageFlagBits::eCompute;
         expand_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             dev, vk::DescriptorSetLayoutCreateInfo{
                 {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
@@ -515,6 +594,14 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 make_block_config(16, BLOCK_ENTRIES,
                     vk::BufferUsageFlagBits::eTransferSrc,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
+            // Deform addressing: one 32 B record per submesh. Host-visible because
+            // gather writes it directly; grow by gather with EnsureCapacity, not by
+            // PrepareCompute (gather runs first and must see the blocks).
+            fr.skin_entries.Initialize(be,
+                make_block_config(static_cast<std::uint32_t>(sizeof(SkinEntry)),
+                    BLOCK_ENTRIES, {},
+                    vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent));
 
             // Capacity- and mode-dependent GPU buffers are created by
             // CreateFrameBuffers() below (and re-created on capacity growth).
@@ -535,6 +622,14 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_raw_set, "indirection-raw-set");
             }
             fr.hiz_set = hiz_pool_->Allocate(*hiz_layout_);
+            {
+                vk::DescriptorSetAllocateInfo deform_ci{};
+                deform_ci.descriptorPool = **deform_pool_;
+                deform_ci.descriptorSetCount = 1;
+                deform_ci.pSetLayouts = &**deform_layout_;
+                auto deform_sets = dev.allocateDescriptorSets(deform_ci);
+                fr.deform_set = std::move(deform_sets[0]);
+            }
 
             fr.expand_set.SetDebugName(dev, "expand-set");
             fr.occlusion_set.SetDebugName(dev, "occlusion-set");
@@ -662,6 +757,11 @@ bool SceneRenderer::CreateFrameBuffers() {
     constexpr std::uint64_t technique_results_size =
         static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(TechniqueResult);
     constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
+    const std::uint64_t palette_bytes =
+        static_cast<std::uint64_t>(std::max(scene_capacity_.palette_matrix_count, 1u)) *
+        16u * sizeof(float);
+    const std::uint64_t modifier_param_bytes =
+        static_cast<std::uint64_t>(std::max(scene_capacity_.modifier_param_bytes, 16u));
 
     const bool mid = draw_mode_ == DrawMode::MID;
     const vk::BufferUsageFlags index_dest_usage =
@@ -812,6 +912,21 @@ bool SceneRenderer::CreateFrameBuffers() {
                 vk::MemoryPropertyFlagBits::eHostCoherent);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_results.GetBuffer(),
                                                    vk::ObjectType::eBuffer, "technique-results");
+
+        // Deform inputs sized by the scene capacity. Both are host-visible so
+        // gather can copy palettes and parameter blocks straight into them.
+        fr.bone_palettes = GpuResources::GpuBuffer::Create(
+            be, palette_bytes, storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.bone_palettes.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "bone-palettes");
+        fr.modifier_params = GpuResources::GpuBuffer::Create(
+            be, modifier_param_bytes, storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.modifier_params.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "modifier-params");
     }
 
     // CPU-prefix region bases for MID (recomputed when topology changes).
@@ -842,6 +957,8 @@ void SceneRenderer::DestroyFrameBuffers() {
         fr.technique_draw_commands = GpuResources::GpuBuffer{};
         fr.technique_counts = GpuResources::GpuBuffer{};
         fr.technique_results = GpuResources::GpuBuffer{};
+        fr.bone_palettes = GpuResources::GpuBuffer{};
+        fr.modifier_params = GpuResources::GpuBuffer{};
     }
 }
 
@@ -1039,7 +1156,10 @@ void SceneRenderer::EnsureSceneCapacity(const SceneCapacity& required) {
     if (!backend_) return;
     if (required.index_count <= scene_capacity_.index_count &&
         required.vertex_span <= scene_capacity_.vertex_span &&
-        required.submesh_count <= scene_capacity_.submesh_count) {
+        required.submesh_count <= scene_capacity_.submesh_count &&
+        required.deform_vertex_span <= scene_capacity_.deform_vertex_span &&
+        required.palette_matrix_count <= scene_capacity_.palette_matrix_count &&
+        required.modifier_param_bytes <= scene_capacity_.modifier_param_bytes) {
         return;
     }
     backend_->GetDevice().waitIdle();
@@ -1049,10 +1169,19 @@ void SceneRenderer::EnsureSceneCapacity(const SceneCapacity& required) {
         std::max(required.vertex_span, scene_capacity_.vertex_span * 2);
     scene_capacity_.submesh_count =
         std::max(required.submesh_count, scene_capacity_.submesh_count * 2);
+    scene_capacity_.deform_vertex_span =
+        std::max(required.deform_vertex_span, scene_capacity_.deform_vertex_span * 2);
+    scene_capacity_.palette_matrix_count =
+        std::max(required.palette_matrix_count, scene_capacity_.palette_matrix_count * 2);
+    scene_capacity_.modifier_param_bytes =
+        std::max(required.modifier_param_bytes, scene_capacity_.modifier_param_bytes * 2);
     LOGIFACE_LOG(info, "SceneRenderer: capacity grew to index_count=" +
         std::to_string(scene_capacity_.index_count) + " vertex_span=" +
         std::to_string(scene_capacity_.vertex_span) + " submeshes=" +
-        std::to_string(scene_capacity_.submesh_count));
+        std::to_string(scene_capacity_.submesh_count) + " deform_span=" +
+        std::to_string(scene_capacity_.deform_vertex_span) + " palette_matrices=" +
+        std::to_string(scene_capacity_.palette_matrix_count) + " modifier_bytes=" +
+        std::to_string(scene_capacity_.modifier_param_bytes));
     DestroyFrameBuffers();
     CreateFrameBuffers();
     // Buffer descriptors are rewritten each frame in PrepareCompute.
@@ -1136,7 +1265,16 @@ void SceneRenderer::Shutdown() {
         fr.obb_entries.Shutdown();
         fr.submesh_vertex_entries.Shutdown();
         fr.cull_entries.Shutdown();
+        fr.skin_entries.Shutdown();
+        fr.deform_set = vk::raii::DescriptorSet(nullptr);
+        fr.bone_palettes = GpuResources::GpuBuffer{};
+        fr.modifier_params = GpuResources::GpuBuffer{};
     }
+    frame_modifier_dispatches_.clear();
+    has_active_deform_ = false;
+    modifier_mgr_ = nullptr;
+    deform_pool_.reset();
+    deform_layout_.reset();
     scene_lights.Shutdown();
     scene_header = GpuResources::GpuBuffer{};
     technique_flags = GpuResources::GpuBuffer{};
@@ -1250,6 +1388,148 @@ void SceneRenderer::UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_
     for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
         UpdateIndexBufferArrayElement(fi, buffer_index, buffer, size);
     }
+}
+
+namespace {
+
+// Writes one element of a fixed-size skin-influence descriptor array. The table
+// lives in the deform set, which is allocated once and outlives capacity growth,
+// so a descriptor written here stays valid for the life of the set.
+void WriteSkinTableElement(const vk::raii::Device& dev,
+                           const vk::DescriptorSet set,
+                           const std::uint32_t binding,
+                           const std::uint32_t buffer_index,
+                           const vk::Buffer buffer,
+                           const std::uint64_t size,
+                           const char* const what) {
+    if (!set || !buffer) {
+        LOGIFACE_LOG(warn, std::string(what) + ": null set or buffer for skin slot " +
+                     std::to_string(buffer_index));
+        return;
+    }
+    // The table is a fixed MAX_SKIN_BUFFERS-element descriptor array. Writing past it
+    // is invalid descriptor usage, so the bound is enforced here as well as at the
+    // allocation site: this is the one choke point every skin-table write goes
+    // through.
+    if (buffer_index >= SceneRenderer::MAX_SKIN_BUFFERS) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            LOGIFACE_LOG(error, std::string(what) + ": skin buffer slot " +
+                         std::to_string(buffer_index) + " is past the " +
+                         std::to_string(SceneRenderer::MAX_SKIN_BUFFERS) +
+                         "-slot deform table; the descriptor is not written");
+        }
+        return;
+    }
+    const vk::DescriptorBufferInfo bii(buffer, 0, size);
+    vk::WriteDescriptorSet w{};
+    w.dstSet = set;
+    w.dstBinding = binding;
+    w.dstArrayElement = buffer_index;
+    w.descriptorCount = 1;
+    w.descriptorType = vk::DescriptorType::eStorageBuffer;
+    w.pBufferInfo = &bii;
+    dev.updateDescriptorSets(w, nullptr);
+}
+
+} // anonymous namespace
+
+void SceneRenderer::UpdateSkinBufferArrayElement(std::uint32_t frame_index,
+                                                 std::uint32_t buffer_index,
+                                                 vk::Buffer buffer,
+                                                 std::uint64_t size) {
+    if (!backend_ || frames_.empty()) return;
+    WriteSkinTableElement(backend_->GetDevice(),
+                          frames_[frame_index % frames_in_flight_].deform_set,
+                          0, buffer_index, buffer, size, "UpdateSkinBufferArrayElement");
+}
+
+void SceneRenderer::UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index,
+                                                      std::uint32_t buffer_index,
+                                                      vk::Buffer buffer,
+                                                      std::uint64_t size) {
+    if (!backend_ || frames_.empty()) return;
+    WriteSkinTableElement(backend_->GetDevice(),
+                          frames_[frame_index % frames_in_flight_].deform_set,
+                          1, buffer_index, buffer, size, "UpdateSkinExtraBufferArrayElement");
+}
+
+void SceneRenderer::UpdateAllFrameSkinBufferArrayElements(std::uint32_t buffer_index,
+                                                           vk::Buffer buffer,
+                                                           std::uint64_t size) {
+    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
+        UpdateSkinBufferArrayElement(fi, buffer_index, buffer, size);
+    }
+}
+
+void SceneRenderer::UpdateAllFrameSkinExtraBufferArrayElements(std::uint32_t buffer_index,
+                                                                vk::Buffer buffer,
+                                                                std::uint64_t size) {
+    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
+        UpdateSkinExtraBufferArrayElement(fi, buffer_index, buffer, size);
+    }
+}
+
+GpuResources::BlockArray& SceneRenderer::GetFrameSkinEntries(std::uint32_t frame_index) {
+    return frames_[frame_index % frames_in_flight_].skin_entries;
+}
+
+std::span<std::array<float, 16>> SceneRenderer::MapFrameBonePalettes(std::uint32_t frame_index) {
+    if (!backend_ || frames_.empty()) return {};
+    auto& buffer = frames_[frame_index % frames_in_flight_].bone_palettes;
+    if (!buffer.IsValid()) return {};
+    const std::uint64_t bytes = buffer.GetSize();
+    auto* mapped = static_cast<std::array<float, 16>*>(buffer.Map(0, bytes));
+    if (mapped == nullptr) return {};
+    return {mapped, static_cast<std::size_t>(bytes / (16u * sizeof(float)))};
+}
+
+void SceneRenderer::UnmapFrameBonePalettes(std::uint32_t frame_index) {
+    if (!backend_ || frames_.empty()) return;
+    auto& buffer = frames_[frame_index % frames_in_flight_].bone_palettes;
+    if (buffer.IsValid()) buffer.Unmap();
+}
+
+std::span<std::byte> SceneRenderer::MapFrameModifierParams(std::uint32_t frame_index) {
+    if (!backend_ || frames_.empty()) return {};
+    auto& buffer = frames_[frame_index % frames_in_flight_].modifier_params;
+    if (!buffer.IsValid()) return {};
+    const std::uint64_t bytes = buffer.GetSize();
+    auto* mapped = static_cast<std::byte*>(buffer.Map(0, bytes));
+    if (mapped == nullptr) return {};
+    return {mapped, static_cast<std::size_t>(bytes)};
+}
+
+void SceneRenderer::UnmapFrameModifierParams(std::uint32_t frame_index) {
+    if (!backend_ || frames_.empty()) return;
+    auto& buffer = frames_[frame_index % frames_in_flight_].modifier_params;
+    if (buffer.IsValid()) buffer.Unmap();
+}
+
+void SceneRenderer::SetModifierDispatches(std::uint32_t frame_index,
+                                          std::span<const ModifierDispatch> dispatches) {
+    if (frame_modifier_dispatches_.empty()) return;
+    auto& dst = frame_modifier_dispatches_[frame_index % frames_in_flight_];
+    dst.assign(dispatches.begin(), dispatches.end());
+}
+
+std::span<const ModifierDispatch> SceneRenderer::GetModifierDispatches(
+    std::uint32_t frame_index) const {
+    if (frame_modifier_dispatches_.empty()) return {};
+    return frame_modifier_dispatches_[frame_index % frames_in_flight_];
+}
+
+bool SceneRenderer::IsModifierReady(const Modifiers::ModifierId id) const {
+    // No modifier pipeline exists yet: the deform pipelines are built with the
+    // deform pass. Gather therefore emits no stages and every skinned submesh
+    // renders its bind pose, which is the pre-deform behaviour.
+    (void)id;
+    return false;
+}
+
+Modifiers::ModifierId SceneRenderer::SkinningModifier() const {
+    return modifier_mgr_ != nullptr ? modifier_mgr_->SkinningId() : Modifiers::kInvalidModifierId;
 }
 
 void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,

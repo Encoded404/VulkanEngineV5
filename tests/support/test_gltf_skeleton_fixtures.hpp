@@ -393,4 +393,111 @@ inline constexpr const char* kGeometryAccessors = R"(
     return MakeGlb(json, bin);
 }
 
+// ── parametric influence-set fixture ───────────────────────────────────────
+//
+// One vertex per corner, three corners, and `sets.size()` influence sets. Every
+// vertex carries the same influences, which keeps the assertion "which of them
+// survived the eight-slot budget" readable. Set `n` becomes JOINTS_n/WEIGHTS_n,
+// so a caller decides where the strong weights live.
+struct InfluenceSetSpec {
+    std::array<std::uint8_t, 4> joints{};
+    std::array<std::uint8_t, 4> weights{};
+};
+
+[[nodiscard]] inline std::vector<std::byte> MultiSetGlb(const std::vector<InfluenceSetSpec>& sets) {
+    constexpr std::size_t kVertices = 3;
+    std::vector<std::byte> bin;
+    const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    for (const float f : positions) AppendFloat(bin, f);
+    for (std::size_t i = 0; i < kVertices; ++i) {
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f);
+    }
+
+    // One bufferView per stream, in the order the accessors below reference.
+    // Offsets are derived from `bin.size()` as it is built, so adding a set only
+    // moves the streams that follow it.
+    std::vector<std::pair<std::size_t, std::size_t>> set_offsets; // (joints, weights)
+    for (const InfluenceSetSpec& set : sets) {
+        const std::size_t joints_offset = bin.size();
+        for (std::size_t v = 0; v < kVertices; ++v) {
+            for (std::size_t k = 0; k < 4; ++k) AppendU8(bin, set.joints[k]);
+        }
+        const std::size_t weights_offset = bin.size();
+        for (std::size_t v = 0; v < kVertices; ++v) {
+            for (std::size_t k = 0; k < 4; ++k) AppendU8(bin, set.weights[k]);
+        }
+        set_offsets.emplace_back(joints_offset, weights_offset);
+    }
+
+    const std::size_t indices_offset = bin.size();
+    AppendU16(bin, 0); AppendU16(bin, 1); AppendU16(bin, 2);
+    bin.insert(bin.end(), Pad4(bin.size()), std::byte{0});
+    const std::size_t ibm_offset = bin.size();
+    AppendMat4Identity(bin);
+    AppendMat4Identity(bin);
+
+    // Attributes: POSITION 0, NORMAL 1, then two accessors per set.
+    std::string attributes = "\"POSITION\": 0, \"NORMAL\": 1";
+    std::string buffer_views;
+    std::string accessors;
+    const auto append = [](std::string& out, const std::string& item) {
+        if (!out.empty()) out += ",";
+        out += item;
+    };
+    append(buffer_views, R"json({"buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962})json");
+    append(buffer_views, R"json({"buffer": 0, "byteOffset": 36, "byteLength": 36, "target": 34962})json");
+    append(accessors, R"json({"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"})json");
+    append(accessors, R"json({"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"})json");
+
+    std::size_t view = 2;
+    for (std::size_t s = 0; s < sets.size(); ++s) {
+        const std::string joints_name = "JOINTS_" + std::to_string(s);
+        const std::string weights_name = "WEIGHTS_" + std::to_string(s);
+        attributes += ", \"" + joints_name + "\": " + std::to_string(2 + 2 * s) +
+                      ", \"" + weights_name + "\": " + std::to_string(3 + 2 * s);
+        append(buffer_views, "{\"buffer\": 0, \"byteOffset\": " +
+                             std::to_string(set_offsets[s].first) +
+                             ", \"byteLength\": 12, \"target\": 34962}");
+        append(buffer_views, "{\"buffer\": 0, \"byteOffset\": " +
+                             std::to_string(set_offsets[s].second) +
+                             ", \"byteLength\": 12, \"target\": 34962}");
+        append(accessors, "{\"bufferView\": " + std::to_string(view) +
+                              ", \"componentType\": 5121, \"count\": 3, \"type\": \"VEC4\"}");
+        append(accessors, "{\"bufferView\": " + std::to_string(view + 1) +
+                              ", \"componentType\": 5121, \"normalized\": true, \"count\": 3, "
+                              "\"type\": \"VEC4\"}");
+        view += 2;
+    }
+
+    const std::size_t indices_accessor = 2 + 2 * sets.size();
+    append(buffer_views, "{\"buffer\": 0, \"byteOffset\": " + std::to_string(indices_offset) +
+                         ", \"byteLength\": 6, \"target\": 34963}");
+    append(buffer_views, "{\"buffer\": 0, \"byteOffset\": " + std::to_string(ibm_offset) +
+                         ", \"byteLength\": 128}");
+    append(accessors, "{\"bufferView\": " + std::to_string(view) +
+                          ", \"componentType\": 5123, \"count\": 3, \"type\": \"SCALAR\"}");
+    append(accessors, "{\"bufferView\": " + std::to_string(view + 1) +
+                          ", \"componentType\": 5126, \"count\": 2, \"type\": \"MAT4\"}");
+
+    const std::string json = std::string(R"json({
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0, 3]}],
+  "nodes": [
+    {"name": "rig", "children": [1, 2]},
+    {"name": "joint0"},
+    {"name": "joint1"},
+    {"mesh": 0, "skin": 0}
+  ],
+  "skins": [{"joints": [1, 2], "inverseBindMatrices": )json") +
+        std::to_string(indices_accessor + 1) + R"json(}],
+  "meshes": [{"primitives": [{"attributes": {)json" + attributes +
+        R"json(}, "indices": )json" + std::to_string(indices_accessor) + R"json(, "mode": 4}]}],
+  "buffers": [{"byteLength": )json" + std::to_string(bin.size()) + R"json(}],
+  "bufferViews": [)json" + buffer_views + R"json(],
+  "accessors": [)json" + accessors + R"json(]
+})json";
+    return MakeGlb(json, bin);
+}
+
 } // namespace GltfSkeletonFixture

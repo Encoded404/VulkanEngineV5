@@ -101,6 +101,7 @@ protected:
         }
         vertex_buffer_.reset();
         skin_buffer_.reset();
+        skin_extra_buffer_.reset();
         readback_.reset();
         renderer_->Shutdown();
         renderer_.reset();
@@ -140,7 +141,8 @@ protected:
                    std::span<const glm::mat4> palette_matrices,
                    const SkinEntry& entry,
                    const std::uint32_t src_base = 0,
-                   const std::uint32_t vertex_count = 0) {
+                   const std::uint32_t vertex_count = 0,
+                   std::span<const GpuBoneInfluence> extra_influences = {}) {
         CreateBuffers();
         vertex_buffer_->Upload(vertices.data(), vertices.size() * sizeof(Vertex));
         skin_buffer_->Upload(influences.data(), influences.size() * sizeof(GpuBoneInfluence));
@@ -149,6 +151,21 @@ protected:
             0, 0, static_cast<vk::Buffer>(*vertex_buffer_->GetBuffer()), vk::WholeSize);
         renderer_->UpdateSkinBufferArrayElement(
             0, 0, static_cast<vk::Buffer>(*skin_buffer_->GetBuffer()), vk::WholeSize);
+
+        if (!extra_influences.empty()) {
+            if (!skin_extra_buffer_) {
+                skin_extra_buffer_ = std::make_unique<GpuBuffer>(GpuBuffer::Create(
+                    backend_, kMaxVertices * sizeof(GpuBoneInfluence),
+                    vk::BufferUsageFlagBits::eStorageBuffer,
+                    vk::MemoryPropertyFlagBits::eHostVisible |
+                        vk::MemoryPropertyFlagBits::eHostCoherent));
+                ASSERT_TRUE(skin_extra_buffer_->IsValid());
+            }
+            skin_extra_buffer_->Upload(extra_influences.data(),
+                                       extra_influences.size() * sizeof(GpuBoneInfluence));
+            renderer_->UpdateSkinExtraBufferArrayElement(
+                0, 0, static_cast<vk::Buffer>(*skin_extra_buffer_->GetBuffer()), vk::WholeSize);
+        }
 
         auto palettes = renderer_->MapFrameBonePalettes(0);
         ASSERT_GE(palettes.size(), palette_matrices.size());
@@ -253,6 +270,9 @@ protected:
     std::unique_ptr<SceneRenderer> renderer_;
     std::unique_ptr<GpuBuffer> vertex_buffer_;
     std::unique_ptr<GpuBuffer> skin_buffer_;
+    // Bound only by the two-influence-set tests; a single-set shader path must
+    // never read it.
+    std::unique_ptr<GpuBuffer> skin_extra_buffer_;
     std::unique_ptr<GpuBuffer> readback_;
 };
 
@@ -295,6 +315,16 @@ protected:
                       : 0u);
     e.deform_base = 0;
     (void)vertex_count;
+    return e;
+}
+
+// A skin entry for a submesh whose mesh carries both influence sets: base and
+// extra records, both at slot 0 / bias 0.
+[[nodiscard]] SkinEntry MakeTwoSetEntry(const bool active) {
+    SkinEntry e = MakeEntry(1, active);
+    e.extra_slot = 0;
+    e.extra_bias = 0;
+    e.influence_sets = 2;
     return e;
 }
 
@@ -410,6 +440,89 @@ TEST_P(SkinningGpuTest, ARejectedRegionLeavesTheOutputUntouched) {
     EXPECT_NEAR(second[0].px, first[0].px, 1e-6f);
     EXPECT_NEAR(second[0].py, first[0].py, 1e-6f);
     EXPECT_NEAR(second[0].pz, first[0].pz, 1e-6f);
+}
+
+TEST_P(SkinningGpuTest, EightInfluencesMatchTheCpuReference) {
+    // One vertex, four influences in each record: the widest path the shader has
+    // (two records, eight slots). The weights deliberately straddle both records
+    // and sum to 255, which is what the importer produces for an 8-influence
+    // vertex.
+    const std::vector<Vertex> vertices{MakeVertex(1.0f, 0.0f, 0.0f)};
+    GpuBoneInfluence base = MakeInfluence(0, 1, 64, 63);
+    base.joints23 = 2u | (3u << 16);
+    base.weights |= (std::uint32_t{64} << 16) | (std::uint32_t{32} << 24);
+    GpuBoneInfluence extra{};
+    extra.joints01 = 4u | (5u << 16);
+    extra.joints23 = 6u | (7u << 16);
+    extra.weights = std::uint32_t{16} |
+                    (std::uint32_t{8} << 8) |
+                    (std::uint32_t{4} << 16) |
+                    (std::uint32_t{4} << 24);
+
+    // Eight joints, each translated by a distinct multiple of X so a swapped,
+    // dropped or double-counted influence cannot average out to the right answer.
+    std::vector<glm::mat4> palettes;
+    for (std::uint32_t j = 0; j < 8; ++j) {
+        palettes.push_back(glm::translate(glm::mat4(1.0f),
+                                          glm::vec3(static_cast<float>(j + 1), 0.0f, 0.0f)));
+    }
+
+    Configure(vertices, std::span<const GpuBoneInfluence>(&base, 1), palettes,
+              MakeTwoSetEntry(true), 0, 0,
+              std::span<const GpuBoneInfluence>(&extra, 1));
+    const auto out = Run();
+
+    // CPU reference: sum w_i * (palette_i * p) over all eight influences.
+    const glm::vec4 p(1.0f, 0.0f, 0.0f, 1.0f);
+    const std::uint32_t weights[8] = {64, 63, 64, 32, 16, 8, 4, 4};
+    glm::vec3 expected(0.0f);
+    int total = 0;
+    for (std::uint32_t k = 0; k < 8; ++k) {
+        expected += (static_cast<float>(weights[k]) / 255.0f) *
+                    glm::vec3(palettes[k] * p);
+        total += static_cast<int>(weights[k]);
+    }
+    ASSERT_EQ(total, 255) << "the fixture weights must sum to one";
+    EXPECT_NEAR(out[0].px, expected.x, 1e-4f);
+    EXPECT_NEAR(out[0].py, expected.y, 1e-4f);
+    EXPECT_NEAR(out[0].pz, expected.z, 1e-4f);
+}
+
+TEST_P(SkinningGpuTest, AFourInfluenceMeshNeverReadsTheExtraStream) {
+    // Sentinel: the extra buffer is bound and holds a full-weight influence on a
+    // joint translated by 1000. A single-set entry must not read it; if the shader
+    // took a record from the extra stream the vertex would jump there.
+    const std::vector<Vertex> vertices{MakeVertex(1.0f, 0.0f, 0.0f)};
+    const std::vector<GpuBoneInfluence> influences{MakeInfluence(0, 1, 128, 127)};
+    GpuBoneInfluence sentinel{};
+    sentinel.joints01 = 2u; // a joint that only exists in the palette for this test
+    sentinel.weights = 255u;
+    const std::vector<glm::mat4> palettes{
+        glm::mat4(1.0f),
+        glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, 0.0f)),
+        glm::translate(glm::mat4(1.0f), glm::vec3(1000.0f, 0.0f, 0.0f)),
+    };
+
+    // influence_sets == 1: the extra descriptor is bound but must stay unread.
+    Configure(vertices, influences, palettes, MakeEntry(1, true), 0, 0,
+              std::span<const GpuBoneInfluence>(&sentinel, 1));
+    const auto single = Run();
+
+    // The same dispatch with the extra record actually used must differ, which
+    // proves the sentinel buffer is reachable and the test can fail.
+    SkinEntry two_sets = MakeTwoSetEntry(true);
+    two_sets.extra_slot = 0;
+    Configure(vertices, influences, palettes, two_sets, 0, 0,
+              std::span<const GpuBoneInfluence>(&sentinel, 1));
+    const auto with_extra = Run();
+
+    const glm::vec3 expected =
+        (128.0f / 255.0f) * glm::vec3(1.0f, 0.0f, 0.0f) +
+        (127.0f / 255.0f) * glm::vec3(3.0f, 0.0f, 0.0f);
+    EXPECT_NEAR(single[0].px, expected.x, 1e-5f)
+        << "a 4-influence submesh read the extra influence stream";
+    EXPECT_GT(with_extra[0].px, 100.0f)
+        << "the sentinel must dominate when two sets are read, or this test cannot fail";
 }
 
 INSTANTIATE_TEST_SUITE_P(BothDrawModes, SkinningGpuTest,

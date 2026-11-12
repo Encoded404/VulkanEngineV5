@@ -18,7 +18,9 @@ import VulkanEngine.FileLoaders.Mesh.GltfMeshAssembler;
 namespace {
 
 using GltfSkeletonFixture::AnimatedGlb;
+using GltfSkeletonFixture::InfluenceSetSpec;
 using GltfSkeletonFixture::MakeGlb;
+using GltfSkeletonFixture::MultiSetGlb;
 using GltfSkeletonFixture::SkippedSkinGlb;
 using GltfSkeletonFixture::SkinnedGlb;
 using GltfSkeletonFixture::TwoSetGlb;
@@ -177,14 +179,121 @@ TEST_F(GltfSkinImportTest, SecondInfluenceSetImportsAParallelStream) {
     ASSERT_EQ(mesh->bone_weights.size(), mesh->vertices.size());
     ASSERT_EQ(mesh->bone_weights_extra.size(), mesh->vertices.size());
 
-    // The two sets are normalized across all eight influences: 204/255 + 51/255
-    // sums to 1, so the stored bytes stay 204 and 51.
+    // Both sets are read and normalized together: 0.8 from JOINTS_0/WEIGHTS_0 plus
+    // 0.2 from JOINTS_1/WEIGHTS_1 keeps 204 and 51, so the two records sum to 255.
+    // The engine packs a vertex's influences into eight slots (base first, then the
+    // extra record), not one record per authored set, so both live in the base
+    // record here and the extra record is all zero.
     for (std::size_t i = 0; i < mesh->vertices.size(); ++i) {
         EXPECT_EQ(mesh->bone_weights[i].bone_indices[0], 0u);
-        EXPECT_EQ(mesh->bone_weights_extra[i].bone_indices[0], 1u);
-        const int total = static_cast<int>(mesh->bone_weights[i].weights[0]) +
-                          static_cast<int>(mesh->bone_weights_extra[i].weights[0]);
+        EXPECT_EQ(mesh->bone_weights[i].weights[0], 204u);
+        EXPECT_EQ(mesh->bone_weights[i].bone_indices[1], 1u) << "the second set's joint";
+        EXPECT_EQ(mesh->bone_weights[i].weights[1], 51u);
+        for (std::size_t k = 0; k < 4; ++k) {
+            EXPECT_EQ(mesh->bone_weights_extra[i].weights[k], 0u);
+            EXPECT_EQ(mesh->bone_weights_extra[i].bone_indices[k], 0u);
+        }
+        int total = 0;
+        for (std::size_t k = 0; k < 4; ++k) {
+            total += static_cast<int>(mesh->bone_weights[i].weights[k]) +
+                     static_cast<int>(mesh->bone_weights_extra[i].weights[k]);
+        }
         EXPECT_EQ(total, 255);
+    }
+}
+
+TEST_F(GltfSkinImportTest, FiveInfluencesFillBothRecords) {
+    // Three influences in set 0 and two in set 1: the fifth has to land in the
+    // extra record, which is what makes `influence_sets == 2` load bearing.
+    InfluenceSetSpec base_set{};
+    base_set.joints = {0, 1, 2, 0};
+    base_set.weights = {100, 60, 40, 0};
+    InfluenceSetSpec extra_set{};
+    extra_set.joints = {1, 0, 0, 0};
+    extra_set.weights = {40, 15, 0, 0};
+
+    const std::shared_ptr<Mesh> mesh = AssembleFixture("five.glb", MultiSetGlb({base_set, extra_set}));
+    ASSERT_NE(mesh, nullptr);
+    ASSERT_EQ(mesh->influence_sets, 2u);
+    ASSERT_EQ(mesh->bone_weights_extra.size(), mesh->vertices.size());
+
+    // Slot order is the author order of the non-zero influences (set 0 first, then
+    // set 1), so the first four fill the base record and the fifth the extra one.
+    // 100 + 60 + 40 + 40 + 15 already sums to 255, so the bytes pass through.
+    const auto& b = mesh->bone_weights.front();
+    const auto& e = mesh->bone_weights_extra.front();
+    std::vector<std::pair<unsigned, unsigned>> pairs; // (weight, joint)
+    int total = 0;
+    for (std::size_t k = 0; k < 4; ++k) {
+        if (b.weights[k] != 0) pairs.emplace_back(b.weights[k], b.bone_indices[k]);
+        if (e.weights[k] != 0) pairs.emplace_back(e.weights[k], e.bone_indices[k]);
+        total += static_cast<int>(b.weights[k]) + static_cast<int>(e.weights[k]);
+    }
+    EXPECT_EQ(total, 255);
+    EXPECT_EQ(pairs.size(), 5u) << "every authored influence survives";
+    EXPECT_NE(std::find(pairs.begin(), pairs.end(), std::pair{40u, 1u}), pairs.end())
+        << "set 1's 40-weight influence keeps its joint index";
+    EXPECT_NE(std::find(pairs.begin(), pairs.end(), std::pair{15u, 0u}), pairs.end());
+    EXPECT_NE(std::find(pairs.begin(), pairs.end(), std::pair{100u, 0u}), pairs.end());
+    EXPECT_NE(std::find(pairs.begin(), pairs.end(), std::pair{60u, 1u}), pairs.end());
+    EXPECT_NE(std::find(pairs.begin(), pairs.end(), std::pair{40u, 2u}), pairs.end());
+    // At least one influence had to go in the extra record.
+    EXPECT_GT(e.weights[0] + e.weights[1] + e.weights[2] + e.weights[3], 0u);
+}
+
+TEST_F(GltfSkinImportTest, MoreThanEightInfluencesKeepTheHeaviest) {
+    // Nine non-zero influences across three sets. The single influence in set 2 is
+    // the heaviest, so keeping the first eight by set order would lose it; the
+    // importer has to select by weight.
+    InfluenceSetSpec set0{};
+    set0.joints = {0, 1, 2, 0};
+    set0.weights = {200, 10, 10, 10};
+    InfluenceSetSpec set1{};
+    set1.joints = {1, 0, 0, 0};
+    set1.weights = {10, 10, 10, 10};
+    InfluenceSetSpec set2{};
+    set2.joints = {1, 0, 0, 0};
+    set2.weights = {200, 0, 0, 0};
+
+    const std::shared_ptr<Mesh> mesh = AssembleFixture("nine.glb", MultiSetGlb({set0, set1, set2}));
+    ASSERT_NE(mesh, nullptr);
+    ASSERT_EQ(mesh->influence_sets, 2u);
+    ASSERT_EQ(mesh->bone_weights_extra.size(), mesh->vertices.size());
+
+    const auto& b = mesh->bone_weights.front();
+    const auto& e = mesh->bone_weights_extra.front();
+    std::array<std::uint8_t, 8> weights{};
+    std::array<std::uint8_t, 8> joints{};
+    for (std::size_t k = 0; k < 4; ++k) {
+        weights[k] = b.weights[k];
+        joints[k] = b.bone_indices[k];
+        weights[4 + k] = e.weights[k];
+        joints[4 + k] = e.bone_indices[k];
+    }
+
+    int total = 0;
+    int nonzero = 0;
+    int heaviest = 0;
+    for (const std::uint8_t w : weights) {
+        total += w;
+        if (w > 0) ++nonzero;
+        heaviest = std::max<int>(heaviest, w);
+    }
+    EXPECT_EQ(total, 255);
+    EXPECT_EQ(nonzero, 8) << "the ninth (smallest) influence is dropped";
+
+    // The two 200-weight influences survive and stay the largest: one from set 0
+    // and the one from set 2, which set order alone would have discarded. They hold
+    // 400 of the kept 460, so each quantizes to about 111.
+    EXPECT_EQ(joints[0], 0u);
+    EXPECT_EQ(joints[1], 1u) << "set 2's heavy influence, kept despite being the ninth";
+    EXPECT_GE(weights[0], 100u);
+    EXPECT_GE(weights[1], 100u);
+    EXPECT_LE(std::abs(static_cast<int>(weights[0]) - static_cast<int>(weights[1])), 1);
+    // The remaining six are the small ones, renormalized from 10/460 each.
+    for (std::size_t k = 2; k < 8; ++k) {
+        EXPECT_GT(weights[k], 0u) << "a kept influence must not quantize away";
+        EXPECT_LE(weights[k], 7u);
     }
 }
 

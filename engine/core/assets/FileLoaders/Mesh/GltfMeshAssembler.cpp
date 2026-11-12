@@ -801,9 +801,22 @@ struct ConversionState {
     bool warned_unsupported_mode = false;
     bool warned_extra_uv_set = false;
     bool warned_material = false;
-    bool warned_too_many_influences = false;
+    // JOINTS_4/WEIGHTS_4 or beyond: past the four sets that can contribute to a
+    // vertex's eight influence slots.
+    bool warned_extra_influence_set = false;
     bool warned_joint_range = false;
 };
+
+// glTF does not cap the number of JOINTS_n/WEIGHTS_n sets, but a vertex holds at
+// most eight influences here, so four sets (16 candidates) is the widest input
+// that can matter. Sets past the fourth are reported and ignored.
+inline constexpr std::size_t kMaxInfluenceSets = 4;
+// One GpuBoneInfluence record holds four influences, two records per vertex.
+inline constexpr std::size_t kMaxVertexInfluences = 8;
+// A dropped influence lighter than this is quantization noise that
+// NormalizeAndQuantizeWeights would discard anyway, so dropping it does not by
+// itself justify a "too many influences" warning.
+inline constexpr float kInfluenceDropEpsilon = 1e-4f;
 
 // Makes the per-vertex influence streams parallel. Once any primitive of the
 // mesh is skinned, every vertex carries a BoneWeight (zeros for unskinned
@@ -980,45 +993,100 @@ void EnsureSkinStreams(ConversionState& state, const bool want_extra) {
                 ReadAccessor<fastgltf::math::fvec4>(asset, weights_it->accessorIndex)};
     };
     auto [joints0, weights0] = read_influences("JOINTS_0", "WEIGHTS_0");
-    auto [joints1, weights1] = read_influences("JOINTS_1", "WEIGHTS_1");
     const bool has_skin0 = weights0.size() >= positions.size() && joints0.size() >= positions.size();
-    const bool has_skin1 = has_skin0 &&
-        weights1.size() >= positions.size() && joints1.size() >= positions.size();
-    if (!has_skin0) {
-        joints0.clear();
-        weights0.clear();
+
+    // Sets 1..3 are optional; a primitive may also author none of them while a
+    // sibling primitive does (the streams are made parallel by EnsureSkinStreams
+    // and EmitVertex, zeros where a primitive has no such set).
+    struct InfluenceSet {
+        std::vector<fastgltf::math::u32vec4> joints;
+        std::vector<fastgltf::math::fvec4> weights;
+    };
+    std::array<InfluenceSet, kMaxInfluenceSets> sets{};
+    if (has_skin0) {
+        sets[0] = InfluenceSet{std::move(joints0), std::move(weights0)};
+        for (std::size_t s = 1; s < kMaxInfluenceSets; ++s) {
+            const std::string joints_name = "JOINTS_" + std::to_string(s);
+            const std::string weights_name = "WEIGHTS_" + std::to_string(s);
+            auto [joints, weights] = read_influences(joints_name.c_str(), weights_name.c_str());
+            if (weights.size() >= positions.size() && joints.size() >= positions.size()) {
+                sets[s] = InfluenceSet{std::move(joints), std::move(weights)};
+            }
+        }
     }
-    if (!has_skin1) {
-        joints1.clear();
-        weights1.clear();
+    bool has_extra_set = false;
+    for (std::size_t s = 1; s < kMaxInfluenceSets; ++s) {
+        has_extra_set = has_extra_set || !sets[s].weights.empty();
     }
-    if (!state.warned_too_many_influences &&
-        (primitive.findAttribute("JOINTS_2") != primitive.attributes.end() ||
-         primitive.findAttribute("WEIGHTS_2") != primitive.attributes.end())) {
-        state.warned_too_many_influences = true;
+
+    // Sets past the fourth cannot reach a vertex's eight slots, and pretending
+    // otherwise would silently reshape strong influences. Report it once per mesh.
+    if (!state.warned_extra_influence_set &&
+        (primitive.findAttribute("JOINTS_4") != primitive.attributes.end() ||
+         primitive.findAttribute("WEIGHTS_4") != primitive.attributes.end())) {
+        state.warned_extra_influence_set = true;
         LOGIFACE_LOG(warn, "GltfMeshAssembler: mesh " + std::to_string(gltf_mesh) + " primitive " +
                                std::to_string(primitive_index) +
-                               " declares JOINTS_2/WEIGHTS_2; the engine supports at most 8 "
-                               "influences, so the extra set is ignored");
+                               " declares JOINTS_4/WEIGHTS_4 or beyond; a vertex holds at most " +
+                               std::to_string(kMaxVertexInfluences) +
+                               " influences, so only the first four sets are read");
     }
-    if (has_skin0) EnsureSkinStreams(state, has_skin1);
+    if (has_skin0) EnsureSkinStreams(state, has_extra_set);
 
-    // Converts one corner's glTF influences into the two engine streams. Weights
-    // are normalized and quantized across all eight influences, so the two sets
-    // together sum to 1; the stored joint index stays skin-local.
+    // Reports, once per primitive, that some vertex carried more than eight
+    // non-trivial influences and had to drop the smallest ones. This is the
+    // documented limitation rather than a silent approximation: an asset that
+    // splits 9+ influences across sets keeps its heaviest eight per vertex, not
+    // the first eight by set order.
+    bool dropped_influences = false;
+
+    // Converts one corner's glTF influences into the two engine streams. Every
+    // candidate influence from every set is collected and the heaviest eight are
+    // kept, so a mesh whose strong weights live in the second or third set is not
+    // truncated by set order. Weights are then normalized and quantized across
+    // all eight, so the two records together sum to exactly 255; the stored joint
+    // index stays skin-local.
     const auto build_weights = [&](const std::uint32_t index) {
         BoneWeight base{};
         BoneWeight extra{};
         if (!has_skin0) return std::pair{base, extra};
+
+        struct Candidate {
+            float weight;
+            std::uint32_t joint;
+        };
+        std::array<Candidate, kMaxInfluenceSets * 4> candidates{};
+        std::size_t count = 0;
+        for (const InfluenceSet& set : sets) {
+            if (set.weights.empty()) continue;
+            for (std::size_t k = 0; k < 4; ++k) {
+                const float weight = set.weights[index][k];
+                if (weight > 0.0f) {
+                    candidates[count++] = Candidate{weight, set.joints[index][k]};
+                }
+            }
+        }
+        if (count == 0) return std::pair{base, extra};
+
+        if (count > kMaxVertexInfluences) {
+            // Stable, so a mesh with tied weights keeps a deterministic order (the
+            // dedup key below includes the eight slots, so an unstable order would
+            // make vertex merging depend on luck).
+            std::stable_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(count),
+                             [](const Candidate& a, const Candidate& b) {
+                                 return a.weight > b.weight;
+                             });
+            if (candidates[kMaxVertexInfluences].weight > kInfluenceDropEpsilon) {
+                dropped_influences = true;
+            }
+            count = kMaxVertexInfluences;
+        }
+
         std::array<float, 8> weights{};
         std::array<std::uint32_t, 8> joints{};
-        for (std::size_t k = 0; k < 4; ++k) {
-            weights[k] = weights0[index][k];
-            joints[k] = joints0[index][k];
-            if (has_skin1) {
-                weights[4 + k] = weights1[index][k];
-                joints[4 + k] = joints1[index][k];
-            }
+        for (std::size_t k = 0; k < count; ++k) {
+            weights[k] = candidates[k].weight;
+            joints[k] = candidates[k].joint;
         }
         if (!NormalizeAndQuantizeWeights(weights)) return std::pair{base, extra};
         const auto quantize = [](const float weight) {
@@ -1165,6 +1233,14 @@ void EnsureSkinStreams(ConversionState& state, const bool want_extra) {
                                base_weights, extra_weights));
             }
         }
+    }
+
+    if (dropped_influences) {
+        LOGIFACE_LOG(warn, "GltfMeshAssembler: mesh " + std::to_string(gltf_mesh) + " primitive " +
+                               std::to_string(primitive_index) + " authors more than " +
+                               std::to_string(kMaxVertexInfluences) +
+                               " influences per vertex; the smallest weights are dropped and the "
+                               "remaining ones renormalized");
     }
 
     const std::uint32_t index_count = static_cast<std::uint32_t>(mesh.indices.size()) - index_start;

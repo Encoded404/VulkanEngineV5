@@ -273,6 +273,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/MeshUploadManager.cpp
     render/ModifierManager.cpp
     render/MeshGatherSystem.cpp
+    render/AnimationSystem.cpp
     render/MeshPipeline.cpp
     assets/SceneImport.cpp
     assets/SkeletalAnimation.cpp
@@ -422,6 +423,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         components/Text.cppm
         components/DynamicMesh.cppm
         components/SkeletonPose.cppm
+        components/AnimationPlayer.cppm
         components/GeometryModifier.cppm
         components/OrmOverride.cppm
         components/MaterialOverride.cppm
@@ -472,6 +474,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         render/ModifierManager.cppm
         render/MeshUploadManager.cppm
         render/MeshGatherSystem.cppm
+        render/AnimationSystem.cppm
         render/MeshPipeline.cppm
         assets/SceneImport.cppm
         assets/MeshCache.cppm

@@ -13,6 +13,7 @@ import vulkan;
 
 import VulkanEngine.MeshManager;
 import VulkanEngine.ModifierManager;
+import VulkanEngine.AnimationSystem;
 import VulkanEngine.Components.DynamicMesh;
 import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderWatcher;
@@ -128,6 +129,20 @@ void GameEngine::RegisterFramePipeline() {
             ctx_.scene_renderer->SyncModifierPipelines(app.frame.frame_counter);
         },
         "frame.modifier_sync");
+
+    // Sample clips into SkeletonPose before gather copies the palettes. Same
+    // reason as ModifierSync for the constraint edge: the plain Add overload would
+    // put this after MeshProcessFrame, and gather would copy the previous frame's
+    // pose. CPU-only and renderer-free, so it runs even while the scene is not yet
+    // valid; nothing here may touch a device.
+    frames_.AddBefore(
+        FrameSlot::MeshProcessFrame, FrameSlot::AnimationUpdate,
+        [this](FramePhaseContext& fctx) {
+            Application::ApplicationContext& app = fctx.App();
+            static_cast<void>(
+                ctx_.animation_system.Update(ctx_.component_registry, app.frame.delta_time));
+        },
+        "frame.animation_update");
 
     // The mesh manager's per-frame retire rides the same FIF slot as the
     // uploads, so it runs before the frame records.

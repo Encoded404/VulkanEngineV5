@@ -29,12 +29,39 @@ struct SkeletonPose {
     std::vector<std::vector<std::array<float, 16>>> palettes;
     std::uint32_t version = 0;
     bool dirty = true;
+    // Bookkeeping, written by Rebuild/RebuildFromLocal: which asset and skeleton the
+    // current `world`/`palettes` were computed from. `built_asset` is an identity
+    // tag only and is never dereferenced, so re-pointing `asset` cannot leave a
+    // dangling read.
+    const SkeletalAsset* built_asset = nullptr;
+    std::uint32_t built_skeleton_index = kNoSkeleton;
     // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+    // True when `world`/`palettes` were computed from the `asset`/`skeleton_index`
+    // the component currently names. A consumer must check this rather than trust
+    // `dirty`, which the rebuild itself clears and any other caller may have.
+    [[nodiscard]] bool MatchesBuiltState() const noexcept {
+        return built_asset == asset.get() && built_skeleton_index == skeleton_index;
+    }
 
     // Recomputes the bind pose (local = SkeletonJoint::local_bind, world with the
     // SkeletonRoot transforms, order-independent) and the palettes of every skin
-    // bound to `skeleton_index`. Bumps `version` and clears `dirty`.
+    // bound to `skeleton_index`. Bumps `version` and clears `dirty`. A pose with no
+    // asset, or whose `skeleton_index` is outside it, is left cleared rather than
+    // half-built.
+    //
+    // While an `AnimationPlayer` is attached, the next animation update samples its
+    // clip over this pose: the player owns the pose, so a manual bind-pose reset
+    // does not survive. Detaching the player stops sampling but leaves the last
+    // sampled pose in place; call `Rebuild()` (or mark `dirty`) after detaching to
+    // return the object to its rest pose.
     void Rebuild();
+
+    // Recomputes `world` and the palettes from the current `local`, which is what
+    // an animation system fills with sampled joint transforms. A `local` whose
+    // size does not match the skeleton is reset to the bind pose rather than read
+    // past its end. Bumps `version` and clears `dirty`.
+    void RebuildFromLocal();
 
     // The palette of `skin_index`, empty when that skin is not bound to this
     // pose or the index is out of range.

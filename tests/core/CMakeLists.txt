@@ -18,6 +18,8 @@ add_executable(engine_tests
   skeletal_animation_tests.cpp
   deform_addressing_tests.cpp
   modifier_stack_tests.cpp
+  geometry_modifier_tests.cpp
+  animation_system_tests.cpp
   modifier_registry_tests.cpp
   modifier_dispatch_tests.cpp
   mesh_transform_compose_tests.cpp

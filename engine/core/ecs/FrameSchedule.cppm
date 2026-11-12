@@ -76,6 +76,9 @@ enum class FrameSlot : std::uint16_t {
     None = 0,             // not bound to a slot
     TextDisplayScale,     // platform content scale -> text system (runs even
                           // when no valid scene exists: UI still draws)
+    // Clip sampling into SkeletonPose. Must run before gather (MeshProcessFrame)
+    // so the palette gather copies is this frame's pose, not the previous one.
+    AnimationUpdate,
     // Modifier pipelines reconciled from the registry; must run before gather
     // (MeshProcessFrame) so it only ever sees runnable modifier ids.
     ModifierSync,
@@ -97,6 +100,7 @@ enum class FrameSlot : std::uint16_t {
 [[nodiscard]] constexpr std::string_view FrameSlotName(FrameSlot slot) noexcept {
     switch (slot) {
         case FrameSlot::TextDisplayScale:   return "frame.text_display_scale";
+        case FrameSlot::AnimationUpdate:    return "frame.animation_update";
         case FrameSlot::ModifierSync:       return "frame.modifier_sync";
         case FrameSlot::MeshProcessFrame:   return "frame.mesh_process";
         case FrameSlot::MeshEndFrame:       return "frame.mesh_end";

@@ -21,6 +21,7 @@ import VulkanEngine.TechniqueManager;
 import VulkanEngine.Renderer;
 import VulkanEngine.MeshManager;
 import VulkanEngine.MeshRenderSystem;
+import VulkanEngine.AnimationSystem;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.ResourceSystem;
 import VulkanEngine.ResourceSystem.TextureResource;
@@ -150,6 +151,9 @@ struct EngineContext {
     std::unique_ptr<Renderer::Renderer> renderer;
     std::unique_ptr<MeshManager> mesh_manager;
     MeshRenderSystem mesh_render_system;
+    // Clip playback into SkeletonPose components. CPU-only and stateless, so it
+    // is a plain member rather than an optional subsystem.
+    AnimationSystem animation_system;
     MeshRegistry mesh_registry;
     VulkanEngine::ComponentRegistry component_registry{};
 
@@ -201,6 +205,7 @@ struct EngineContext {
     auto& GetRenderer() { return *renderer; }
     auto& GetMeshManager() { return *mesh_manager; }
     auto& GetMeshRenderSystem() { return mesh_render_system; }
+    auto& GetAnimationSystem() { return animation_system; }
     auto& GetMeshRegistry() { return mesh_registry; }
     auto& GetComponentRegistry() { return component_registry; }
     auto& GetMaterialManager() { return material_mgr; }

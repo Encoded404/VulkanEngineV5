@@ -99,6 +99,26 @@ void ReportTransformOverrideIssue(const Components::TransformOverrideStatus stat
     }
 }
 
+// Reports a bounds policy that an active deform cannot honour, once per
+// (policy, object). gather keeps both cull bits set for every active deform, so
+// the request is ignored rather than applied; saying so is what keeps
+// `RestPose` from looking like a supported way to cull a deforming object.
+void ReportBoundsPolicyIssue(Components::GeometryModifier* const modifier,
+                             const std::uint64_t entity_id) {
+    if (modifier == nullptr) return;
+    const std::optional<Components::BoundsPolicy> unsupported =
+        Components::UnsupportedBoundsPolicy(modifier->bounds);
+    if (!unsupported.has_value()) return;
+    if (!modifier->ShouldReport(
+            OverrideSignature(9, static_cast<std::uint64_t>(*unsupported), entity_id))) {
+        return;
+    }
+    LOGIFACE_LOG(warn, "GeometryModifier: entity " + std::to_string(entity_id) +
+        " asks for bounds policy '" + std::string(Components::BoundsPolicyName(*unsupported)) +
+        "' but its vertices are moved by a modifier and no deformed envelope exists; the object "
+        "is kept out of the culler and out of occluder selection (SkipCulling)");
+}
+
 // Material chosen for one object-local submesh, after applying (and validating)
 // any per-object MaterialOverride. `technique` is the material's own technique
 // and is never mixed with a different material's packing.
@@ -748,6 +768,13 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             resolve_skin(plan, loaded, pose, sm.skin_index, gpu_info, entity_id);
             resolve_stack(plan, geometry_modifier, s, e.mesh_ref->loaded_mesh_id,
                           loaded->submesh_count, entity_id);
+            // A stack that resolved at least one stage is exactly the case the write
+            // pass turns into an active deform (a stage only drops there if a
+            // frame buffer failed to map, which is already reported globally), so
+            // this is where an unsupported bounds policy applies and is reported.
+            if (plan.modifier_count > 0 && plan.vertex_span > 0) {
+                ReportBoundsPolicyIssue(geometry_modifier, entity_id);
+            }
 
             accumulate(sm, plan.technique_material);
             plans_.push_back(plan);
@@ -1121,8 +1148,10 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             if (deform_active) {
                 // Bounds for a deformed object are no longer its rest-pose bounds,
                 // so it must neither be culled nor selected as an occluder. This
-                // covers unskinned modifier objects too: `bounds` may only narrow
-                // it once an envelope exists.
+                // covers unskinned modifier objects too, and it is unconditional:
+                // `BoundsPolicy` cannot narrow it until an envelope of the deformed
+                // object exists (see Components::UnsupportedBoundsPolicy), so a
+                // request to do so is reported in the resolve pass and ignored here.
                 entry->flags = SceneRenderer::kDeformActive |
                                SceneRenderer::kDeformNoOccluder |
                                SceneRenderer::kDeformNoCullTest |

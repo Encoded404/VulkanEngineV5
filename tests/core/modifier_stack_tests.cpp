@@ -138,35 +138,7 @@ TEST(ModifierStackTest, VisitsParamsInStageOrder) {
     EXPECT_EQ(markers, (std::vector<std::uint8_t>{0xAA, 0xCC}));
 }
 
-TEST(ModifierStackTest, MeshIdAdoptsOnceAndReportsAMismatchOnce) {
-    GeometryModifier modifier{};
-    EXPECT_EQ(modifier.mesh_id, GeometryModifier::kUnboundMesh);
-
-    // Gather adopts the owner's mesh on first use.
-    modifier.mesh_id = 42;
-    EXPECT_EQ(modifier.mesh_id, 42u);
-
-    // A diagnostic is reported once per distinct signature, not per frame.
-    EXPECT_TRUE(modifier.ShouldReport(0x1234));
-    EXPECT_FALSE(modifier.ShouldReport(0x1234));
-    EXPECT_TRUE(modifier.ShouldReport(0x5678));
-
-    // Re-binding clears the diagnostic state so a fresh mismatch is reported.
-    modifier.Bind(43);
-    EXPECT_EQ(modifier.mesh_id, 43u);
-    EXPECT_TRUE(modifier.ShouldReport(0x1234));
-
-    // Unbinding returns the component to "adopt on first use".
-    modifier.Unbind();
-    EXPECT_EQ(modifier.mesh_id, GeometryModifier::kUnboundMesh);
-    EXPECT_TRUE(modifier.ShouldReport(0x1234));
-}
-
-TEST(ModifierStackTest, DefaultBoundsPolicyIsSkipCulling) {
-    // A modifier moves vertices away from their rest-pose bounds, so the default
-    // must not let the culler trust them.
-    GeometryModifier modifier{};
-    EXPECT_EQ(modifier.bounds, BoundsPolicy::SkipCulling);
-}
+// Mesh fingerprint adoption and the bounds policy live in
+// geometry_modifier_tests.cpp: this file only owns stack resolution.
 
 } // namespace

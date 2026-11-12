@@ -39,13 +39,17 @@ export namespace VulkanEngine {
 
     // Fills `out_local` from `SkeletonJoint::local_bind`, then overwrites only the
     // clip's channelled joints. A clip switch therefore restores the bind pose for
-    // joints the new clip does not animate. Time wraps against `clip.duration`.
-    // Rotation channels interpolate with shortest-arc slerp and store a unit
-    // quaternion; translation/scale channels lerp or step.
+    // joints the new clip does not animate. `loop` selects how time is bounded
+    // against `clip.duration`: wrapped into [0, duration) when true (the looping
+    // default), clamped into [0, duration] when false so a finished one-shot clip
+    // holds its final pose instead of snapping back to the first key. Rotation
+    // channels interpolate with shortest-arc slerp and store a unit quaternion;
+    // translation/scale channels lerp or step.
     void SampleClip(const AnimationClip& clip,
                     const Skeleton& skeleton,
                     float time,
-                    std::span<SubMeshTransform> out_local);
+                    std::span<SubMeshTransform> out_local,
+                    bool loop = true);
 
     // Composes world transforms from the skeleton hierarchy. Order-independent:
     // glTF `skin.joints` may store a child before its parent, so only

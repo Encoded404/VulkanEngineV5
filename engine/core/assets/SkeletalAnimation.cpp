@@ -142,7 +142,8 @@ Mat4 FromTRS(const SubMeshTransform& trs) {
 void SampleClip(const AnimationClip& clip,
                 const Skeleton& skeleton,
                 const float time,
-                const std::span<SubMeshTransform> out_local) {
+                const std::span<SubMeshTransform> out_local,
+                const bool loop) {
     const std::size_t joint_count = out_local.size();
     for (std::size_t i = 0; i < joint_count && i < skeleton.joints.size(); ++i) {
         out_local[i] = skeleton.joints[i].local_bind;
@@ -150,8 +151,15 @@ void SampleClip(const AnimationClip& clip,
 
     float wrapped = time;
     if (clip.duration > 0.0f) {
-        wrapped = std::fmod(time, clip.duration);
-        if (wrapped < 0.0f) wrapped += clip.duration;
+        if (loop) {
+            wrapped = std::fmod(time, clip.duration);
+            if (wrapped < 0.0f) wrapped += clip.duration;
+        } else {
+            // A one-shot clip holds its final pose past the end. Wrapping here
+            // would snap back to the first key at exactly `duration`, which is
+            // where a finished player sits.
+            wrapped = std::clamp(time, 0.0f, clip.duration);
+        }
     } else {
         wrapped = std::max(time, 0.0f);
     }

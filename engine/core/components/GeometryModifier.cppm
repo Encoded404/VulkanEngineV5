@@ -34,12 +34,47 @@ struct SubMeshModifierStack {
 };
 
 // How the culler should treat an object whose vertices a modifier moves.
+//
+// A deform moves vertices away from the asset's rest-pose bounds, and no envelope
+// of a deformed object is computed yet, so the only policy that can be honoured is
+// SkipCulling. `RestPose` would cull against bounds that no longer hold;
+// `Conservative` and `Manual` both need data that does not exist yet (a computed
+// envelope, or caller-supplied bounds). See `UnsupportedBoundsPolicy`.
 enum class BoundsPolicy : std::uint8_t {
     RestPose,     // trust the asset's rest-pose bounds (unsafe for a real deform)
     SkipCulling,  // never cull and never use as an occluder
     Conservative, // cull against an envelope (follow-up; falls back to SkipCulling)
     Manual,       // trust caller-provided bounds
 };
+
+// Diagnostic spelling of a policy.
+[[nodiscard]] constexpr std::string_view BoundsPolicyName(const BoundsPolicy policy) noexcept {
+    switch (policy) {
+        case BoundsPolicy::RestPose:     return "RestPose";
+        case BoundsPolicy::SkipCulling:  return "SkipCulling";
+        case BoundsPolicy::Conservative: return "Conservative";
+        case BoundsPolicy::Manual:       return "Manual";
+    }
+    return "<unknown>";
+}
+
+// The policy an *active* deform cannot honour, or nullopt when the object already
+// asked for SkipCulling (the one implemented policy).
+//
+// gather keeps `kDeformNoOccluder | kDeformNoCullTest` set for every active deform
+// and never clears them from this component, so an unsupported request cannot
+// silently shrink a deformed object's culling. The caller reports the returned
+// policy once per object instead of letting it look honoured.
+[[nodiscard]] constexpr std::optional<BoundsPolicy> UnsupportedBoundsPolicy(
+    const BoundsPolicy requested) noexcept {
+    switch (requested) {
+        case BoundsPolicy::SkipCulling: return std::nullopt;
+        case BoundsPolicy::RestPose:
+        case BoundsPolicy::Conservative:
+        case BoundsPolicy::Manual: return requested;
+    }
+    return requested;
+}
 
 // Per-object vertex-modifier stack.
 //

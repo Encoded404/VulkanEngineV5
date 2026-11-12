@@ -215,5 +215,9 @@ TEST(FrameScheduleTest, PhaseNamesAreTheDiagnosticSpelling) {
     EXPECT_EQ(FramePhaseName(FramePhase::Record), "record");
     EXPECT_EQ(FramePhaseName(FramePhase::PostPresent), "post-present");
     EXPECT_EQ(FrameSlotName(FrameSlot::RenderSubmit), "frame.render_submit");
+    // The animation slot must precede gather, and its diagnostic spelling is what
+    // a profile or a game's AddBefore refers to.
+    EXPECT_EQ(FrameSlotName(FrameSlot::AnimationUpdate), "frame.animation_update");
+    EXPECT_EQ(FrameSlotName(FrameSlot::ModifierSync), "frame.modifier_sync");
     EXPECT_EQ(FrameSlotName(FrameSlot::None), "<none>");
 }

@@ -69,7 +69,7 @@ template<typename T, typename... Args> T& AddComponent(Entity&, Args&&...);
 template<typename T> void RemoveComponent(Entity&);  // deferred inside ForEach
 template<typename T> T* GetComponent(Entity&);
 template<typename T> const T* GetComponent(const Entity&) const;
-template<typename T> bool HasComponent(const Entity&) const;   // mask, O(1)
+template<typename T> bool HasComponent(const Entity&) const;   // sparse lookup, O(1)
 template<typename T> std::size_t Count() const;
 
 // queries
@@ -85,15 +85,17 @@ void ApplyStructuralChanges();
 void Clear();
 ```
 
-`AddComponent` throws `std::logic_error` on a duplicate, on a destroyed entity,
-and when the component-type budget (`kMaxComponentTypes`, 64) is exceeded.
+`AddComponent` throws `std::logic_error` on a duplicate, on a destroyed entity.
+There is no fixed component-type cap: presence lives in the per-type pools, not
+in a per-entity bitmask, so a game can register any number of component types.
 
 ## Queries
 
-`ForEach<Ts...>` iterates the smallest matching pool, tests the entity mask for
-the remaining types, then resolves each component. An empty intersection costs
-nothing and the visit order is the driving pool's dense order, so gather output
-is deterministic. The callback may take the entity as well as the components.
+`ForEach<Ts...>` iterates the smallest matching pool, resolves each requested
+component once per entity, and treats a null pointer as that entity lacking the
+type. An empty intersection costs nothing and the visit order is the driving
+pool's dense order, so gather output is deterministic. The callback may take the
+entity as well as the components.
 
 ## Structural changes and deferral
 
@@ -128,10 +130,12 @@ registry hooks.
 
 Structural changes and queries are single-threaded and never overlap.
 `GetComponent` / `HasComponent` are lock-free reads; the mutating APIs, `Count`
-and `ForEach` take the registry mutex. `UpdateAllComponentsAsync` collects
-object-component pointers under the lock and runs `Update` in parallel over
-stable addresses. No structural change may occur while a query or update is in
-flight.
+and `ForEach` take the registry mutex. `HasComponent` reads `pools_`, the pool's
+`sparse_` and `values_.size()`, so a structural change while a query is in
+flight now yields a torn pointer through `pools_.resize()` rather than a stale
+mask bit. `UpdateAllComponentsAsync` collects object-component pointers under
+the lock and runs `Update` in parallel over stable addresses. No structural
+change may occur while a query or update is in flight.
 
 ## Systems and the fixed-step order
 

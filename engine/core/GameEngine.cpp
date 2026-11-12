@@ -1497,4 +1497,17 @@ void GameEngine::UploadLighting(const SceneRenderer::SceneHeader& header,
     ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_pool);
 }
 
+Modifiers::ModifierId GameEngine::RegisterModifier(Modifiers::ModifierDesc desc) {
+    // The registry outlives the renderer (Shutdown resets it, and a later Setup
+    // registers skinning again), so registering before InitRenderer is legal: the
+    // first ModifierSync the renderer runs builds every entry it finds.
+    return ctx_.modifier_mgr.Register(std::move(desc));
+}
+
+void GameEngine::UnregisterModifier(const Modifiers::ModifierId id) {
+    // Unregister on a dead or unknown handle is a no-op inside the manager, so a
+    // double unregister (or an unregister after Shutdown's Reset) is harmless.
+    ctx_.modifier_mgr.Unregister(id);
+}
+
 } // namespace VulkanEngine

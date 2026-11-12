@@ -22,6 +22,7 @@ add_executable(gpu_tests
   slug_blob_gpu_tests.cpp
   gpu_pass_timer_gpu_tests.cpp
   skinning_gpu_tests.cpp
+  modifier_gpu_tests.cpp
   normal_pack_gpu_tests.cpp
   unskinned_regression_gpu_tests.cpp
   skinned_bounds_gpu_tests.cpp
@@ -64,6 +65,15 @@ add_slang_shaders(
   COMPILER ${VKENGINE_SLANG_SPIRV_COMPILER}
   COMPILER_DEPENDS ${VKENGINE_SLANG_COMPILER_DEPENDS}
     "${CMAKE_SOURCE_DIR}/engine/core/shaders/normal_pack.slang"
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/modifier_common.slang"
+    # modifier_common.slang's own includes: the compiler has no dependency
+    # scanner, so every header the probe or the template reaches has to be
+    # listed here or an edit to it would leave stale SPIR-V behind.
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/modifier_template.slang"
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/scene_entries.slang"
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/scene_block_layout.slang"
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/skin_layout.slang"
+    "${CMAKE_SOURCE_DIR}/engine/core/shaders/normal_encoding.slang"
   OPT_LEVEL ${_gpu_test_shader_opt}
   SHADERS
     test_fullscreen_vs test_fullscreen_vs.slang vertex main
@@ -74,6 +84,9 @@ add_slang_shaders(
     test_read_page_rgba test_read_page_rgba.cs.slang compute main
     test_slug_blob_probe test_slug_blob_probe.cs.slang compute main
     test_pack_tbn       test_pack_tbn.cs.slang       compute main
+    test_modifier_apply test_modifier_apply.cs.slang compute main
+    # Compile-only check for the engine's modifier example (never loaded).
+    modifier_template_compile_check modifier_template_compile_check.slang compute main
 )
 add_dependencies(gpu_tests gpu_test_shaders)
 

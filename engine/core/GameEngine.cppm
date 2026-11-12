@@ -31,6 +31,7 @@ export import VulkanEngine.ECS.SystemSchedule;
 export import VulkanEngine.ECS.FrameSchedule;
 export import VulkanEngine.Modules.EngineModules;
 export import VulkanEngine.ShaderRegistration;
+export import VulkanEngine.ModifierManager;
 export import VulkanEngine.Text.TextSystem;
 export import VulkanEngine.Text.Font;
 
@@ -161,6 +162,32 @@ public:
                            VulkanEngine::ShaderSystem::ShaderManager&, VulkanEngine::ShaderSystem::ShaderId vert_id,
                            VulkanEngine::ShaderSystem::ShaderId frag_id)>;
     void SetTechniqueRegistrar(TechniqueRegistrarFn registrar) { technique_registrar_ = std::move(registrar); }
+
+    // ── Vertex modifiers ──
+    // Registers an application vertex modifier: a 1:1 compute kernel over a
+    // submesh's vertex window, run by the deform pass inside a GeometryModifier
+    // stack. The descriptor names a compute shader the app registered with the
+    // shader manager (Register for a reflected shader, RegisterManual for a
+    // prebuilt .spv) and declares the parameter block the shader reads.
+    //
+    // CPU-only: no pipeline is built here. The frame's ModifierSync step builds
+    // one, so a modifier registered between frames is dispatchable on the next
+    // one. Returns kInvalidModifierId and logs on a validation failure.
+    //
+    // Main thread, between frames: registering or unregistering inside a frame's
+    // gather-to-submit window would invalidate that frame's dispatch list.
+    Modifiers::ModifierId RegisterModifier(Modifiers::ModifierDesc desc);
+
+    // Retires a modifier. Gather stops emitting it immediately; an already
+    // submitted frame keeps its pipeline until the retire window has passed.
+    // A builtin (the "skinning" stage) cannot be unregistered.
+    void UnregisterModifier(Modifiers::ModifierId id);
+
+    // The registry itself, for inspecting ids, live entries and versions.
+    [[nodiscard]] Modifiers::ModifierManager& GetModifierManager() { return ctx_.modifier_mgr; }
+    [[nodiscard]] const Modifiers::ModifierManager& GetModifierManager() const {
+        return ctx_.modifier_mgr;
+    }
 
     // Replaces the engine's default single-sun lighting upload (from
     // GameConfig::lighting) at runtime. The scene renders with this from the

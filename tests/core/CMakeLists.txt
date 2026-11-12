@@ -22,6 +22,7 @@ add_executable(engine_tests
   animation_system_tests.cpp
   modifier_registry_tests.cpp
   modifier_dispatch_tests.cpp
+  game_engine_modifier_tests.cpp
   mesh_transform_compose_tests.cpp
   transform_override_tests.cpp
   draw_key_bound_tests.cpp

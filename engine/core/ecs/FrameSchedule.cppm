@@ -76,6 +76,9 @@ enum class FrameSlot : std::uint16_t {
     None = 0,             // not bound to a slot
     TextDisplayScale,     // platform content scale -> text system (runs even
                           // when no valid scene exists: UI still draws)
+    // Modifier pipelines reconciled from the registry; must run before gather
+    // (MeshProcessFrame) so it only ever sees runnable modifier ids.
+    ModifierSync,
     MeshProcessFrame,     // per-frame mesh/render processing (FIF ring indexing)
     MeshEndFrame,         // mesh manager's per-frame retire
     TextureUploadPump,    // finished async uploads -> staged images
@@ -94,6 +97,7 @@ enum class FrameSlot : std::uint16_t {
 [[nodiscard]] constexpr std::string_view FrameSlotName(FrameSlot slot) noexcept {
     switch (slot) {
         case FrameSlot::TextDisplayScale:   return "frame.text_display_scale";
+        case FrameSlot::ModifierSync:       return "frame.modifier_sync";
         case FrameSlot::MeshProcessFrame:   return "frame.mesh_process";
         case FrameSlot::MeshEndFrame:       return "frame.mesh_end";
         case FrameSlot::TextureUploadPump:  return "frame.texture_upload_pump";

@@ -20,7 +20,15 @@ import VulkanEngine.PipelineTemplates;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
-        struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
+        struct ExpandPC {
+            glm::mat4 vp;
+            std::uint32_t cnt;
+            std::uint32_t p0;
+            std::uint32_t p1;
+            std::uint32_t hasActiveDeform;
+            std::uint32_t regionSpan;
+        };
+        static_assert(sizeof(ExpandPC) == 84, "ExpandPC must match expand.slang");
         // projInfo = (|proj[0][0]|, |proj[1][1]|, proj[2][2], 1 if perspective else 0)
         struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; glm::vec4 projInfo; };
         struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
@@ -117,6 +125,14 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
         const std::array<vk::DescriptorSetLayout, 1> hiz_sets{**hiz_layout_};
         hiz_pipeline_layout_ =
             MakePipelineLayout(be, "hiz-gen-pipeline-layout", hiz_sets, sizeof(HiZPC));
+
+        // Deform: set 0 is the shared vertex-buffer table (widened to compute so
+        // the skinning stage can read the undeformed source vertices), set 1 is
+        // the deform input set. Every modifier pipeline shares this layout.
+        const std::array<vk::DescriptorSetLayout, 2> deform_sets{
+            **vertex_buffers_layout_, **deform_layout_};
+        deform_pipeline_layout_ =
+            MakePipelineLayout(be, "deform-pipeline-layout", deform_sets, sizeof(ModifierPC));
 
         const std::array<vk::DescriptorSetLayout, 4> depth_sets{
             **empty_layout_, **submesh_vertex_layout_, **vertex_buffers_layout_, **indirection_layout_};

@@ -127,6 +127,10 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     // Logical buffers ("scene-buffers", etc.) are hazard-only: they carry no
     // Vulkan handle, so the graph uses them purely for ordering.
     (void)pipeline_->ImportBuffer("scene-buffers");
+    // Hazard-only token for the per-frame deformed-vertex buffer. The deform
+    // pass writes it; the occluder prepass, depth prepass and main pass read it
+    // through their vertex shaders.
+    (void)pipeline_->ImportBuffer("deform-vertices");
     (void)pipeline_->ImportBuffer("draw-indirect");
     (void)pipeline_->ImportBuffer("depth-indirect");
     (void)pipeline_->ImportBuffer("occluder-indirect");
@@ -183,6 +187,8 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
 
     const auto expand_handle = register_builtin(
         std::make_unique<VulkanEngine::SceneRenderer::ExpandPass>(scene_renderer));
+    const auto deform_handle = register_builtin(
+        std::make_unique<VulkanEngine::SceneRenderer::DeformPass>(scene_renderer));
     const auto occluder_select_handle = register_builtin(
         std::make_unique<VulkanEngine::SceneRenderer::OccluderSelectPass>(scene_renderer));
     const auto occluder_prepass_handle = register_builtin(
@@ -260,10 +266,11 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     }
 
     // Explicit ordering ensures correct pipeline:
-    // expand → occluder-select → occluder-prepass → hiz-gen-pre → pre-cull →
-    // depth-prepass → hiz-gen (full) → occlusion → collect → main →
+    // expand → deform → occluder-select → occluder-prepass → hiz-gen-pre →
+    // pre-cull → depth-prepass → hiz-gen (full) → occlusion → collect → main →
     // world text (depth-tested) → screen-space text → ImGui.
-    pipeline_->AddDependency(expand_handle, occluder_select_handle);
+    pipeline_->AddDependency(expand_handle, deform_handle);
+    pipeline_->AddDependency(deform_handle, occluder_select_handle);
     pipeline_->AddDependency(occluder_select_handle, occluder_prepass_handle);
     pipeline_->AddDependency(occluder_prepass_handle, hiz_pre_handle);
     pipeline_->AddDependency(hiz_pre_handle, pre_cull_handle);
@@ -295,6 +302,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         VulkanEngine::RenderGraph::PassHandle,
         VulkanEngine::PipelinePass::kBuiltinPassCount>{
         expand_handle,
+        deform_handle,
         occluder_select_handle,
         occluder_prepass_handle,
         hiz_pre_handle,

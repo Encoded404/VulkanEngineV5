@@ -77,6 +77,16 @@ inline constexpr std::uint32_t kDeformNoCullTest = 1u << 2;
 inline constexpr std::uint32_t kSkinned = 1u << 3;       // skin tables are valid
 inline constexpr std::uint32_t kFinalRegionB = 1u << 4;  // stack parity
 
+// CullEntry.flags bit 0: selected as an occluder this frame (technique_packing.slang).
+inline constexpr std::uint32_t kOccluderBit = 1u << 0;
+
+// CullEntry.flags bits expand copies out of a SkinEntry (technique_packing.slang
+// declares the same two). An object with an active deform has no trustworthy
+// rest-pose bounds: occluder_select skips it and pre_cull/occlusion_cull keep it
+// alive without testing stale bounds.
+inline constexpr std::uint32_t kCullNoOccluder = 1u << 1;
+inline constexpr std::uint32_t kCullNoCullTest = 1u << 2;
+
 struct SkinEntry {
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::uint32_t palette_base = 0;    // global matrix index into bone_palettes
@@ -121,6 +131,79 @@ struct ModifierPC {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 static_assert(sizeof(ModifierPC) == 32, "ModifierPC must match the shader push constant");
+
+// Stable map key for a modifier handle: the slot value and its generation.
+// A stale handle can never alias the entry that recycled its slot.
+[[nodiscard]] constexpr std::uint64_t ModifierKey(const Modifiers::ModifierId id) noexcept {
+    return (static_cast<std::uint64_t>(id.generation) << 32) |
+           static_cast<std::uint64_t>(id.value);
+}
+
+// ── GPU entry mirrors ──
+//
+// Byte-identical C++ mirrors of the per-submesh records in
+// shaders/scene_entries.slang (scalar block layout: matrices are 4-byte
+// aligned, float3x3 is three 12-byte rows). They live here because the cull
+// and deform passes write them and the engine's diagnostics/tests seed them;
+// the shaders' static layouts are pinned by the static_asserts below.
+struct VertexEntry {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::array<float, 16> mvp{};           // 0
+    float max_scale = 0.0f;                // 64
+    std::uint32_t material_id = 0;         // 68
+    std::uint32_t orm_packed = 0;          // 72
+    std::array<float, 16> model_matrix{};  // 76
+    std::array<float, 9> normal_matrix{};  // 140 (row-major, 12B row stride)
+    std::uint32_t vertex_buffer_slot = 0;  // 176
+    std::uint32_t uv_slot = 0;             // 180
+    std::int32_t uv_bias = 0;              // 184
+    std::int32_t deform_bias = 0;          // 188 (kNoDeform when not deformed)
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(VertexEntry) == 192, "VertexEntry must match scene_entries.slang");
+
+struct CullEntry {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t index_base = 0;
+    std::uint32_t index_count = 0;
+    std::uint32_t technique_id = 0;
+    std::uint32_t flags = 0;  // kOccluderBit / kCull* bits
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(CullEntry) == 16, "CullEntry must match scene_entries.slang");
+
+struct BoundingSphereEntry {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float radius = 0.0f;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(BoundingSphereEntry) == 16,
+              "BoundingSphereEntry must match the bounding_spheres block layout");
+
+struct ObbEntry {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    float cx = 0.0f;
+    float cy = 0.0f;
+    float cz = 0.0f;
+    float pad0 = 0.0f;
+    float ux = 0.0f;
+    float uy = 0.0f;
+    float uz = 0.0f;
+    float hu = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 0.0f;
+    float hv = 0.0f;
+    float wx = 0.0f;
+    float wy = 0.0f;
+    float wz = 0.0f;
+    float hw = 0.0f;
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+static_assert(sizeof(ObbEntry) == 64, "ObbEntry must match scene_entries.slang");
 
 // ── Deform addressing helpers ──
 //
@@ -365,10 +448,30 @@ public:
     // iterates it on the CPU.
     void SetModifierDispatches(std::uint32_t frame_index, std::span<const ModifierDispatch> dispatches);
     [[nodiscard]] std::span<const ModifierDispatch> GetModifierDispatches(std::uint32_t frame_index) const;
-    // True once a modifier's compute pipeline exists and is usable. Always false
-    // until the deform pipelines are created; gather then emits no stages.
+    // True once a modifier's compute pipeline exists and is usable. Gather only
+    // emits a stage whose pipeline is ready, so an unbuilt modifier is skipped
+    // rather than dispatched into a null pipeline.
     [[nodiscard]] bool IsModifierReady(Modifiers::ModifierId id) const;
     [[nodiscard]] Modifiers::ModifierId SkinningModifier() const;
+    // Reconciles the registry into compute pipelines. Called once per frame in
+    // the Bridge phase, before gather resolves the stack: a modifier registered
+    // this frame must have a pipeline before gather can number its stage.
+    void SyncModifierPipelines(std::uint32_t frame_counter);
+    // Runs the frame's CPU dispatch list against the deform pipeline layout.
+    // A no-op for an empty list (an unskinned scene dispatches nothing).
+    void DispatchDeform(vk::CommandBuffer cmd, std::uint32_t frame_index);
+    // The per-frame deformed-vertex buffer (set 2, binding 2 / deform set
+    // binding 4). Exposed for diagnostics and the GPU tests that read a deform
+    // result back; gather never touches it.
+    [[nodiscard]] vk::Buffer GetFrameDeformVertices(std::uint32_t frame_index) const;
+    // Per-submesh vertex and cull entries. Gather owns the other four block
+    // arrays through GetFrameBlockArrays; these two are written by expand on
+    // the GPU, so they are only seeded/read by diagnostics and the cull tests.
+    [[nodiscard]] VulkanEngine::GpuResources::BlockArray& GetFrameVertexEntries(std::uint32_t frame_index);
+    [[nodiscard]] VulkanEngine::GpuResources::BlockArray& GetFrameCullEntries(std::uint32_t frame_index);
+    // Replaces the technique flag table contents (one packed word per technique
+    // id). UpdateTechniqueFlags packs the registered techniques through this.
+    void SetTechniqueFlags(std::span<const std::uint32_t> flags);
     // The registry this renderer resolves modifier ids against.
     [[nodiscard]] Modifiers::ModifierManager& GetModifierManager() { return *modifier_mgr_; }
     // True when the frame carries at least one deform dispatch. Expand reads it
@@ -585,6 +688,11 @@ private:
         // Flat modifier-parameter blocks. Host-visible/coherent and mapped during
         // gather; sized by SceneCapacity::modifier_param_bytes.
         VulkanEngine::GpuResources::GpuBuffer modifier_params{};
+        // Deformed-vertex output: 2 * deform_vertex_span vertices, the A and B
+        // regions the modifier stack ping-pongs between. Device-local; written
+        // only by the deform pass and read only by the depth/main vertex
+        // shaders (set 2, binding 2).
+        VulkanEngine::GpuResources::GpuBuffer deform_vertices{};
 
         // Descriptor sets
         VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
@@ -724,6 +832,31 @@ private:
     // upload path, which must not target buffers that capacity growth re-creates.
     std::unique_ptr<vk::raii::DescriptorSetLayout> deform_layout_{};
     std::unique_ptr<vk::raii::DescriptorPool> deform_pool_{};
+    // Deform pipeline layout: [vertex-buffer table (set 0), deform inputs (set
+    // 1)] plus the 32-byte ModifierPC push constant. Every modifier pipeline
+    // shares it, so the two sets stay bound across vkCmdBindPipeline.
+    std::unique_ptr<vk::raii::PipelineLayout> deform_pipeline_layout_{};
+
+    // One compute pipeline per live registry entry, keyed by ModifierId
+    // (generation, value). A pipeline that is retired stays alive for
+    // frames_in_flight_ frames: PipelineSlot's destructor destroys the Vulkan
+    // pipeline immediately, and a submitted command buffer may still use it.
+    struct ModifierPipeline {
+        Modifiers::ModifierId id{};
+        ShaderSystem::PipelineSlot slot{};
+        std::optional<ShaderSystem::ComputePipelineDesc> desc{};
+        // Shader version the current/last build used, plus the failure that was
+        // already reported for it. A broken modifier is retried every frame (so a
+        // transient driver failure heals without a shader edit) but logs once,
+        // instead of spamming the log at frame rate.
+        std::uint64_t shader_version = 0;
+        bool failure_logged = false;
+        bool ready = false;
+        bool dead = false;
+        std::uint64_t dead_at = 0;
+    };
+    std::map<std::uint64_t, ModifierPipeline> modifier_pipelines_{};
+    std::uint64_t modifier_registry_version_ = 0;
 
     // Per-frame modifier dispatch list (CPU-only, never uploaded).
     std::vector<std::vector<ModifierDispatch>> frame_modifier_dispatches_{};

@@ -1,6 +1,7 @@
 #include "scene_entries.slang"
 #include "scene_block_layout.slang"
 #include "technique_packing.slang"
+#include "skin_layout.slang"
 
 [[vk::binding(0, 0)]]
 StructuredBuffer<DynamicEntry, CDataLayout> dynamicEntries[];
@@ -27,15 +28,29 @@ RWStructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<uint, CDataLayout> drawIndices;
 
-// [0] = next vertex-indirection base, [1] = next draw-index base. Zeroed by the CPU.
+// [0] = next vertex-indirection base, [1] = next draw-index base. Zeroed by the
+// CPU. [2] is the per-frame deform-region allocator (element offset into the
+// deformed-vertex buffer), zeroed with the others.
 [[vk::binding(6, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> expandCounter;
+
+// Per-submesh deform addressing, written by gather. Expand is the only writer
+// of `deform_base` (it owns the per-frame region allocator) and it also clears
+// kDeformActive when the region budget cannot cover the submesh. Read only when
+// `hasActiveDeform != 0`, so an unskinned scene touches none of it.
+[[vk::binding(7, 0)]]
+RWStructuredBuffer<SkinEntry, CDataLayout> skinEntries[];
 
 struct ExpandPC {
     float4x4 vp;
     uint objectCount;
     uint pad0;
     uint pad1;
+    // 0 when the frame has no deform dispatch: the skin-entry descriptor is
+    // not read at all and every deformBias is the sentinel.
+    uint hasActiveDeform;
+    // Elements per deform region (T, not 2T): expand allocates only into A.
+    uint regionSpan;
 };
 
 [[vk::push_constant]]
@@ -139,6 +154,38 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].uvBias =
         staticEntries[NonUniformResourceIndex(block)][elementIndex].uvBias;
 
+    // ── Deform allocation ──
+    // The GPU, not the CPU, owns each submesh's region base: the count pass
+    // cannot know it before expand runs. A submesh whose region would run past
+    // the frame's budget loses kDeformActive and keeps the sentinel bias, so it
+    // renders its bind pose instead of corrupting another submesh's region.
+    // When the frame has no deform at all, none of this touches the skin-entry
+    // descriptor: an unskinned scene pays nothing but the branch.
+    int deformBias = kNoDeform;
+    uint cullFlags = 0;
+    if (pushConstant.hasActiveDeform != 0) {
+        SkinEntry skin = skinEntries[NonUniformResourceIndex(block)][elementIndex];
+        if ((skin.flags & kDeformNoOccluder) != 0) cullFlags |= kCullNoOccluder;
+        if ((skin.flags & kDeformNoCullTest) != 0) cullFlags |= kCullNoCullTest;
+        if ((skin.flags & kDeformActive) != 0) {
+            uint deformBase;
+            InterlockedAdd(expandCounter[2], vertexSpan, deformBase);
+            if (deformBase + vertexSpan > pushConstant.regionSpan) {
+                skinEntries[NonUniformResourceIndex(block)][elementIndex].flags =
+                    skin.flags & ~kDeformActive;
+            } else {
+                skinEntries[NonUniformResourceIndex(block)][elementIndex].deform_base = deformBase;
+                // An even stack ends in B and an odd stack in A; expand writes
+                // the final region base into the same signed bias the UV path
+                // uses, so the vertex shader needs no second lookup.
+                uint finalBase = deformBase +
+                    (((skin.flags & kFinalRegionB) != 0) ? pushConstant.regionSpan : 0u);
+                deformBias = int(finalBase) - int(baseVertex + windowBase);
+            }
+        }
+    }
+    submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].deformBias = deformBias;
+
     if (kCompactionMode == 0) {
         // CID: one entry per vertex slot; no per-occurrence duplication.
         for (uint j = 0; j < vertexSpan; j++) {
@@ -163,5 +210,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexBase = indexBase;
     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = indexRange;
     cullEntries[NonUniformResourceIndex(block)][elementIndex].techniqueId = techId;
-    cullEntries[NonUniformResourceIndex(block)][elementIndex].flags = 0; // occluder bit, set by occluder_select
+    // Bit 0 is the occluder bit, set later by occluder_select; the deform bits
+    // travel with the entry so every cull pass agrees the object's rest-pose
+    // bounds must not be tested.
+    cullEntries[NonUniformResourceIndex(block)][elementIndex].flags = cullFlags;
 }

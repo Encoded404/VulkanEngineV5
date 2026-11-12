@@ -25,6 +25,11 @@ export namespace VulkanEngine::PipelinePass {
 // of them. `Count` is the array size for anchors.
 enum class BuiltinPass : std::uint8_t {
     Expand,
+    // Deform runs after expand (which allocates each submesh's deform region)
+    // and before occluder-select, so every cull/draw pass sees the deformed
+    // vertices and an object with an active deform is never treated as an
+    // occluder on its rest-pose bounds.
+    Deform,
     OccluderSelect,
     OccluderPrepass,
     HiZGenPre,

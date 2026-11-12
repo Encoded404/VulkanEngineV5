@@ -14,6 +14,13 @@ StructuredBuffer<Vertex, CDataLayout> vertexBuffers[];
 [[vk::binding(1, 2)]]
 StructuredBuffer<float2, CDataLayout> uvBuffers[];
 
+// Per-frame deformed-vertex output (engine set 2, binding 2). A submesh whose
+// VertexEntry carries a non-sentinel deformBias reads its vertices here instead
+// of from the source table; the two regions are the deform stack's ping-pong
+// buffers and expand picked the final one.
+[[vk::binding(2, 2)]]
+StructuredBuffer<Vertex, CDataLayout> deformVertices;
+
 [[vk::binding(0, 3)]]
 StructuredBuffer<VertexIndirectionEntry, CDataLayout> vertexIndirection;
 
@@ -63,12 +70,12 @@ struct VertexDecode {
 VertexDecode DecodeVertex(uint vertexId, uint submeshIndex, bool use_uv1) {
     VertexDecode d;
     uint vertexIndex;
-    uint vertexBufferSlot;
+    uint indirectionSlot = 0;
     uint block;
     uint elementIndex;
     if (kCompactionMode == 0) {
         VertexIndirectionEntry entry = vertexIndirection[vertexId];
-        vertexBufferSlot = entry.vertexIndex >> 24;
+        indirectionSlot = entry.vertexIndex >> 24;
         vertexIndex = entry.vertexIndex & 0xFFFFFFu;
         submeshIndex = entry.submeshIndex;
         block = submeshIndex / kEntriesPerBlock;
@@ -77,16 +84,20 @@ VertexDecode DecodeVertex(uint vertexId, uint submeshIndex, bool use_uv1) {
         vertexIndex = vertexId;
         block = submeshIndex / kEntriesPerBlock;
         elementIndex = submeshIndex % kEntriesPerBlock;
-        vertexBufferSlot =
-            submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].vertexBufferSlot;
     }
-    Vertex vert = vertexBuffers[NonUniformResourceIndex(vertexBufferSlot)][vertexIndex];
+    // One entry read, hoisted above the vertex fetch: the deform bias decides
+    // where the vertex comes from, and the unskinned path already read this
+    // entry anyway. vertexBufferSlot also comes from here in MID mode.
+    VertexEntry info = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex];
+    uint vertexBufferSlot = (kCompactionMode == 0) ? indirectionSlot : info.vertexBufferSlot;
+    Vertex vert = (info.deformBias != kNoDeform)
+        ? deformVertices[info.deformBias + (int)vertexIndex]
+        : vertexBuffers[NonUniformResourceIndex(vertexBufferSlot)][vertexIndex];
     float3 p = float3(vert.px, vert.py, vert.pz);
 
     float3 n_ms;
     float4 t_ms = UnpackTBN(vert.packedTBN, n_ms);
 
-    VertexEntry info = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex];
     d.mvp = info.mvp;
     d.material_id = info.materialId;
     d.orm_packed = info.ormPacked;

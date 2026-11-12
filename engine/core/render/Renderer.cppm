@@ -23,6 +23,7 @@ export import VulkanEngine.ImGui;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.Render.Passes.ExpandPass;
+import VulkanEngine.Render.Passes.DeformPass;
 import VulkanEngine.Render.Passes.OccluderSelectPass;
 import VulkanEngine.Render.Passes.OccluderPrePass;
 import VulkanEngine.Render.Passes.DepthPrePass;

@@ -360,24 +360,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     };
     static_assert(sizeof(ObbEntry) == 64, "ObbEntry must match Slang ObbEntry (CDataLayout)");
 
-    // VertexEntry mirror (written by the GPU expand pass, only sized here).
-    // Slang C layout: mvp@0 (64B) + maxScale@64 + materialId@68 + ormPacked@72
-    // + modelMatrix@76 (64B) + normalMatrix@140 (3 tightly packed float3 rows,
-    // 36B) + vertexBufferSlot@176 + uvSlot@180 + uvBias@184 = 188 bytes. No
-    // alignment padding — matrices sit on 4-byte boundaries, which is exactly
-    // what scalar block layout permits.
-    struct VertexEntry {
-        std::array<float, 16> mvp;           // 0
-        float max_scale;                     // 64
-        std::uint32_t material_id;           // 68
-        std::uint32_t orm_packed;            // 72
-        std::array<float, 16> model_matrix;  // 76
-        std::array<float, 9> normal_matrix;  // 140 (row-major, 12B row stride)
-        std::uint32_t vertex_buffer_slot;    // 176 (read by the MID vertex shaders)
-        std::uint32_t uv_slot;               // 180 (out-of-line UV1 block; kNoUvSlot when absent)
-        std::int32_t uv_bias;                // 184 (uvRegionBase - meshVtxBase)
-    };
-    static_assert(sizeof(VertexEntry) == 188, "VertexEntry must match Slang VertexEntry (CDataLayout)");
+    // VertexEntry is written by the GPU expand pass, never by gather; its
+    // mirror and static_assert live in SceneRenderer.cppm next to the other
+    // entry records.
 
     // Pack ORM override factors into one u32: bits [7:0]=AO, [15:8]=roughness,
     // [23:16]=metallic, [31:24]=spare. Unorm8 per channel, must match the
@@ -484,9 +469,14 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         plan.skin_slot = gpu_info->skin_buffer_index;
         plan.extra_slot = gpu_info->has_extra_skin ? gpu_info->skin_extra_buffer_index
                                                    : SceneRenderer::kNoSkinSlot;
-        // The influence tables are their own element spaces, so the region base
-        // re-bases the absolute source element index just like the UV path does.
-        const std::uint32_t source_base = plan.base_vertex + plan.vertex_window_base;
+        // The influence tables are their own element spaces, exactly like the UV
+        // stream: the uploaded records are parallel to the mesh's vertices, so an
+        // absolute source element `base_vertex + window_base + j` re-bases onto
+        // `skin_region_base + window_base + j`. Subtracting `plan.base_vertex`
+        // (not the submesh's window base) is what leaves the window offset in the
+        // shader's index; subtracting the window base too would read another
+        // vertex's influences for every submesh whose window starts past 0.
+        const std::uint32_t source_base = plan.base_vertex;
         plan.skin_bias = SceneRenderer::DeformBias(gpu_info->skin_region_base, source_base);
         plan.extra_bias = SceneRenderer::DeformBias(gpu_info->skin_extra_region_base, source_base);
         plan.influence_sets = gpu_info->influence_sets;

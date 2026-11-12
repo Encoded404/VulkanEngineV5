@@ -8,6 +8,7 @@ import ShaderReflection;
 import VulkanEngine.ShaderManager;
 
 import Shaders.Engine.ExpandComp;
+import Shaders.Engine.DeformComp;
 import Shaders.Engine.OcclusionCullComp;
 import Shaders.Engine.OccluderSelectComp;
 import Shaders.Engine.PreCullComp;
@@ -43,6 +44,8 @@ struct EngineShaderIds {
     // starting at 0, so 0 is a valid first shader. A default-constructed
     // EngineShaderIds therefore honestly means "nothing registered yet".
     ShaderSystem::ShaderId expand_comp = ShaderSystem::kInvalidShaderId;
+    // Builtin skinning modifier (linear-blend skinning), compiled as compute.
+    ShaderSystem::ShaderId deform_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId occlusion_cull_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId occluder_select_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId pre_cull_comp = ShaderSystem::kInvalidShaderId;
@@ -84,6 +87,7 @@ struct EngineShaderIds {
 
     void RegisterAll(ShaderSystem::ShaderManager& mgr, std::string_view data_dir) {
         expand_comp              = Shaders::Engine::ExpandComp::Register(mgr, data_dir);
+        deform_comp              = Shaders::Engine::DeformComp::Register(mgr, data_dir);
         occlusion_cull_comp      = Shaders::Engine::OcclusionCullComp::Register(mgr, data_dir);
         occluder_select_comp     = Shaders::Engine::OccluderSelectComp::Register(mgr, data_dir);
         pre_cull_comp            = Shaders::Engine::PreCullComp::Register(mgr, data_dir);

@@ -137,13 +137,15 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
     }
 
-    // Set 2: Vertex buffer table (binding 0) and out-of-line UV table
-    // (binding 1). Both are fixed-count: the spec allows the variable-count
-    // flag only on the highest binding, and neither array's runtime length is
-    // ever queried, so the flag is dropped and both bindings are allocated at
-    // their full fixed count (partially bound, update-after-bind).
+    // Set 2: Vertex buffer table (binding 0), out-of-line UV table (binding 1)
+    // and the per-frame deformed-vertex buffer (binding 2). The two tables are
+    // fixed-count: the spec allows the variable-count flag only on the highest
+    // binding, and neither array's runtime length is ever queried, so the flag
+    // is dropped and both bindings are allocated at their full fixed count
+    // (partially bound, update-after-bind). Binding 2 is a single descriptor
+    // read only by the indirection vertex shaders.
     {
-        std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 3> bs{};
         bs[0].binding = 0;
         bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[0].descriptorCount = MAX_VERTEX_BUFFERS;
@@ -160,11 +162,19 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         // about the set's stage visibility for no benefit.
         bs[1].stageFlags = vk::ShaderStageFlagBits::eVertex |
                            vk::ShaderStageFlagBits::eCompute;
-        const std::array<vk::DescriptorBindingFlags, 2> flags = {
+        bs[2].binding = 2;
+        bs[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bs[2].descriptorCount = 1;
+        // Read by the depth and main indirection vertex shaders; the deform
+        // pass writes the same bytes through its own set (deform binding 4),
+        // so this binding is vertex-only.
+        bs[2].stageFlags = vk::ShaderStageFlagBits::eVertex;
+        const std::array<vk::DescriptorBindingFlags, 3> flags = {
             vk::DescriptorBindingFlagBits::ePartiallyBound |
                 vk::DescriptorBindingFlagBits::eUpdateAfterBind,
             vk::DescriptorBindingFlagBits::ePartiallyBound |
                 vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+            vk::DescriptorBindingFlags{},
         };
         vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
         bind_flags.bindingCount = static_cast<std::uint32_t>(flags.size());
@@ -177,9 +187,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         vertex_buffers_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, *vertex_buffers_layout_, "vertex-buffers-layout");
 
+        // The +1 is per frame *set*: one deformed-vertex descriptor per frame.
         const vk::DescriptorPoolSize ps{
             vk::DescriptorType::eStorageBuffer,
-            frames_in_flight_ * (MAX_VERTEX_BUFFERS + MAX_UV_BUFFERS)
+            frames_in_flight_ * (MAX_VERTEX_BUFFERS + MAX_UV_BUFFERS + 1)
         };
         vk::DescriptorPoolCreateInfo pool_ci{};
         pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
@@ -581,18 +592,23 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                     vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent));
             fr.submesh_vertex_entries.Initialize(be,
-                make_block_config(188, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 188, Slang CDataLayout
+                make_block_config(192, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 192, Slang CDataLayout
                                                         // (scalar block layout): 64 mvp + 12 (maxScale/mat/orm)
                                                         // + 64 modelMatrix + 36 normalMatrix + 4 slot + 4 uvSlot
-                                                        // + 4 uvBias. No padding — matrices are 4B-aligned.
-                                                        // Byte-identical to the VertexEntry mirror +
+                                                        // + 4 uvBias + 4 deformBias. No padding — matrices are
+                                                        // 4B-aligned. Byte-identical to the VertexEntry mirror +
                                                         // static_assert in MeshGatherSystem.cpp. MUST match the
                                                         // VertexEntry definition in scene_entries.slang.
-                    vk::BufferUsageFlagBits::eTransferSrc,
+                    // TransferSrc|Dst: the engine only hands these to the GPU,
+                    // but diagnostics and the GPU tests seed and read them back
+                    // (they are written by expand, so there is no host mapping).
+                    vk::BufferUsageFlagBits::eTransferSrc |
+                        vk::BufferUsageFlagBits::eTransferDst,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
             fr.cull_entries.Initialize(be,
                 make_block_config(16, BLOCK_ENTRIES,
-                    vk::BufferUsageFlagBits::eTransferSrc,
+                    vk::BufferUsageFlagBits::eTransferSrc |
+                        vk::BufferUsageFlagBits::eTransferDst,
                     vk::MemoryPropertyFlagBits::eDeviceLocal));
             // Deform addressing: one 32 B record per submesh. Host-visible because
             // gather writes it directly; grow by gather with EnsureCapacity, not by
@@ -643,6 +659,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
         if (!CreateFrameBuffers()) return false;
     }
+
+    // Build any modifier pipelines that are already registered (the builtin
+    // skinning entry is registered before this call). Gather on the first frame
+    // needs IsModifierReady == true to emit the skinning stage.
+    SyncModifierPipelines(0);
 
     (void)be.GetSwapchainExtent(depth_width_, depth_height_);
 
@@ -802,8 +823,11 @@ bool SceneRenderer::CreateFrameBuffers() {
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_indices.GetBuffer(),
                                                    vk::ObjectType::eBuffer, "draw-indices");
 
+        // [0] entry base, [1] index base, [2] deform-region base. The third
+        // word is expand's per-frame deform allocator; PrepareCompute zeroes
+        // all three, and an 8-byte allocation would put word 2 out of range.
         fr.expand_counter = GpuResources::GpuBuffer::Create(
-            be, 2u * sizeof(std::uint32_t), storage_usage,
+            be, 3u * sizeof(std::uint32_t), storage_usage,
             vk::MemoryPropertyFlagBits::eHostVisible |
                 vk::MemoryPropertyFlagBits::eHostCoherent);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.expand_counter.GetBuffer(),
@@ -927,6 +951,20 @@ bool SceneRenderer::CreateFrameBuffers() {
                 vk::MemoryPropertyFlagBits::eHostCoherent);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.modifier_params.GetBuffer(),
                                                    vk::ObjectType::eBuffer, "modifier-params");
+        // Two regions of T vertices each: the modifier stack writes A, B, A...
+        // and the final region is what the vertex shaders read. Device-local:
+        // only the deform pass writes it and only the draws read it.
+        const std::uint64_t deform_vertex_bytes =
+            static_cast<std::uint64_t>(std::max(2u * scene_capacity_.deform_vertex_span, 1u)) *
+            sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
+        // TransferSrc as well: the engine never reads this buffer back, but the
+        // GPU tests and diagnostics copy a deform result out of it.
+        fr.deform_vertices = GpuResources::GpuBuffer::Create(
+            be, deform_vertex_bytes,
+            storage_usage | vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.deform_vertices.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "deform-vertices");
     }
 
     // CPU-prefix region bases for MID (recomputed when topology changes).
@@ -959,6 +997,7 @@ void SceneRenderer::DestroyFrameBuffers() {
         fr.technique_results = GpuResources::GpuBuffer{};
         fr.bone_palettes = GpuResources::GpuBuffer{};
         fr.modifier_params = GpuResources::GpuBuffer{};
+        fr.deform_vertices = GpuResources::GpuBuffer{};
     }
 }
 
@@ -1269,9 +1308,14 @@ void SceneRenderer::Shutdown() {
         fr.deform_set = vk::raii::DescriptorSet(nullptr);
         fr.bone_palettes = GpuResources::GpuBuffer{};
         fr.modifier_params = GpuResources::GpuBuffer{};
+        fr.deform_vertices = GpuResources::GpuBuffer{};
     }
     frame_modifier_dispatches_.clear();
     has_active_deform_ = false;
+    // Pipelines reference the deform layout; drop them before it.
+    modifier_pipelines_.clear();
+    modifier_registry_version_ = 0;
+    deform_pipeline_layout_.reset();
     modifier_mgr_ = nullptr;
     deform_pool_.reset();
     deform_layout_.reset();
@@ -1521,15 +1565,131 @@ std::span<const ModifierDispatch> SceneRenderer::GetModifierDispatches(
 }
 
 bool SceneRenderer::IsModifierReady(const Modifiers::ModifierId id) const {
-    // No modifier pipeline exists yet: the deform pipelines are built with the
-    // deform pass. Gather therefore emits no stages and every skinned submesh
-    // renders its bind pose, which is the pre-deform behaviour.
-    (void)id;
-    return false;
+    if (!id.IsValid()) return false;
+    const auto it = modifier_pipelines_.find(ModifierKey(id));
+    return it != modifier_pipelines_.end() && it->second.ready && !it->second.dead &&
+           it->second.slot.Get() != nullptr;
+}
+
+void SceneRenderer::SyncModifierPipelines(const std::uint32_t frame_counter) {
+    if (!backend_ || !modifier_mgr_ || !shader_mgr_ || !pipeline_factory_ ||
+        !deform_pipeline_layout_) {
+        // Without the deform layout no modifier can be built. Gather then sees
+        // IsModifierReady == false and every skinned submesh renders its bind
+        // pose.
+        return;
+    }
+
+    // Retire unconditionally: every slot's retire ring has to advance once per
+    // frame, whether or not anything changed.
+    for (auto& [key, pipeline] : modifier_pipelines_) {
+        pipeline.slot.RetireFrame(frame_counter);
+    }
+    // A retired Vulkan pipeline may still be referenced by a submitted command
+    // buffer until frames_in_flight_ frames have passed.
+    std::erase_if(modifier_pipelines_, [frame_counter](const auto& item) {
+        return item.second.dead && frame_counter >= item.second.dead_at;
+    });
+
+    const std::uint32_t fif = std::max(frames_in_flight_, 1u);
+    const std::uint64_t version = modifier_mgr_->RegistryVersion();
+    if (version != modifier_registry_version_) {
+        modifier_registry_version_ = version;
+        // A retired registry entry keeps its pipeline alive for the full retire
+        // window; gather stops emitting it the moment IsModifierReady sees the
+        // dead flag.
+        for (auto& [key, pipeline] : modifier_pipelines_) {
+            if (!pipeline.dead && !modifier_mgr_->IsAlive(pipeline.id)) {
+                pipeline.dead = true;
+                pipeline.ready = false;
+                pipeline.dead_at = frame_counter + fif;
+            }
+        }
+        // New entries get their pipeline object here; the build below happens
+        // this same frame so gather already sees it as ready.
+        for (const auto& entry : modifier_mgr_->Entries()) {
+            if (!entry.alive) continue;
+            const std::uint64_t key = ModifierKey(entry.id);
+            if (modifier_pipelines_.contains(key)) continue;
+            const Modifiers::ModifierDesc* desc = modifier_mgr_->Get(entry.id);
+            if (desc == nullptr || desc->compute_shader == ShaderSystem::kInvalidShaderId) {
+                continue;
+            }
+            ModifierPipeline pipeline{};
+            pipeline.id = entry.id;
+            pipeline.slot.SetFramesInFlight(fif);
+            ShaderSystem::ComputePipelineDesc pipeline_desc{};
+            pipeline_desc.shader = desc->compute_shader;
+            pipeline_desc.layout = **deform_pipeline_layout_;
+            pipeline_desc.entry_point = desc->entry_point;
+            pipeline.desc = std::move(pipeline_desc);
+            modifier_pipelines_.emplace(key, std::move(pipeline));
+        }
+    }
+
+    // Build or rebuild each live pipeline whose shader version changed. Polling
+    // every frame (a version lookup per pipeline, not per submesh) is what makes
+    // a deform.slang edit hot-reload; the registry version above only gates
+    // creation and retirement.
+    for (auto& [key, pipeline] : modifier_pipelines_) {
+        if (pipeline.dead || !pipeline.desc) continue;
+        const std::uint64_t shader_version =
+            shader_mgr_->GetVersion(pipeline.desc->shader);
+        const bool version_changed = pipeline.shader_version != shader_version;
+        // Steady state: a live pipeline whose shader has not changed is left
+        // alone. A pipeline that is not ready (a failed build) keeps retrying so
+        // a transient driver failure heals without a shader edit.
+        if (pipeline.ready && !version_changed) continue;
+        if (version_changed) {
+            // A new shader version gets a fresh chance and a fresh error line.
+            pipeline.shader_version = shader_version;
+            pipeline.failure_logged = false;
+        }
+        auto result = pipeline_factory_->CreateCompute(*pipeline.desc, *shader_mgr_);
+        if (!result.has_value()) {
+            // Keep retrying: a transient driver failure heals on its own, and a
+            // permanently broken modifier stays invisible to gather (bind pose)
+            // rather than failing the frame. The failure line is emitted once per
+            // shader version, not once per frame.
+            pipeline.ready = false;
+            if (!pipeline.failure_logged) {
+                pipeline.failure_logged = true;
+                const Modifiers::ModifierDesc* desc = modifier_mgr_->Get(pipeline.id);
+                LOGIFACE_LOG(error, "SyncModifierPipelines: modifier '" +
+                                        (desc != nullptr ? desc->name : std::string("<stale>")) +
+                                        "' pipeline creation failed (will retry): " +
+                                        result.error().message);
+            }
+            continue;
+        }
+        pipeline.slot.Swap(std::move(*result), frame_counter);
+        pipeline.ready = true;
+        pipeline.failure_logged = false;
+        const Modifiers::ModifierDesc* desc = modifier_mgr_->Get(pipeline.id);
+        VulkanBackend::Vulkan::SetVulkanObjectName(
+            backend_->GetDevice(), pipeline.slot.Get(),
+            "modifier-" + (desc != nullptr ? desc->name : std::string("stale")) + "-pipeline");
+    }
 }
 
 Modifiers::ModifierId SceneRenderer::SkinningModifier() const {
     return modifier_mgr_ != nullptr ? modifier_mgr_->SkinningId() : Modifiers::kInvalidModifierId;
+}
+
+vk::Buffer SceneRenderer::GetFrameDeformVertices(const std::uint32_t frame_index) const {
+    if (frames_.empty()) return {};
+    const auto& buffer = frames_[frame_index % frames_in_flight_].deform_vertices;
+    return buffer.IsValid() ? *buffer.GetBuffer() : vk::Buffer{};
+}
+
+VulkanEngine::GpuResources::BlockArray& SceneRenderer::GetFrameVertexEntries(
+    const std::uint32_t frame_index) {
+    return frames_[frame_index % frames_in_flight_].submesh_vertex_entries;
+}
+
+VulkanEngine::GpuResources::BlockArray& SceneRenderer::GetFrameCullEntries(
+    const std::uint32_t frame_index) {
+    return frames_[frame_index % frames_in_flight_].cull_entries;
 }
 
 void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,

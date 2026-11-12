@@ -32,11 +32,18 @@ struct StaticEntry {
 // of 12 bytes (stride 12), float4x4 members are NOT 16-byte aligned —
 // byte-identical to the C++ mirror struct in MeshGatherSystem.cpp:
 //   mvp@0 (64B) maxScale@64 materialId@68 ormPacked@72 modelMatrix@76 (64B)
-//   normalMatrix@140 (36B) vertexBufferSlot@176 uvSlot@180 uvBias@184 -> 188.
+//   normalMatrix@140 (36B) vertexBufferSlot@176 uvSlot@180 uvBias@184
+//   deformBias@188 -> 192.
 // uvSlot/uvBias address the out-of-line UV1 stream: the UV buffer's block and
 // the signed re-base of the absolute vertex index into that region. A sentinel
 // uvSlot (kNoUvSlot) means UV1 is absent and the shader emits UV0 for it.
+//
+// deformBias addresses the per-frame deformed-vertex buffer (set 2, binding 2)
+// with the same signed re-base: deformVertices[deformBias + vertexIndex]. A
+// sentinel deformBias (kNoDeform) means this submesh was not deformed and the
+// vertex comes from the ordinary vertex table.
 static const uint kNoUvSlot = 0xFFFFFFFFu;
+static const int kNoDeform = -2147483647 - 1;  // INT32_MIN, mirrored in C++
 
 struct VertexEntry {
     float4x4 mvp;
@@ -48,6 +55,7 @@ struct VertexEntry {
     uint vertexBufferSlot;  // vertex buffer table slot for this mesh; read by the MID vertex shaders
     uint uvSlot;            // out-of-line UV1 buffer table slot (kNoUvSlot when absent)
     int  uvBias;            // uvRegionBase - meshVtxBase, signed re-base into the UV region
+    int  deformBias;        // deformRegionBase - meshVtxBase; kNoDeform when not deformed
 };
 
 struct CullEntry {

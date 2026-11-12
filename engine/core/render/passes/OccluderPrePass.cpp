@@ -26,6 +26,13 @@ void OccluderPrePass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
                 VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddRead(occluder_indirect, VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
+    // The deformed-vertex buffer is a per-FIF engine buffer, not a resource the
+    // graph already imports: without this declaration the graph would not
+    // insert the deform->draw barrier and the first frame could read the
+    // buffer before the deform dispatch completed.
+    ctx.AddRead(ctx.ImportBuffer("deform-vertices"),
+                VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
+                VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddWrite(depth_buffer);
 
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};

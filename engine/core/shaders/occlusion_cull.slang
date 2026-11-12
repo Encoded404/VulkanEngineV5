@@ -67,6 +67,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Hi-Z culled: kept alive unconditionally, regardless of test outcome.
     if ((techniqueFlags[cullEntry.techniqueId] & kFlagReceivesOcclusion) == 0) return;
 
+    // Same rule as pre_cull: an object with an active deform has no trustworthy
+    // rest-pose bounds, so the Hi-Z test must not cull it.
+    if ((cullEntry.flags & kCullNoCullTest) != 0) return;
+
     float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
     float maxScaleVal = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale;
 

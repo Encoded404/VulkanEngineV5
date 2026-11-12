@@ -12,6 +12,7 @@ import logiface;
 import vulkan;
 
 import VulkanEngine.MeshManager;
+import VulkanEngine.ModifierManager;
 import VulkanEngine.Components.DynamicMesh;
 import VulkanEngine.EngineBootstrap;
 import VulkanEngine.ShaderWatcher;
@@ -114,6 +115,19 @@ void GameEngine::RegisterFramePipeline() {
             },
             "frame.mesh_process");
     }
+
+    // Reconcile the modifier registry into compute pipelines before gather
+    // numbers any stack. The plain Add overload takes no constraint edge, so
+    // relying on registration order would put this after gather; the edge is
+    // what guarantees a modifier registered this frame is runnable this frame.
+    frames_.AddBefore(
+        FrameSlot::MeshProcessFrame, FrameSlot::ModifierSync,
+        [this](FramePhaseContext& fctx) {
+            if (!ctx_.scene_renderer) return;
+            Application::ApplicationContext& app = fctx.App();
+            ctx_.scene_renderer->SyncModifierPipelines(app.frame.frame_counter);
+        },
+        "frame.modifier_sync");
 
     // The mesh manager's per-frame retire rides the same FIF slot as the
     // uploads, so it runs before the frame records.
@@ -925,6 +939,29 @@ bool GameEngine::InitializeRendererCore(VulkanEngine::Application::ApplicationCo
         .vertex_span = 1u << 19,
         .submesh_count = 1u << 14,
     };
+    // Register the builtin skinning modifier before the renderer builds its
+    // modifier pipelines: SceneRenderer::Initialize syncs the registry, and
+    // gather must see a ready skinning pipeline on the first frame.
+    if (!ctx_.modifier_mgr.SkinningId().IsValid()) {
+        const ShaderSystem::ShaderId deform = ctx_.GetShaderIds().deform_comp;
+        if (deform == ShaderSystem::kInvalidShaderId) {
+            LOGIFACE_LOG(warn, "GameEngine::InitializeRendererCore: deform shader is not "
+                               "registered; skinned meshes will render in bind pose");
+        } else {
+            (void)ctx_.modifier_mgr.RegisterBuiltin(Modifiers::ModifierDesc{
+                .name = std::string(Modifiers::ModifierManager::kSkinningName),
+                .compute_shader = deform,
+                .entry_point = "main",
+                .param_size = 0,
+                .param_alignment = 16,
+                .workgroup_size = 64,
+                .writes_normals = true,
+                .writes_tangents = true,
+                .may_change_bounds = true,
+            });
+        }
+    }
+
     ctx_.scene_renderer = std::make_unique<SceneRenderer::SceneRenderer>();
     {
         auto s = DebugSection("engineinit.scene_renderer");
@@ -1423,6 +1460,11 @@ void GameEngine::Shutdown() {
 
     ctx_.renderer_shaders = {};
     renderer_initialized_ = false;
+
+    // The renderer is gone, so nothing resolves modifier ids any more. Clearing
+    // the registry lets a later Setup register the builtin skinning entry again
+    // instead of rejecting it as a duplicate.
+    ctx_.modifier_mgr.Reset();
 
     scene_valid_ = false;
     scene_invalid_reported_ = false;

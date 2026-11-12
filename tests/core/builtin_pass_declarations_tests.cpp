@@ -10,6 +10,7 @@ import VulkanEngine.RenderPipeline;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.PipelinePass;
 import VulkanEngine.Render.Passes.ExpandPass;
+import VulkanEngine.Render.Passes.DeformPass;
 import VulkanEngine.Render.Passes.OccluderSelectPass;
 import VulkanEngine.Render.Passes.OccluderPrePass;
 import VulkanEngine.Render.Passes.PreCullPass;
@@ -65,6 +66,7 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
 
     namespace SR = VulkanEngine::SceneRenderer;
     const auto expand = reg(std::make_unique<SR::ExpandPass>(scene_renderer));
+    const auto deform = reg(std::make_unique<SR::DeformPass>(scene_renderer));
     const auto occluder_select = reg(std::make_unique<SR::OccluderSelectPass>(scene_renderer));
     const auto occluder_prepass =
         reg(std::make_unique<SR::OccluderPrePass>(scene_renderer, vk::ClearDepthStencilValue{1.0f, 0}));
@@ -86,6 +88,7 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
     // without this test naming it. Pass order itself is the renderer's wiring.
     std::array<PassHandle, kBuiltinPassCount> anchors{};
     anchors[static_cast<std::size_t>(BuiltinPass::Expand)] = expand;
+    anchors[static_cast<std::size_t>(BuiltinPass::Deform)] = deform;
     anchors[static_cast<std::size_t>(BuiltinPass::OccluderSelect)] = occluder_select;
     anchors[static_cast<std::size_t>(BuiltinPass::OccluderPrepass)] = occluder_prepass;
     anchors[static_cast<std::size_t>(BuiltinPass::HiZGenPre)] = hiz_pre;
@@ -99,7 +102,8 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
     anchors[static_cast<std::size_t>(BuiltinPass::Text)] = text;
     anchors[static_cast<std::size_t>(BuiltinPass::ImGui)] = imgui;
 
-    pipeline.AddDependency(expand, occluder_select);
+    pipeline.AddDependency(expand, deform);
+    pipeline.AddDependency(deform, occluder_select);
     pipeline.AddDependency(occluder_select, occluder_prepass);
     pipeline.AddDependency(occluder_prepass, hiz_pre);
     pipeline.AddDependency(hiz_pre, pre_cull);

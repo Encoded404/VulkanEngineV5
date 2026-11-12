@@ -17,7 +17,7 @@
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<CullEntry, CDataLayout> cullEntries[];
 
-// Per-submesh transform constants written by expand (176 B VertexEntry).
+// Per-submesh transform constants written by expand (192 B VertexEntry).
 [[vk::binding(1, 0)]]
 StructuredBuffer<VertexEntry, CDataLayout> submeshVertexEntries[];
 
@@ -78,6 +78,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (entry.indexCount == 0) return;
     if (entry.indexCount > kMaxOccluderIndices) return;
     if (entry.techniqueId >= kMaxDrawGroups) return;
+    // An object with an active deform is not an occluder: its rest-pose OBB
+    // under-approximates the deformed geometry, so selecting it could cull
+    // things that are actually visible (docs/pre-prepass-occlusion-culling.md
+    // §5.8).
+    if ((entry.flags & kCullNoOccluder) != 0) return;
 
     uint flags = techniqueFlags[entry.techniqueId];
     if ((flags & kFlagDepthPass) == 0) return;    // no prepass depth → never occludes

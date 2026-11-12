@@ -92,6 +92,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (entry.techniqueId >= kMaxDrawGroups) return;
     uint flags = techniqueFlags[entry.techniqueId];
 
+    // An object with an active deform has no trustworthy rest-pose bounds: skip
+    // the frustum and Hi-Z tests, but still compact it into the depth survivor
+    // list below (it must draw in the prepass, it just cannot be culled by
+    // bounds that describe the undeformed mesh).
+    if ((entry.flags & kCullNoCullTest) == 0) {
+    // ── Frustum and Hi-Z tests (skipped entirely for an active deform) ──
     float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
     float maxScaleVal = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].maxScale;
 
@@ -190,6 +196,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
             }
         }
     }
+
+    } // kCullNoCullTest
 
     // ── Survivor compaction into the depth-prepass indirection ──
     // Techniques with participates_in_depth_pass == false keep their

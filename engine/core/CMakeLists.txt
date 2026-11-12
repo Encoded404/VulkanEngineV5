@@ -311,6 +311,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     bootstrap/EngineBootstrap.cpp
     bootstrap/Crash.cpp
     render/passes/ExpandPass.cpp
+    render/passes/DeformPass.cpp
     render/passes/HiZPass.cpp
     render/passes/OcclusionPass.cpp
     render/passes/CollectPass.cpp
@@ -332,6 +333,7 @@ set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine")
 set(_shader_opt_level "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 set(_engine_shaders
     ExpandComp              expand.slang              compute  main
+    DeformComp              deform.slang              compute  main
     OcclusionCullComp       occlusion_cull.slang       compute  main
     OccluderSelectComp      occluder_select.slang      compute  main
     PreCullComp             pre_cull.slang             compute  main
@@ -375,6 +377,10 @@ add_slang_shaders(
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/technique_packing.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/hiz_helpers.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/slug_gpu.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skin_layout.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/modifier_common.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/normal_encoding.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/normal_pack.slang"
     OPT_LEVEL   ${_shader_opt_level}
     SHADERS
         ${_engine_shaders}
@@ -501,6 +507,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         bootstrap/EngineBootstrap.cppm
         render_graph/RenderGraph.cppm
         render/passes/ExpandPass.cppm
+        render/passes/DeformPass.cppm
         render/passes/OccluderSelectPass.cppm
         render/passes/OccluderPrePass.cppm
         render/passes/PreCullPass.cppm

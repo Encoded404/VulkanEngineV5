@@ -31,3 +31,10 @@ static const uint kFlagOccluderSafe      = 1u << 3;
 // CullEntry.flags bit 0: submesh selected as an occluder this frame (set by
 // occluder_select, honored by pre_cull).
 static const uint kOccluderBit = 1u << 0;
+// Per-object deform bounds bits, copied from SkinEntry.flags (kDeform* bits in
+// skin_layout.slang) by expand. An object with an active deform no longer has
+// meaningful rest-pose bounds, so it must neither be selected as an occluder
+// nor Hi-Z tested. Both are set unconditionally by gather today; a future
+// conservative envelope is what would clear them.
+static const uint kCullNoOccluder = 1u << 1;
+static const uint kCullNoCullTest = 1u << 2;

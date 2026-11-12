@@ -27,7 +27,17 @@ import VulkanEngine.PipelinePass;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
-        struct ExpandPC { glm::mat4 vp; std::uint32_t cnt; std::uint32_t p0; std::uint32_t p1; };
+        struct ExpandPC {
+            glm::mat4 vp;
+            std::uint32_t cnt;
+            std::uint32_t p0;
+            std::uint32_t p1;
+            // 0 keeps the expand pass off the skin-entry descriptor entirely.
+            std::uint32_t hasActiveDeform;
+            // Elements per deform region (T, not 2T).
+            std::uint32_t regionSpan;
+        };
+        static_assert(sizeof(ExpandPC) == 84, "ExpandPC must match expand.slang");
         struct HiZPC { std::uint32_t bl; std::uint32_t sw; std::uint32_t sh; std::uint32_t tc; };
         // projInfo = (|proj[0][0]|, |proj[1][1]|, proj[2][2], 1 if perspective else 0)
         struct OccPC { std::uint32_t cnt; std::uint32_t refineLevel; std::uint32_t hizWidth; std::uint32_t hizHeight; glm::vec4 projInfo; };
@@ -160,8 +170,10 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
 
     // Per-frame counters/commands.
     {
-        const std::uint32_t zero2[2] = {0u, 0u};
-        fr.expand_counter.Upload(zero2, sizeof(zero2));
+        // [0] entry base, [1] index base, [2] deform-region base. All three are
+        // reset here; expand owns the third as its deform allocator.
+        const std::uint32_t zero3[3] = {0u, 0u, 0u};
+        fr.expand_counter.Upload(zero3, sizeof(zero3));
         const std::uint32_t zero = 0u;
         fr.occluder_candidate_count.Upload(&zero, sizeof(zero));
         if (mid) {
@@ -306,7 +318,12 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 *fr.deform_set, 3, fr.skin_entries,
                 vk::DescriptorType::eStorageBuffer);
     WriteBuffer(*fr.deform_set, 2, fr.bone_palettes, dev);
+    WriteBuffer(*fr.deform_set, 4, fr.deform_vertices, dev);
     WriteBuffer(*fr.deform_set, 5, fr.modifier_params, dev);
+    // The depth/main vertex shaders read the deform output through set 2. The
+    // buffer is re-created on capacity growth, so this is rewritten every
+    // frame, not once at init.
+    WriteBuffer(fr.vertex_buffers_set, 2, fr.deform_vertices, dev);
 
     // Single shared indirection set (set 3) bound to vertex_indirection.
     {
@@ -383,11 +400,19 @@ void SceneRenderer::UpdateTechniqueFlags(
         if (f.bounds_conservative)       bits |= TECHNIQUE_FLAG_OCCLUDER_SAFE;
         flags[g] = bits;
     }
+    SetTechniqueFlags(flags);
+}
 
+void SceneRenderer::SetTechniqueFlags(std::span<const std::uint32_t> flags) {
+    if (!backend_) return;
+    std::vector<std::uint32_t> padded(MAX_DRAW_GROUPS, 0);
+    const std::size_t count = std::min(flags.size(), padded.size());
+    std::copy_n(flags.begin(), static_cast<std::ptrdiff_t>(count), padded.begin());
     // Upload only when contents change (flags are static in practice).
-    if (technique_flags_cache_ != flags) {
-        technique_flags_cache_ = flags;
-        technique_flags.Upload(flags.data(), sizeof(std::uint32_t) * flags.size());
+    if (technique_flags_cache_ != padded) {
+        technique_flags_cache_ = std::move(padded);
+        technique_flags.Upload(technique_flags_cache_.data(),
+                               sizeof(std::uint32_t) * technique_flags_cache_.size());
     }
 }
 
@@ -594,10 +619,71 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *expand_pipeline_layout_,
                              0, ds, {});
-    ExpandPC pc{ vp, cnt, 0, 0 };
+    ExpandPC pc{ vp, cnt, 0, 0,
+                 has_active_deform_ ? 1u : 0u,
+                 scene_capacity_.deform_vertex_span };
     cmd.pushConstants(*expand_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(ExpandPC), &pc);
     cmd.dispatch((cnt + 63) / 64, 1, 1);
+}
+
+void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi) {
+    auto& fr = frames_[fi % frames_in_flight_];
+    const std::span<const ModifierDispatch> dispatches = GetModifierDispatches(fi);
+    if (dispatches.empty() || !deform_pipeline_layout_) {
+        return;
+    }
+    LOGIFACE_LOG(trace, "DispatchDeform: stages=" + std::to_string(dispatches.size()));
+
+    // Set 0 is the shared vertex-buffer table (both its bindings are visible to
+    // compute); set 1 is the deform input set. Every modifier pipeline shares
+    // this layout, so the sets stay bound across vkCmdBindPipeline.
+    const std::array<vk::DescriptorSet, 2> sets{
+        fr.vertex_buffers_set,
+        static_cast<vk::DescriptorSet>(fr.deform_set),
+    };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *deform_pipeline_layout_,
+                           0, sets, {});
+
+    for (std::size_t i = 0; i < dispatches.size(); ++i) {
+        const ModifierDispatch& dispatch = dispatches[i];
+        const auto it = modifier_pipelines_.find(ModifierKey(dispatch.modifier));
+        if (it == modifier_pipelines_.end() || !it->second.ready || it->second.dead) {
+            // Gather already dropped non-ready modifiers; a pipeline retired
+            // between gather and submit leaves its stage unwritten. Skipping it
+            // is the safe outcome: the vertex shaders read whatever region the
+            // remaining stages produced.
+            continue;
+        }
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, it->second.slot.Get());
+        const ModifierPC pc{
+            .submesh_index = dispatch.submesh_index,
+            .stage = dispatch.stage,
+            .src_slot = dispatch.src_slot,
+            .src_base = dispatch.src_base,
+            .vertex_count = dispatch.vertex_count,
+            .param_offset = dispatch.param_offset,
+            .param_size = dispatch.param_size,
+            .region_span = scene_capacity_.deform_vertex_span,
+        };
+        cmd.pushConstants(*deform_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+                          0, sizeof(ModifierPC), &pc);
+        const std::uint32_t group = std::max(dispatch.workgroup_size, 1u);
+        cmd.dispatch((dispatch.vertex_count + group - 1) / group, 1, 1);
+
+        // Stage k+1 reads stage k's output. The render graph inserts a barrier
+        // between passes, but not between the dispatches inside this one, so
+        // each dispatch's writes must be visible to the next.
+        if (i + 1 < dispatches.size()) {
+            vk::MemoryBarrier barrier{};
+            barrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead |
+                                    vk::AccessFlagBits::eShaderWrite;
+            cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                vk::PipelineStageFlagBits::eComputeShader,
+                                {}, barrier, {}, {});
+        }
+    }
 }
 
 void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,

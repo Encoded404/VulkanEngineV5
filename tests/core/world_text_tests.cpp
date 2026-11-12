@@ -114,21 +114,21 @@ protected:
 
 // Text is a data component: addressable by type through the registry, a second
 // add of the same type throws rather than silently replacing the first, and
-// removal clears both the entity's mask bit and the stored column. The
-// members' default values are the component's own business, not this test's.
+// removal clears the stored column. The members' default values are the
+// component's own business, not this test's.
 TEST_F(WorldTextTest, ComponentRegistersAndRemoves) {
     ComponentRegistry registry;
     Entity& entity = registry.CreateEntity();
     Text& text = registry.AddComponent<Text>(entity);
-    EXPECT_TRUE(entity.HasComponent<Text>());
+    EXPECT_TRUE(registry.HasComponent<Text>(entity));
     EXPECT_EQ(entity.GetComponent<Text>(), &text);
 
     // A second component of the same type does not silently replace the first.
     EXPECT_THROW(registry.AddComponent<Text>(entity), std::logic_error);
 
-    // Removal clears the entity's mask bit and the stored column.
+    // Removal clears the stored column.
     registry.RemoveComponent<Text>(entity);
-    EXPECT_FALSE(entity.HasComponent<Text>());
+    EXPECT_FALSE(registry.HasComponent<Text>(entity));
     EXPECT_EQ(entity.GetComponent<Text>(), nullptr);
 }
 

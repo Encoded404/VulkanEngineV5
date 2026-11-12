@@ -103,7 +103,7 @@ TEST(PrefabTest, APoseOnlyPrefabIsAPlainTransformEntity) {
     ASSERT_NE(transform, nullptr);
     EXPECT_EQ(transform->position, (glm::vec3{1.0f, 2.0f, 3.0f}));
     EXPECT_EQ(transform->scale, (glm::vec3{2.0f, 2.0f, 2.0f}));
-    EXPECT_FALSE(entity->HasComponent<MeshReference>());
+    EXPECT_FALSE(registry.HasComponent<MeshReference>(*entity));
 }
 
 TEST(PrefabTest, AFullBundleComposesOnOneEntity) {
@@ -138,10 +138,10 @@ TEST(PrefabTest, AFullBundleComposesOnOneEntity) {
     Entity& entity = Prefabs::Spawn(registry, prefab);
     const EntityId id = entity.GetId();
 
-    EXPECT_TRUE(entity.HasComponent<Transform>());
-    EXPECT_TRUE(entity.HasComponent<MeshReference>());
+    EXPECT_TRUE(registry.HasComponent<Transform>(entity));
+    EXPECT_TRUE(registry.HasComponent<MeshReference>(entity));
     EXPECT_EQ(entity.GetComponent<MeshReference>()->loaded_mesh_id, 7u);
-    EXPECT_TRUE(entity.HasComponent<RigidBody>());
+    EXPECT_TRUE(registry.HasComponent<RigidBody>(entity));
     EXPECT_EQ(world.BodyCount(), 1u)
         << "the body was attached through the engine's OnAdd hook, not by the factory";
 

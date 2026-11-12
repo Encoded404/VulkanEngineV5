@@ -18,9 +18,11 @@
 //
 // Threading: structural changes and queries are single-threaded and never
 // overlap. `GetComponent`/`HasComponent` are lock-free reads; the mutating APIs
-// and `ForEach` take the registry mutex. Object-component `Update` runs in
-// parallel over stable pointers. No structural change may occur while a query
-// or update is in flight.
+// and `ForEach` take the registry mutex. `HasComponent` now reads `pools_`,
+// `sparse_` and `values_.size()`, so a structural change while a query is in
+// flight yields a torn pointer through `pools_.resize()` rather than a stale
+// mask bit. Object-component `Update` runs in parallel over stable pointers. No
+// structural change may occur while a query or update is in flight.
 //
 // Structural changes: `RemoveComponent` and `DestroyEntity` called from inside
 // `ForEach` are deferred and applied by `ApplyStructuralChanges()`. `CreateEntity`
@@ -81,7 +83,6 @@ public:
 
     [[nodiscard]] EntityId GetId() const noexcept { return id_; }
     [[nodiscard]] bool IsAlive() const noexcept { return alive_; }
-    [[nodiscard]] ComponentMask GetMask() const noexcept { return mask_; }
     [[nodiscard]] ComponentRegistry& GetRegistry() const noexcept { return *registry_; }
     [[nodiscard]] ComponentRegistry* GetRegistryPtr() const noexcept { return registry_; }
 
@@ -90,12 +91,6 @@ public:
     template<typename T>
     [[nodiscard]] const T* GetComponent() const;
 
-    template<typename T>
-    [[nodiscard]] bool HasComponent() const {
-        const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
-        return type_id < kMaxComponentTypes && mask_.test(type_id);
-    }
-
 private:
     friend class ComponentRegistry;
 
@@ -103,18 +98,17 @@ private:
         id_ = EntityId{index, generation_};
         registry_ = registry;
         alive_ = true;
-        mask_.reset();
+        // Slot cleanliness rests entirely on DestroyNow removing every pool row
+        // before pushing the index back onto free_slots_.
     }
 
     void MarkDead() noexcept {
         alive_ = false;
-        mask_.reset();
         if (++generation_ == 0) generation_ = 1; // never reuse generation 0
     }
 
     EntityId id_{};
     ComponentRegistry* registry_ = nullptr;
-    ComponentMask mask_{};
     bool alive_ = false;
     std::uint32_t generation_ = 1;
 };
@@ -288,6 +282,14 @@ public:
         }
         Entity& entity = *slots_[index];
         entity.Activate(index, this);
+        // A recycled slot must be clean. Presence now lives only in the pools,
+        // so a row left behind by a previous occupant would make the reused
+        // entity report HasComponent and hand out the previous entity's data.
+#ifndef NDEBUG
+        for (const auto& pool : pools_) {
+            assert(pool == nullptr || !pool->Has(entity));
+        }
+#endif
         return entity;
     }
 
@@ -340,14 +342,12 @@ public:
         if (!owner.alive_) {
             throw std::logic_error("AddComponent on a destroyed entity");
         }
-        const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
-        if (type_id >= kMaxComponentTypes) {
-            throw std::logic_error("component type budget exceeded (" +
-                                   std::to_string(kMaxComponentTypes) + " types)");
-        }
         auto& pool = GetOrCreatePool<T>();
         T& component = pool.Emplace(owner, std::forward<Args>(args)...);
-        owner.mask_.set(type_id);
+        // Emplace writes sparse_ before running OnAttach and the OnAdd hooks, so
+        // a hook that throws leaves the component visible to HasComponent,
+        // GetComponent, Count and ForEach. That is deliberate: a throwing hook
+        // must not leave an invisible-but-counted row behind.
         return component;
     }
 
@@ -366,22 +366,20 @@ public:
 
     template<typename T>
     [[nodiscard]] T* GetComponent(Entity& entity) {
-        if (!HasComponent<T>(entity)) return nullptr;
         auto* pool = GetPool<T>();
         return pool != nullptr ? pool->Find(entity) : nullptr;
     }
 
     template<typename T>
     [[nodiscard]] const T* GetComponent(const Entity& entity) const {
-        if (!HasComponent<T>(entity)) return nullptr;
         const auto* pool = GetPool<T>();
         return pool != nullptr ? pool->Find(entity) : nullptr;
     }
 
     template<typename T>
     [[nodiscard]] bool HasComponent(const Entity& entity) const {
-        const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
-        return type_id < kMaxComponentTypes && entity.mask_.test(type_id);
+        const auto* pool = GetPool<T>();
+        return pool != nullptr && pool->Has(entity);
     }
 
     template<typename T>
@@ -394,8 +392,10 @@ public:
     // ── Queries ──
     //
     // Visits every entity that has all of Ts, iterating the smallest matching
-    // pool so empty intersections cost nothing. `fn` may take (Entity&, Ts&...)
-    // or (Ts&...). Order is the driving pool's insertion order (deterministic).
+    // pool so empty intersections cost nothing. Each component is resolved once
+    // per entity and the same pointer is the membership test, so a query costs
+    // one sparse lookup per requested type. `fn` may take (Entity&, Ts&...) or
+    // (Ts&...). Order is the driving pool's insertion order (deterministic).
     template<typename... Ts, typename Fn>
     void ForEach(Fn&& fn) {
         static_assert(sizeof...(Ts) > 0, "ForEach requires at least one component type");
@@ -417,11 +417,18 @@ public:
         if (driver == nullptr || driver->Count() == 0) return;
 
         driver->ForEachEntity([&](Entity& entity) {
-            if (!(HasComponent<Ts>(entity) && ...)) return;
+            // Resolve each component once: membership is the pool's sparse
+            // lookup, so test and fetch must not look it up twice. Folding over
+            // the tuple rather than std::get<T> keeps ForEach<T, T> well-formed.
+            auto members = std::make_tuple(GetComponent<Ts>(entity)...);
+            const bool has_all =
+                std::apply([](auto*... p) { return (... && (p != nullptr)); }, members);
+            if (!has_all) return;
+
             if constexpr (std::is_invocable_v<Fn&, Entity&, Ts&...>) {
-                std::invoke(fn, entity, *GetComponent<Ts>(entity)...);
+                std::apply([&](auto*... p) { std::invoke(fn, entity, *p...); }, members);
             } else {
-                std::invoke(fn, *GetComponent<Ts>(entity)...);
+                std::apply([&](auto*... p) { std::invoke(fn, *p...); }, members);
             }
         });
     }
@@ -494,9 +501,6 @@ private:
     template<typename T>
     ComponentPool<T>& GetOrCreatePool() {
         const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
-        if (type_id >= kMaxComponentTypes) {
-            throw std::logic_error("component type budget exceeded");
-        }
         if (type_id >= pools_.size()) pools_.resize(type_id + 1);
         if (pools_[type_id] == nullptr) {
             pools_[type_id] = std::make_unique<ComponentPool<T>>();
@@ -515,10 +519,7 @@ private:
 
     template<typename T>
     void RemoveInternal(Entity& entity) {
-        const std::size_t type_id = ComponentTypeIDSystem::GetTypeID<T>();
-        if (type_id >= kMaxComponentTypes || !entity.mask_.test(type_id)) return;
         if (auto* pool = GetPool<T>()) pool->Remove(entity);
-        entity.mask_.reset(type_id);
     }
 
     std::vector<std::unique_ptr<IComponentPool>> pools_{};

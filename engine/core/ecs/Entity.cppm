@@ -1,10 +1,10 @@
 // Entity identity primitives for the hybrid ECS.
 //
-// This module holds only identity: the generation-checked entity handle, the
-// component-type budget, and the per-type id source. Component, Entity, the
-// component pools and the registry live in VulkanEngine.ECS.ComponentRegistry
-// because Entity::GetComponent<T> needs the registry complete, which would be a
-// module cycle if Entity were defined here.
+// This module holds only identity: the generation-checked entity handle and the
+// per-type id source. Component, Entity, the component pools and the registry
+// live in VulkanEngine.ECS.ComponentRegistry because Entity::GetComponent<T>
+// needs the registry complete, which would be a module cycle if Entity were
+// defined here.
 
 module;
 
@@ -29,13 +29,9 @@ struct EntityId {
     friend constexpr bool operator==(const EntityId&, const EntityId&) noexcept = default;
 };
 
-// One mask bit per registered component type, so this is also the component
-// type budget. Exceeding it is reported by ComponentRegistry, not silently
-// truncated.
-inline constexpr std::size_t kMaxComponentTypes = 64;
-using ComponentMask = std::bitset<kMaxComponentTypes>;
-
-// Component type ID system. IDs are stable per type for the process lifetime.
+// Component type ID system. IDs are stable per type for the process lifetime and
+// have no fixed capacity: component presence lives in the per-type pools, not in
+// a per-entity bitmask.
 class ComponentTypeIDSystem {
 private:
     inline static std::atomic_size_t next_type_id{0};

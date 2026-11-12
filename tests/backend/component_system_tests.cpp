@@ -47,6 +47,26 @@ struct OtherData {
     int tag = 0;
 };
 
+// A complete type per index: ComponentPool<T> needs completeness for the
+// Component base check and for the dense column.
+template<int N>
+struct TypeAt {
+    int value = N;
+};
+
+struct NeverAddedData {
+    int value = 0;
+};
+
+template<std::size_t... Is>
+void AddEveryTypeAt(VulkanEngine::ComponentRegistry& registry,
+                    VulkanEngine::Entity& entity,
+                    std::index_sequence<Is...>) {
+    ((registry.AddComponent<TypeAt<static_cast<int>(Is)>>(entity).value =
+          static_cast<int>(Is)),
+     ...);
+}
+
 }  // namespace
 
 TEST(ComponentSystemTest, TypeIdSystemReturnsStableIdsPerType) {
@@ -72,7 +92,7 @@ TEST(ComponentSystemTest, ObjectComponentReceivesOnAttachAndUpdate) {
 
     EXPECT_TRUE(component.WasAttached());
     EXPECT_FALSE(component.WasUpdated());
-    EXPECT_TRUE(entity.HasComponent<RegistryProbeComponent>());
+    EXPECT_TRUE(registry.HasComponent<RegistryProbeComponent>(entity));
     EXPECT_EQ(entity.GetComponent<RegistryProbeComponent>(), &component);
 
     VulkanEngine::Input::InputSystem granted{};
@@ -139,16 +159,16 @@ TEST(ComponentSystemTest, ViewVisitsOnlyEntitiesWithEveryComponent) {
     EXPECT_EQ(visited, 1u);
 }
 
-TEST(ComponentSystemTest, RemoveComponentClearsTheMaskAndTheColumn) {
+TEST(ComponentSystemTest, RemoveComponentClearsTheColumn) {
     TestLogging::InstallPerTestFileLogger();
 
     VulkanEngine::ComponentRegistry registry;
     auto& entity = registry.CreateEntity();
     registry.AddComponent<ProbeData>(entity).value = 3;
-    ASSERT_TRUE(entity.HasComponent<ProbeData>());
+    ASSERT_TRUE(registry.HasComponent<ProbeData>(entity));
 
     registry.RemoveComponent<ProbeData>(entity);
-    EXPECT_FALSE(entity.HasComponent<ProbeData>());
+    EXPECT_FALSE(registry.HasComponent<ProbeData>(entity));
     EXPECT_EQ(entity.GetComponent<ProbeData>(), nullptr);
     EXPECT_EQ(registry.Count<ProbeData>(), 0u);
 }
@@ -249,4 +269,114 @@ TEST(ComponentSystemTest, ClearRemovesEveryEntityAndComponent) {
     EXPECT_EQ(registry.EntityCount(), 0u);
     EXPECT_EQ(registry.Count<ProbeData>(), 0u);
     EXPECT_EQ(registry.Count<RegistryProbeComponent>(), 0u);
+}
+
+TEST(ComponentSystemTest, MoreThanSixtyFourComponentTypesAreSupported) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+    AddEveryTypeAt(registry, entity, std::make_index_sequence<200>{});
+
+    EXPECT_EQ(registry.Count<TypeAt<0>>(), 1u);
+    EXPECT_EQ(registry.Count<TypeAt<64>>(), 1u);
+    EXPECT_EQ(registry.Count<TypeAt<199>>(), 1u);
+    EXPECT_EQ(entity.GetComponent<TypeAt<64>>()->value, 64);
+    EXPECT_EQ(entity.GetComponent<TypeAt<199>>()->value, 199);
+    EXPECT_TRUE(registry.HasComponent<TypeAt<199>>(entity));
+
+    std::size_t visited = 0;
+    registry.ForEach<TypeAt<199>>([&](TypeAt<199>& value) {
+        ++visited;
+        EXPECT_EQ(value.value, 199);
+    });
+    EXPECT_EQ(visited, 1u);
+}
+
+TEST(ComponentSystemTest, RecycledSlotStartsWithNoComponents) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& first = registry.CreateEntity();
+    const auto first_id = first.GetId();
+    registry.AddComponent<ProbeData>(first);
+    registry.AddComponent<OtherData>(first);
+    registry.AddComponent<RegistryProbeComponent>(first);
+    registry.DestroyEntity(first);
+
+    auto& second = registry.CreateEntity();
+    EXPECT_EQ(second.GetId().index, first_id.index);
+    EXPECT_FALSE(registry.HasComponent<ProbeData>(second));
+    EXPECT_FALSE(registry.HasComponent<OtherData>(second));
+    EXPECT_FALSE(registry.HasComponent<RegistryProbeComponent>(second));
+    EXPECT_EQ(registry.Count<ProbeData>(), 0u);
+    EXPECT_EQ(registry.Count<OtherData>(), 0u);
+    EXPECT_EQ(registry.Count<RegistryProbeComponent>(), 0u);
+}
+
+TEST(ComponentSystemTest, NeverAddedTypeStaysInert) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& entity = registry.CreateEntity();
+
+    EXPECT_FALSE(registry.HasComponent<NeverAddedData>(entity));
+    EXPECT_EQ(entity.GetComponent<NeverAddedData>(), nullptr);
+    EXPECT_EQ(registry.Count<NeverAddedData>(), 0u);
+
+    std::size_t visited = 0;
+    EXPECT_NO_THROW(registry.ForEach<NeverAddedData>([&](NeverAddedData&) { ++visited; }));
+    EXPECT_EQ(visited, 0u);
+}
+
+TEST(ComponentSystemTest, DeferredRemoveComponentInsideForEachIsAppliedAtTheBoundary) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    auto& removed = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(removed).value = 1;
+    auto& kept = registry.CreateEntity();
+    registry.AddComponent<ProbeData>(kept).value = 2;
+    const auto removed_id = removed.GetId();
+
+    std::size_t visited = 0;
+    registry.ForEach<ProbeData>([&](VulkanEngine::Entity& entity, ProbeData&) {
+        ++visited;
+        if (entity.GetId() == removed_id) {
+            registry.RemoveComponent<ProbeData>(entity);
+        }
+    });
+    EXPECT_EQ(visited, 2u);
+
+    // Still present during iteration; applied at the phase boundary.
+    EXPECT_EQ(registry.Count<ProbeData>(), 2u);
+    EXPECT_TRUE(registry.HasComponent<ProbeData>(removed));
+
+    registry.ApplyStructuralChanges();
+    EXPECT_EQ(registry.Count<ProbeData>(), 1u);
+    EXPECT_FALSE(registry.HasComponent<ProbeData>(removed));
+    EXPECT_TRUE(registry.HasComponent<ProbeData>(kept));
+}
+
+TEST(ComponentSystemTest, ThrowingOnAddHookLeavesTheComponentVisible) {
+    TestLogging::InstallPerTestFileLogger();
+
+    VulkanEngine::ComponentRegistry registry;
+    registry.OnAdd<ProbeData>([](VulkanEngine::Entity&, ProbeData&) {
+        throw std::runtime_error("hook failed");
+    });
+    auto& entity = registry.CreateEntity();
+
+    EXPECT_THROW(registry.AddComponent<ProbeData>(entity), std::runtime_error);
+
+    // Emplace wrote sparse_ before the hook ran, so the component is visible
+    // rather than invisible-but-counted. Accepted behavior; pinned here so a
+    // later reorder cannot silently revert it.
+    EXPECT_TRUE(registry.HasComponent<ProbeData>(entity));
+    ASSERT_NE(entity.GetComponent<ProbeData>(), nullptr);
+    EXPECT_EQ(registry.Count<ProbeData>(), 1u);
+
+    std::size_t visited = 0;
+    registry.ForEach<ProbeData>([&](ProbeData&) { ++visited; });
+    EXPECT_EQ(visited, 1u);
 }

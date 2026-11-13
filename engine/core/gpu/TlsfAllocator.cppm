@@ -7,7 +7,7 @@ import std;
 constexpr std::uint32_t UINT32_MAX =
     std::numeric_limits<std::uint32_t>::max();
 
-constexpr std::uint32_t UINT64_MAX =
+constexpr std::uint64_t UINT64_MAX =
     std::numeric_limits<std::uint64_t>::max();
 
 export namespace VulkanEngine::GpuResources {

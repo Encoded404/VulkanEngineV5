@@ -97,10 +97,14 @@ float3x3 normalMat(float4 rot, float3 scale) {
     );
 }
 
-[numthreads(64, 1, 1)]
-[shader("compute")]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint submeshIndex = dispatchThreadId.x;
+groupshared uint g_entryBase;
+groupshared uint g_indexBase;
+
+// Thread 0 of each submesh workgroup: transform, per-submesh allocations and
+// cull-entry publication. The per-vertex/per-index range copies run in main(),
+// where the whole workgroup cooperates; doing them here serialized the entire
+// index list on one GPU thread per submesh.
+void SetupSubmesh(uint submeshIndex) {
     if (submeshIndex >= pushConstant.objectCount) return;
 
     uint block = submeshIndex / kEntriesPerBlock;    // which storage buffer block (kEntriesPerBlock submeshes per block)
@@ -186,27 +190,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
     submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].deformBias = deformBias;
 
-    if (kCompactionMode == 0) {
-        // CID: one entry per vertex slot; no per-occurrence duplication.
-        for (uint j = 0; j < vertexSpan; j++) {
-            vertexIndirection[entryBase + j].vertexIndex =
-                (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
-            vertexIndirection[entryBase + j].submeshIndex = submeshIndex;
-        }
-    }
-
-    // Replay the asset indices once. CID maps each occurrence to its
-    // indirection slot; MID writes the absolute vertex index with no block
-    // bits, which the vertex shader receives directly as SV_VertexID. The
-    // 24-bit upload invariant (baseVertex + windowBase + vertexSpan < 2^24)
-    // keeps every value below the maxDrawIndexedIndexValue bound.
-    for (uint i = 0; i < indexRange; i++) {
-        uint rawIndex = indexBuffers[NonUniformResourceIndex(indexBufSlot)][indexOffset + i];
-        drawIndices[indexBase + i] = (kCompactionMode == 0)
-            ? entryBase + (rawIndex - windowBase)
-            : baseVertex + rawIndex;
-    }
-
     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexBase = indexBase;
     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = indexRange;
     cullEntries[NonUniformResourceIndex(block)][elementIndex].techniqueId = techId;
@@ -214,4 +197,58 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // travel with the entry so every cull pass agrees the object's rest-pose
     // bounds must not be tested.
     cullEntries[NonUniformResourceIndex(block)][elementIndex].flags = cullFlags;
+
+    g_entryBase = entryBase;
+    g_indexBase = indexBase;
+}
+
+[numthreads(256, 1, 1)]
+[shader("compute")]
+void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
+    const uint submeshIndex = groupId.x;
+    const uint tid = groupThreadId.x;
+
+    if (tid == 0) {
+        g_entryBase = 0;
+        g_indexBase = 0;
+        SetupSubmesh(submeshIndex);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (submeshIndex >= pushConstant.objectCount) return;
+
+    uint block = submeshIndex / kEntriesPerBlock;
+    uint elementIndex = submeshIndex % kEntriesPerBlock;
+
+    uint indexBufSlot = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexStartPacked >> 24;
+    uint indexOffset  = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexStartPacked & 0xFFFFFFu;
+    uint vertexBufferSlot = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexInfoPacked >> 24;
+    uint baseVertex    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexInfoPacked & 0xFFFFFFu;
+    uint windowBase    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexWindowBase;
+    uint vertexSpan    = staticEntries[NonUniformResourceIndex(block)][elementIndex].vertexSpan;
+    uint indexRange    = staticEntries[NonUniformResourceIndex(block)][elementIndex].indexRange;
+
+    const uint entryBase = g_entryBase;
+    const uint indexBase = g_indexBase;
+
+    if (kCompactionMode == 0) {
+        // CID: one entry per vertex slot; no per-occurrence duplication.
+        for (uint j = tid; j < vertexSpan; j += 256) {
+            vertexIndirection[entryBase + j].vertexIndex =
+                (vertexBufferSlot << 24) | (baseVertex + windowBase + j);
+            vertexIndirection[entryBase + j].submeshIndex = submeshIndex;
+        }
+    }
+
+    // Replay the asset indices once, workgroup-wide. CID maps each occurrence
+    // to its indirection slot; MID writes the absolute vertex index with no
+    // block bits, which the vertex shader receives directly as SV_VertexID.
+    // The 24-bit upload invariant (baseVertex + windowBase + vertexSpan < 2^24)
+    // keeps every value below the maxDrawIndexedIndexValue bound.
+    for (uint i = tid; i < indexRange; i += 256) {
+        uint rawIndex = indexBuffers[NonUniformResourceIndex(indexBufSlot)][indexOffset + i];
+        drawIndices[indexBase + i] = (kCompactionMode == 0)
+            ? entryBase + (rawIndex - windowBase)
+            : baseVertex + rawIndex;
+    }
 }

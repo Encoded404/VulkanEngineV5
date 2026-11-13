@@ -624,7 +624,8 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
                  scene_capacity_.deform_vertex_span };
     cmd.pushConstants(*expand_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(ExpandPC), &pc);
-    cmd.dispatch((cnt + 63) / 64, 1, 1);
+    // One workgroup per submesh: the whole group cooperates on the index copy.
+    cmd.dispatch(cnt, 1, 1);
 }
 
 void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi) {
@@ -806,7 +807,8 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         CollectPC pc2{ current_entity_count_, 0, key_count, 2 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc2);
-        cmd.dispatch(groups, 1, 1);
+        // One workgroup per submesh so the index copy is parallel.
+        cmd.dispatch(current_entity_count_, 1, 1);
 
         barrier();
 
@@ -824,7 +826,7 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         CollectPC pcMid{ current_entity_count_, 0, key_count, 2 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pcMid);
-        cmd.dispatch(groups, 1, 1);
+        cmd.dispatch(current_entity_count_, 1, 1);
     }
 }
 
@@ -881,7 +883,8 @@ void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
     PreCullPC pc{ current_entity_count_, hiz_w, hiz_h, 0, fr.proj_info };
     cmd.pushConstants(*pre_cull_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(PreCullPC), &pc);
-    cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
+    // One workgroup per submesh: the whole group cooperates on the copy.
+    cmd.dispatch(current_entity_count_, 1, 1);
 }
 
 void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {

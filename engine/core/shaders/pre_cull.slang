@@ -72,10 +72,12 @@ struct PreCullPC {
 [[vk::push_constant]]
 ConstantBuffer<PreCullPC> pc;
 
-[numthreads(64, 1, 1)]
-[shader("compute")]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint submeshIndex = dispatchThreadId.x;
+groupshared uint g_depthDest;
+groupshared uint g_depthCount;
+
+// Thread 0 of each submesh workgroup. Early returns are safe here: the caller
+// always reaches the workgroup barrier afterwards.
+void CullSubmesh(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
 
     uint block = submeshIndex / kEntriesPerBlock;
@@ -206,12 +208,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if ((flags & kFlagDepthPass) == 0) return;
 
     if (kCompactionMode == 0) {
-        // CID: copy the 4 B entry slots into the packed index list.
+        // CID: reserve the destination range; the workgroup copies it in main().
         uint destOffset;
         InterlockedAdd(depthOutCounter[0], entry.indexCount, destOffset);
-        for (uint i = 0; i < entry.indexCount; i++) {
-            depthOut[destOffset + i] = drawIndices[entry.indexBase + i];
-        }
+        g_depthDest = destOffset;
+        g_depthCount = entry.indexCount;
     } else {
         // MID: one 20 B indexed draw command per survivor.
         uint slot;
@@ -223,5 +224,28 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         depthOut[base + 3] = 0u;
         // firstInstance carries the submesh id (see collect_count_compact.slang).
         depthOut[base + 4] = submeshIndex;
+    }
+}
+
+[numthreads(256, 1, 1)]
+[shader("compute")]
+void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
+    const uint submeshIndex = groupId.x;
+    const uint tid = groupThreadId.x;
+
+    if (tid == 0) {
+        g_depthDest = 0;
+        g_depthCount = 0;
+        CullSubmesh(submeshIndex);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (kCompactionMode == 0 && g_depthCount != 0) {
+        uint block = submeshIndex / kEntriesPerBlock;
+        uint elementIndex = submeshIndex % kEntriesPerBlock;
+        CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
+        for (uint i = tid; i < g_depthCount; i += 256) {
+            depthOut[g_depthDest + i] = drawIndices[entry.indexBase + i];
+        }
     }
 }

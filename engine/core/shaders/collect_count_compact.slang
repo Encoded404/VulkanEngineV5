@@ -87,7 +87,12 @@ void passPrefix() {
     }
 }
 
-void passCompactMono(uint submeshIndex) {
+groupshared uint g_dest;
+groupshared uint g_count;
+
+// Thread 0: reserve this submesh's range in mainOut. The copy itself is done
+// by the whole workgroup in main().
+void passCompactMonoReserve(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
     uint block = submeshIndex / kEntriesPerBlock;
     uint elementIndex = submeshIndex % kEntriesPerBlock;
@@ -98,10 +103,8 @@ void passCompactMono(uint submeshIndex) {
 
     uint local;
     InterlockedAdd(techniqueResults[entry.techniqueId].count, entry.indexCount, local);
-    uint destOffset = techniqueResults[entry.techniqueId].offset + local;
-    for (uint i = 0; i < entry.indexCount; i++) {
-        mainOut[destOffset + i] = drawIndices[entry.indexBase + i];
-    }
+    g_dest = techniqueResults[entry.techniqueId].offset + local;
+    g_count = entry.indexCount;
 }
 
 void passCompactMid(uint submeshIndex) {
@@ -131,17 +134,40 @@ void passCompactMid(uint submeshIndex) {
 
 [numthreads(256, 1, 1)]
 [shader("compute")]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint submeshIndex = dispatchThreadId.x;
-    if (kCompactionMode == 0) {
-        if (pc.pass == 0) {
-            passCount(submeshIndex);
-        } else if (pc.pass == 1) {
-            if (dispatchThreadId.x == 0) passPrefix();
+void main(uint3 dispatchThreadId : SV_DispatchThreadID,
+          uint3 groupId : SV_GroupID,
+          uint3 groupThreadId : SV_GroupThreadID) {
+    // Count and prefix stay one-thread-per-submesh / single-thread: O(1) work.
+    if (kCompactionMode == 0 && pc.pass == 0) {
+        passCount(dispatchThreadId.x);
+        return;
+    }
+    if (kCompactionMode == 0 && pc.pass == 1) {
+        if (dispatchThreadId.x == 0) passPrefix();
+        return;
+    }
+
+    // Compact: one workgroup per submesh so the index copy is parallel.
+    const uint submeshIndex = groupId.x;
+    const uint tid = groupThreadId.x;
+
+    if (tid == 0) {
+        g_dest = 0;
+        g_count = 0;
+        if (kCompactionMode == 0) {
+            passCompactMonoReserve(submeshIndex);
         } else {
-            passCompactMono(submeshIndex);
+            passCompactMid(submeshIndex);
         }
-    } else {
-        passCompactMid(submeshIndex);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (kCompactionMode == 0 && g_count != 0) {
+        uint block = submeshIndex / kEntriesPerBlock;
+        uint elementIndex = submeshIndex % kEntriesPerBlock;
+        CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
+        for (uint i = tid; i < g_count; i += 256) {
+            mainOut[g_dest + i] = drawIndices[entry.indexBase + i];
+        }
     }
 }

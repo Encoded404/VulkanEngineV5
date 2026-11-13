@@ -82,6 +82,11 @@ public:
     // Immediate, no GPU work. Reserves a slot pre-bound to the fallback and
     // records the declared semantic/encoding/sampler. nullopt = bindless
     // capacity exhausted (caller substitutes the fallback).
+    // True while decoded items, staged copies or recorded-but-unretired ranges
+    // remain. A scene teardown can use this to avoid releasing resources the
+    // uploader is still working on.
+    [[nodiscard]] bool HasPendingWork() const;
+
     [[nodiscard]] std::optional<TextureReservation> Reserve(
         TextureSemantic semantic, TextureNormalEncoding normal_encoding,
         const SamplerDesc& sampler, const ResourceId& id);
@@ -173,7 +178,7 @@ private:
     // jobs dereference.
     std::atomic<std::uint32_t> in_flight_{0};
 
-    std::mutex ready_mutex_{};
+    mutable std::mutex ready_mutex_{};
     std::vector<ReadyItem> ready_{};
 
     // Main-thread-only state.

@@ -163,8 +163,12 @@ void GameEngine::RegisterFramePipeline() {
         [this](FramePhaseContext& fctx) {
             if (!ctx_.texture_uploader) return;
             Application::ApplicationContext& app = fctx.App();
+            // Use the renderer's frame slot, the same index RecordUploads will
+            // retire into, so the staging ring drains the right allocation set.
+            const std::uint32_t frame_index =
+                ctx_.renderer != nullptr ? ctx_.renderer->FrameIndex() : app.frame.frame_counter;
             ctx_.texture_uploader->BeginFrame(
-                app.frame.frame_counter,
+                frame_index,
                 [&app](std::uint32_t recording_frame) {
                     return app.bootstrap->IsFrameComplete(recording_frame);
                 });

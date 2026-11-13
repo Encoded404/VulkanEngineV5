@@ -108,6 +108,10 @@ public:
 
     void Shutdown();
 
+    // Frame slot index the next RenderFrame will use (also the index handed to
+    // the texture uploader for staging retirement).
+    [[nodiscard]] std::uint32_t FrameIndex() const { return frame_counter_; }
+
     void RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                      VulkanEngine::ComponentRegistry& registry,
                      const VulkanEngine::Components::Camera& camera,

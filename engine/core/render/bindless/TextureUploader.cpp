@@ -217,7 +217,12 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
     if (backend_ == nullptr) {
         return;
     }
-    (void)frame_index;
+
+    // Drain the staging ranges retired one FIF ago. Without this, every
+    // frame-gated upload leaked its slice of the staging pool: outstanding
+    // bytes climbed to the capacity ceiling, Allocate() then failed forever,
+    // items stayed in ready_, and HasPendingWork() never cleared.
+    staging_pool_->BeginFrame(frame_index);
 
     // 1. Collect worker-finished items into staged images.
     std::vector<ReadyItem> finished;
@@ -230,16 +235,11 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
             CompleteItem(item, UploadStatus::Failed, std::move(item.error));
             continue;
         }
-        GpuResources::GpuTexture texture = GpuResources::GpuTexture::CreatePending(
-            *backend_, *image_heap_, item.data, item.format, item.reservation.sampler,
-            sampler_cache_);
-        if (!texture.IsValid()) {
-            CompleteItem(item, UploadStatus::Failed, "image allocation failed");
-            continue;
-        }
         const std::uint64_t total = std::ranges::fold_left(
             item.data.subresources, std::uint64_t{0},
             [](std::uint64_t acc, const TextureSubresource& sub) { return acc + sub.size; });
+        // Reserve staging before creating the image: a full pool must not churn
+        // image-heap allocations for an item that cannot be uploaded yet.
         auto staging = staging_pool_->Allocate(total, 4);
         if (!staging.has_value()) {
             // Staging is full: keep the item for a later frame.
@@ -247,6 +247,30 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
             ready_.push_back(std::move(item));
             continue;
         }
+        GpuResources::GpuTexture texture = GpuResources::GpuTexture::CreatePending(
+            *backend_, *image_heap_, item.data, item.format, item.reservation.sampler,
+            sampler_cache_);
+        if (!texture.IsValid()) {
+            staging_pool_->Retire(*staging, frame_index);
+            CompleteItem(item, UploadStatus::Failed, "image allocation failed");
+            continue;
+        }
+        // The staging slice is sized from the subresource table; a table whose
+        // last subresource ends past that size would memcpy out of the mapping.
+        // Reject the item instead of trusting the data (and turning a bad asset
+        // into a process-crashing wild write).
+        std::uint64_t required_bytes = 0;
+        bool table_overflow = false;
+        for (const auto& sub : item.data.subresources) {
+            if (sub.size > total || sub.offset > total - sub.size) table_overflow = true;
+            required_bytes = std::max(required_bytes, sub.offset + sub.size);
+        }
+        if (table_overflow || required_bytes > total || staging->size < required_bytes ||
+            required_bytes > item.data.blob.size()) {
+            CompleteItem(item, UploadStatus::Failed, "texture subresource table is out of bounds");
+            continue;
+        }
+
         auto* dst = static_cast<std::byte*>(staging->mapped_ptr);
         for (const auto& sub : item.data.subresources) {
             std::memcpy(dst + sub.offset, item.data.blob.data() + sub.offset,
@@ -270,6 +294,13 @@ void TextureUploader::CompleteItem(const ReadyItem& item, UploadStatus status, s
         item.promise->set_value(UploadResult{
             .handle = item.reservation.handle, .status = status, .error = std::move(error)});
     }
+}
+
+bool TextureUploader::HasPendingWork() const {
+    if (in_flight_.load(std::memory_order_acquire) > 0) return true;
+    if (!staged_.empty()) return true;
+    std::lock_guard lock(ready_mutex_);
+    return !ready_.empty();
 }
 
 std::uint64_t TextureUploader::RecordUploads(vk::CommandBuffer cmd, std::uint32_t frame_index,

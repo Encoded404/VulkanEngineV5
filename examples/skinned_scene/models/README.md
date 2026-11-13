@@ -1,7 +1,6 @@
 # 2BoneRectangle.glb
 
-Small two-bone rig used by the `skinned_scene` example. Authored by the
-repository owner in Blender and exported with the Khronos glTF Blender I/O
+Small two-bone rig used by the `skinned_scene` example. Authored by Encoded in Blender and exported with the Khronos glTF Blender I/O
 exporter (v5.3.43); no third-party assets.
 
 - 2x2x6 cuboid spanning `z = -3..3`, 80 vertices, 68 triangles.

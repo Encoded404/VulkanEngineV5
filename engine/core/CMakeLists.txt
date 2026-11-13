@@ -2,6 +2,14 @@ add_library(${ENGINE_TARGET} STATIC)
 target_compile_features(${ENGINE_TARGET} PUBLIC cxx_std_23)
 target_link_libraries(${ENGINE_TARGET} PUBLIC logiface::logiface)
 
+# The component access validator: PUBLIC so the engine and every test target
+# compile the same checks in the same build. `checks` and `on_violation` remain
+# runtime switches on top (see ComponentAccess); this only decides whether the
+# code exists. Without it, NDEBUG compiles the whole validator out.
+if(VKENGINE_COMPONENT_CHECKS)
+    target_compile_definitions(${ENGINE_TARGET} PUBLIC VKENGINE_COMPONENT_CHECKS=1)
+endif()
+
 target_link_libraries(${ENGINE_TARGET} PRIVATE
     FileLoader
     ${BACKEND_TARGET}
@@ -411,6 +419,8 @@ target_sources(${ENGINE_TARGET} PUBLIC
         bootstrap/Startup.cppm
         ApplicationContext.cppm
         ecs/Entity.cppm
+        ecs/ComponentAccess.cppm
+        ecs/ComponentSchedule.cppm
         ecs/ComponentContext.cppm
         ecs/ComponentRegistry.cppm
         ecs/SystemSchedule.cppm

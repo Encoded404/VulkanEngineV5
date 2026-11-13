@@ -40,6 +40,18 @@
       }
     },
     {
+      "name": "check",
+      "inherits": "default",
+      "displayName": "Clang + libc++ (strict component access checks)",
+      "description": "Same toolchain as `default`, with VKENGINE_COMPONENT_CHECKS=ON so the component access validator is compiled into Release too. A separate binaryDir because the option value differs; the vcpkg installation and manifest install are shared with the `default` tree, so configure that one first.",
+      "binaryDir": "${sourceDir}/build-check",
+      "cacheVariables": {
+        "VKENGINE_COMPONENT_CHECKS": "ON",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/vcpkg_installed",
+        "VCPKG_MANIFEST_INSTALL": "OFF"
+      }
+    },
+    {
       "name": "msvc",
       "displayName": "MSVC + Microsoft STL (vcpkg + Ninja Multi-Config)",
       "description": "Native Windows x64 build using MSVC. Run from a Visual Studio Developer PowerShell so cl.exe and the C++ Modules component are visible. import std requires Ninja, not the Visual Studio generator.",
@@ -110,6 +122,24 @@
       "displayName": "Build Clang + libc++ Debug",
       "configurePreset": "default",
       "configuration": "Debug",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "check-debug",
+      "displayName": "Build Clang + libc++ Debug (strict component checks)",
+      "configurePreset": "check",
+      "configuration": "Debug",
+      "environment": {
+        "CCACHE_DISABLE": "1"
+      }
+    },
+    {
+      "name": "check-release",
+      "displayName": "Build Clang + libc++ Release (strict component checks)",
+      "configurePreset": "check",
+      "configuration": "Release",
       "environment": {
         "CCACHE_DISABLE": "1"
       }
@@ -192,6 +222,26 @@
       "name": "debug",
       "configurePreset": "default",
       "configuration": "Debug",
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "check-debug",
+      "configurePreset": "check",
+      "configuration": "Debug",
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "check-release",
+      "configurePreset": "check",
+      "configuration": "Release",
       "filter": {
         "exclude": {
           "label": "gpu"

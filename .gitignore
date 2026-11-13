@@ -33,6 +33,7 @@
 
 # build directories
 /build/
+/build-check/
 /build-msvc/
 /build-windows/
 /.vcpkg-local/

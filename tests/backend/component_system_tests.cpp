@@ -15,27 +15,34 @@ namespace {
 // receives OnAttach/Update.
 class RegistryProbeComponent : public VulkanEngine::Component {
 public:
+    // Reading the input grant is a declared service read; without the bit the
+    // accessor reports a violation under strict checks.
+    static constexpr std::uint32_t kServices =
+        VulkanEngine::ServiceRead(VulkanEngine::Service::Input);
+
     [[nodiscard]] bool WasAttached() const noexcept { return attached_; }
     [[nodiscard]] bool WasUpdated() const noexcept { return updated_; }
     [[nodiscard]] float GetLastDeltaTime() const noexcept { return last_delta_time_; }
 
     void OnAttach(VulkanEngine::Entity& /*owner*/) override { attached_ = true; }
 
-    void Update(float delta_time, const VulkanEngine::ComponentContext& context) override {
+    void Update(float delta_time, VulkanEngine::UpdateScope& scope) override {
         updated_ = true;
         last_delta_time_ = delta_time;
-        last_context_ = &context;
+        // Observed inside the call: the scope and the context are per-call
+        // values, so nothing stores a pointer to them.
+        last_input_ = scope.Services().InputRead();
     }
 
-    [[nodiscard]] const VulkanEngine::ComponentContext* GetLastContext() const noexcept {
-        return last_context_;
+    [[nodiscard]] const VulkanEngine::Input::InputSystem* GetLastInput() const noexcept {
+        return last_input_;
     }
 
 private:
     bool attached_ = false;
     bool updated_ = false;
     float last_delta_time_ = 0.0f;
-    const VulkanEngine::ComponentContext* last_context_ = nullptr;
+    const VulkanEngine::Input::InputSystem* last_input_ = nullptr;
 };
 
 // Data components: plain structs, so they live in dense columns.
@@ -97,13 +104,13 @@ TEST(ComponentSystemTest, ObjectComponentReceivesOnAttachAndUpdate) {
 
     VulkanEngine::Input::InputSystem granted{};
     VulkanEngine::ComponentContext context{};
-    context.input = &granted;
-    registry.UpdateAllComponentsAsync(0.25f, context);
+    context.GrantInput(&granted);
+    registry.UpdateComponents(0.25f, context);
     EXPECT_TRUE(component.WasUpdated());
     EXPECT_FLOAT_EQ(component.GetLastDeltaTime(), 0.25f);
     // The granted view is what the update received — service access by grant,
     // not by construction-site injection.
-    EXPECT_EQ(component.GetLastContext()->input, context.input);
+    EXPECT_EQ(component.GetLastInput(), &granted);
 }
 
 TEST(ComponentSystemTest, DuplicateAddDoesNotReplaceTheStoredComponent) {

@@ -5,8 +5,10 @@ add_executable(examples_tests
   leaderboard_tests.cpp
   custom_pass_tests.cpp
   text_demo_tests.cpp
+  basic_scene_component_tests.cpp
 )
 target_link_libraries(examples_tests PRIVATE
+  basic_scene_core
   custom_pass_core
   text_demo_core
   infinite_runner_core

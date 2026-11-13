@@ -259,6 +259,9 @@ unset(_vkengine_hot_reload_default)
 option(VKENGINE_HOT_RELOAD_RELWITHDEBINFO
     "Keep hot reload (in-process slang) enabled in RelWithDebInfo as well (OFF = RelWithDebInfo is slang-free, like Release)"
     ON)
+option(VKENGINE_COMPONENT_CHECKS
+    "Compile the component access validator into every configuration, including Release"
+    OFF)
 
 # Verify libc++ availability (only valid after project() — we now know the compiler)
 if(USE_LIBCPP)

@@ -21,6 +21,10 @@ export namespace VulkanEngine::Components {
 // is empty and GetPalette returns an empty span for it, so a multi-skeleton asset
 // can never read another skeleton's world array.
 struct SkeletonPose {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "SkeletonPose";
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<const SkeletalAsset> asset;
     std::uint32_t skeleton_index = kNoSkeleton; // into asset->skeletons

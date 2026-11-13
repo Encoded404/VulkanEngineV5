@@ -5,14 +5,20 @@
 // construction-site injection forces games into per-type wiring — every factory
 // repeats the engine context it collected. The fix keeps the ECS contract
 // intact: the engine builds ONE view of the services an object component is
-// allowed to see and hands it to Component::Update. The component never
-// reaches the world or the engine; it reaches what was granted.
+// allowed to see and hands it to Component::Update. The component never reaches
+// the world or the engine; it reaches what was granted.
 //
-// The struct is a plain data view over granted service pointers, so
-// `UpdateAllComponentsAsync` can copy it into each parallel job. Services not
-// granted (null when the subsystem is not compiled in or not initialized) read
-// as null — a component decides what to do without them, exactly like the
-// engine's no-singleton rule.
+// The grants are private: the engine and tests set them with GrantInput /
+// GrantPhysicsWorld, and a component reads them with the accessors. That closes
+// the direct-field bypass — a component cannot reach a service it did not
+// declare, and the accessors report a violation when it tries during an update
+// (see ComponentAccess). Outside an update (setup, systems, tests) the
+// accessors return the grant unvalidated: the check guards the barriered path,
+// it is not a capability system for arbitrary calls.
+//
+// A write grant satisfies a read, so a declared writer may call InputRead()
+// while a declared reader calling Input() is rejected. Readers do not serialize
+// against other readers.
 
 module;
 
@@ -21,6 +27,8 @@ module;
 export module VulkanEngine.ECS.ComponentContext;
 
 import std;
+
+import VulkanEngine.ECS.ComponentAccess;
 
 import VulkanEngine.Input;
 
@@ -31,24 +39,43 @@ import VulkanEngine.Physics.World;
 export namespace VulkanEngine {
 
 struct ComponentContext {
-    // Input bindings and edge/level queries. Granted by the engine (the app's
-    // InputSystem), never owned here.
-    VulkanEngine::Input::InputSystem* input = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    // Input bindings and edge/level queries. The write grant: binding an action
+    // mutates the input system, so it belongs in OnConfigure, never in Update.
+    [[nodiscard]] VulkanEngine::Input::InputSystem* Input() const {
+        EnforceServiceAccess(Service::Input, true);
+        return input_;
+    }
+    // The const read grant: queries only, safe to share with another reader.
+    [[nodiscard]] const VulkanEngine::Input::InputSystem* InputRead() const {
+        EnforceServiceAccess(Service::Input, false);
+        return input_;
+    }
 
 #ifdef VKENGINE_PHYSICS
-    // The physics world facade, for steering/diagnosing components that need
-    // it (queries, velocity control). Granted when the physics module is
-    // running; null otherwise.
-    VulkanEngine::Physics::World* physics_world = nullptr; // NOLINT(misc-non-private-member-variables-in-classes)
+    // The physics world facade, for steering/diagnosing components that need it
+    // (queries, velocity control). Granted when the physics module is running;
+    // null otherwise.
+    [[nodiscard]] VulkanEngine::Physics::World* PhysicsWorld() const {
+        EnforceServiceAccess(Service::PhysicsWorld, true);
+        return physics_world_;
+    }
+    [[nodiscard]] const VulkanEngine::Physics::World* PhysicsWorldRead() const {
+        EnforceServiceAccess(Service::PhysicsWorld, false);
+        return physics_world_;
+    }
 #endif
 
-    [[nodiscard]] VulkanEngine::Input::InputSystem* Input() const noexcept {
-        return input;
-    }
+    void GrantInput(VulkanEngine::Input::InputSystem* input) noexcept { input_ = input; }
 #ifdef VKENGINE_PHYSICS
-    [[nodiscard]] VulkanEngine::Physics::World* PhysicsWorld() const noexcept {
-        return physics_world;
+    void GrantPhysicsWorld(VulkanEngine::Physics::World* world) noexcept {
+        physics_world_ = world;
     }
+#endif
+
+private:
+    VulkanEngine::Input::InputSystem* input_ = nullptr;
+#ifdef VKENGINE_PHYSICS
+    VulkanEngine::Physics::World* physics_world_ = nullptr;
 #endif
 };
 

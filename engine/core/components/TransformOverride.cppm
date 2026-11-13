@@ -31,6 +31,10 @@ using VulkanEngine::SubMeshTransform;
 //
 // Data component: dense storage.
 struct TransformOverride {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "TransformOverride";
     static constexpr std::uint32_t kUnboundMesh =
         std::numeric_limits<std::uint32_t>::max();
 

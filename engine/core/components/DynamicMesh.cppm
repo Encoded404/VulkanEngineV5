@@ -21,6 +21,10 @@ export namespace VulkanEngine::Components {
 // `MeshData::influence_sets` (with one warning) and gather ignores a
 // GeometryModifier on the entity. Both render through the plain vertex path.
 struct DynamicMesh {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "DynamicMesh";
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     MeshManager::Handle gpu_handle;
     GpuResources::MeshData mesh_data;

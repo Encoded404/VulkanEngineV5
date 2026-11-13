@@ -25,51 +25,46 @@ import VulkanEngine.Components.Transform;
 export namespace Examples::BasicScene::Components {
 
 // Object component: owns input bindings and drives its entity's Transform.
-// Engine services come from the granted ComponentContext in Update — no
-// engine pointer is stored at the construction site.
+//
+// Declaration: read and write the same entity's Transform, read the input
+// service. `SelfParallel` is legal because the type touches no cross-entity
+// component and holds no writable service bit: instances on different entities
+// are disjoint by construction, which is exactly what the mode promises.
+//
+// The action binding is a one-time service *write*, so it lives in OnConfigure
+// (serial, before any level); Update only reads input. That is what keeps the
+// mutating BindAction call off the parallel path.
 class SimpleControllerComponent : public VulkanEngine::Component {
 public:
+    using SelfReads = VulkanEngine::AccessSet<VulkanEngine::Components::Transform>;
+    using SelfWrites = VulkanEngine::AccessSet<VulkanEngine::Components::Transform>;
+    static constexpr VulkanEngine::Concurrency kConcurrency =
+        VulkanEngine::Concurrency::SelfParallel;
+    static constexpr std::uint32_t kServices =
+        VulkanEngine::ServiceRead(VulkanEngine::Service::Input);
+    static constexpr std::string_view kName = "examples.simple_controller";
+
     SimpleControllerComponent() noexcept = default;
 
-    void Update(float delta_time, const VulkanEngine::ComponentContext& context) override {
+    void OnConfigure(const VulkanEngine::ComponentContext& context) override {
         auto* input_system = context.Input();
-        if (input_system_ == nullptr) {
-            // First update: the granted context binds the actions lazily
-            // (OnAttach no longer receives a service view).
-            if (input_system == nullptr) return;
-            input_system_ = input_system;
-            BindActions(*input_system);
-        }
-        MoveAndSpin(*input_system, delta_time);
+        if (input_system == nullptr) return;
+        BindActions(*input_system);
     }
 
-private:
-    void BindActions(VulkanEngine::Input::InputSystem& input_system) {
-        // One 2D action for both keyboard (WASD) and the gamepad's left stick.
-        move_ = input_system_->BindAction<2>("move", VulkanEngine::Input::ActionConfig{
-            .processing = VulkanEngine::Input::ActionProcessing::ClampLength,
-        });
-        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_A).Component(0, -1.0f));
-        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_D).Component(0, +1.0f));
-        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_W).Component(1, +1.0f));
-        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_S).Component(1, -1.0f));
-        move_.BindGamepadStick(SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY);
+    void Update(float delta_time, VulkanEngine::UpdateScope& scope) override {
+        const auto* input_system = scope.Services().InputRead();
+        if (input_system == nullptr) return;
 
-        pause_spin_handle_ = input_system.BindAction("pause_spin", VulkanEngine::Input::InputBinding::MouseButton(SDL_BUTTON_LEFT));
-    }
-
-    void MoveAndSpin(VulkanEngine::Input::InputSystem& input_system, float delta_time) {
-        auto* transform = GetOwner() != nullptr ? GetOwner()->GetComponent<VulkanEngine::Components::Transform>() : nullptr;
-        if (transform == nullptr) {
-            return;
-        }
+        auto* transform = scope.Find<VulkanEngine::Components::Transform>();
+        if (transform == nullptr) return;
 
         constexpr float move_speed = 1.5f;
         const auto move = move_.Value();
         transform->position.x += move[0] * move_speed * delta_time;
         transform->position.y += move[1] * move_speed * delta_time;
 
-        if (!input_system.IsActionActive(pause_spin_handle_)) {
+        if (!input_system->IsActionActive(pause_spin_handle_)) {
             const auto yaw = glm::angleAxis(glm::radians(delta_time * 90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             LOGIFACE_LOG(trace, "Applying rotation: " + glm::to_string(glm::eulerAngles(yaw)) + " degrees");
 #ifndef NDEBUG
@@ -87,7 +82,20 @@ private:
     }
 
 private:
-    VulkanEngine::Input::InputSystem* input_system_ = nullptr;
+    void BindActions(VulkanEngine::Input::InputSystem& input_system) {
+        // One 2D action for both keyboard (WASD) and the gamepad's left stick.
+        move_ = input_system.BindAction<2>("move", VulkanEngine::Input::ActionConfig{
+            .processing = VulkanEngine::Input::ActionProcessing::ClampLength,
+        });
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_A).Component(0, -1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_D).Component(0, +1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_W).Component(1, +1.0f));
+        move_.Bind(VulkanEngine::Input::InputBinding::Key(SDLK_S).Component(1, -1.0f));
+        move_.BindGamepadStick(SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY);
+
+        pause_spin_handle_ = input_system.BindAction("pause_spin", VulkanEngine::Input::InputBinding::MouseButton(SDL_BUTTON_LEFT));
+    }
+
     VulkanEngine::Input::Action<2> move_{};
     VulkanEngine::Input::ActionHandle pause_spin_handle_;
 };

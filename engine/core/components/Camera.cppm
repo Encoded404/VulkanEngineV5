@@ -27,6 +27,10 @@ enum class CameraOrientation : std::uint8_t {
 // Data component: camera parameters plus the matrix helpers that read them.
 // Dense storage, so do not cache a Camera* -- store the owning EntityId.
 struct Camera {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "Camera";
     glm::vec3 position{0.0f, 0.0f, 3.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 target{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 up{0.0f, 1.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)

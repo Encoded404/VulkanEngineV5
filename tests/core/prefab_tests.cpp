@@ -52,6 +52,28 @@ using Physics::World;
     return body;
 }
 
+// Records what it observes inside Update. The scope and the context are
+// per-call values, so the probe must not store a pointer to either: at HEAD the
+// old fixture stored the context pointer and read it after the call returned,
+// which was already a dangling read of the default-argument temporary.
+class Probe : public Component {
+public:
+    static constexpr std::uint32_t kServices = ServiceRead(Service::Input);
+
+    void Update(float /*delta_time*/, UpdateScope& scope) override {
+        observed_input_ = scope.Services().InputRead();
+        observed_ = true;
+    }
+    [[nodiscard]] bool Observed() const noexcept { return observed_; }
+    [[nodiscard]] const VulkanEngine::Input::InputSystem* ObservedInput() const noexcept {
+        return observed_input_;
+    }
+
+private:
+    bool observed_ = false;
+    const VulkanEngine::Input::InputSystem* observed_input_ = nullptr;
+};
+
 } // namespace
 
 TEST(ComponentContextTest, GrantsAreIndependentViewsNotTheEngine) {
@@ -64,27 +86,19 @@ TEST(ComponentContextTest, GrantsAreIndependentViewsNotTheEngine) {
 
     VulkanEngine::Input::InputSystem input{};
     ComponentContext granted{};
-    granted.input = &input;
+    granted.GrantInput(&input);
     EXPECT_EQ(granted.Input(), &input);
+    EXPECT_EQ(granted.InputRead(), &input);
 }
 
 TEST(ComponentContextTest, UnownedContextDefaultsAreHarmless) {
     ComponentRegistry registry;
-    class Probe : public Component {
-    public:
-        void Update(float /*delta_time*/, const ComponentContext& context) override {
-            seen_ = &context;
-        }
-        [[nodiscard]] const ComponentContext* Seen() const noexcept { return seen_; }
-
-    private:
-        const ComponentContext* seen_ = nullptr;
-    };
     Probe& probe = registry.AddComponent<Probe>(registry.CreateEntity());
 
     // The default-arg path: a registry update with no explicit context.
-    registry.UpdateAllComponentsAsync(0.016f);
-    EXPECT_EQ(probe.Seen()->Input(), nullptr);
+    registry.UpdateComponents(0.016f);
+    EXPECT_TRUE(probe.Observed());
+    EXPECT_EQ(probe.ObservedInput(), nullptr);
 }
 
 TEST(PrefabTest, APoseOnlyPrefabIsAPlainTransformEntity) {

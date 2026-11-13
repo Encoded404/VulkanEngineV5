@@ -9,6 +9,7 @@
 
 import std;
 
+import VulkanShared.Jobs;
 import VulkanShared.SystemProfile;
 import VulkanEngine.Application;
 import VulkanEngine.EngineContext;
@@ -144,4 +145,110 @@ TEST(EcsProfileTest, SystemScheduleNullSinkStillRunsSystems) {
 
     systems.Run(registry, 0.016f);
     EXPECT_EQ(runs, 1);
+}
+
+// ── Object-component update: one timing per executed plan segment ──
+
+namespace {
+
+using namespace VulkanEngine;
+
+struct ProfileTarget : Component {
+    static constexpr std::string_view kName = "test.profile_target";
+};
+
+class ProfileExclusiveA : public Component {
+public:
+    static constexpr std::string_view kName = "test.profile_exclusive_a";
+    void Update(float, UpdateScope&) override {}
+};
+class ProfileExclusiveB : public Component {
+public:
+    static constexpr std::string_view kName = "test.profile_exclusive_b";
+    void Update(float, UpdateScope&) override {}
+};
+class ProfileExclusiveC : public Component {
+public:
+    static constexpr std::string_view kName = "test.profile_exclusive_c";
+    void Update(float, UpdateScope&) override {}
+};
+
+class ProfileWriter : public Component {
+public:
+    using SelfWrites = AccessSet<ProfileTarget>;
+    static constexpr Concurrency kConcurrency = Concurrency::Serial;
+    static constexpr std::string_view kName = "test.profile_writer";
+    void Update(float, UpdateScope&) override {}
+};
+class ProfileReaderOne : public Component {
+public:
+    using SelfReads = AccessSet<ProfileTarget>;
+    static constexpr Concurrency kConcurrency = Concurrency::SelfParallel;
+    static constexpr std::string_view kName = "test.profile_reader_one";
+    void Update(float, UpdateScope&) override {}
+};
+class ProfileReaderTwo : public Component {
+public:
+    using SelfReads = AccessSet<ProfileTarget>;
+    static constexpr Concurrency kConcurrency = Concurrency::SelfParallel;
+    static constexpr std::string_view kName = "test.profile_reader_two";
+    void Update(float, UpdateScope&) override {}
+};
+
+} // namespace
+
+TEST(EcsProfileTest, ComponentUpdateReportsOneTimingPerExecutedSegment) {
+    ComponentRegistry registry;
+    Entity& entity = registry.CreateEntity();
+    registry.AddComponent<ProfileExclusiveA>(entity);
+    registry.AddComponent<ProfileExclusiveB>(entity);
+    registry.AddComponent<ProfileExclusiveC>(entity);
+
+    // Three exclusive types: three levels, each with one unit, merged into one
+    // sequential segment.
+    const std::vector<PlanSegment> plan = registry.ExecutionPlan();
+    ASSERT_EQ(plan.size(), 1u);
+    ASSERT_EQ(plan[0].level_count, 3u);
+
+    RecordingSink sink;
+    registry.UpdateComponents(0.016f, {}, &sink);
+
+    ASSERT_EQ(sink.calls.size(), plan.size());
+    EXPECT_EQ(sink.calls[0].kind, SystemProfileKind::Component);
+    EXPECT_EQ(sink.calls[0].label, "component.serial[0-2]");
+    EXPECT_GE(sink.calls[0].ms, 0.0);
+}
+
+TEST(EcsProfileTest, AParallelSegmentIsLabelledByLevelIndex) {
+    auto scheduler = VulkanShared::JobScheduler{VulkanShared::JobBudget{.workers = 2}};
+    ComponentRegistry registry{&scheduler};
+    Entity& entity = registry.CreateEntity();
+    registry.AddComponent<ProfileWriter>(entity);
+    registry.AddComponent<ProfileReaderOne>(entity);
+    registry.AddComponent<ProfileReaderTwo>(entity);
+
+    // [writer] [reader_one, reader_two]: the first level holds one unit and the
+    // second holds two, so only the second is dispatched in parallel.
+    ASSERT_EQ(registry.Schedule().Levels().size(), 2u);
+
+    RecordingSink sink;
+    registry.UpdateComponents(0.016f, {}, &sink);
+
+    ASSERT_EQ(sink.calls.size(), 2u);
+    EXPECT_EQ(sink.calls[0].label, "component.serial[0]");
+    EXPECT_EQ(sink.calls[1].label, "component.parallel[1]");
+    for (const RecordedTiming& call : sink.calls) {
+        EXPECT_EQ(call.kind, SystemProfileKind::Component);
+        EXPECT_GE(call.ms, 0.0);
+    }
+}
+
+TEST(EcsProfileTest, ANullSinkRecordsNothing) {
+    ComponentRegistry registry;
+    Entity& entity = registry.CreateEntity();
+    registry.AddComponent<ProfileExclusiveA>(entity);
+    registry.AddComponent<ProfileExclusiveB>(entity);
+
+    // Nothing to assert beyond "it ran and did not need a sink".
+    EXPECT_NO_THROW(registry.UpdateComponents(0.016f, {}, nullptr));
 }

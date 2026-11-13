@@ -17,7 +17,7 @@ data-ness.**
 | Declaration | `class X : Component` | plain `struct`/`class` |
 | Storage | stable heap object (`unique_ptr<T>`) | dense contiguous column |
 | Addressability | `X*` valid for the entity's life | **transient**: valid until the next structural change |
-| Behavior | virtual `OnAttach` / `OnDetach` / `Update` | none; driven by systems/views |
+| Behavior | virtual `OnAttach` / `OnConfigure` / `OnDetach` / `Update` | none; driven by systems/views |
 | Long-lived reference | `X*` is fine | store `EntityId`, re-fetch with `GetComponent<T>` |
 | Engine resources | RAII + `OnDetach` | via registry `OnAdd`/`OnRemove` hooks |
 
@@ -39,8 +39,9 @@ when a column grows.
   stays stable, but a destroyed entity reports `IsAlive() == false`.
 - `registry.IsAlive(id)` / `registry.TryGetEntity(id)` are the checked
   resolvers.
-- `Component::GetOwner()` returns the `Entity*`; `GetOwnerId()` returns the
-  persistent id.
+- `Component::GetOwner()` returns the `const Entity*` (identity only; the entity
+  is not a registry handle during an update — use the `UpdateScope`);
+  `GetOwnerId()` returns the persistent id.
 
 ## Storage
 
@@ -80,9 +81,21 @@ template<typename T, typename Fn> void OnAdd(Fn&&);    // (Entity&, T&)
 template<typename T, typename Fn> void OnRemove(Fn&&); // (Entity&, T&)
 
 // object behavior / structural queue
-void UpdateAllComponentsAsync(float delta_time);
+void UpdateComponents(float delta_time, const ComponentContext& = {},
+                      VulkanShared::ISystemProfileSink* = nullptr);
 void ApplyStructuralChanges();
 void Clear();
+
+// registration and schedule
+template<typename T> void RegisterComponent();
+const ComponentSchedule& CloseRegistration();
+const ComponentSchedule& Schedule();
+const ComponentAccessInfo* AccessInfo(std::size_t type_id);
+NameTable TargetNames();
+std::vector<PlanSegment> ExecutionPlan();
+std::string Describe();
+void SetAccessOptions(ComponentAccessOptions);
+ComponentAccessOptions AccessOptions();
 ```
 
 `AddComponent` throws `std::logic_error` on a duplicate, on a destroyed entity.
@@ -104,9 +117,12 @@ entity as well as the components.
 and revalidated when `ApplyStructuralChanges()` runs at the phase boundary (a
 destroy already applied makes later queued actions for the same entity no-ops).
 
-`CreateEntity` and `AddComponent` are **immediate** and assert if called during
-iteration: their return reference would be meaningless if deferred. Systems that
-spawn while iterating collect what they need, then spawn after the loop.
+`CreateEntity` and `AddComponent` throw `std::logic_error` if called during
+iteration or during a component update: their return reference would be
+meaningless if deferred. Systems that spawn while iterating collect what they
+need, then spawn after the loop. The check is compiled in every configuration, so
+a release build rejects the pattern instead of self-deadlocking on the registry
+mutex.
 
 ## Engine-owned resources
 
@@ -117,25 +133,46 @@ GPU free. This keeps engine services out of component types and puts teardown in
 one place.
 
 Object components needing an engine service do not hold engine pointers either.
-`Component::Update(delta_time, context)` receives a
-`ComponentContext` (see `VulkanEngine.ECS.ComponentContext`): the narrow view of
-granted services (the app's input system; the running physics world when
-compiled in). The engine builds the view once at Setup; a component reads only
-what was granted, and services not compiled in read as null. Prefab-spawned
-bundles (`VulkanEngine.ECS.Prefabs`) compose these plain data components on one
-entity, with engine-owned resource attachment still happening through the same
-registry hooks.
+`Component::Update(delta_time, scope)` receives an `UpdateScope`, whose
+`Services()` is the narrow view of granted services (the app's input system; the
+running physics world when compiled in). The engine builds the view once at
+Setup and grants it with `GrantInput` / `GrantPhysicsWorld`; a component reads
+only what was granted, and services not compiled in read as null. A one-time
+binding goes in `OnConfigure(context)`, which runs serially before the first
+level. Prefab-spawned bundles (`VulkanEngine.ECS.Prefabs`) compose these plain
+data components on one entity, with engine-owned resource attachment still
+happening through the same registry hooks.
 
 ## Threading
 
-Structural changes and queries are single-threaded and never overlap.
-`GetComponent` / `HasComponent` are lock-free reads; the mutating APIs, `Count`
-and `ForEach` take the registry mutex. `HasComponent` reads `pools_`, the pool's
-`sparse_` and `values_.size()`, so a structural change while a query is in
-flight now yields a torn pointer through `pools_.resize()` rather than a stale
-mask bit. `UpdateAllComponentsAsync` collects object-component pointers under
-the lock and runs `Update` in parallel over stable addresses. No structural
-change may occur while a query or update is in flight.
+Structural changes and queries are single-threaded and never overlap with each
+other or with a component update. `GetComponent` / `HasComponent` are lock-free
+reads; the mutating APIs, `Count` and `ForEach` take the registry mutex.
+
+`UpdateComponents` is the exception that is *not* single-threaded: it collects
+every object component under the mutex, computes the execution plan, raises
+`update_active_`, and only then releases the lock. For the whole pass every other
+registry entry point throws on every thread — the mutators because they would
+mutate pools a worker is reading, the read-only ones because they hand out
+`Entity&`, whose `GetComponent` yields mutable pointers. The only registry path
+during a pass is the `UpdateScope` the executor constructs for each component;
+its constructor is private, so the capability cannot be forged.
+
+Two atomics and one lock make that sound: `update_active_` (the pass flag, read
+outside the mutex only as an early-out and re-read under it by every member that
+takes the lock), `iteration_depth_` (the query depth, likewise) and
+`pending_mutex_` (the deferred structural queue, always taken after `mutex_`).
+The four lock-free reads check the flag once by design; a query that starts
+during a pass is rejected, and one already in flight only reads a sparse index no
+pass mutates.
+
+The component schedule itself — levels, edges, work units — is described in
+[component-access-and-scheduling.md](component-access-and-scheduling.md).
+
+A structural change may not occur while a query is in flight; the update window
+is closed by the pass flag, but a query racing a *first-use registration* on
+another thread while no pass is active is still the caller's responsibility.
+Registration is single-threaded by contract.
 
 ## Systems and the fixed-step order
 
@@ -147,7 +184,7 @@ the whole step as:
 
 1. `ApplyStructuralChanges()` — drain what the previous step queued,
 2. `SystemSchedule::Run(...)` — data systems, in registration order,
-3. `UpdateAllComponentsAsync(...)` — object components, parallel,
+3. `UpdateComponents(...)` — object components, walking the resolved levels,
 4. `ApplyStructuralChanges()` — drain what 2–3 queued.
 
 Object components therefore keep driving themselves, and data systems get a

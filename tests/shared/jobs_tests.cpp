@@ -293,6 +293,25 @@ TEST(JobScheduler, ParallelForRethrowsTheFirstFailure) {
     EXPECT_EQ(visited.load(), 64);
 }
 
+TEST(JobScheduler, ParallelForInlinePathAlsoAttemptsEveryIndexAndRethrowsTheFirst) {
+    // The same contract as the pooled path: a serial run must not stop at the
+    // first throw, because a caller's failure semantics cannot depend on the
+    // worker count.
+    JobScheduler scheduler{Budget(0)};
+    std::atomic<int> visited{0};
+    EXPECT_THROW(
+        scheduler.ParallelFor(16, [&](const std::size_t index) {
+            visited.fetch_add(1);
+            if (index == 3) throw std::runtime_error("inline boom");
+        }),
+        std::runtime_error);
+    EXPECT_EQ(visited.load(), 16);
+
+    // A single index still propagates.
+    EXPECT_THROW(scheduler.ParallelFor(1, [](std::size_t) { throw std::runtime_error("one"); }),
+                 std::runtime_error);
+}
+
 TEST(JobScheduler, WaitRethrowsAJobFailure) {
     JobScheduler scheduler{Budget(2)};
     auto job = scheduler.CreateJob(JobScheduler::JobDesc{Tier::Compute, "throwing", [] {

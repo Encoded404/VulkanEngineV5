@@ -67,6 +67,7 @@ function(setup_test_target TARGET)
 endfunction()
 
 add_subdirectory(backend)
+add_subdirectory(bench)
 add_subdirectory(crash)
 add_subdirectory(core)
 add_subdirectory(gpu)

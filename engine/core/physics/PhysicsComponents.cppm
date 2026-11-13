@@ -31,6 +31,10 @@ export namespace VulkanEngine::Physics {
 /// attachment: changing `shape`/`motion`/`mass` here has no effect until the
 /// component is removed and re-added.
 struct RigidBody {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "RigidBody";
     PhysicsBodyId body{}; // NOLINT(misc-non-private-member-variables-in-classes)
     ShapeDesc shape{}; // NOLINT(misc-non-private-member-variables-in-classes)
     CollisionLayer layer = CollisionLayer::Default; // NOLINT(misc-non-private-member-variables-in-classes)
@@ -54,6 +58,10 @@ struct RigidBody {
 /// `AddImpulse`, which wake it correctly. A sleeping dynamic body is woken by
 /// those calls too, so there is no separate "kick" path.
 struct Velocity {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "Velocity";
     glm::vec3 linear{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 angular{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
@@ -72,6 +80,10 @@ struct Velocity {
 /// new shape set. `RigidBody`'s handle therefore changes when this component
 /// changes, and code must re-read it (never cache the handle across a rebuild).
 struct Collider {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "Collider";
     std::vector<ShapeDesc> children{}; // NOLINT(misc-non-private-member-variables-in-classes)
 };
 

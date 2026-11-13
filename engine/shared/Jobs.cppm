@@ -180,13 +180,26 @@ public:
     void Submit(Tier tier, const char* name, JobFn fn);
 
     /// Run `count` indices on the pool, participating on the calling thread.
-    /// Exceptions are rethrown on the calling thread after every index has been
-    /// attempted.
+    ///
+    /// ONE failure contract, in both the inline and the pooled path: every index
+    /// is attempted and the first exception is rethrown on the calling thread.
+    /// A caller's failure semantics therefore do not depend on the worker count —
+    /// a serial run no longer stops at the first throw and skips the rest.
     template<typename Fn>
     void ParallelFor(std::size_t count, Fn&& fn, Tier tier = Tier::Compute) {
         if (count == 0) return;
         if (count == 1 || worker_count_ == 0) {
-            for (std::size_t i = 0; i < count; ++i) fn(i);
+            // Same contract as the pooled path below: attempt every index, keep
+            // the first failure, rethrow once the loop is done.
+            std::exception_ptr first_error;
+            for (std::size_t i = 0; i < count; ++i) {
+                try {
+                    fn(i);
+                } catch (...) {
+                    if (!first_error) first_error = std::current_exception();
+                }
+            }
+            if (first_error) std::rethrow_exception(first_error);
             return;
         }
 

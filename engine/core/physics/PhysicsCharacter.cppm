@@ -37,6 +37,10 @@ export namespace VulkanEngine::Physics {
 /// `desired_velocity.y` is zero the character keeps its own vertical speed and
 /// accumulates gravity, which is what makes it fall and land correctly.
 struct Character {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "Character";
     CharacterId character{}; // NOLINT(misc-non-private-member-variables-in-classes)
     CharacterDesc desc{}; // NOLINT(misc-non-private-member-variables-in-classes)
     glm::vec3 desired_velocity{0.0f, 0.0f, 0.0f}; // NOLINT(misc-non-private-member-variables-in-classes)

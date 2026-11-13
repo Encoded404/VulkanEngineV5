@@ -18,6 +18,12 @@ ctest --preset debug
 - Test presets mirror them (device-free; they exclude the `gpu` label), plus
   `debug-gpu`, `release-gpu`, `relwithdebinfo-gpu` and `msvc-debug-gpu` for the
   opt-in GPU tests.
+- The strict component-access gate is a separate configure tree, because it
+  differs by an option value: `check` (inherits `default`, `build-check/`,
+  `VKENGINE_COMPONENT_CHECKS=ON`) with `check-debug` / `check-release` build and
+  test presets. `check-release` runs the component access validator under
+  `NDEBUG`; the plain `release` preset is the shipping configuration where it is
+  compiled out. Both must pass. See `docs/component-access-and-scheduling.md`.
 - The `windows` preset sets `BUILD_TESTING=OFF` and `VKENGINE_HOT_RELOAD=OFF`.
 - C++23 modules (`import std;`) are used throughout. Supported compilers:
   Clang with libc++ (`USE_LIBCPP=ON`, the `default` preset; static libc++ in

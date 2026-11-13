@@ -371,9 +371,9 @@ bool GameEngine::Setup(VulkanEngine::Application::ApplicationContext& ctx, const
     // app's input system and whatever engine subsystems just started. Built
     // once here; Update receives the view instead of every component storing
     // an engine pointer.
-    component_context_.input = ctx.input_system;
+    component_context_.GrantInput(ctx.input_system);
 #ifdef VKENGINE_PHYSICS
-    component_context_.physics_world = ctx_.physics_world.get();
+    component_context_.GrantPhysicsWorld(ctx_.physics_world.get());
 #endif
 
     initialized_ = true;
@@ -1405,15 +1405,15 @@ void GameEngine::FixedUpdate(const VulkanEngine::Application::ApplicationContext
     // Simulation phase order (docs/ecs-design.md):
     //   1. apply structural changes queued during the previous step,
     //   2. run data-component systems in registration order,
-    //   3. dispatch object-component Update (parallel over stable pointers),
+    //   3. dispatch object-component Update over the resolved schedule levels,
     //   4. apply structural changes queued during 2-3.
     // The fixed timestep equals the wall-clock delta when fixed stepping is
     // disabled. This runs on the on_fixed_update hook, so it may execute more
     // than once per rendered frame; nothing here may touch per-frame render state.
     ctx_.component_registry.ApplyStructuralChanges();
     systems_.Run(ctx_.component_registry, ctx.frame.fixed_delta_time, ctx.system_profile_sink);
-    ctx_.component_registry.UpdateAllComponentsAsync(ctx.frame.fixed_delta_time,
-                                                     component_context_);
+    ctx_.component_registry.UpdateComponents(ctx.frame.fixed_delta_time, component_context_,
+                                             ctx.system_profile_sink);
     ctx_.component_registry.ApplyStructuralChanges();
 }
 

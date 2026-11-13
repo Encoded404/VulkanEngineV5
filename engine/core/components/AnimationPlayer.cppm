@@ -23,6 +23,10 @@ export namespace VulkanEngine::Components {
 // to the pose's skeleton is ignored (and reported once) rather than driving
 // another skeleton's matrix arrays.
 struct AnimationPlayer {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "AnimationPlayer";
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     std::shared_ptr<const SkeletalAsset> asset;
     std::uint32_t clip_index = 0; // into asset->animations

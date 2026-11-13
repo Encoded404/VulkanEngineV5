@@ -310,10 +310,11 @@ public:
 
     // ── ECS system breakdown ──
     //
-    // Single-threaded by construction: SystemSchedule runs on the loop thread
-    // and object-component async updates are not sampled, so no atomics. The
-    // label is copied only on first sight; the hot path is a heterogeneous
-    // string_view lookup.
+    // Single-threaded by construction: SystemSchedule runs on the loop thread,
+    // and the component update reports one timing per executed plan segment from
+    // the thread that drove the segment - between barriers, never from a worker
+    // - so no atomics are needed. The label is copied only on first sight; the
+    // hot path is a heterogeneous string_view lookup.
     void AddSystemTiming(const VulkanShared::SystemProfileKind kind,
                          const std::string_view label, const double milliseconds) override {
         if (!enabled_) {

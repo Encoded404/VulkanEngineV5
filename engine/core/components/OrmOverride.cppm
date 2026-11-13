@@ -18,6 +18,10 @@ export namespace VulkanEngine::Components {
 //
 // Data component: dense storage.
 struct OrmOverride {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "OrmOverride";
     float ao = 1.0f;        // NOLINT(misc-non-private-member-variables-in-classes)
     float roughness = 1.0f; // NOLINT(misc-non-private-member-variables-in-classes)
     float metallic = 1.0f;  // NOLINT(misc-non-private-member-variables-in-classes)

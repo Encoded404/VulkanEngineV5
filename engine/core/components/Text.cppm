@@ -38,6 +38,10 @@ enum class TextWrap : std::uint8_t {
 // applied on top), which is why it is a height and not a pixel size: world text
 // has no pixels until a frame projects it.
 struct Text {
+    // The short, stable name Describe() prints for this target. A plain
+    // static member does not affect the object/data split, which is
+    // is_base_of_v<Component, T>.
+    static constexpr std::string_view kName = "Text";
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     // The font registry id; 0 means "not set" and is skipped by a gather pass.
     std::uint32_t font_id = 0;

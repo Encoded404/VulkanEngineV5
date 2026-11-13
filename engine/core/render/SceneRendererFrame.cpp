@@ -859,7 +859,8 @@ void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,
         w, h };
     cmd.pushConstants(*occluder_select_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccluderSelectPC), &pc);
-    cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
+    // One workgroup per submesh: the whole group cooperates on the copy.
+    cmd.dispatch(current_entity_count_, 1, 1);
 }
 
 void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {

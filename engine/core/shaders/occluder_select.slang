@@ -65,10 +65,12 @@ struct OccluderSelectPC {
 [[vk::push_constant]]
 ConstantBuffer<OccluderSelectPC> pc;
 
-[numthreads(64, 1, 1)]
-[shader("compute")]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-    uint submeshIndex = dispatchThreadId.x;
+groupshared uint g_occluderDest;
+groupshared uint g_occluderCount;
+
+// Thread 0 of each submesh workgroup: area test + selection. Early returns are
+// safe here because the caller reaches the workgroup barrier afterwards.
+void SelectOccluder(uint submeshIndex) {
     if (submeshIndex >= pc.elementCount) return;
 
     uint block = submeshIndex / kEntriesPerBlock;
@@ -147,12 +149,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (slot >= kMaxOccluders) return;
 
     if (kCompactionMode == 0) {
-        // CID: copy the 4 B entry slots into the packed index list.
+        // CID: reserve the range; the workgroup copies it in main().
         uint destOffset;
         InterlockedAdd(occluderOutCounter[0], entry.indexCount, destOffset);
-        for (uint i = 0; i < entry.indexCount; i++) {
-            occluderOut[destOffset + i] = drawIndices[entry.indexBase + i];
-        }
+        g_occluderDest = destOffset;
+        g_occluderCount = entry.indexCount;
     } else {
         // MID: one 20 B indexed draw command per selected occluder.
         uint cmdSlot;
@@ -167,4 +168,27 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     cullEntries[NonUniformResourceIndex(block)][elementIndex].flags |= kOccluderBit;
+}
+
+[numthreads(256, 1, 1)]
+[shader("compute")]
+void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
+    const uint submeshIndex = groupId.x;
+    const uint tid = groupThreadId.x;
+
+    if (tid == 0) {
+        g_occluderDest = 0;
+        g_occluderCount = 0;
+        SelectOccluder(submeshIndex);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (kCompactionMode == 0 && g_occluderCount != 0) {
+        uint block = submeshIndex / kEntriesPerBlock;
+        uint elementIndex = submeshIndex % kEntriesPerBlock;
+        CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
+        for (uint i = tid; i < g_occluderCount; i += 256) {
+            occluderOut[g_occluderDest + i] = drawIndices[entry.indexBase + i];
+        }
+    }
 }

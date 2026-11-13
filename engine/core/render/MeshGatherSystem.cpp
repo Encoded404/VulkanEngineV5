@@ -1002,7 +1002,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
     const bool palettes_ok = palettes.size() >= palette_cursor;
     const bool params_ok = modifier_param_bytes == 0 || params.size() >= modifier_param_bytes;
-    bool dropped_any_stage = false;
+    [[maybe_unused]] bool dropped_any_stage = false;
     if (!palettes_ok && palette_cursor > 0) {
         static bool reported = false;
         if (!reported) {

@@ -340,7 +340,12 @@ std::uint64_t TextureUploader::RecordUploads(vk::CommandBuffer cmd, std::uint32_
         regions.reserve(data.subresources.size());
         for (const auto& sub : data.subresources) {
             vk::BufferImageCopy region{};
-            region.bufferOffset = 0;  // RecordBufferToImage adds alloc.offset
+            // The staging buffer holds the whole mip chain laid out at each
+            // subresource's blob offset; RecordBufferToImage then adds the
+            // staging allocation's own base. Without sub.offset every mip read
+            // level 0, so LOD > 0 sampled a cropped copy of the base image
+            // (swirls/lines at distance, correct up close).
+            region.bufferOffset = sub.offset;
             region.bufferRowLength = 0;
             region.bufferImageHeight = 0;
             region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;

@@ -130,6 +130,9 @@ protected:
         ASSERT_TRUE(renderer_->Initialize(backend_, vertex_heap_, capacity, *shaders_,
                                           *pipeline_factory_, ids_, /*frames_in_flight=*/1,
                                           GetParam(), modifier_mgr_));
+        // A headless bootstrap has no swapchain extent; PrepareCompute writes the
+        // Hi-Z sampler descriptors, so create them at the test's render extent.
+        renderer_->EnsureRenderExtent(1280, 720);
         if (renderer_->GetDrawMode() != GetParam()) {
             GTEST_SKIP() << "draw mode " << (GetParam() == DrawMode::MID ? "MID" : "CID")
                          << " is unavailable on this device";

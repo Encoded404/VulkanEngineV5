@@ -360,7 +360,7 @@ index defensively.
 |---|---|---|
 | `participates_in_depth_pass == false` | prepass filtering | submesh is excluded from the *depth prepass indirection* (its cull-entry index count stays nonzero — collect still needs it for the main pass) |
 | `receives_occlusion == false` | pre-cull test | entry is kept alive unconditionally; never an occluder candidate |
-| `bounds_conservative` | occluder selection | see §5.8 — displaced techniques are occludee-only unless they supply conservative post-deform bounds |
+| `bounds_conservative` | occluder selection | see §5.8 — displaced techniques are occludee-only unless they supply conservative post-deform bounds; per-object deform bits take precedence for skinned/modified geometry |
 
 Without this gating, a technique excluded from the depth pass (for example a
 transparent) is still rasterized into the depth buffer, and the main pass then
@@ -370,34 +370,37 @@ pre-cull/compaction stage while collect keeps such entries alive.
 
 ### 5.8 Interaction with geometry-deformation compute
 
-If custom **compute shaders that modify geometry and write it to storage** are used,
-with custom vertex pipelines layered on top:
+The deform pass is **implemented** (`BuiltinPass::Deform`, on the graphics queue,
+between `expand` and `occluder-select`). It is a real built-in pass rather than an
+app pass because it needs the engine's private per-frame buffers, and an
+async-compute pass may not touch imported engine resources. The data flow and the
+modifier contract are in [skeletal animation](skeletal-animation.md).
 
-1. **Ordering constraint:** any deform pass must run *after* expand (it needs
-   the submesh transforms/indirection) and **before the first pass that
-   rasterizes deformed geometry** — i.e. before the occluder prepass. The
-   deform pass slots naturally where the pipeline already has a compute
-   segment.
-2. **Occluder candidacy:** a technique whose vertices can be displaced by
-   compute must never be an occluder unless it can prove a *post-deform
-   conservative bound* (union of bone spheres, animation-space AABB, or an
-   authored envelope). Fitted-to-rest-pose OBBs of displaced meshes are not
-   under-approximations of the deformed geometry → false culls (§3 rule).
-   Encode as a technique property: occluder selection requires
-   `participates_in_depth_pass && !has_vertex_displacement` (or a
-   conservative-bounds override).
-3. **Occludee bounds:** displaced submeshes can still be occluded, but only
-   if their bound encloses the full deformation envelope. Techniques must
-   either declare conservative bounds (CPU-known animation envelope) or opt
-   out via a bounds flag; otherwise the §8 correctness argument is void for
-   them.
-4. **The prepass depth of displaced geometry is only exact if the deform pass
-   writes before the prepass** — which the slot above guarantees.
+1. **Ordering constraint:** `expand` runs first: it allocates each active
+   submesh's region in the per-frame deformed-vertex buffer and writes
+   `VertexEntry::deformBias`. `deform` dispatches the submesh's modifier stack,
+   and the occluder prepass, depth prepass and main pass read the result through
+   the standard vertex shaders. Every one of those passes declares the
+   `deform-vertices` graph resource, so the graph emits the write→read barrier.
+2. **Occluder candidacy is per object, not per technique.** Every active deform
+   sets the `kDeformNoOccluder` flag in `SkinEntry::flags`; `expand` copies it into
+   `CullEntry::kCullNoOccluder`, and `occluder_select.slang` skips that entry.
+   `PipelineFlags::bounds_conservative` remains a technique-level declaration and
+   is not relied on for deformed geometry, because a mixed scene can share one
+   technique between static and deforming objects.
+3. **Occludee bounds** are also per object: an active deform sets
+   `kDeformNoCullTest`, so `pre_cull.slang` keeps it alive without testing its
+   stale rest-pose bounds and `occlusion_cull.slang` never tests them either.
+   Conservative envelopes are a follow-up; `BoundsPolicy::Conservative` and
+   `Manual` currently fall back to `SkipCulling` and are reported once per object.
+4. **The prepass depth of displaced geometry is exact** because `deform` writes
+   before the occluder prepass, and the depth/main vertex shaders read
+   `deformVertices` via `VertexEntry::deformBias`.
 
-Practical consequence for the design: the deform pass slots into the same
-serial chain without new machinery (it is one more compute node depending on
-expand), but the flag table from §5.7 must carry the deformation/bounds bits so
-expand, occluder selection, and the pre-cull all make consistent decisions.
+A submesh that cannot allocate a deform region (the frame budget was exhausted)
+has `kDeformActive` cleared by `expand`, so it renders its bind pose through the
+normal vertex path rather than sampling another submesh's region.
+
 
 ---
 

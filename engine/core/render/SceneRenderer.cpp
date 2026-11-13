@@ -667,7 +667,14 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     (void)be.GetSwapchainExtent(depth_width_, depth_height_);
 
-    if (!CreateHiZResources()) return false;
+    // A headless bootstrap has no swapchain and leaves the extent at zero. Hi-Z
+    // needs a positive extent (vkCreateImage rejects a zero width/height), so
+    // defer the pyramid until EnsureRenderExtent supplies one. Tests and
+    // embedders that only dispatch compute/cull work never need it; a windowed
+    // app always reports a real extent here.
+    if (depth_width_ > 0 && depth_height_ > 0) {
+        if (!CreateHiZResources()) return false;
+    }
 
     // ── Lighting system (descriptor set 4) ──
     {

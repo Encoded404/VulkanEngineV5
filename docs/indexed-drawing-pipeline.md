@@ -206,6 +206,46 @@ state therefore performs no block-descriptor writes at all; the previous
 unconditional rewrite cost nine bindings × used blocks `vkUpdateDescriptorSets`
 calls every frame.
 
+### 2.10 Deformation: one extra vertex stream, no new draw path
+
+Skinned and modified submeshes are drawn by the same indexed draws as everything
+else. The deform stage writes a per-frame vertex buffer, and the vertex shader
+chooses between that buffer and the ordinary vertex table:
+
+```slang
+Vertex vert = (info.deformBias != kNoDeform)
+    ? deformVertices[info.deformBias + (int)vertexIndex]
+    : vertexBuffers[NonUniformResourceIndex(vertexBufferSlot)][vertexIndex];
+```
+
+- `VertexEntry::deformBias` is a signed 32-bit element bias, written by
+  `expand` and `kNoDeform` when the submesh is not deformed. It is hoisted above
+  the vertex fetch; an unskinned submesh reads the same `VertexEntry` it always
+  read, so the unskinned path pays no extra descriptor read.
+- The deformed-vertex buffer is per frame-in-flight and holds `2 * T` vertices,
+  where `T` (`SceneCapacity::deform_vertex_span`) is the sum of the active
+  submeshes' tight vertex windows. The deform stack ping-pongs between region A
+  (`deform_base`) and region B (`deform_base + T`); expand owns the GPU-side
+  region allocator in the third word of `expandCounter`.
+- `SkinEntry` (one per submesh, a block array) carries the skin-table slot/bias,
+  the flat palette base, the influence-set count, the deform flags and the
+  GPU-written `deform_base`. Palettes live in a flat `GpuBuffer` addressed by a
+  global matrix index (`palette_base + joint`), not a block array: a palette may
+  start mid-block or cross a block boundary.
+- The deform dispatch list is CPU-side and is iterated in the deform pass. No
+  draw path, index format or draw mode changes; CID and MID both read the same
+  buffer.
+- `deform_vertex_span`, `palette_matrix_count` and `modifier_param_bytes` grow
+  together through `EnsureSceneCapacity`, which re-creates every frame slot's
+  buffers in one device idle. The deform set's fixed descriptor budget is the two
+  64-entry skin tables plus palette, output and parameters (131 storage buffers);
+  the expand set is the fifth block array plus three singles.
+- An unskinned scene records no dispatch and `HasActiveDeform()` stays false.
+  `expand` then skips the skin-entry array entirely and writes `kNoDeform`.
+
+Full data flow, influence layout and the application modifier contract:
+[skeletal animation](skeletal-animation.md).
+
 ## 3. Cost data
 
 Symbols: `N` = total index count, `S` = submeshes, `r` = index/vertex ratio

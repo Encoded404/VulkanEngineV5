@@ -149,6 +149,10 @@ because the Visual Studio generators cannot consume CMake's imported `std` BMI.
 
 ## Further documentation
 
+- **[docs/skeletal-animation.md](docs/skeletal-animation.md)** — the skeletal
+  animation path: glTF skin/clip import, `SkeletonPose`/`AnimationPlayer`, the
+  per-frame deform pass, influence layout, application vertex modifiers and
+  bounds policy, with the `examples/skinned_scene` walkthrough.
 - **[docs/steam-runtime-libstdcxx.md](docs/steam-runtime-libstdcxx.md)** — Steam
   Linux Runtime 4's dynamic libstdc++ policy, the ABI check the build runs, and
   why the shipping configuration is Clang + libc++.

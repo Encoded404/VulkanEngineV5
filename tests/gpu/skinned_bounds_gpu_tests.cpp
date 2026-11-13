@@ -65,6 +65,10 @@ protected:
         ASSERT_TRUE(renderer_->Initialize(backend_, vertex_heap_, capacity, *shaders_,
                                           *pipeline_factory_, ids_, /*frames_in_flight=*/1,
                                           DrawMode::CID, modifier_mgr_));
+        // A headless bootstrap has no swapchain extent; the pre-cull dispatch
+        // binds the Hi-Z descriptors, so give the renderer the test extent before
+        // PrepareCompute writes them.
+        renderer_->EnsureRenderExtent(kWidth, kHeight);
 
         // One submesh in the frame: PrepareCompute grows the block arrays and
         // writes the cull-pass descriptors for it.

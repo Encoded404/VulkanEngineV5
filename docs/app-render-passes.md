@@ -224,7 +224,10 @@ are resized by the engine automatically.
 
 ## Built-in anchors
 
-`BuiltinPass` enumerates the engine passes for ordering: `Expand`,
+`BuiltinPass` enumerates the engine passes for ordering: `Expand`, `Deform`,
 `OccluderSelect`, `OccluderPrepass`, `HiZGenPre`, `PreCull`, `DepthPrepass`,
 `HiZGen`, `Occlusion`, `Collect`, `MainPass`, `Text`, `ImGui`. Engine descriptor
 sets 0-4 are reserved; application sets start at `kFirstAppDescriptorSet` (5).
+`Deform` is the engine-owned skinning/modifier dispatch; app passes may order
+around it but cannot replace it (see
+[skeletal animation](skeletal-animation.md)).

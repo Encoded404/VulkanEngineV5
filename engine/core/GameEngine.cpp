@@ -829,24 +829,13 @@ uint32_t GameEngine::LoadTextureFromGltfImage(VulkanEngine::Application::Applica
         return BindlessManager::kFallbackSlot;
     }
 
-    auto handle = ctx_.resource_manager.Register(resource);
-    if (!handle.IsValid()) {
-        LOGIFACE_LOG(warn, "LoadTextureFromGltfImage: failed to register '" + resource_name +
-                           "', using fallback");
-        return BindlessManager::kFallbackSlot;
-    }
-
-    const std::uint32_t slot =
-        UploadTextureToBindless(ctx, handle.Get(), semantic, normal_encoding, sampler);
-#ifdef VKENGINE_HOT_RELOAD
-    // Only a URI image has a file to watch; embedded bytes are re-imported with
-    // the asset, so there is nothing to register with the path-keyed watcher.
-    if (ctx_.texture_reloader && slot != BindlessManager::kFallbackSlot && !source_path.empty()) {
-        ctx_.texture_reloader->WatchResource(handle.GetId(), source_path, semantic,
-                                            normal_encoding, sampler);
-    }
-#endif
-    return slot;
+    // The uploader takes its own copy of the decoded payload, so the resource
+    // only has to outlive this call. It is deliberately not registered in the
+    // resource manager: a scene reload re-imports the glTF, and retaining every
+    // glTF texture's decoded CPU data would grow without bound when switching
+    // assets. Hot reloading an individual glTF texture has no stable file to
+    // watch for the embedded case, so the path-keyed watcher is not used here.
+    return UploadTextureToBindless(ctx, resource.get(), semantic, normal_encoding, sampler);
 }
 
 std::shared_ptr<const VulkanEngine::Text::FontFace> GameEngine::LoadFont(
@@ -1499,6 +1488,10 @@ void GameEngine::UploadLighting(const SceneRenderer::SceneHeader& header,
         return;
     }
     ctx_.scene_renderer->UploadLighting(header, lights, ctx_.staging_pool);
+}
+
+bool GameEngine::HasPendingTextureUploads() const {
+    return ctx_.texture_uploader != nullptr && ctx_.texture_uploader->HasPendingWork();
 }
 
 Modifiers::ModifierId GameEngine::RegisterModifier(Modifiers::ModifierDesc desc) {

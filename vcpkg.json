@@ -15,7 +15,9 @@
         },
         {
             "name": "ktx",
-            "features": [ "vulkan" ]
+            "features": [
+                "vulkan"
+            ]
         },
         {
             "name": "sdl3",
@@ -39,7 +41,10 @@
         "cli11",
         {
             "name": "imgui",
-            "features": [ "vulkan-binding", "sdl3-binding" ]
+            "features": [
+                "vulkan-binding",
+                "sdl3-binding"
+            ]
         },
         "efsw",
         {
@@ -58,7 +63,11 @@
         "libunibreak",
         {
             "name": "joltphysics",
-            "features": [ "debugrenderer", "rtti" ]
-        }
+            "features": [
+                "debugrenderer",
+                "rtti"
+            ]
+        },
+        "curl"
     ]
 }

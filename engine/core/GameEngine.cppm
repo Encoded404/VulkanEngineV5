@@ -248,6 +248,10 @@ public:
     // already matches. Returns false if a pipeline rebuild failed.
     bool SetDrawMode(SceneRenderer::DrawMode requested);
 
+    // True while the asynchronous texture uploader still owns work. Scene
+    // teardown waits for this before releasing bindless slots and materials.
+    [[nodiscard]] bool HasPendingTextureUploads() const;
+
     struct UploadedMesh {
         std::uint32_t first_submesh = 0;
         std::uint32_t submesh_count = 0;

@@ -1482,13 +1482,10 @@ GltfMeshAssembler::AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer
         // references) are asked for explicitly: without the bit fastgltf skips
         // the node extension object entirely, and the collider hints would
         // silently vanish.
-        fastgltf::Parser parser(fastgltf::Extensions::KHR_mesh_quantization |
-                                fastgltf::Extensions::KHR_texture_transform |
-                                fastgltf::Extensions::KHR_texture_basisu |
-                                fastgltf::Extensions::KHR_materials_emissive_strength |
-                                fastgltf::Extensions::KHR_materials_unlit |
-                                fastgltf::Extensions::KHR_physics_rigid_bodies |
-                                fastgltf::Extensions::KHR_implicit_shapes);
+        // Every extension is enabled: unsupported material extensions are
+        // ignored by the lit contract, while a file that requires one still
+        // yields its geometry instead of failing to parse.
+        fastgltf::Parser parser(static_cast<fastgltf::Extensions>(~std::uint64_t{0}));
 
         auto data = fastgltf::GltfDataBuffer::FromBytes(
             reinterpret_cast<const std::byte*>(buffer->data()), buffer->size());
@@ -1512,6 +1509,9 @@ GltfMeshAssembler::AssembleFromFullBuffer(std::shared_ptr<FileLoader::ByteBuffer
         }
 
         auto mesh = std::make_shared<VulkanEngine::Mesh>();
+        // glTF texture coordinates put (0, 0) at the upper-left of the image,
+        // which is already Vulkan's sampling orientation.
+        mesh->uvs_top_left = true;
         ConvertAsset(asset.get(), material_bindings_, *mesh);
 
         if (mesh->vertices.empty()) {

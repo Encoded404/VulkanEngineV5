@@ -82,6 +82,49 @@ constexpr const char* kPngDataUri =
 })";
 }
 
+
+// A minimal GLB whose single image lives in a buffer view (the form every
+// .glb with embedded textures uses). The payload is a 1x1 PNG, the same image
+// the data-URI fixture above uses.
+[[nodiscard]] std::vector<std::byte> MakeGlbBytes() {
+    static constexpr std::array<std::uint8_t, 70> kPng = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64,
+        0xf8, 0xcf, 0x50, 0x0f, 0x00, 0x03, 0x86, 0x01, 0x80, 0x5a, 0x34, 0x7d, 0x6b, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    };
+
+    std::string json = R"({
+  "asset": {"version": "2.0"},
+  "buffers": [{"byteLength": 70}],
+  "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 70}],
+  "images": [{"bufferView": 0, "mimeType": "image/png"}],
+  "textures": [{"source": 0}],
+  "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]
+})";
+    while (json.size() % 4 != 0) json.push_back(' ');
+
+    std::vector<std::byte> glb;
+    const auto append_u32 = [&glb](const std::uint32_t value) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            glb.push_back(static_cast<std::byte>((value >> shift) & 0xFFu));
+        }
+    };
+    const std::size_t bin_size = (kPng.size() + 3u) & ~std::size_t{3u};
+    append_u32(0x46546C67u);  // "glTF"
+    append_u32(2u);
+    append_u32(static_cast<std::uint32_t>(12u + 8u + json.size() + 8u + bin_size));
+    append_u32(static_cast<std::uint32_t>(json.size()));
+    append_u32(0x4E4F534Au);  // "JSON"
+    for (const char c : json) glb.push_back(static_cast<std::byte>(c));
+    append_u32(static_cast<std::uint32_t>(bin_size));
+    append_u32(0x004E4942u);  // "BIN"
+    for (const std::uint8_t byte : kPng) glb.push_back(static_cast<std::byte>(byte));
+    glb.resize(glb.size() + (bin_size - kPng.size()), std::byte{0});
+    return glb;
+}
+
 class GltfMaterialImportTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -325,4 +368,28 @@ TEST_F(GltfMaterialImportTest, ParsedMaterialResolvesToADrawGroup) {
 }
 
 }  // namespace
+TEST_F(GltfMaterialImportTest, ResolvesGlbBufferViewImages) {
+    // Regression: fastgltf reports a GLB texture as sources::BufferView, not as
+    // inlined bytes. The importer must resolve the view against the loaded GLB
+    // buffer, otherwise every .glb asset renders with fallback textures.
+    const std::filesystem::path glb_path = path_.parent_path() / "fixture.glb";
+    {
+        const std::vector<std::byte> glb = MakeGlbBytes();
+        std::ofstream file(glb_path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(file.is_open());
+        file.write(reinterpret_cast<const char*>(glb.data()),
+                   static_cast<std::streamsize>(glb.size()));
+    }
 
+    GltfImportResult result;
+    ASSERT_NO_THROW(result = ImportGltfMaterials(glb_path));
+    ASSERT_EQ(result.images.size(), 1u);
+    EXPECT_EQ(result.images[0].source, VulkanEngine::FileLoaders::Mesh::GltfImageRef::Source::Embedded);
+    EXPECT_EQ(result.images[0].mime_type, "image/png");
+    ASSERT_EQ(result.images[0].embedded_bytes.size(), 70u);
+    EXPECT_EQ(result.images[0].embedded_bytes[0], std::byte{0x89});
+    EXPECT_EQ(result.images[0].embedded_bytes.back(), std::byte{0x82});
+
+    std::error_code ec;
+    std::filesystem::remove(glb_path, ec);
+}

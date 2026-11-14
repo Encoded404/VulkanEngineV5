@@ -116,13 +116,14 @@ TEST_F(SceneImportUvTest, EveryUvSetLeavesImportInTheSameOrientation) {
     ASSERT_EQ(loaded.uvs.size(), 6u);
     ASSERT_EQ(loaded.uv1.size(), 6u);
 
-    // Both sets arrive already flipped: v' = 1 - v.
-    EXPECT_NEAR(loaded.uvs[1], 1.0f, kEps);
-    EXPECT_NEAR(loaded.uvs[3], 1.0f, kEps);
-    EXPECT_NEAR(loaded.uvs[5], 0.0f, kEps);
-    EXPECT_NEAR(loaded.uv1[1], 1.0f, kEps);
-    EXPECT_NEAR(loaded.uv1[3], 1.0f, kEps);
-    EXPECT_NEAR(loaded.uv1[5], 0.75f, kEps);
+    // glTF already authors UVs with the upper-left origin, so neither set is
+    // flipped on the way into LoadedMeshData.
+    EXPECT_NEAR(loaded.uvs[1], 0.0f, kEps);
+    EXPECT_NEAR(loaded.uvs[3], 0.0f, kEps);
+    EXPECT_NEAR(loaded.uvs[5], 1.0f, kEps);
+    EXPECT_NEAR(loaded.uv1[1], 0.0f, kEps);
+    EXPECT_NEAR(loaded.uv1[3], 0.0f, kEps);
+    EXPECT_NEAR(loaded.uv1[5], 0.25f, kEps);
 
     // The U component is never touched.
     EXPECT_NEAR(loaded.uv1[2], 0.25f, kEps);
@@ -131,15 +132,15 @@ TEST_F(SceneImportUvTest, EveryUvSetLeavesImportInTheSameOrientation) {
     ASSERT_EQ(data.vertices.size(), 3u);
     ASSERT_EQ(data.uv_extra[0].size(), 3u);
 
-    // UV0 reaches the vertex unflipped by ConvertToVertices...
-    EXPECT_NEAR(data.vertices[0].v, 1.0f, kEps);
-    EXPECT_NEAR(data.vertices[1].v, 1.0f, kEps);
-    EXPECT_NEAR(data.vertices[2].v, 0.0f, kEps);
+    // UV0 reaches the vertex unchanged by ConvertToVertices...
+    EXPECT_NEAR(data.vertices[0].v, 0.0f, kEps);
+    EXPECT_NEAR(data.vertices[1].v, 0.0f, kEps);
+    EXPECT_NEAR(data.vertices[2].v, 1.0f, kEps);
     // ...and UV1 reaches uv_extra the same way, so the net values are unchanged
     // from when the flip lived in ToMeshData.
-    EXPECT_NEAR(data.uv_extra[0][0].v, 1.0f, kEps);
-    EXPECT_NEAR(data.uv_extra[0][1].v, 1.0f, kEps);
-    EXPECT_NEAR(data.uv_extra[0][2].v, 0.75f, kEps);
+    EXPECT_NEAR(data.uv_extra[0][0].v, 0.0f, kEps);
+    EXPECT_NEAR(data.uv_extra[0][1].v, 0.0f, kEps);
+    EXPECT_NEAR(data.uv_extra[0][2].v, 0.25f, kEps);
 }
 
 // Identical source values must survive as identical sets: one convention, no

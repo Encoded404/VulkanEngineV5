@@ -319,6 +319,11 @@ export namespace VulkanEngine
         std::vector<MeshVertexVec3> normals; //NOLINT(misc-non-private-member-variables-in-classes)
         // UV0, inline into the vertex struct at upload. Parallel to `vertices`.
         std::vector<MeshVertexVec2> uvs; //NOLINT(misc-non-private-member-variables-in-classes)
+        // True when the source authored UVs with the texture-space origin at
+        // the upper-left (glTF). SceneImport flips V for sources whose origin
+        // is lower-left (OBJ, the engine BIN format) so every LoadedMeshData UV
+        // set arrives in one convention: V down, matching Vulkan sampling.
+        bool uvs_top_left = false; //NOLINT(misc-non-private-member-variables-in-classes)
         // Out-of-line UV sets 1..MAX_UV_SETS-1, indexed uv_extra[k-1], parallel
         // to `vertices` when present. Empty when the source does not author it.
         std::array<std::vector<MeshVertexVec2>, MAX_UV_SETS - 1> uv_extra{}; //NOLINT(misc-non-private-member-variables-in-classes)

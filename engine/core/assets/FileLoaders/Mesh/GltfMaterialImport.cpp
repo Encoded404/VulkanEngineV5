@@ -84,7 +84,7 @@ template <typename OptionalTextureInfo>
     }
 }
 
-[[nodiscard]] GltfImageRef ToImageRef(const fastgltf::Image& image) {
+[[nodiscard]] GltfImageRef ToImageRef(const fastgltf::Asset& asset, const fastgltf::Image& image) {
     GltfImageRef ref{};
     if (const auto* uri = std::get_if<fastgltf::sources::URI>(&image.data)) {
         // An external (or, rarely, un-inlined data) URI: the caller resolves it
@@ -93,16 +93,35 @@ template <typename OptionalTextureInfo>
         ref.uri = std::string(uri->uri.string());
         ref.mime_type = MimeName(uri->mimeType);
     } else if (const auto* array = std::get_if<fastgltf::sources::Array>(&image.data)) {
-        // A GLB-embedded image, a `data:` URI (fastgltf decodes those itself),
-        // or an image backed by a buffer view: the payload is already in memory.
+        // A `data:` URI (fastgltf decodes those itself): the payload is already
+        // in memory.
         ref.source = GltfImageRef::Source::Embedded;
         ref.mime_type = MimeName(array->mimeType);
         ref.embedded_bytes.assign(array->bytes.begin(), array->bytes.end());
-    } else if (std::get_if<fastgltf::sources::BufferView>(&image.data) != nullptr) {
-        // fastgltf normally resolves a buffer-view image to sources::Array (the
-        // GLB buffer is loaded). If it does not, the caller cannot reach the
-        // bytes through this interface, so report None rather than a bad index.
-        ref.source = GltfImageRef::Source::None;
+    } else if (const auto* view = std::get_if<fastgltf::sources::BufferView>(&image.data)) {
+        // A GLB image: fastgltf keeps the payload in the enclosing buffer and
+        // names the view, so resolve the byte range here. ImportGltfMaterials
+        // loads external buffers, so a GLB's BIN chunk arrives as
+        // sources::Array on buffer 0.
+        if (view->bufferViewIndex >= asset.bufferViews.size()) return ref;
+        const auto& buffer_view = asset.bufferViews[view->bufferViewIndex];
+        if (buffer_view.bufferIndex >= asset.buffers.size()) return ref;
+
+        std::span<const std::byte> bytes{};
+        const auto& source = asset.buffers[buffer_view.bufferIndex].data;
+        if (const auto* array = std::get_if<fastgltf::sources::Array>(&source)) {
+            bytes = std::span<const std::byte>{array->bytes.data(), array->bytes.size()};
+        } else if (const auto* vector = std::get_if<fastgltf::sources::Vector>(&source)) {
+            bytes = std::span<const std::byte>{vector->bytes.data(), vector->bytes.size()};
+        } else if (const auto* byte_view = std::get_if<fastgltf::sources::ByteView>(&source)) {
+            bytes = byte_view->bytes;
+        }
+        if (bytes.size() < buffer_view.byteOffset + buffer_view.byteLength) return ref;
+
+        const auto begin = bytes.begin() + static_cast<std::ptrdiff_t>(buffer_view.byteOffset);
+        ref.source = GltfImageRef::Source::Embedded;
+        ref.mime_type = MimeName(view->mimeType);
+        ref.embedded_bytes.assign(begin, begin + static_cast<std::ptrdiff_t>(buffer_view.byteLength));
     } else {
         ref.source = GltfImageRef::Source::None;
     }
@@ -162,6 +181,13 @@ SamplerDesc ToSamplerDesc(const GltfSamplerInfo& sampler) noexcept {
         desc.address_u = vk::SamplerAddressMode::eRepeat;
         desc.address_v = vk::SamplerAddressMode::eRepeat;
         desc.address_w = vk::SamplerAddressMode::eRepeat;
+        // glTF has no anisotropy field. A glTF texture is authored for
+        // minification across arbitrary view angles (the chessboard is a
+        // checker viewed almost edge-on), and trilinear alone turns that into
+        // broad stripes. 16x is the usual viewer default; the cache clamps it
+        // to the device maximum.
+        desc.anisotropy = true;
+        desc.max_anisotropy = 16;
         return desc;
     }
 
@@ -199,6 +225,9 @@ SamplerDesc ToSamplerDesc(const GltfSamplerInfo& sampler) noexcept {
     desc.address_u = to_vk_wrap(sampler.wrap_s);
     desc.address_v = to_vk_wrap(sampler.wrap_t);
     desc.address_w = to_vk_wrap(sampler.wrap_s);
+    // See the default-sampler path above: glTF does not describe anisotropy.
+    desc.anisotropy = true;
+    desc.max_anisotropy = 16;
     return desc;
 }
 
@@ -217,10 +246,11 @@ GltfImportResult ImportGltfMaterials(const std::filesystem::path& path) {
         throw std::runtime_error("ImportGltfMaterials: failed to read " + path.string());
     }
 
-    fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_transform |
-                            fastgltf::Extensions::KHR_texture_basisu |
-                            fastgltf::Extensions::KHR_materials_emissive_strength |
-                            fastgltf::Extensions::KHR_materials_unlit);
+    // Parse every extension: the importer only consumes the ones the engine's
+    // material contract understands, but a glTF that *requires* transmission,
+    // clearcoat, variants and friends is still loadable for its geometry,
+    // textures and factors rather than failing the whole asset.
+    fastgltf::Parser parser(static_cast<fastgltf::Extensions>(~std::uint64_t{0}));
     auto data = fastgltf::GltfDataBuffer::FromBytes(bytes.data(), bytes.size());
     if (!data) {
         throw std::runtime_error("ImportGltfMaterials: could not create GLTF data buffer");
@@ -250,7 +280,7 @@ GltfImportResult ImportGltfMaterials(const std::filesystem::path& path) {
 
     result.images.reserve(asset->images.size());
     for (const auto& image : asset->images) {
-        result.images.push_back(ToImageRef(image));
+        result.images.push_back(ToImageRef(asset.get(), image));
     }
 
     result.textures.reserve(asset->textures.size());

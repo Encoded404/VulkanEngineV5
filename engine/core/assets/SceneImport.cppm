@@ -27,9 +27,11 @@ using MaterialManager::MaterialId;
 struct LoadedMeshData {
     std::vector<float> positions;
     std::vector<float> normals;
-    // UV coordinates in the engine's orientation: the importer's V is already
-    // flipped. Every set shares that convention — `uvs` as well as `uv1` — so
-    // consumers copy them verbatim rather than flipping per set.
+    // UV coordinates in the engine's orientation: V down (upper-left texture
+    // origin, matching Vulkan sampling). Every set shares that convention —
+    // `uvs` as well as `uv1` — and the per-format normalization (glTF is
+    // already there; OBJ/BIN are flipped once in SceneImport) happened in the
+    // importer, so consumers copy them verbatim.
     std::vector<float> uvs;
     // Optional out-of-line UV1, interleaved (u,v) like `uvs`, parallel to
     // `positions`, and flipped the same way. Empty when the source has no UV1.

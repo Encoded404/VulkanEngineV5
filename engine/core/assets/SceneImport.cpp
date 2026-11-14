@@ -22,6 +22,17 @@ import VulkanEngine.StandardMeshPipeline;
 namespace VulkanEngine::SceneLoader {
 
 namespace {
+
+// Every UV set is normalized to the upper-left texture origin. Sources that
+// already use it (glTF) pass through; lower-left sources (OBJ, BIN) are
+// flipped here, once, for UV0 and UV1 alike.
+[[nodiscard]] float ToEngineV(const VulkanEngine::Mesh& mesh, const float v) noexcept {
+    return mesh.uvs_top_left ? v : 1.0f - v;
+}
+
+} // namespace
+
+namespace {
     // Local alias for the NormalEncoding helpers' 3D vector type.
     using float3 = MeshVertexVec3;
 
@@ -111,8 +122,8 @@ LoadedMeshData LoadMeshFromFile(const std::filesystem::path& models_dir,
                 // Every UV set is stored in the engine's orientation: the V
                 // flip happens here, once, so all sets share one convention and
                 // consumers copy them verbatim.
-                for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
-                for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(1.0f - uv.v); }
+                for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(ToEngineV(*mesh, uv.v)); }
+                for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(ToEngineV(*mesh, uv.v)); }
                 for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
                 data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;
@@ -143,8 +154,8 @@ LoadedMeshData LoadMeshFromFilePath(const std::filesystem::path& file_path,
             // Every UV set is stored in the engine's orientation: the V flip
             // happens here, once, so all sets share one convention and
             // consumers copy them verbatim.
-            for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
-            for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(1.0f - uv.v); }
+            for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(ToEngineV(*mesh, uv.v)); }
+            for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(ToEngineV(*mesh, uv.v)); }
             for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
             data.tangent_handedness = mesh->tangent_handedness;
             data.indices = mesh->indices;
@@ -188,8 +199,8 @@ bool LoadAllMeshes(const std::filesystem::path& models_dir,
                 // Every UV set is stored in the engine's orientation: the V
                 // flip happens here, once, so all sets share one convention and
                 // consumers copy them verbatim.
-                for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(1.0f - uv.v); }
-                for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(1.0f - uv.v); }
+                for (const auto& uv : mesh->uvs) { data.uvs.push_back(uv.u); data.uvs.push_back(ToEngineV(*mesh, uv.v)); }
+                for (const auto& uv : mesh->uv_extra[0]) { data.uv1.push_back(uv.u); data.uv1.push_back(ToEngineV(*mesh, uv.v)); }
                 for (const auto& t : mesh->tangents) { data.tangents.push_back(t.x); data.tangents.push_back(t.y); data.tangents.push_back(t.z); }
                 data.tangent_handedness = mesh->tangent_handedness;
                 data.indices = mesh->indices;

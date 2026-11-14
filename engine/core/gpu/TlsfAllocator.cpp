@@ -243,6 +243,12 @@ uint64_t TlsfAllocator::Allocate(uint64_t size, std::uint64_t alignment) {
 
     if (node_idx == UINT32_MAX) return UINT64_MAX;
 
+    // Defensive: a corrupted free node must not yield a range outside the block.
+    if (aligned > total_size_ || size > total_size_ - aligned) {
+        debug_overlap_ = true;
+        return UINT64_MAX;
+    }
+
     // Defensive: never hand out a range that overlaps a live allocation.
     for (const auto& [live_offset, live_size] : live_extents_) {
         if (aligned < live_offset + live_size && live_offset < aligned + size) {

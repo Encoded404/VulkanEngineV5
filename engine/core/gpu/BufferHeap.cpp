@@ -104,13 +104,21 @@ HeapAllocation DeviceBufferHeap::Allocate(uint64_t size, std::uint64_t alignment
     for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(blocks_.size()); ++bi) {
         auto& block = blocks_[bi];
         const std::uint64_t offset = block.allocator.Allocate(size, alignment);
-        if (offset != UINT64_MAX) {
-            HeapAllocation alloc{};
-            alloc.buffer_index = bi;
-            alloc.offset = offset;
-            alloc.size = size;
-            return alloc;
+        if (offset == UINT64_MAX) continue;
+        // A corrupt allocator could report an in-range-looking offset; never hand
+        // one out, because mapped_ptr + offset would point outside the block.
+        if (offset > block.size || size > block.size - offset) {
+            LOGIFACE_LOG(error, "DeviceBufferHeap '" + debug_name_ +
+                                    "': allocator returned an out-of-block offset " +
+                                    std::to_string(offset) + " (block " +
+                                    std::to_string(block.size) + ")");
+            continue;
         }
+        HeapAllocation alloc{};
+        alloc.buffer_index = bi;
+        alloc.offset = offset;
+        alloc.size = size;
+        return alloc;
     }
 
     // No space found — add a new block

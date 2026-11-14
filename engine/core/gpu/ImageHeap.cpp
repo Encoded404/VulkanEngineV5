@@ -71,9 +71,12 @@ std::uint32_t GpuImageHeap::CreateBlock(std::uint32_t memory_type_index, std::ui
     alloc_info.allocationSize = size;
     alloc_info.memoryTypeIndex = memory_type_index;
 
-    auto memory = std::make_unique<vk::raii::DeviceMemory>(device, alloc_info);
-    if (!**memory) {
-        LOGIFACE_LOG(error, "GpuImageHeap '" + debug_name_ + "': failed to allocate a block");
+    std::unique_ptr<vk::raii::DeviceMemory> memory;
+    try {
+        memory = std::make_unique<vk::raii::DeviceMemory>(device, alloc_info);
+    } catch (const vk::SystemError& error) {
+        LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ + "': failed to allocate a " +
+                               std::to_string(size) + "-byte block: " + std::string(error.what()));
         return kInvalidIndex;
     }
 
@@ -119,7 +122,14 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewD
     // contents-initialization are responsible for an explicit transition.
     image_info.initialLayout = vk::ImageLayout::eUndefined;
 
-    auto image = std::make_unique<vk::raii::Image>(device, image_info);
+    std::unique_ptr<vk::raii::Image> image;
+    try {
+        image = std::make_unique<vk::raii::Image>(device, image_info);
+    } catch (const vk::SystemError& error) {
+        LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ + "': image creation failed: " +
+                               std::string(error.what()));
+        return {};
+    }
 
     vk::ImageMemoryRequirementsInfo2 requirements_info{};
     requirements_info.image = static_cast<vk::Image>(**image);
@@ -156,11 +166,17 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewD
         alloc_info.memoryTypeIndex = *memory_type_index;
         alloc_info.pNext = &dedicated_info;
 
-        record.dedicated_memory = std::make_unique<vk::raii::DeviceMemory>(device, alloc_info);
-        if (!**record.dedicated_memory) {
+        try {
+            record.dedicated_memory = std::make_unique<vk::raii::DeviceMemory>(device, alloc_info);
+            image->bindMemory(*record.dedicated_memory, 0);
+        } catch (const vk::SystemError& error) {
+            // A failed bind leaves no usable image; report it to the caller so a
+            // texture upload can fall back instead of terminating the process.
+            LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ +
+                                   "': dedicated allocation failed (" +
+                                   std::string(error.what()) + "); image dropped");
             return {};
         }
-        image->bindMemory(*record.dedicated_memory, 0);
         record.offset = 0;
     } else {
         // Try every block of the matching memory type, then grow a new one.
@@ -172,7 +188,15 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewD
             }
             const std::uint64_t offset = block.allocator.Allocate(record.size, record.alignment);
             if (offset != kInvalidOffset) {
-                image->bindMemory(*block.memory, offset);
+                try {
+                    image->bindMemory(*block.memory, offset);
+                } catch (const vk::SystemError& error) {
+                    block.allocator.Free(offset, record.size);
+                    LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ +
+                                           "': sub-allocated bind failed (" +
+                                           std::string(error.what()) + "); image dropped");
+                    return {};
+                }
                 record.block_index = block_index;
                 record.offset = offset;
                 placed = true;
@@ -189,7 +213,15 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewD
             if (offset == kInvalidOffset) {
                 return {};
             }
-            image->bindMemory(*block.memory, offset);
+            try {
+                image->bindMemory(*block.memory, offset);
+            } catch (const vk::SystemError& error) {
+                block.allocator.Free(offset, record.size);
+                LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ +
+                                       "': sub-allocated bind failed (" +
+                                       std::string(error.what()) + "); image dropped");
+                return {};
+            }
             record.block_index = block_index;
             record.offset = offset;
         }
@@ -203,7 +235,16 @@ HeapImage GpuImageHeap::Allocate(vk::ImageCreateInfo image_info, const HeapViewD
     view_info.components = view_desc.components;
     view_info.subresourceRange = {view_desc.aspect, view_desc.base_mip_level, view_desc.level_count,
                                    view_desc.base_array_layer, view_desc.layer_count};
-    record.view = std::make_unique<vk::raii::ImageView>(device, view_info);
+    try {
+        record.view = std::make_unique<vk::raii::ImageView>(device, view_info);
+    } catch (const vk::SystemError& error) {
+        if (!record.dedicated && record.block_index < blocks_.size()) {
+            blocks_[record.block_index].allocator.Free(record.offset, record.size);
+        }
+        LOGIFACE_LOG(warn, "GpuImageHeap '" + debug_name_ + "': image view creation failed: " +
+                               std::string(error.what()));
+        return {};
+    }
 
     record.image = std::move(image);
     record.generation = ++generation_counter_;

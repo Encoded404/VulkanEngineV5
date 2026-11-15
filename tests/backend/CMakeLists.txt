@@ -12,6 +12,7 @@ add_executable(backend_tests
   block_array_limit_tests.cpp
   vulkan_capabilities_tests.cpp
   format_utils_tests.cpp
+  output_color_tests.cpp
 )
 target_link_libraries(backend_tests PRIVATE ${BACKEND_TARGET} ${ENGINE_TARGET})
 

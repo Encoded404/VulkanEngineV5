@@ -13,6 +13,7 @@ export namespace VulkanBackend::ImGui {
 
 struct ImGuiBackendConfig {
     std::uint32_t image_count = 3;
+    // Color attachment ImGui renders into: the engine's linear scene target, not the swapchain (the output pass encodes afterwards).
     vk::Format swapchain_format = vk::Format::eUndefined;
     std::uint32_t min_allocation_size = 1024 * 1024;
 };

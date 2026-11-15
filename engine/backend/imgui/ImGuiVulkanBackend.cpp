@@ -6,6 +6,8 @@ module;
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
+#include <cmath>
+
 #include <logging/logging_macros.hpp>
 
 module VulkanBackend.ImGui;
@@ -18,6 +20,27 @@ import logiface;
 import vulkan;
 
 namespace VulkanBackend::ImGui {
+
+namespace {
+
+// ImGui style colours are authored in display-referred sRGB. Because the engine composites them into the linear scene target, decode the vertex colour before blending; the output pass applies the display transfer once.
+float SrgbToLinearChannel(float c) {
+    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+void LinearizeImGuiColors(ImDrawData& draw_data) {
+    for (int list_index = 0; list_index < draw_data.CmdListsCount; ++list_index) {
+        for (ImDrawVert& vertex : draw_data.CmdLists[list_index]->VtxBuffer) {
+            ImVec4 color = ::ImGui::ColorConvertU32ToFloat4(vertex.col);
+            color.x = SrgbToLinearChannel(color.x);
+            color.y = SrgbToLinearChannel(color.y);
+            color.z = SrgbToLinearChannel(color.z);
+            vertex.col = ::ImGui::ColorConvertFloat4ToU32(color);
+        }
+    }
+}
+
+} // namespace
 
 class VulkanImGuiBackend : public IImGuiBackend {
 public:
@@ -105,6 +128,7 @@ public:
         if (draw_data == nullptr || draw_data->TotalVtxCount == 0) {
             return;
         }
+        LinearizeImGuiColors(*draw_data);
 
         vk::RenderingAttachmentInfo color_attach{};
         color_attach.imageView = color_attachment;

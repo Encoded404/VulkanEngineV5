@@ -316,9 +316,9 @@ void WorldTextPass::Setup(PassSetupContext& ctx) {
     // World text composites into the scene: the main pass has already filled the
     // backbuffer and the depth buffer, so this pass continues that rendering area
     // and loads rather than clears both.
-    auto backbuffer = ctx.ReadBackbuffer();
+    auto scene_color = ctx.ReadSceneColor();
     auto depth_buffer = ctx.ReadDepthBuffer();
-    ctx.AddWrite(backbuffer);
+    ctx.AddWrite(scene_color);
     // Read-only depth: the pass tests against the scene depth but never writes,
     // so the graph transitions the buffer to the read-only layout and every
     // later pass still sees the depth the main pass produced.
@@ -328,7 +328,7 @@ void WorldTextPass::Setup(PassSetupContext& ctx) {
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
     setup.auto_begin_rendering = false;
     VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-    color_attach.resource = backbuffer;
+    color_attach.resource = scene_color;
     color_attach.load_op = vk::AttachmentLoadOp::eLoad;
     color_attach.store_op = vk::AttachmentStoreOp::eStore;
     setup.color_attachments.push_back(color_attach);
@@ -477,10 +477,11 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     if (ctx.depth_buffer.view == nullptr) {
         return;
     }
-    const auto& views = bootstrap_->GetSwapchainImageViews();
-    if (ctx.swapchain_image_index >= views.size()) {
+    const auto scene = ctx.GetResource("scene-color");
+    if (!scene.has_value() || scene->AsImageView() == nullptr) {
         return;
     }
+    const vk::ImageView scene_view = scene->AsImageView();
     const std::uint32_t ring = RingForFrame(ctx.frame_index);
     if (ring >= instance_buffers_.size() || !instance_buffers_[ring].IsValid()) {
         return;
@@ -513,7 +514,7 @@ void WorldTextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     // scope. The depth attachment is bound read-only, matching the layout the
     // graph transitions it to for this pass.
     vk::RenderingAttachmentInfo color{};
-    color.imageView = *views[ctx.swapchain_image_index];
+    color.imageView = scene_view;
     color.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     color.loadOp = vk::AttachmentLoadOp::eLoad;
     color.storeOp = vk::AttachmentStoreOp::eStore;

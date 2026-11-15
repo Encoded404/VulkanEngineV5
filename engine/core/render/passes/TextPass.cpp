@@ -101,16 +101,14 @@ TextPass::TextPass(VulkanBackend::Vulkan::IVulkanBootstrap* bootstrap,
 TextPass::~TextPass() = default;
 
 void TextPass::Setup(PassSetupContext& ctx) {
-    // Text composites over the scene: the main pass has already begun rendering
-    // and filled the backbuffer, so this pass continues that rendering area and
-    // loads rather than clears it.
-    auto backbuffer = ctx.ReadBackbuffer();
-    ctx.AddWrite(backbuffer);
+    // Text composites over the scene in the linear target: the main pass has already filled the target, so this pass loads rather than clears it.
+    auto scene_color = ctx.ReadSceneColor();
+    ctx.AddWrite(scene_color);
 
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
     setup.auto_begin_rendering = false;
     VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-    color_attach.resource = backbuffer;
+    color_attach.resource = scene_color;
     color_attach.load_op = vk::AttachmentLoadOp::eLoad;
     color_attach.store_op = vk::AttachmentStoreOp::eStore;
     setup.color_attachments.push_back(color_attach);
@@ -166,13 +164,14 @@ void TextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     if (pending_.empty()) {
         return; // nothing queued: draw nothing, and open no rendering area
     }
-    if (ctx.pass_pipeline == nullptr || ctx.pipeline_layout == nullptr || bootstrap_ == nullptr) {
+    if (ctx.pass_pipeline == nullptr || ctx.pipeline_layout == nullptr) {
         return;
     }
-    const auto& views = bootstrap_->GetSwapchainImageViews();
-    if (ctx.swapchain_image_index >= views.size()) {
+    const auto scene = ctx.GetResource("scene-color");
+    if (!scene.has_value() || scene->AsImageView() == nullptr) {
         return;
     }
+    const vk::ImageView scene_view = scene->AsImageView();
     const std::uint32_t ring = RingForFrame(ctx.frame_index);
     if (ring >= instance_buffers_.size() || !instance_buffers_[ring].IsValid()) {
         return;
@@ -201,7 +200,7 @@ void TextPass::Execute(const FrameContext& ctx, vk::CommandBuffer cmd) {
     // declared eLoad attachment is what tells the graph the target content is
     // carried in, and this is where that load actually happens.
     vk::RenderingAttachmentInfo color{};
-    color.imageView = *views[ctx.swapchain_image_index];
+    color.imageView = scene_view;
     color.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     color.loadOp = vk::AttachmentLoadOp::eLoad;
     color.storeOp = vk::AttachmentStoreOp::eStore;

@@ -34,6 +34,7 @@ import VulkanEngine.Render.Passes.CollectPass;
 import VulkanEngine.Render.Passes.MainPass;
 import VulkanEngine.Render.Passes.ImGuiPass;
 import VulkanEngine.Render.Passes.TextPass;
+import VulkanEngine.Render.Passes.OutputPass;
 // Re-exported because RendererConfig names SceneRenderer::TextBackend.
 export import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.ShaderRegistration;

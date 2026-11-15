@@ -1080,10 +1080,10 @@ bool GameEngine::InitializeImGui(VulkanEngine::Application::ApplicationContext& 
     }
     ctx_.imgui_system = std::make_unique<ImGui::ImGuiSystem>(ctx_.imgui_backend);
 
-    const auto surface_format = backend.GetSurfaceFormat();
     VulkanBackend::ImGui::ImGuiBackendConfig imgui_backend_config{};
     imgui_backend_config.image_count = ctx.bootstrap->GetSnapshot().swapchain_image_count;
-    imgui_backend_config.swapchain_format = static_cast<vk::Format>(surface_format.format);
+    // ImGui is composited into the linear scene target, not the swapchain; the output pass applies the display transfer afterwards.
+    imgui_backend_config.swapchain_format = VulkanBackend::Vulkan::kSceneColorFormat;
 
     ImGui::ImGuiSystemInitInfo imgui_init_info{};
     imgui_init_info.sdl_window = ctx.window;

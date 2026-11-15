@@ -14,9 +14,13 @@ export namespace VulkanBackend::Vulkan {
 
 class VulkanSwapchain {
 public:
-    [[nodiscard]] bool Initialize(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode);
+    [[nodiscard]] bool Initialize(const VulkanInstance& instance, const VulkanDevice& device,
+                                  std::uint32_t preferred_image_count, PresentMode present_mode,
+                                  const OutputSettings& output);
     void Shutdown();
-    [[nodiscard]] bool Recreate(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode);
+    [[nodiscard]] bool Recreate(const VulkanInstance& instance, const VulkanDevice& device,
+                                std::uint32_t preferred_image_count, PresentMode present_mode,
+                                const OutputSettings& output);
 
     [[nodiscard]] std::uint32_t GetImageCount() const { return swapchain_image_count_; }
     [[nodiscard]] std::uint32_t GetWidth() const { return swapchain_extent_.width; }

@@ -35,24 +35,25 @@ by hand.
 
 ```cpp
 void MyPass::Setup(PassSetupContext& ctx) {
-    // Graph resources
-    const auto backbuffer = ctx.ReadBackbuffer();
-    const auto scene_color = ctx.CreateTransientImage(TransientImageDesc{
-        .name = "my-scene-color",
+    // Graph resources. The scene lives in the engine's linear FP16 composition target; the swapchain is only written by the final output pass.
+    // A post-process reads ReadSceneColor() and writes its own target.
+    const auto scene = ctx.ReadSceneColor();
+    const auto post_target = ctx.CreateTransientImage(TransientImageDesc{
+        .name = "my-post-target",
         .format = vk::Format::eR8G8B8A8Unorm,
         .width_scale = 1.0f,   // relative to the render extent
         .height_scale = 1.0f,
         .usage = vk::ImageUsageFlagBits::eColorAttachment |
                  vk::ImageUsageFlagBits::eSampled,
     });
-    ctx.AddRead(backbuffer, PipelineStageIntent::FragmentShader, AccessIntent::Read);
-    ctx.AddWrite(scene_color);
+    ctx.AddRead(scene, PipelineStageIntent::FragmentShader, AccessIntent::Read);
+    ctx.AddWrite(post_target);
 
     // Attachments
     PassAttachmentSetup attachments{};
     attachments.auto_begin_rendering = true;
     AttachmentInfo color{};
-    color.resource = scene_color;
+    color.resource = post_target;
     color.load_op = vk::AttachmentLoadOp::eClear;
     color.store_op = vk::AttachmentStoreOp::eStore;
     attachments.color_attachments.push_back(color);
@@ -77,14 +78,29 @@ void MyPass::Setup(PassSetupContext& ctx) {
     texture.descriptor_type = vk::DescriptorType::eCombinedImageSampler;
     texture.stage_flags = vk::ShaderStageFlagBits::eFragment;
     ctx.DeclareBindings({texture});
-    ctx.BindResource(5, 0, backbuffer);   // descriptor written from the resolved resource
+    ctx.BindResource(5, 0, scene);   // descriptor written from the resolved resource
 }
 ```
 
-Resource kinds: `ReadBackbuffer()`, `ReadDepthBuffer()`, `ImportImage(name)`,
-`ImportBuffer(name)`, `CreateTransientImage(desc)`, `CreateTransientBuffer(desc)`.
+Resource kinds: `ReadSceneColor()`, `ReadBackbuffer()`, `ReadDepthBuffer()`,
+`ImportImage(name)`, `ImportBuffer(name)`, `CreateTransientImage(desc)`,
+`CreateTransientBuffer(desc)`.
 Transients are shared by name: a second pass can call `CreateTransientImage`
 with the same name/description to obtain the same handle.
+
+### Reading the scene vs reading the presented image
+
+- `ReadSceneColor()` returns the engine-owned linear FP16 composition target.
+  Main, world text, screen text and ImGui all render into it. This is the
+  source a post-process pass should read.
+- `ReadBackbuffer()` returns the swapchain presentation image. It is written
+  only by the built-in `Output` pass, which applies exposure, the HDR tone
+  curve and the display transfer function. A pass that reads or writes it must
+  run after `BuiltinPass::Output` and takes over the final encode itself;
+  reading it earlier sees the previous presented frame (or undefined contents).
+- A post-process that writes `ReadSceneColor()` (for example a custom tone
+  map) runs before `BuiltinPass::Output`, and the output pass encodes its
+  result exactly once.
 
 ### Relative transient sizes
 
@@ -126,6 +142,8 @@ built-in anchors:
 ```cpp
 ctx.RunAfter(BuiltinPass::MainPass);   // must run after the main pass
 ctx.RunBefore(BuiltinPass::ImGui);     // must run before the ImGui overlay
+ctx.RunBefore(BuiltinPass::Output);    // scene post-process: before display encode
+ctx.RunAfter(BuiltinPass::Output);     // presentation post-process: raw swapchain
 ```
 
 Or with handles:
@@ -137,6 +155,10 @@ pipeline.AddDependency(first_handle, second_handle); // first before second
 Explicit dependencies win over inferred write-after-read/write-after-write
 ordering, so `RunBefore(BuiltinPass::ImGui)` keeps an app pass ahead of the
 overlay even though the overlay is registered earlier.
+
+`BuiltinPass::Output` is the last engine pass: it reads the linear scene target
+and writes the swapchain. Passes that read the scene or write it must stay
+before it; only a pass that deliberately takes over presentation runs after it.
 
 ## Shaders and hot reload
 
@@ -226,8 +248,9 @@ are resized by the engine automatically.
 
 `BuiltinPass` enumerates the engine passes for ordering: `Expand`, `Deform`,
 `OccluderSelect`, `OccluderPrepass`, `HiZGenPre`, `PreCull`, `DepthPrepass`,
-`HiZGen`, `Occlusion`, `Collect`, `MainPass`, `Text`, `ImGui`. Engine descriptor
-sets 0-4 are reserved; application sets start at `kFirstAppDescriptorSet` (5).
+`HiZGen`, `Occlusion`, `Collect`, `MainPass`, `WorldText`, `Text`, `ImGui`,
+`Output`. Engine descriptor sets 0-4 are reserved; application sets start at
+`kFirstAppDescriptorSet` (5).
 `Deform` is the engine-owned skinning/modifier dispatch; app passes may order
 around it but cannot replace it (see
 [skeletal animation](skeletal-animation.md)).

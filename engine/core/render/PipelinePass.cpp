@@ -66,6 +66,10 @@ VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadBackbuffer() {
     return registry_->ImportBackbuffer();
 }
 
+VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ReadSceneColor() {
+    return registry_->ImportSceneColor();
+}
+
 VulkanEngine::RenderGraph::ResourceHandle PassSetupContext::ImportImage(std::string_view name) {
     return registry_->ImportImage(std::string(name));
 }

@@ -42,7 +42,7 @@ inline constexpr std::uint32_t kAppSet = 5;
     };
 }
 
-// Samples the backbuffer into the transient scene-colour image.
+// Samples the engine's linear scene-colour target into the example's transient 8-bit image.
 class CapturePass final : public IPipelinePass {
 public:
     CapturePass(std::uint64_t vertex_shader, std::uint64_t fragment_shader);
@@ -80,7 +80,7 @@ private:
     bool use_async_queue_ = false;
 };
 
-// Tonemaps scene colour with the computed exposure into the backbuffer.
+// Tonemaps the captured scene colour with the computed exposure and writes the display-linear result back into the engine's scene target, where the final output pass encodes it.
 class ToneMapPass final : public IPipelinePass {
 public:
     ToneMapPass(std::uint64_t vertex_shader, std::uint64_t fragment_shader);

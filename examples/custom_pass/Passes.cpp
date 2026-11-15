@@ -55,10 +55,11 @@ CapturePass::CapturePass(std::uint64_t vertex_shader, std::uint64_t fragment_sha
 CapturePass::~CapturePass() = default;
 
 void CapturePass::Setup(PassSetupContext& ctx) {
-    const auto backbuffer = ctx.ReadBackbuffer();
+    // The scene lives in the engine's linear composition target; the backbuffer is written by the final output pass and is not a scene source.
+    const auto engine_scene = ctx.ReadSceneColor();
     const auto scene_color = ctx.CreateTransientImage(SceneColorDesc());
 
-    ctx.AddRead(backbuffer, PipelineStageIntent::FragmentShader, AccessIntent::Read);
+    ctx.AddRead(engine_scene, PipelineStageIntent::FragmentShader, AccessIntent::Read);
     ctx.AddWrite(scene_color);
 
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
@@ -72,7 +73,7 @@ void CapturePass::Setup(PassSetupContext& ctx) {
     ctx.SetPassAttachments(setup);
 
     ctx.DeclareBindings({CombinedImage(0, vk::ShaderStageFlagBits::eFragment)});
-    ctx.BindResource(kAppSet, 0, backbuffer);
+    ctx.BindResource(kAppSet, 0, engine_scene);
     ctx.RequestGraphicsPipeline(vertex_shader_, fragment_shader_);
 }
 
@@ -127,18 +128,19 @@ ToneMapPass::ToneMapPass(std::uint64_t vertex_shader, std::uint64_t fragment_sha
 ToneMapPass::~ToneMapPass() = default;
 
 void ToneMapPass::Setup(PassSetupContext& ctx) {
-    const auto scene_color = ctx.CreateTransientImage(SceneColorDesc());
+    const auto captured_scene = ctx.CreateTransientImage(SceneColorDesc());
     const auto exposure = ctx.CreateTransientBuffer(ExposureBufferDesc());
-    const auto backbuffer = ctx.ReadBackbuffer();
+    // Write the custom-tonemapped result back into the engine's linear scene target; the final output pass applies the display transfer exactly once.
+    const auto engine_scene = ctx.ReadSceneColor();
 
-    ctx.AddRead(scene_color, PipelineStageIntent::FragmentShader, AccessIntent::Read);
+    ctx.AddRead(captured_scene, PipelineStageIntent::FragmentShader, AccessIntent::Read);
     ctx.AddRead(exposure, PipelineStageIntent::FragmentShader, AccessIntent::Read);
-    ctx.AddWrite(backbuffer);
+    ctx.AddWrite(engine_scene);
 
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
     setup.auto_begin_rendering = true;
     VulkanEngine::RenderGraph::AttachmentInfo color{};
-    color.resource = backbuffer;
+    color.resource = engine_scene;
     color.load_op = vk::AttachmentLoadOp::eClear;
     color.store_op = vk::AttachmentStoreOp::eStore;
     color.clear_color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
@@ -149,11 +151,11 @@ void ToneMapPass::Setup(PassSetupContext& ctx) {
         CombinedImage(0, vk::ShaderStageFlagBits::eFragment),
         StorageBuffer(1, vk::ShaderStageFlagBits::eFragment),
     });
-    ctx.BindResource(kAppSet, 0, scene_color);
+    ctx.BindResource(kAppSet, 0, captured_scene);
     ctx.BindResource(kAppSet, 1, exposure);
     ctx.RequestGraphicsPipeline(vertex_shader_, fragment_shader_);
 
-    // The tonemap must run before the ImGui overlay writes the backbuffer.
+    // The tonemap must run before the ImGui overlay writes the scene target.
     ctx.RunBefore(BuiltinPass::ImGui);
 }
 

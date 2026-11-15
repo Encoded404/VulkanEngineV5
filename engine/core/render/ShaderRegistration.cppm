@@ -30,6 +30,8 @@ import Shaders.Engine.WorldTextVert;
 import Shaders.Engine.WorldTextFrag;
 import Shaders.Engine.SlugTextVert;
 import Shaders.Engine.SlugTextFrag;
+import Shaders.Engine.OutputVert;
+import Shaders.Engine.OutputFrag;
 
 #ifdef VKENGINE_PHYSICAL_CAMERA
 import Shaders.Engine.PhysicalCameraCompositeVert;
@@ -79,6 +81,9 @@ struct EngineShaderIds {
     // instance; the fragment reconstructs coverage analytically from the blob.
     ShaderSystem::ShaderId slug_text_vert = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId slug_text_frag = ShaderSystem::kInvalidShaderId;
+    // Final display encode (linear scene target -> swapchain).
+    ShaderSystem::ShaderId output_vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId output_frag = ShaderSystem::kInvalidShaderId;
 #ifdef VKENGINE_PHYSICAL_CAMERA
     ShaderSystem::ShaderId physical_camera_composite_vert = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId physical_camera_composite_frag = ShaderSystem::kInvalidShaderId;
@@ -110,6 +115,8 @@ struct EngineShaderIds {
         world_text_frag          = Shaders::Engine::WorldTextFrag::Register(mgr, data_dir);
         slug_text_vert           = Shaders::Engine::SlugTextVert::Register(mgr, data_dir);
         slug_text_frag           = Shaders::Engine::SlugTextFrag::Register(mgr, data_dir);
+        output_vert              = Shaders::Engine::OutputVert::Register(mgr, data_dir);
+        output_frag              = Shaders::Engine::OutputFrag::Register(mgr, data_dir);
 #ifdef VKENGINE_PHYSICAL_CAMERA
         physical_camera_composite_vert = Shaders::Engine::PhysicalCameraCompositeVert::Register(mgr, data_dir);
         physical_camera_composite_frag = Shaders::Engine::PhysicalCameraCompositeFrag::Register(mgr, data_dir);

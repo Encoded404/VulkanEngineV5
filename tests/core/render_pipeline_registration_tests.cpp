@@ -183,6 +183,91 @@ TEST(RenderPipelineRegistrationTest, OrdersAroundBuiltinAnchors) {
     EXPECT_EQ(passes[1].name, "main");
 }
 
+// A pass that writes the linear scene target without an explicit Output anchor must still run before the output pass.
+// The output pass reads the scene target, so the graph's write-after-read hazard would otherwise order the writer *after* presentation and silently discard it.
+TEST(RenderPipelineRegistrationTest, SceneWritersRunBeforeTheOutputPass) {
+    RenderPipeline pipeline;
+
+    class OutputStubPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "output-stub"; }
+        void Setup(PassSetupContext& ctx) override {
+            const auto scene = ctx.ReadSceneColor();
+            ctx.AddRead(scene, VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader,
+                        VulkanEngine::RenderGraph::AccessIntent::Read);
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    class SceneWriterPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "scene-writer"; }
+        void Setup(PassSetupContext& ctx) override {
+            ctx.AddWrite(ctx.ReadSceneColor());
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    const auto output = pipeline.RegisterPass(std::make_unique<OutputStubPass>());
+    ASSERT_TRUE(output.has_value());
+
+    std::array<VulkanEngine::RenderGraph::PassHandle, kBuiltinPassCount> anchors{};
+    anchors[static_cast<std::size_t>(BuiltinPass::Output)] = *output;
+    pipeline.SetBuiltinHandles(anchors);
+
+    ASSERT_TRUE(pipeline.RegisterPass(std::make_unique<SceneWriterPass>()).has_value());
+    pipeline.Compile();
+    ASSERT_TRUE(pipeline.IsCompiled());
+
+    const auto& passes = pipeline.GetCompiledGraph().passes;
+    ASSERT_EQ(passes.size(), 2u);
+    EXPECT_EQ(passes[0].name, "scene-writer");
+    EXPECT_EQ(passes[1].name, "output-stub");
+}
+
+// The same writer can be ordered after Output with the handle API.
+// That is a deliberate takeover of presentation, so it must not gain a conflicting writer->Output edge (which would leave the graph with a cycle).
+TEST(RenderPipelineRegistrationTest, SceneWriterExplicitlyAfterOutputDoesNotCycle) {
+    RenderPipeline pipeline;
+
+    class OutputStubPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "output-stub"; }
+        void Setup(PassSetupContext& ctx) override {
+            const auto scene = ctx.ReadSceneColor();
+            ctx.AddRead(scene, VulkanEngine::RenderGraph::PipelineStageIntent::FragmentShader,
+                        VulkanEngine::RenderGraph::AccessIntent::Read);
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    class SceneWriterPass final : public IPipelinePass {
+    public:
+        [[nodiscard]] std::string_view GetName() const override { return "scene-writer"; }
+        void Setup(PassSetupContext& ctx) override {
+            ctx.AddWrite(ctx.ReadSceneColor());
+        }
+        void Execute(const FrameContext&, vk::CommandBuffer) override {}
+    };
+
+    const auto output = pipeline.RegisterPass(std::make_unique<OutputStubPass>());
+    ASSERT_TRUE(output.has_value());
+    std::array<VulkanEngine::RenderGraph::PassHandle, kBuiltinPassCount> anchors{};
+    anchors[static_cast<std::size_t>(BuiltinPass::Output)] = *output;
+    pipeline.SetBuiltinHandles(anchors);
+
+    const auto writer = pipeline.RegisterPass(std::make_unique<SceneWriterPass>());
+    ASSERT_TRUE(writer.has_value());
+    ASSERT_TRUE(pipeline.AddDependency(*output, *writer));
+    pipeline.Compile();
+
+    ASSERT_TRUE(pipeline.IsCompiled());
+    const auto& passes = pipeline.GetCompiledGraph().passes;
+    ASSERT_EQ(passes.size(), 2u);
+    EXPECT_EQ(passes[0].name, "output-stub");
+    EXPECT_EQ(passes[1].name, "scene-writer");
+}
+
 // A transient image's explicit initial/final layout must reach the compiled graph
 // unchanged. The final-layout path used to map eShaderReadOnlyOptimal to
 // Undefined (its ternary chain handled only ColorAttachment/DepthAttachment/

@@ -80,6 +80,11 @@ private:
     std::uint64_t gpu_profile_every_ = 240;
     // Fixed simulation rate in Hz; 0 keeps the variable-step default.
     double fixed_timestep_hz_ = 0.0;
+    // Output color mode and HDR levels (--color-mode/--exposure/...).
+    std::string color_mode_ = "sdr";
+    float exposure_ = 1.0f;
+    float paper_white_nits_ = 100.0f;
+    float peak_nits_ = 1000.0f;
     bool force_validation_ = false;
     bool force_no_validation_ = false;
     bool force_portable_ = false;

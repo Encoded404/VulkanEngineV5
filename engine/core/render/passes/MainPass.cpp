@@ -20,7 +20,8 @@ MainPass::~MainPass() = default;
 void MainPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
     auto scene_buffers = ctx.ImportBuffer("scene-buffers");
     auto draw_indirect = ctx.ImportBuffer("draw-indirect");
-    auto backbuffer = ctx.ReadBackbuffer();
+    // The scene renders into the linear FP16 composition target. The swapchain is written only by the output pass, so scene pipelines never depend on the display's format or color space.
+    auto scene_color = ctx.ReadSceneColor();
     auto depth_buffer = ctx.ReadDepthBuffer();
     ctx.AddRead(scene_buffers, VulkanEngine::RenderGraph::PipelineStageIntent::IndexInput,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
@@ -35,14 +36,14 @@ void MainPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
     ctx.AddRead(ctx.ImportBuffer("deform-vertices"),
                 VulkanEngine::RenderGraph::PipelineStageIntent::VertexShader,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
-    ctx.AddWrite(backbuffer);
+    ctx.AddWrite(scene_color);
     ctx.AddWrite(depth_buffer);
 
     VulkanEngine::RenderGraph::PassAttachmentSetup setup{};
     setup.auto_begin_rendering = true;
 
     VulkanEngine::RenderGraph::AttachmentInfo color_attach{};
-    color_attach.resource = backbuffer;
+    color_attach.resource = scene_color;
     color_attach.load_op = vk::AttachmentLoadOp::eClear;
     color_attach.store_op = vk::AttachmentStoreOp::eStore;
     color_attach.clear_color = vk::ClearColorValue(std::array<float, 4>{

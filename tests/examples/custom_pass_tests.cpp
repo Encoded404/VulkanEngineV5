@@ -154,7 +154,7 @@ TEST(CustomPassPlanTest, FullBuiltinAndCustomGraphCompiles) {
     const auto collect = reg(std::make_unique<SR::CollectPass>(scene_renderer));
     const auto main_pass =
         reg(std::make_unique<SR::MainPass>(scene_renderer, glm::vec4{0.0f}));
-    const auto imgui = reg(std::make_unique<SR::ImGuiPass>(nullptr));
+    const auto imgui = reg(std::make_unique<SR::ImGuiPass>());
 
     pipeline.AddDependency(expand, occluder_select);
     pipeline.AddDependency(occluder_select, occluder_prepass);

@@ -44,6 +44,9 @@ enum class BuiltinPass : std::uint8_t {
     WorldText,
     Text,
     ImGui,
+    // Final display encode: reads the linear scene target and writes the
+    // swapchain. Everything above it renders into the scene target.
+    Output,
     Count,
 };
 
@@ -340,6 +343,8 @@ public:
 
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportDepthBuffer() = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer() = 0;
+    // The engine-owned linear composition target. Created once and shared by the scene, text, ImGui and output passes; only the output pass writes the swapchain.
+    virtual VulkanEngine::RenderGraph::ResourceHandle ImportSceneColor() = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) = 0;
     virtual VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) = 0;
@@ -482,7 +487,10 @@ public:
 
     // ── GPU resource imports and transient creation ──
     VulkanEngine::RenderGraph::ResourceHandle ReadDepthBuffer();
+    // The swapchain presentation image. Written only by BuiltinPass::Output; use ReadSceneColor() for the linear scene target a post-process samples.
     VulkanEngine::RenderGraph::ResourceHandle ReadBackbuffer();
+    // The engine-owned linear FP16 composition target (scene, world text, screen text and ImGui). The output pass reads it and applies the display transfer; app post-processes should read/write this, not the backbuffer.
+    VulkanEngine::RenderGraph::ResourceHandle ReadSceneColor();
     VulkanEngine::RenderGraph::ResourceHandle ImportImage(std::string_view name);
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(std::string_view name);
     VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc);

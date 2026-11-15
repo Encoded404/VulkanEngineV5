@@ -332,6 +332,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     render/passes/ImGuiPass.cpp
     render/passes/TextPass.cpp
     render/passes/WorldTextPass.cpp
+    render/passes/OutputPass.cpp
     render_graph/RenderGraph.cpp
     render_graph/RenderGraphCompile.cpp
 )
@@ -367,6 +368,9 @@ set(_engine_shaders
     # both called `main` in one file both compile as vertex modules.
     SlugTextVert            slug_text.slang            vertex   slug_vs_main
     SlugTextFrag            slug_text.slang            fragment slug_ps_main
+    # Final display encode: linear FP16 scene target -> swapchain.
+    OutputVert              output.slang               vertex   vs_main
+    OutputFrag              output.slang               fragment ps_main
 )
 if(VKENGINE_PHYSICAL_CAMERA)
     list(APPEND _engine_shaders
@@ -532,6 +536,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         render/passes/ImGuiPass.cppm
         render/passes/TextPass.cppm
         render/passes/WorldTextPass.cppm
+        render/passes/OutputPass.cppm
 )
 if(VKENGINE_PHYSICAL_CAMERA)
     target_sources(${ENGINE_TARGET} PUBLIC

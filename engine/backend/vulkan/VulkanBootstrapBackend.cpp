@@ -72,7 +72,8 @@ public:
             device_->GetDevice().waitIdle();
         }
         swapchain_ = std::make_unique<VulkanSwapchain>();
-        if (!swapchain_->Initialize(*instance_, *device_, preferred_image_count, present_mode)) {
+        if (!swapchain_->Initialize(*instance_, *device_, preferred_image_count, present_mode,
+                                    config_.output)) {
             swapchain_->Shutdown();
             swapchain_.reset();
             render_finished_semaphores_.clear();
@@ -142,6 +143,7 @@ public:
     [[nodiscard]] vk::Format GetDepthFormat() const override { return swapchain_->GetDepthFormat(); }
     [[nodiscard]] const vk::raii::ImageView& GetDepthImageView(std::uint32_t image_index) const override { return swapchain_->GetDepthImageView(image_index); }
     [[nodiscard]] const vk::raii::Image& GetDepthImage(std::uint32_t image_index) const override { return swapchain_->GetDepthImage(image_index); }
+    [[nodiscard]] OutputSettings GetOutputSettings() const override { return config_.output; }
 
     [[nodiscard]] bool AcquireNextImage(std::uint32_t frame_idx, std::uint32_t& out_image_index) override {
         LOGIFACE_LOG(trace, "entering AcquireNextImage with frame index " + std::to_string(frame_idx));

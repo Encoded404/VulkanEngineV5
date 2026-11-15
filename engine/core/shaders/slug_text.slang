@@ -116,11 +116,18 @@ VSOutput slug_vs_main(uint vertex_id : SV_VertexID, uint instance_id : SV_Instan
     return output;
 }
 
+// Text colours are authored in display-referred sRGB, so decode to linear before the source-over blend; the output pass encodes once.
+float3 SrgbToLinear(float3 c) {
+    float3 low = c / 12.92;
+    float3 high = pow((c + 0.055) / 1.055, 2.4);
+    return lerp(high, low, step(c, 0.04045));
+}
+
 [shader("fragment")]
 float4 slug_ps_main(VSOutput input) : SV_TARGET {
     // Coverage in [0, 1] from the Slug analytic rasterizer. The colour is
     // straight alpha, composited by the pass's source-over blend, exactly like
     // the MSDF backend.
     const float coverage = hb_gpu_draw(input.texcoord, input.blob_offset);
-    return float4(input.color.rgb, input.color.a * coverage);
+    return float4(SrgbToLinear(input.color.rgb), input.color.a * coverage);
 }

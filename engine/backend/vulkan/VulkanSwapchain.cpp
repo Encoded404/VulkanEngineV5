@@ -15,6 +15,7 @@ import vulkan;
 import VulkanBackend.Vulkan.CommonTypes;
 import VulkanBackend.Vulkan.VulkanDevice;
 import VulkanBackend.Vulkan.VulkanInstance;
+import VulkanBackend.Vulkan.VulkanCapabilities;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 
 namespace VulkanBackend::Vulkan {
@@ -33,7 +34,9 @@ vk::PresentModeKHR ToVkPresentMode(PresentMode mode) {
 
 } // anonymous namespace
 
-bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode) {
+bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDevice& device,
+                                 std::uint32_t preferred_image_count, PresentMode present_mode,
+                                 const OutputSettings& output) {
     try {
         const auto& vk_surface = instance.GetSurface();
         const auto& vk_physical_device = device.GetPhysicalDevice();
@@ -42,7 +45,27 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
 
         const auto capabilities = vk_physical_device.getSurfaceCapabilitiesKHR(*vk_surface);
         const auto formats = vk_physical_device.getSurfaceFormatsKHR(*vk_surface);
-        surface_format_ = formats.empty() ? vk::SurfaceFormatKHR{} : formats.front();
+
+        // Never take formats.front(): the compositor's order is a scanout preference, not a quality ranking.
+        // On a KWin HDR session the first pair is R16G16B16A16_UNORM + SRGB_NONLINEAR, a 16-bit SDR surface; the selection below chooses by mode and transfer function instead.
+        const auto format_supported = [&vk_physical_device](vk::Format format) {
+            const auto properties = vk_physical_device.getFormatProperties(format);
+            return static_cast<bool>(properties.optimalTilingFeatures &
+                                     vk::FormatFeatureFlagBits::eColorAttachment);
+        };
+        const OutputTarget target =
+            SelectOutputTarget(formats, output.mode, format_supported);
+        surface_format_ = target.surface_format;
+        if (!formats.empty() && surface_format_.format == vk::Format::eUndefined) {
+            LOGIFACE_LOG(error, "no renderable swapchain surface format advertises a color space "
+                                 "the engine can encode");
+            return false;
+        }
+        LOGIFACE_LOG(info, std::string("swapchain output: ") +
+                               vk::to_string(surface_format_.format) + " / " +
+                               vk::to_string(surface_format_.colorSpace) +
+                               " encoding=" + std::to_string(static_cast<int>(target.encoding)) +
+                               (target.fallback ? " (fallback from requested mode)" : ""));
 
         const auto present_modes = vk_physical_device.getSurfacePresentModesKHR(*vk_surface);
         vk::PresentModeKHR vk_present_mode = ToVkPresentMode(present_mode);
@@ -71,16 +94,59 @@ bool VulkanSwapchain::Initialize(const VulkanInstance& instance, const VulkanDev
         swap_info.imageColorSpace = surface_format_.colorSpace;
         swap_info.imageExtent = swapchain_extent_;
         swap_info.imageArrayLayers = 1;
-        swap_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment |
-                               vk::ImageUsageFlagBits::eSampled;
+        // The engine's built-in passes only render into the backbuffer.
+        // Keep eSampled for app passes that still sample it, but only when the selected format supports it: requesting an unsupported usage would fail swapchain creation on the format the picker just chose.
+        vk::ImageUsageFlags image_usage = vk::ImageUsageFlagBits::eColorAttachment;
+        if (vk_physical_device.getFormatProperties(surface_format_.format)
+                .optimalTilingFeatures &
+            vk::FormatFeatureFlagBits::eSampledImage) {
+            image_usage |= vk::ImageUsageFlagBits::eSampled;
+        }
+        swap_info.imageUsage = image_usage;
         swap_info.imageSharingMode = vk::SharingMode::eExclusive;
         swap_info.preTransform = capabilities.currentTransform;
         swap_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         swap_info.presentMode = vk_present_mode;
         swap_info.clipped = vk::True;
 
+        // HDR10 and scRGB need mastering metadata so the compositor can map the content instead of guessing.
+        // The struct is only legal when VK_EXT_hdr_metadata is enabled; the shader still encodes PQ without it, but the display gets less information.
+        vk::HdrMetadataEXT hdr_metadata{};
+        bool apply_hdr_metadata = false;
+        const bool hdr_output = target.encoding == OutputEncoding::Pq ||
+                                target.encoding == OutputEncoding::Scrgb;
+        if (hdr_output) {
+            const float paper_white = std::max(output.paper_white_nits, 1.0f);
+            const float peak = output.peak_nits > paper_white ? output.peak_nits : 1000.0f;
+            if (device.GetCapabilities().IsDeviceExtensionEnabled(DeviceExtension::HdrMetadata)) {
+                const bool pq = target.encoding == OutputEncoding::Pq;
+                // HDR10 is mastered in Rec.2020; scRGB keeps the sRGB primaries.
+                hdr_metadata.displayPrimaryRed =
+                    pq ? vk::XYColorEXT{0.708f, 0.292f} : vk::XYColorEXT{0.640f, 0.330f};
+                hdr_metadata.displayPrimaryGreen =
+                    pq ? vk::XYColorEXT{0.170f, 0.797f} : vk::XYColorEXT{0.300f, 0.600f};
+                hdr_metadata.displayPrimaryBlue =
+                    pq ? vk::XYColorEXT{0.131f, 0.046f} : vk::XYColorEXT{0.150f, 0.060f};
+                hdr_metadata.whitePoint = vk::XYColorEXT{0.3127f, 0.3290f};
+                hdr_metadata.maxLuminance = peak;
+                hdr_metadata.minLuminance = 0.005f;
+                hdr_metadata.maxContentLightLevel = peak;
+                hdr_metadata.maxFrameAverageLightLevel = peak * 0.5f;
+                apply_hdr_metadata = true;
+            } else {
+                LOGIFACE_LOG(warn, "HDR output selected without VK_EXT_hdr_metadata; "
+                                   "the display will tone-map without mastering luminance");
+            }
+        }
+
         swapchain_ = std::make_unique<vk::raii::SwapchainKHR>(vk_device, swap_info);
         VulkanBackend::Vulkan::SetVulkanObjectName(vk_device, *swapchain_, "swapchain");
+        // HDR metadata is NOT a VkSwapchainCreateInfoKHR pNext structure; the extension attaches it to an existing swapchain through vkSetHdrMetadataEXT.
+        if (apply_hdr_metadata) {
+            const vk::Device raw_device = *vk_device;
+            const vk::SwapchainKHR swapchain_handle = *swapchain_;
+            raw_device.setHdrMetadataEXT(1, &swapchain_handle, &hdr_metadata);
+        }
         swapchain_images_ = swapchain_->getImages();
         swapchain_image_initialized_.assign(swapchain_images_.size(), false);
         swapchain_image_count_ = static_cast<std::uint32_t>(swapchain_images_.size());
@@ -186,9 +252,11 @@ void VulkanSwapchain::Shutdown() {
     swapchain_.reset();
 }
 
-bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device, std::uint32_t preferred_image_count, PresentMode present_mode) {
+bool VulkanSwapchain::Recreate(const VulkanInstance& instance, const VulkanDevice& device,
+                               std::uint32_t preferred_image_count, PresentMode present_mode,
+                               const OutputSettings& output) {
     Shutdown();
-    return Initialize(instance, device, preferred_image_count, present_mode);
+    return Initialize(instance, device, preferred_image_count, present_mode, output);
 }
 
 } // namespace VulkanBackend::Vulkan

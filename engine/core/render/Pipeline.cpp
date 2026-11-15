@@ -102,6 +102,20 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportDepthBuffer() {
     return depth_buffer_handle_;
 }
 
+VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportSceneColor() {
+    if (!scene_color_handle_.IsValid()) {
+        TransientImageDesc desc{};
+        desc.name = "scene-color";
+        desc.format = VulkanBackend::Vulkan::kSceneColorFormat;
+        desc.width_scale = 1.0f;
+        desc.height_scale = 1.0f;
+        desc.usage = vk::ImageUsageFlagBits::eColorAttachment |
+                     vk::ImageUsageFlagBits::eSampled;
+        scene_color_handle_ = CreateTransientImage(desc);
+    }
+    return scene_color_handle_;
+}
+
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportImage(const std::string& name) {
     const auto handle = graph_builder_.ImportResource(name, VulkanEngine::RenderGraph::ResourceKind::Image);
     TrackImportedResource(handle, name, VulkanEngine::RenderGraph::ResourceKind::Image);
@@ -610,6 +624,61 @@ void RenderPipeline::RebuildFromModel() {
         if (before_slot < present.size() && after_slot < present.size() && present[before_slot] &&
             present[after_slot]) {
             (void)graph_builder_.AddDependency(builder_handles[before_slot], builder_handles[after_slot]);
+        }
+    }
+
+    // The output pass is the final reader of the linear scene target.
+    // A pass that writes that target must run before it; otherwise the graph's write-after-read hazard would order the writer after the only swapchain writer and silently discard its result.
+    // Resolve this after every explicit dependency is known so an app that deliberately ordered itself after Output (RunAfter or AddDependency) gets a diagnostic rather than a cycle.
+    if (scene_color_handle_.IsValid()) {
+        const auto output_index =
+            static_cast<std::size_t>(VulkanEngine::PipelinePass::BuiltinPass::Output);
+        if (output_index < builtin_handles_.size() && builtin_handles_[output_index].IsValid()) {
+            const std::uint32_t output_slot = builtin_handles_[output_index].index;
+            if (output_slot < present.size() && present[output_slot]) {
+                const auto reaches = [this](std::uint32_t from, std::uint32_t to) {
+                    if (from == to) {
+                        return true;
+                    }
+                    std::vector<std::uint32_t> pending{from};
+                    std::unordered_set<std::uint32_t> seen{from};
+                    while (!pending.empty()) {
+                        const std::uint32_t current = pending.back();
+                        pending.pop_back();
+                        for (const auto& [before, after] : model_dependencies_) {
+                            if (before != current || seen.contains(after)) {
+                                continue;
+                            }
+                            if (after == to) {
+                                return true;
+                            }
+                            seen.insert(after);
+                            pending.push_back(after);
+                        }
+                    }
+                    return false;
+                };
+                for (std::size_t slot = 0; slot < model_passes_.size(); ++slot) {
+                    if (!present[slot] || slot == output_slot) {
+                        continue;
+                    }
+                    const bool writes_scene = std::ranges::any_of(
+                        model_passes_[slot].writes, [this](const auto& write) {
+                            return write.index == scene_color_handle_.index;
+                        });
+                    if (!writes_scene) {
+                        continue;
+                    }
+                    if (reaches(output_slot, static_cast<std::uint32_t>(slot))) {
+                        LOGIFACE_LOG(warn, "pass '" + model_passes_[slot].name +
+                                               "' writes the scene target but is ordered after "
+                                               "BuiltinPass::Output; its result will not be presented");
+                        continue;
+                    }
+                    (void)graph_builder_.AddDependency(builder_handles[slot],
+                                                       builder_handles[output_slot]);
+                }
+            }
         }
     }
     applying_ = false;

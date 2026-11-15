@@ -22,6 +22,7 @@ import VulkanEngine.Render.Passes.MainPass;
 import VulkanEngine.Render.Passes.WorldTextPass;
 import VulkanEngine.Render.Passes.TextPass;
 import VulkanEngine.Render.Passes.ImGuiPass;
+import VulkanEngine.Render.Passes.OutputPass;
 
 namespace {
 
@@ -80,7 +81,8 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
         reg(std::make_unique<SR::MainPass>(scene_renderer, glm::vec4{0.1f, 0.1f, 0.1f, 1.0f}));
     const auto world_text = reg(std::make_unique<SR::WorldTextPass>(nullptr, 15, 17));
     const auto text = reg(std::make_unique<SR::TextPass>(nullptr, 19, 23));
-    const auto imgui = reg(std::make_unique<SR::ImGuiPass>(nullptr));
+    const auto imgui = reg(std::make_unique<SR::ImGuiPass>());
+    const auto output = reg(std::make_unique<SR::OutputPass>(nullptr, 29, 31));
 
     // Key the anchor table by the BuiltinPass enumerator each registration
     // backs: the Count sentinel then drives completeness, so a builtin that is
@@ -101,6 +103,7 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
     anchors[static_cast<std::size_t>(BuiltinPass::WorldText)] = world_text;
     anchors[static_cast<std::size_t>(BuiltinPass::Text)] = text;
     anchors[static_cast<std::size_t>(BuiltinPass::ImGui)] = imgui;
+    anchors[static_cast<std::size_t>(BuiltinPass::Output)] = output;
 
     pipeline.AddDependency(expand, deform);
     pipeline.AddDependency(deform, occluder_select);
@@ -115,6 +118,7 @@ TEST(BuiltinPassDeclarationsTest, SetupDrivesGraphDeclarations) {
     pipeline.AddDependency(main_pass, world_text);
     pipeline.AddDependency(world_text, text);
     pipeline.AddDependency(text, imgui);
+    pipeline.AddDependency(imgui, output);
 
     pipeline.Compile();
     ASSERT_TRUE(pipeline.IsCompiled());

@@ -15,5 +15,6 @@ float4 main(PSInput input) : SV_TARGET {
     float3 color = max(sceneColor.Sample(input.uv).rgb, 0.0);
     const float e = exposure[0];
     color = 1.0 - exp(-color * e);
-    return float4(pow(saturate(color), 1.0 / 2.2), 1.0);
+    // The engine's output pass applies the display transfer; this pass writes display-linear values so the encode happens exactly once.
+    return float4(saturate(color), 1.0);
 }

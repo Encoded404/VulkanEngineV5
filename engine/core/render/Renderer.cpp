@@ -26,6 +26,7 @@ import VulkanEngine.Components.Camera;
 import VulkanEngine.GpuResources;
 import VulkanEngine.GpuStats;
 import VulkanEngine.ImGui;
+import VulkanEngine.ShaderManager;
 
 namespace VulkanEngine::Renderer {
 
@@ -212,7 +213,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     VulkanEngine::RenderGraph::PassHandle imgui_handle{};
     if (imgui_system != nullptr) {
         imgui_handle = register_builtin(
-            std::make_unique<VulkanEngine::SceneRenderer::ImGuiPass>(&bootstrap));
+            std::make_unique<VulkanEngine::SceneRenderer::ImGuiPass>());
     }
 
     // Screen-space text sits above the scene and below the ImGui overlay, so an
@@ -265,6 +266,18 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         world_text_handle = register_builtin(std::move(world_text_pass));
     }
 
+    // The only pass that writes the swapchain. Every scene/UI pass above writes the linear FP16 scene target, so the display format (SDR sRGB, scRGB or HDR10) is confined to this pipeline.
+    VulkanEngine::RenderGraph::PassHandle output_handle{};
+    if (shader_ids == nullptr || shader_ids->output_vert == ShaderSystem::kInvalidShaderId ||
+        shader_ids->output_frag == ShaderSystem::kInvalidShaderId) {
+        LOGIFACE_LOG(error, "Renderer: the output shader pair is not registered");
+        builtins_ok = false;
+    } else {
+        output_handle = register_builtin(
+            std::make_unique<VulkanEngine::SceneRenderer::OutputPass>(
+                &bootstrap.GetBackend(), shader_ids->output_vert, shader_ids->output_frag));
+    }
+
     // Explicit ordering ensures correct pipeline:
     // expand → deform → occluder-select → occluder-prepass → hiz-gen-pre →
     // pre-cull → depth-prepass → hiz-gen (full) → occlusion → collect → main →
@@ -297,6 +310,17 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
     }
 
+    // The output pass is the sole writer of the swapchain, so it must follow every pass that composites into the scene target.
+    const auto last_color_writer = [&]() {
+        if (imgui_handle.IsValid()) return imgui_handle;
+        if (text_handle.IsValid()) return text_handle;
+        if (world_text_handle.IsValid()) return world_text_handle;
+        return main_handle;
+    }();
+    if (output_handle.IsValid()) {
+        pipeline_->AddDependency(last_color_writer, output_handle);
+    }
+
     // Expose every built-in as an ordering anchor before app passes apply.
     pipeline_->SetBuiltinHandles(std::array<
         VulkanEngine::RenderGraph::PassHandle,
@@ -315,6 +339,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         world_text_handle,
         text_handle,
         imgui_handle,
+        output_handle,
     });
 
     pipeline_->Compile();
@@ -464,8 +489,8 @@ void Renderer::RenderFrame(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // every view. Idempotent when only the count is first observed.
         pipeline_->OnSwapchainRecreated(sc_count);
         if (imgui && imgui->IsInitialized()) {
-            imgui->OnSwapchainRecreated(sc_count,
-                static_cast<vk::Format>(bootstrap.GetBackend().GetSurfaceFormat().format));
+            // ImGui renders into the linear scene target now; its pipeline must follow that format, not the swapchain's.
+            imgui->OnSwapchainRecreated(sc_count, VulkanBackend::Vulkan::kSceneColorFormat);
         }
     }
 

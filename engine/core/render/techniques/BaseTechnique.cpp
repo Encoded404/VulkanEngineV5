@@ -234,8 +234,9 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         // Fixed-state assembly comes from the shared builder (single copy of
         // the "pull-mode vertices + dynamic viewport/scissor + vertex-stage-
         // only spec constant" knowledge, shared with the scene pipelines).
+        // Scene techniques render into the engine's linear composition target, never the swapchain: the display format is the output pass's problem.
         const std::array<vk::Format, 1> surface_formats{
-            bootstrap.GetBackend().GetSurfaceFormat().format};
+            VulkanBackend::Vulkan::kSceneColorFormat};
         ShaderSystem::GraphicsPipelineTemplate base_tmpl{
             .debug_name = "base-technique",
             .input_assembly = vk::PipelineInputAssemblyStateCreateInfo(
@@ -276,7 +277,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
                 vert_id, frag_id,
                 vk::to_string(config.primitive_topology),
                 vk::to_string(config.sample_count),
-                vk::to_string(bootstrap.GetBackend().GetSurfaceFormat().format),
+                vk::to_string(VulkanBackend::Vulkan::kSceneColorFormat),
                 vk::to_string(bootstrap.GetBackend().GetDepthFormat())));
             return false;
         }

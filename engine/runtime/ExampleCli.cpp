@@ -12,6 +12,7 @@ import logiface;
 
 import VulkanEngine.Application;
 import VulkanEngine.Startup;
+import VulkanBackend.Vulkan.CommonTypes;
 import Runtime.Overrides;
 
 namespace Runtime {
@@ -61,6 +62,22 @@ Cli::Cli(std::string_view app_name, std::string_view org_id, std::string_view ap
     app_.add_option("--fixed-timestep", fixed_timestep_hz_,
                     "Run on_fixed_update at this rate in Hz (0 = variable step)")
        ->type_name("HZ");
+
+    // Output color management. SDR is the safe default; HDR is opt-in and
+    // falls back to SDR when the surface does not advertise the requested
+    // color space.
+    app_.add_option("--color-mode", color_mode_,
+                    "Swapchain output: sdr, scrgb (linear FP16) or hdr10 (PQ)")
+       ->check(CLI::IsMember({"sdr", "scrgb", "hdr10"}));
+    app_.add_option("--exposure", exposure_,
+                    "Linear exposure multiplier applied by the output pass")
+       ->type_name("EV_SCALE");
+    app_.add_option("--paper-white-nits", paper_white_nits_,
+                    "HDR diffuse-white level in cd/m^2")
+       ->type_name("NITS");
+    app_.add_option("--peak-nits", peak_nits_,
+                    "HDR highlight ceiling in cd/m^2")
+       ->type_name("NITS");
 
     // Storage options. Everything the application writes (settings, saves,
     // pipeline caches, logs) lives under the resolved root; these only decide
@@ -145,6 +162,14 @@ VulkanEngine::Application::ApplicationConfig Cli::MakeConfig() const {
         force_validation_ ||
         (config.bootstrap_config.enable_validation && !force_no_validation_);
     config.bootstrap_config.force_disabled_extensions = overrides_.force_disabled_extensions;
+    using VulkanBackend::Vulkan::ColorMode;
+    config.bootstrap_config.output.mode = color_mode_ == "scrgb"
+                                              ? ColorMode::HdrScrgb
+                                              : (color_mode_ == "hdr10" ? ColorMode::Hdr10
+                                                                        : ColorMode::Sdr);
+    config.bootstrap_config.output.exposure = exposure_;
+    config.bootstrap_config.output.paper_white_nits = paper_white_nits_;
+    config.bootstrap_config.output.peak_nits = peak_nits_;
     config.draw_mode = overrides_.draw_mode;
     return config;
 }

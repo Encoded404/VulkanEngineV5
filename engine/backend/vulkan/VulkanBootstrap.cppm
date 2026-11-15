@@ -89,6 +89,10 @@ public:
     [[nodiscard]] virtual vk::Format GetDepthFormat() const = 0;
     [[nodiscard]] virtual const vk::raii::ImageView& GetDepthImageView(std::uint32_t image_index) const = 0;
     [[nodiscard]] virtual const vk::raii::Image& GetDepthImage(std::uint32_t image_index) const = 0;
+    // Output color settings requested at bootstrap. The default (SDR, unit
+    // exposure) keeps the headless/test fakes and any backend that does not
+    // implement color management well-defined.
+    [[nodiscard]] virtual OutputSettings GetOutputSettings() const { return {}; }
 
     // RenderGraph support
     [[nodiscard]] virtual bool AcquireNextImage(std::uint32_t frame_idx, std::uint32_t& out_image_index) = 0; // Modified

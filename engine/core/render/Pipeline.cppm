@@ -63,6 +63,7 @@ public:
     // ── IResourceRegistry overrides ──
     VulkanEngine::RenderGraph::ResourceHandle ImportBackbuffer() override;
     VulkanEngine::RenderGraph::ResourceHandle ImportDepthBuffer() override;
+    VulkanEngine::RenderGraph::ResourceHandle ImportSceneColor() override;
     VulkanEngine::RenderGraph::ResourceHandle ImportImage(const std::string& name) override;
     VulkanEngine::RenderGraph::ResourceHandle ImportBuffer(const std::string& name) override;
     VulkanEngine::RenderGraph::ResourceHandle CreateTransientImage(const TransientImageDesc& desc) override;
@@ -263,6 +264,7 @@ private:
 
     VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
+    VulkanEngine::RenderGraph::ResourceHandle scene_color_handle_{};
 
     std::uint32_t backbuffer_resource_index_ = 0;
     std::uint32_t depth_buffer_resource_index_ = 0;

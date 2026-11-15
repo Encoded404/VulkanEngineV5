@@ -241,6 +241,8 @@ bool VulkanDevice::CreateLogicalDeviceAndResources(const std::uint32_t frames_in
     // advertised, otherwise residency falls back to the caller's byte budget.
     try_request(DeviceExtension::MemoryBudget, "VK_EXT_memory_budget", Requirement::Optional);
     try_request(DeviceExtension::MemoryPriority, "VK_EXT_memory_priority", Requirement::Optional);
+    // Optional: without it the swapchain still gets an HDR color space and the shader still encodes PQ, but the display cannot be told the mastering luminance, so the compositor has to guess at tone mapping.
+    try_request(DeviceExtension::HdrMetadata, "VK_EXT_hdr_metadata", Requirement::Optional);
 
     // 4. App requests (deduped against the catalog; unknown names are dynamic).
     for (const auto& request : config.device_extensions) {

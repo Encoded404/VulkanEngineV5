@@ -94,6 +94,13 @@ VSOutput vs_main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
     return output;
 }
 
+// Text colours are authored in display-referred sRGB, so decode to linear before the source-over blend; the output pass encodes once.
+float3 SrgbToLinear(float3 c) {
+    float3 low = c / 12.92;
+    float3 high = pow((c + 0.055) / 1.055, 2.4);
+    return lerp(high, low, step(c, 0.04045));
+}
+
 [shader("fragment")]
 float4 ps_main(VSOutput input) : SV_TARGET {
     const float4 sample = allTextures[NonUniformResourceIndex(input.page)].Sample(input.uv);
@@ -118,5 +125,5 @@ float4 ps_main(VSOutput input) : SV_TARGET {
     const float distance = abs(distance_true) > abs(distance_rgb) ? distance_true : distance_rgb;
 
     const float coverage = saturate(screen_px_range * distance + 0.5);
-    return float4(input.color.rgb, input.color.a * coverage);
+    return float4(SrgbToLinear(input.color.rgb), input.color.a * coverage);
 }

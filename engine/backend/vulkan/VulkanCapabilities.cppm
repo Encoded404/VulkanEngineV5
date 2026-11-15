@@ -18,7 +18,8 @@ enum class Requirement : std::uint8_t {
 // ── Instance-level extensions (loader/driver-global) ──────────────────
 
 enum class InstanceExtension : std::uint16_t {
-    DebugUtils,   // VK_EXT_debug_utils
+    DebugUtils,           // VK_EXT_debug_utils
+    SwapchainColorspace,  // VK_EXT_swapchain_colorspace (HDR color spaces)
     Count,
 };
 
@@ -31,6 +32,7 @@ enum class DeviceExtension : std::uint16_t {
     GraphicsPipelineLibrary, // VK_EXT_graphics_pipeline_library (Optional)
     MemoryBudget,           // VK_EXT_memory_budget              (Optional; budget/usage reporting)
     MemoryPriority,         // VK_EXT_memory_priority            (Optional; per-allocation priority)
+    HdrMetadata,            // VK_EXT_hdr_metadata               (Optional; HDR10 mastering metadata)
     Count,
 };
 
@@ -91,6 +93,7 @@ struct FeatureSpec {
 
 inline constexpr std::array<InstanceExtensionSpec, static_cast<std::size_t>(InstanceExtension::Count)> kInstanceExtensionCatalog = {{
     { "VK_EXT_debug_utils", Requirement::Optional },              // InstanceExtension::DebugUtils
+    { "VK_EXT_swapchain_colorspace", Requirement::Optional },     // InstanceExtension::SwapchainColorspace
 }};
 
 // std::span cannot be brace-initialized from a bare enum list; use a named array.
@@ -104,6 +107,7 @@ inline constexpr std::array<DeviceExtensionSpec, static_cast<std::size_t>(Device
       std::span<const DeviceExtension>(kGplDependencies), Feature::GraphicsPipelineLibrary },                // GraphicsPipelineLibrary
     { "VK_EXT_memory_budget",             Requirement::Optional, {}, {} },                                   // MemoryBudget
     { "VK_EXT_memory_priority",           Requirement::Optional, {}, Feature::MemoryPriority },              // MemoryPriority
+    { "VK_EXT_hdr_metadata",              Requirement::Optional, {}, {} },                                   // HdrMetadata
 }};
 
 inline constexpr std::array<FeatureSpec, static_cast<std::size_t>(Feature::Count)> kFeatureCatalog = {{

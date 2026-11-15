@@ -154,6 +154,8 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
     if (config.enable_validation || app_wants_debug_utils) {
         add_request("VK_EXT_debug_utils", app_debug_utils_required, "engine-catalog");
     }
+    // HDR output color spaces (EXTENDED_SRGB_LINEAR, HDR10_ST2084) only exist when this instance extension is enabled. Optional: an SDR-only driver or an app that force-disables it still runs, just without HDR targets.
+    add_request("VK_EXT_swapchain_colorspace", false, "engine-catalog");
     for (const auto& request : config.instance_extensions) {
         if (request.name == "VK_EXT_debug_utils") continue;   // handled with the catalog entry
         add_request(request.name, request.required, "app");
@@ -237,6 +239,8 @@ bool VulkanInstance::Initialize(const VulkanBootstrapConfig& config) {
         builder.AddExtensionName(name);
         if (name == "VK_EXT_debug_utils") {
             builder.SetExtensionEnabled(InstanceExtension::DebugUtils);
+        } else if (name == "VK_EXT_swapchain_colorspace") {
+            builder.SetExtensionEnabled(InstanceExtension::SwapchainColorspace);
         }
     }
 

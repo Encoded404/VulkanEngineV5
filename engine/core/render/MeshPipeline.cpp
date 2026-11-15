@@ -185,7 +185,8 @@ void GraphicsPipeline::CreatePipeline(VulkanBackend::Vulkan::VulkanBootstrap& bo
     std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     const vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
 
-    const vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
+    // Scene pipelines render into the linear composition target.
+    const vk::Format format = VulkanBackend::Vulkan::kSceneColorFormat;
     vk::PipelineRenderingCreateInfo rendering_info{};
     rendering_info.colorAttachmentCount = 1;
     rendering_info.pColorAttachmentFormats = &format;
@@ -256,7 +257,7 @@ void GraphicsPipeline::CreatePipelineWithLayout(
         std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
 
-        const vk::Format format = bootstrap.GetBackend().GetSurfaceFormat().format;
+        const vk::Format format = VulkanBackend::Vulkan::kSceneColorFormat;
         vk::PipelineRenderingCreateInfo rendering_info{};
         rendering_info.colorAttachmentCount = 1;
         rendering_info.pColorAttachmentFormats = &format;

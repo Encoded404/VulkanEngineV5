@@ -33,13 +33,27 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     if (coord.x < srcSize.x && coord.y < srcSize.y) {
         float depthValues[STRIDE][STRIDE];
 
-        for (int y = 0; y < STRIDE; y++) {
-            for (int x = 0; x < STRIDE; x++) {
-                int2 clampedCoord = min(coord + int2(x, y), srcSize - 1);
-                if (pc.baseLevel == 0)
+        // Keep the source branch outside the load loop.
+        // Inside the loop, each unrolled load carries its own uniform branch, which prevents the loads from being scheduled together.
+        // Unroll the tile and the reduction loops as well, so every depthValues access stays constant-indexed and the compiler keeps the tile in registers.
+        if (pc.baseLevel == 0) {
+            [ForceUnroll]
+            for (int y = 0; y < STRIDE; y++) {
+                [ForceUnroll]
+                for (int x = 0; x < STRIDE; x++) {
+                    int2 clampedCoord = min(coord + int2(x, y), srcSize - 1);
                     depthValues[y][x] = depthTexture.Load(int3(clampedCoord, 0)).r;
-                else
-                    depthValues[y][x] = hizLevels[pc.baseLevel - 1][clampedCoord];
+                }
+            }
+        } else {
+            const uint srcLevel = pc.baseLevel - 1;
+            [ForceUnroll]
+            for (int y = 0; y < STRIDE; y++) {
+                [ForceUnroll]
+                for (int x = 0; x < STRIDE; x++) {
+                    int2 clampedCoord = min(coord + int2(x, y), srcSize - 1);
+                    depthValues[y][x] = hizLevels[srcLevel][clampedCoord];
+                }
             }
         }
 
@@ -50,7 +64,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         // first reduction: 4x4 -> 2x2 (writes dstLevel)
         {
             uint dstLevel = pc.baseLevel;
+            [ForceUnroll]
             for (int y = 0; y < HALF; y++) {
+                [ForceUnroll]
                 for (int x = 0; x < HALF; x++) {
                     float reducedDepth = max(
                         max(depthValues[y * 2][x * 2], depthValues[y * 2 + 1][x * 2]),

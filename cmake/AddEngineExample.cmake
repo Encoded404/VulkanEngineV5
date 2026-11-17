@@ -114,14 +114,22 @@ function(add_engine_example NAME)
         target_sources(${NAME} PRIVATE "${_catalog_header}")
 
         if(OUTPUT_PATH)
+            # A custom target alone is always out of date, so the copy would run on every build.
+            # Track the staged files and use a per-config stamp: an unchanged build then has nothing to do.
             set(_credits_dest "${_example_dir}/credits")
-            add_custom_target(${NAME}_credits ALL
+            set(_credits_stamp
+                "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${NAME}_credits_$<CONFIG>.stamp")
+            file(GLOB_RECURSE _credits_stage_files "${_credits_stage}/*")
+            add_custom_command(
+                OUTPUT "${_credits_stamp}"
                 COMMAND ${CMAKE_COMMAND} -E remove_directory "${_credits_dest}"
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${_credits_dest}"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                         "${_credits_stage}" "${_credits_dest}"
+                COMMAND ${CMAKE_COMMAND} -E touch "${_credits_stamp}"
+                DEPENDS ${_credits_stage_files}
                 COMMENT "Deploying asset credits for ${NAME}"
                 VERBATIM)
+            add_custom_target(${NAME}_credits ALL DEPENDS "${_credits_stamp}")
             add_dependencies(${NAME} ${NAME}_credits)
         endif()
     elseif(AEG_LICENSE_DIR)

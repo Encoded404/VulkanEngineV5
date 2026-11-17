@@ -349,6 +349,9 @@ if(USE_LIBCPP)
 			add_library(project_libcpp_static INTERFACE)
 
 			if(VKENGINE_STATIC_LIBCPP)
+				# The probe caches its result, so drop any memoized value first: installing libcxx-static/libcxxabi-static after an earlier configure must be picked up by the next configure, without deleting the build directory by hand.
+				# This mirrors the lld probe further down.
+				unset(HAS_STATIC_LIBCXX CACHE)
 				set(CMAKE_REQUIRED_FLAGS "-stdlib=libc++")
 				set(CMAKE_REQUIRED_LINK_OPTIONS
 					"-static-libstdc++" "-Wl,-Bstatic,-lc++abi,-Bdynamic")

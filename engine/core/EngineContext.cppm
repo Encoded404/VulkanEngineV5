@@ -66,9 +66,11 @@ struct GameConfig {
         .depth_compare_op = vk::CompareOp::eLessOrEqual
     };
     Renderer::RendererConfig renderer_config{};
-    // Advanced setting: indexed-drawing compaction/draw shape. Fixed at
-    // renderer init; see SceneRenderer::DrawMode / Reinitialize.
-    SceneRenderer::DrawMode draw_mode = SceneRenderer::DrawMode::CID;
+    // Advanced setting: indexed-drawing compaction/draw shape.
+    // Fixed at renderer init; see SceneRenderer::DrawMode / Reinitialize.
+    // MID is the default because it emits one command per alive submesh instead of copying an index list per submesh every frame.
+    // SceneRenderer falls back to CID on a device without drawIndirectCount or drawIndirectFirstInstance.
+    SceneRenderer::DrawMode draw_mode = SceneRenderer::DrawMode::MID;
     std::uint64_t geometry_buffer_size_mb = 128;
     // Requested bindless combined-image-sampler capacity. Clamped at boot by the
     // device limits minus the other update-after-bind pools' descriptor counts.

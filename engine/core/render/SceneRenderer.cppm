@@ -963,7 +963,9 @@ private:
     std::uint32_t current_entity_count_ = 0;
     glm::mat4 view_proj_{1.0f};
 
-    DrawMode draw_mode_ = DrawMode::CID;
+    // Pre-Initialize placeholder only; Initialize overwrites it with the resolved mode.
+    // Matches the GameConfig default so a half-constructed renderer does not advertise a different shape than a configured one.
+    DrawMode draw_mode_ = DrawMode::MID;
     bool draw_indirect_count_supported_ = false;
     bool draw_indirect_first_instance_supported_ = false;
     // MID requires both drawIndirectCount and drawIndirectFirstInstance; this

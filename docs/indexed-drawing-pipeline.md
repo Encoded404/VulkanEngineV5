@@ -52,6 +52,11 @@ Mode names follow `[qualifier]ID`: the qualifier names the compaction output and
 `ID` means Indirect Draw. `CID` is Compacted-Indirect Draw; `MID` is
 Multi-Indirect Draw. A new mode takes a new qualifier and the same suffix.
 
+**MID is the default.** It is the mode a `GameConfig` gets when nothing sets
+`draw_mode`: each alive submesh emits one 20 B command that indexes its own range
+in place, so the per-frame compaction never copies an index list. CID is the
+core-1.0 fallback (§2.3) and stays selectable for A/B measurement.
+
 ### 2.3 `drawIndirectCount` and `drawIndirectFirstInstance` are optional
 
 CID mode needs no feature beyond core 1.0. MID mode needs both
@@ -75,9 +80,10 @@ A test or a diagnostic run forces a mode with an override:
 --overwrite draw.mode=auto|cid|mid
 ```
 
-`auto` (the default) applies no override, so the game or a settings UI decides.
-`cid` and `mid` force that mode. `mid` still falls back to CID when the device
-lacks `drawIndirectCount` or `drawIndirectFirstInstance` (§2.3).
+`auto` (the default for the override) applies no override, so `GameConfig::draw_mode`
+decides, which is MID unless a game or settings UI set something else. `cid` and `mid`
+force that mode. `mid` still falls back to CID when the device lacks
+`drawIndirectCount` or `drawIndirectFirstInstance` (§2.3).
 
 ### 2.4 One specialization constant selects the emission variant
 

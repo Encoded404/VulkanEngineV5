@@ -60,6 +60,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         LOGIFACE_LOG(warn, "SceneRenderer: drawIndirectCount and drawIndirectFirstInstance "
                            "not both supported; falling back to CID draw mode");
     }
+    // One line per run naming the shape actually used: the requested mode can be MID by default and still resolve to CID.
+    // The effective mode is therefore not readable from the config alone.
+    LOGIFACE_LOG(info, std::string("SceneRenderer: draw mode ") +
+        (draw_mode_ == DrawMode::MID ? "MID" : "CID"));
 
     // Resolve the submesh-block budget from the device before any descriptor
     // layout is created: binding array sizes and descriptor pool sizes both

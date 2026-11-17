@@ -1164,11 +1164,24 @@ bool GameEngine::RegisterEngineTechniques(VulkanEngine::Application::Application
         // Both stages of the uv1 pair must be named main_uv1 to link on the
         // shared descriptor layout; the mask pairs reuse the same vertex
         // shaders, since the mask is a fragment-only concern.
-        const std::array<TechniqueManager::VariantShaderPair, 4> rows = {{
-            {vert_id, frag_id},
-            {ctx_.shader_ids.main_indir_vert_uv1, ctx_.shader_ids.standard_mesh_frag_uv1},
-            {vert_id, ctx_.shader_ids.standard_mesh_frag_mask},
-            {ctx_.shader_ids.main_indir_vert_uv1, ctx_.shader_ids.standard_mesh_frag_mask_uv1},
+        //
+        // Depth prepass policy per row: the opaque pairs never discard, so the
+        // engine depth pipeline is enough. The mask pairs supply a coverage-only
+        // fragment shader so the prepass stores exactly the depth the color pass
+        // keeps.
+        const std::array<TechniqueManager::VariantShaderRow, 4> rows = {{
+            {vert_id, frag_id, ShaderSystem::kInvalidShaderId,
+             TechniqueManager::DepthCoverage::EngineDepthOnly},
+            {ctx_.shader_ids.main_indir_vert_uv1, ctx_.shader_ids.standard_mesh_frag_uv1,
+             ShaderSystem::kInvalidShaderId,
+             TechniqueManager::DepthCoverage::EngineDepthOnly},
+            {vert_id, ctx_.shader_ids.standard_mesh_frag_mask,
+             ctx_.shader_ids.standard_mesh_depth_mask,
+             TechniqueManager::DepthCoverage::Custom},
+            {ctx_.shader_ids.main_indir_vert_uv1,
+             ctx_.shader_ids.standard_mesh_frag_mask_uv1,
+             ctx_.shader_ids.standard_mesh_depth_mask_uv1,
+             TechniqueManager::DepthCoverage::Custom},
         }};
         mesh_tech->SetVariantShaderRows(rows);
         if (!mesh_tech->CompileDefaultMesh(

@@ -73,6 +73,7 @@ enum class HarnessMode {
     Sampled,   // test_sample_frag, bindless set 0 only
     Standard,  // standard_mesh.spv, sets 0/4/5 + camera push constant
     Unlit,     // unlit.spv, set 0 + a trimmed 24-byte per-material set 5
+    DepthMask, // standard_mesh sets, renders the depth coverage shader
 };
 
 // Matches UnlitTextureTechnique::UnlitPerMaterialData: albedo_texture, float4
@@ -95,6 +96,9 @@ struct TextureRenderHarnessConfig {
     // standard_mesh fragment shader.
     VulkanEngine::ShaderSystem::ShaderId vertex_shader{};
     VulkanEngine::ShaderSystem::ShaderId fragment_shader{};
+    // DepthMask mode: the coverage-only fragment shader for the depth-only
+    // pipeline. The color pipeline still uses fragment_shader.
+    VulkanEngine::ShaderSystem::ShaderId depth_fragment_shader{};
 };
 
 // Registers the test shaders with a ShaderManager through RegisterManual (they
@@ -136,9 +140,20 @@ public:
         const VulkanEngine::GpuResources::GpuTexture& albedo,
         const HarnessUnlitMaterialData& material = {});
 
+    // DepthMask mode: draws the same full-screen triangle through the depth
+    // coverage fragment shader into a D32 depth image (cleared to 1.0) and
+    // reads it back as one float per pixel. The depth pipeline has no color
+    // attachments. Use it to compare the discard set against the color MASK
+    // entry point.
+    std::vector<float> RenderDepthMaskAndReadBack(
+        const VulkanEngine::GpuResources::GpuTexture& albedo,
+        const HarnessMaterialData& material,
+        const HarnessSceneHeader& scene = {});
+
 private:
     bool CreateDescriptorLayouts();
     bool CreatePipeline();
+    bool CreateDepthPipeline();
     void WriteDescriptors(const VulkanEngine::GpuResources::GpuTexture& albedo,
                           const VulkanEngine::GpuResources::GpuTexture& normal,
                           const VulkanEngine::GpuResources::GpuTexture& orm,
@@ -165,6 +180,8 @@ private:
     std::unique_ptr<vk::raii::PipelineLayout> pipeline_layout_{};
     // PipelineProduct (not a bare Pipeline) keeps GPL library pipelines alive.
     std::unique_ptr<VulkanEngine::ShaderSystem::PipelineProduct> pipeline_{};
+    // DepthMask mode's colorless pipeline, sharing pipeline_layout_.
+    std::unique_ptr<VulkanEngine::ShaderSystem::PipelineProduct> depth_pipeline_{};
 
     std::vector<std::unique_ptr<vk::raii::Buffer>> host_buffers_;
     std::vector<std::unique_ptr<vk::raii::DeviceMemory>> host_memories_;

@@ -610,19 +610,19 @@ This section describes the current state and a sequence of changes. It is not a 
 - A transparent material uses source-alpha / one-minus-source-alpha blending. It tests depth with `less-or-equal` and does not write depth.
 - Draws are grouped by technique, material, and render state. The collect pass emits one indirect draw per group. The main pass binds the group pipeline and issues the draw.
 - There is no depth sort for transparent groups. The draw order is the group order, which is not related to depth.
-- The depth prepass is enabled per technique, not per material. Transparent groups are not excluded. Their depth goes into the prepass buffer.
+- Depth-prepass participation is a per-group decision. A group participates only when its technique allows it, its blend mode is not transparent, and its interface-variant row declares a depth coverage policy other than `Exclude`. Transparent groups are excluded. Cutout rows either supply a coverage-only depth shader or stay out of the prepass.
 
-The last point has two consequences. By construction, the prepass stores the nearest transparent fragment at each pixel. The main pass then tests every fragment against that depth with `less-or-equal`. A second transparent layer behind the first is rejected, even though it should blend through the first. In addition, opaque geometry behind a transparent surface can be rejected, because the transparent surface wrote depth in the prepass. The transparent surface then blends over the clear color. The path is order-independent, but it is not correct for a scene with a transparent surface in front of opaque geometry.
+Before transparent groups were excluded, the prepass stored the nearest transparent fragment at each pixel. The main pass then tested every fragment against that depth with `less-or-equal`, so a second transparent layer behind the first was rejected, even though it should blend through the first. Opaque geometry behind a transparent surface could be rejected too, because the transparent surface wrote depth in the prepass. The transparent surface then blended over the clear color. The path was order-independent, but it was not correct for a scene with a transparent surface in front of opaque geometry.
 
 The engine's depth prepass is useful for opaque geometry: it fills the depth buffer once and lets the main pass run with depth test equal. For transparency, it works against the goal.
 
 ### 10.2 A minimal fix
 
-1. Exclude groups whose blend mode is transparent from the depth prepass. The cull shader already reads the technique flags. Add a check on the render-state bits in the draw key, or add a per-group flag.
+1. Exclude groups whose blend mode is transparent from the depth prepass. `GroupWritesPrepassDepth` makes the decision from the draw group's render state, and `UpdateTechniqueFlags` packs it into the per-group flag table that pre-cull already reads.
 2. Keep the main pass depth test against the opaque depth buffer. Transparent fragments behind opaque geometry are still rejected. Transparent fragments behind other transparent fragments are not.
 3. Accept that the transparent order is the group order. For a first step, that is better than a single layer, but it can still show the wrong order between two transparent materials.
 
-This fix costs no memory and removes the single-layer limitation. It is a prerequisite for every later step. Verify it with two transparent quads at different depths. The far quad must be visible through the near one.
+Points 1 and 2 are implemented. Point 3 is the documented limit of the current path: it costs no memory and removes the single-layer limitation. Verify it with two transparent quads at different depths. The far quad must be visible through the near one.
 
 ### 10.3 Per-object sorting in the collect path
 

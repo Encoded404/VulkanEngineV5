@@ -269,6 +269,12 @@ the candidate list. Crucially this draws **real geometry**, so the depth is a
 valid under-approximation for free; no OBB-silhouette or proxy generation is
 needed (and fitted-OBB silhouettes would be *wrong* — §3).
 
+The pass loops draw groups, like the depth prepass. A group whose technique
+declares a depth coverage policy (`Custom` or `ReuseColorFragment`) binds the
+technique's depth-only pipeline, so a cutout occluder writes its real cutout
+depth rather than a full triangle. The occluder command list is grouped by
+technique for the same reason: each group needs its own pipeline.
+
 Alternative for later: Drobot-style coarse rasterization of the candidates in
 compute into a ~256×144 depth buffer, avoiding the graphics-pipeline round trip.
 More code, marginal gain at this scale; the hardware path is simpler and the
@@ -358,7 +364,7 @@ index defensively.
 
 | Flag | Consumer | Action |
 |---|---|---|
-| `participates_in_depth_pass == false` | prepass filtering | submesh is excluded from the *depth prepass indirection* (its cull-entry index count stays nonzero — collect still needs it for the main pass) |
+| `participates_in_depth_pass == false` | prepass filtering | submesh is excluded from the *depth prepass command list* (its cull-entry index count stays nonzero — collect still needs it for the main pass) |
 | `receives_occlusion == false` | pre-cull test | entry is kept alive unconditionally; never an occluder candidate |
 | `bounds_conservative` | occluder selection | see §5.8 — displaced techniques are occludee-only unless they supply conservative post-deform bounds; per-object deform bits take precedence for skinned/modified geometry |
 

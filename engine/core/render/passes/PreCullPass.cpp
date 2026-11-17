@@ -19,12 +19,14 @@ void PreCullPass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
     auto hiz_image = ctx.ImportImage("hiz-image");
     auto scene_buffers = ctx.ImportBuffer("scene-buffers");
     auto depth_indirect = ctx.ImportBuffer("depth-indirect");
+    auto depth_counts = ctx.ImportBuffer("depth-counts");
     ctx.AddRead(hiz_image, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddRead(scene_buffers, VulkanEngine::RenderGraph::PipelineStageIntent::ComputeShader,
                 VulkanEngine::RenderGraph::AccessIntent::Read);
     ctx.AddWrite(scene_buffers);
     ctx.AddWrite(depth_indirect);
+    ctx.AddWrite(depth_counts);
 }
 
 void PreCullPass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,

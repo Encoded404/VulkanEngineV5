@@ -357,6 +357,10 @@ set(_engine_shaders
     StandardMeshFragUV1     standard_mesh.slang        fragment main_uv1
     StandardMeshFragMask    standard_mesh.slang        fragment main_mask
     StandardMeshFragMaskUV1 standard_mesh.slang        fragment main_mask_uv1
+    # Depth-only coverage pairs for the depth prepass: same sample and cutoff
+    # as the MASK pairs, no color output.
+    StandardMeshDepthMask    standard_mesh.slang        fragment main_depth_mask
+    StandardMeshDepthMaskUV1 standard_mesh.slang        fragment main_depth_mask_uv1
     DepthPrepassFrag        depth_prepass.slang        fragment main
     UnlitFrag               unlit.slang                fragment main
     UiTextVert              ui_text.slang              vertex   vs_main

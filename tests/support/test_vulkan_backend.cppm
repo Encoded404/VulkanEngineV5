@@ -102,6 +102,12 @@ private:
     std::vector<std::uint32_t> queue_families_{};
     VulkanBackend::Vulkan::VulkanCapabilities capabilities_{};
     std::string error_message_{};
+    // One depth target, shared by the prepass and depth-readback tests.
+    // Declared memory, image, view so reverse-order member destruction releases
+    // the view, then the image, then the memory that backs it.
+    vk::raii::DeviceMemory depth_memory_{nullptr};
+    vk::raii::Image depth_image_{nullptr};
+    vk::raii::ImageView depth_view_{nullptr};
 };
 
 } // namespace TestSupport

@@ -20,7 +20,8 @@ namespace {
 using VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData;
 using VulkanEngine::TechniqueManager::DefaultMeshTechnique;
 using VulkanEngine::TechniqueManager::GetVariantShaderRow;
-using VulkanEngine::TechniqueManager::VariantShaderPair;
+using VulkanEngine::TechniqueManager::DepthCoverage;
+using VulkanEngine::TechniqueManager::VariantShaderRow;
 namespace DrawKeyState = VulkanEngine::TechniqueManager::DrawKeyState;
 namespace TechniquePacking = VulkanEngine::TechniqueManager::TechniquePacking;
 using VulkanEngine::ShaderSystem::ShaderId;
@@ -189,9 +190,9 @@ TEST(UvVariantTest, BaseTechniqueHasNoInterfaceVariants) {
 // ── Variant row lookup ──
 
 TEST(UvVariantTest, VariantRowsMapSlotsInOrder) {
-    const std::array<VariantShaderPair, 2> rows = {{
-        {ShaderId{7}, ShaderId{8}},
-        {ShaderId{9}, ShaderId{10}},
+    const std::array<VariantShaderRow, 2> rows = {{
+        {.vert = ShaderId{7}, .frag = ShaderId{8}},
+        {.vert = ShaderId{9}, .frag = ShaderId{10}},
     }};
     ShaderId v{};
     ShaderId f{};

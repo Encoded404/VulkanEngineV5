@@ -22,6 +22,8 @@ import Shaders.Engine.StandardMeshFrag;
 import Shaders.Engine.StandardMeshFragUV1;
 import Shaders.Engine.StandardMeshFragMask;
 import Shaders.Engine.StandardMeshFragMaskUV1;
+import Shaders.Engine.StandardMeshDepthMask;
+import Shaders.Engine.StandardMeshDepthMaskUV1;
 import Shaders.Engine.DepthPrepassFrag;
 import Shaders.Engine.UnlitFrag;
 import Shaders.Engine.UiTextVert;
@@ -65,6 +67,10 @@ struct EngineShaderIds {
     // mesh technique's variant table.
     ShaderSystem::ShaderId standard_mesh_frag_mask = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId standard_mesh_frag_mask_uv1 = ShaderSystem::kInvalidShaderId;
+    // Depth-only coverage rows for the depth prepass (named entry points
+    // main_depth_mask / main_depth_mask_uv1). They write no color.
+    ShaderSystem::ShaderId standard_mesh_depth_mask = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId standard_mesh_depth_mask_uv1 = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId depth_prepass_frag = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId unlit_frag = ShaderSystem::kInvalidShaderId;
     // Screen-space text overlay: the vertex pulls the quad from SV_VertexID and
@@ -107,6 +113,9 @@ struct EngineShaderIds {
         standard_mesh_frag_mask  = Shaders::Engine::StandardMeshFragMask::Register(mgr, data_dir);
         standard_mesh_frag_mask_uv1 =
             Shaders::Engine::StandardMeshFragMaskUV1::Register(mgr, data_dir);
+        standard_mesh_depth_mask = Shaders::Engine::StandardMeshDepthMask::Register(mgr, data_dir);
+        standard_mesh_depth_mask_uv1 =
+            Shaders::Engine::StandardMeshDepthMaskUV1::Register(mgr, data_dir);
         depth_prepass_frag       = Shaders::Engine::DepthPrepassFrag::Register(mgr, data_dir);
         unlit_frag               = Shaders::Engine::UnlitFrag::Register(mgr, data_dir);
         ui_text_vert             = Shaders::Engine::UiTextVert::Register(mgr, data_dir);

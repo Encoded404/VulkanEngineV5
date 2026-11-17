@@ -170,6 +170,55 @@ bool HeadlessVulkanBackend::CreateLogicalDevice(std::uint32_t frames_in_flight) 
         semaphores_.emplace_back(*device_, vk::SemaphoreCreateInfo{});
         fence_ = std::make_unique<vk::raii::Fence>(*device_, vk::FenceCreateInfo{});
 
+        // A real depth target so engine-created graphics pipelines have a valid
+        // depth format and the prepass tests can read depth back.
+        const vk::Extent2D kDepthExtent{1280, 720};
+        vk::ImageCreateInfo depth_ci{};
+        depth_ci.imageType = vk::ImageType::e2D;
+        depth_ci.format = GetDepthFormat();
+        depth_ci.extent = vk::Extent3D{kDepthExtent.width, kDepthExtent.height, 1};
+        depth_ci.mipLevels = 1;
+        depth_ci.arrayLayers = 1;
+        depth_ci.samples = vk::SampleCountFlagBits::e1;
+        depth_ci.tiling = vk::ImageTiling::eOptimal;
+        depth_ci.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment |
+                         vk::ImageUsageFlagBits::eSampled |
+                         vk::ImageUsageFlagBits::eTransferSrc;
+        depth_ci.initialLayout = vk::ImageLayout::eUndefined;
+        depth_image_ = vk::raii::Image(*device_, depth_ci);
+
+        const vk::MemoryRequirements depth_req = depth_image_.getMemoryRequirements();
+        const vk::PhysicalDeviceMemoryProperties memory =
+            physical_device_->getMemoryProperties();
+        const std::optional<std::uint32_t> depth_type = [&]() -> std::optional<std::uint32_t> {
+            for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
+                if ((depth_req.memoryTypeBits & (1u << i)) != 0 &&
+                    (memory.memoryTypes[i].propertyFlags &
+                     vk::MemoryPropertyFlagBits::eDeviceLocal) != vk::MemoryPropertyFlags{}) {
+                    return i;
+                }
+            }
+            return std::nullopt;
+        }();
+        if (!depth_type.has_value()) {
+            error_message_ = "HeadlessVulkanBackend: no device-local memory type for the depth image";
+            return false;
+        }
+        vk::MemoryAllocateInfo depth_alloc{};
+        depth_alloc.allocationSize = depth_req.size;
+        depth_alloc.memoryTypeIndex = *depth_type;
+        depth_memory_ = vk::raii::DeviceMemory(*device_, depth_alloc);
+        depth_image_.bindMemory(depth_memory_, 0);
+
+        vk::ImageViewCreateInfo depth_view_ci{};
+        depth_view_ci.image = *depth_image_;
+        depth_view_ci.viewType = vk::ImageViewType::e2D;
+        depth_view_ci.format = GetDepthFormat();
+        depth_view_ci.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+        depth_view_ci.subresourceRange.levelCount = 1;
+        depth_view_ci.subresourceRange.layerCount = 1;
+        depth_view_ = vk::raii::ImageView(*device_, depth_view_ci);
+
         queue_families_.clear();
         queue_families_.push_back(graphics_family_);
         return true;
@@ -186,6 +235,9 @@ bool HeadlessVulkanBackend::CreateSwapchain(std::uint32_t, VulkanBackend::Vulkan
 bool HeadlessVulkanBackend::GetSwapchainExtent(std::uint32_t&, std::uint32_t&) const { return false; }
 
 void HeadlessVulkanBackend::Shutdown() {
+    depth_view_ = vk::raii::ImageView(nullptr);
+    depth_image_ = vk::raii::Image(nullptr);
+    depth_memory_ = vk::raii::DeviceMemory(nullptr);
     command_buffers_.clear();
     semaphores_.clear();
     fence_.reset();
@@ -213,12 +265,18 @@ std::vector<bool>& HeadlessVulkanBackend::GetSwapchainImageInitializedFlags() {
 const vk::SurfaceFormatKHR& HeadlessVulkanBackend::GetSurfaceFormat() const {
     throw std::logic_error("HeadlessVulkanBackend has no surface");
 }
-vk::Format HeadlessVulkanBackend::GetDepthFormat() const { return vk::Format::eUndefined; }
+vk::Format HeadlessVulkanBackend::GetDepthFormat() const { return vk::Format::eD32Sfloat; }
 const vk::raii::ImageView& HeadlessVulkanBackend::GetDepthImageView(std::uint32_t) const {
-    throw std::logic_error("HeadlessVulkanBackend has no depth image");
+    if (*depth_view_ == nullptr) {
+        throw std::logic_error("HeadlessVulkanBackend depth image is not initialized");
+    }
+    return depth_view_;
 }
 const vk::raii::Image& HeadlessVulkanBackend::GetDepthImage(std::uint32_t) const {
-    throw std::logic_error("HeadlessVulkanBackend has no depth image");
+    if (*depth_image_ == nullptr) {
+        throw std::logic_error("HeadlessVulkanBackend depth image is not initialized");
+    }
+    return depth_image_;
 }
 bool HeadlessVulkanBackend::AcquireNextImage(std::uint32_t, std::uint32_t&) { return false; }
 bool HeadlessVulkanBackend::SubmitFrame(std::uint32_t, std::uint32_t, bool) { return false; }

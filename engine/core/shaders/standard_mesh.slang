@@ -93,6 +93,14 @@ float2 SlotUV(uint uv_sets, uint slot, float2 uv0, float2 uv1) {
     return ((uv_sets >> (slot * 2u)) & 0x3u) == 1u ? uv1 : uv0;
 }
 
+// Samples the material's albedo through its per-slot UV selection. The MASK
+// coverage rule is the sampled alpha, so the color entry points and the
+// depth-only entry points must share this one sample.
+float4 SampleAlbedo(MaterialData mat, float2 uv0, float2 uv1) {
+    float2 uv = SlotUV(mat.uv_sets, 0u, uv0, uv1);
+    return allTextures[NonUniformResourceIndex(mat.albedo_texture)].Sample(uv);
+}
+
 // Cook-Torrance BRDF
 
 static const float PI = 3.14159265359;
@@ -134,16 +142,15 @@ ShadeOut Shade(PSInput input, float2 uv0, float2 uv1) {
     uint elem  = input.materialId % 256u;
     MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
 
-    // Per-slot UV selection (0=albedo, 1=normal, 2=orm, 3=emissive).
-    float2 uv_albedo = SlotUV(mat.uv_sets, 0u, uv0, uv1);
+    // Per-slot UV selection (1=normal, 2=orm, 3=emissive; albedo goes through
+    // SampleAlbedo so the depth-only entry points share the same sample).
     float2 uv_normal = SlotUV(mat.uv_sets, 1u, uv0, uv1);
     float2 uv_orm    = SlotUV(mat.uv_sets, 2u, uv0, uv1);
 
     // Sample textures. Albedo alpha is carried through to the output (the
     // alpha-blend render state relies on it); opaque textures are at 1.0 so
     // the opaque path is unchanged.
-    float4 albedo_sample = allTextures[NonUniformResourceIndex(mat.albedo_texture)]
-        .Sample(uv_albedo);
+    float4 albedo_sample = SampleAlbedo(mat, uv0, uv1);
     float3 albedo = albedo_sample.rgb;
 
     // Effective ORM factor layer, packed unorm8 by the CPU gather pass: the
@@ -316,8 +323,9 @@ float4 main_uv1(PSInputUV1 input) : SV_TARGET {
 // OWN interface-variant bit, not a change to these entry points).
 //
 // The variant exists so the discard lives in entry points that only MASK
-// materials bind: the base pipeline (and the depth prepass that shares its
-// vertex stage) stays discard-free and keeps full early-Z optimization.
+// materials bind: the base color pipeline stays discard-free and keeps full
+// early-Z optimization. The depth prepass uses the matching main_depth_mask
+// pair, which applies the same cutoff with no color output.
 [shader("fragment")]
 float4 main_mask(PSInput input) : SV_TARGET {
     ShadeOut result = Shade(input, input.texCoord, input.texCoord);
@@ -342,4 +350,28 @@ float4 main_mask_uv1(PSInputUV1 input) : SV_TARGET {
         discard;
     }
     return float4(result.color.rgb, 1.0);
+}
+
+// Depth-only coverage entry points for the depth prepass. They run the same
+// sample and cutoff as the MASK pairs above and write no color: the prepass
+// pipeline has no color attachments. The vertex stage is the row's color
+// vertex shader, so the material id and UVs arrive through the same interface.
+[shader("fragment")]
+void main_depth_mask(PSInput input) {
+    uint block = input.materialId / 256u;
+    uint elem  = input.materialId % 256u;
+    MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
+    if (SampleAlbedo(mat, input.texCoord, input.texCoord).a < mat.alpha_cutoff) {
+        discard;
+    }
+}
+
+[shader("fragment")]
+void main_depth_mask_uv1(PSInputUV1 input) {
+    uint block = input.materialId / 256u;
+    uint elem  = input.materialId % 256u;
+    MaterialData mat = materialBuffer[NonUniformResourceIndex(block)][elem];
+    if (SampleAlbedo(mat, input.texCoord, input.uv1).a < mat.alpha_cutoff) {
+        discard;
+    }
 }

@@ -176,19 +176,17 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         fr.expand_counter.Upload(zero3, sizeof(zero3));
         const std::uint32_t zero = 0u;
         fr.occluder_candidate_count.Upload(&zero, sizeof(zero));
-        if (mid) {
-            fr.depth_out_command_count.Upload(&zero, sizeof(zero));
-            fr.occluder_out_command_count.Upload(&zero, sizeof(zero));
-        } else {
-            const vk::DrawIndexedIndirectCommand zero_cmd{0u, 1u, 0u, 0, 0u};
-            fr.depth_out_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
-            fr.occluder_out_draw_command.Upload(&zero_cmd, sizeof(zero_cmd));
-        }
+        // Depth and occluder prepass: the counters are shared by both modes;
+        // the per-group count tables only feed MID's drawIndirectCount but are
+        // written by the shaders in both, so they are reset here for every mode.
+        fr.depth_out_counter.Upload(&zero, sizeof(zero));
+        fr.occluder_out_counter.Upload(&zero, sizeof(zero));
     }
 
     // Zero CPU-consumed buffers. technique_draw_commands only exists in
     // CID mode; technique_counts is written by the MID compact pass.
-    for (auto* buf : {&fr.technique_results, &fr.technique_counts}) {
+    for (auto* buf : {&fr.technique_results, &fr.technique_counts,
+                      &fr.depth_technique_counts, &fr.occluder_technique_counts}) {
         auto* p = buf->Map(0, buf->GetSize());
         if (p) {
             std::memset(p, 0, buf->GetSize());
@@ -200,6 +198,18 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         if (p) {
             std::memset(p, 0, fr.technique_draw_commands.GetSize());
             fr.technique_draw_commands.Unmap();
+        }
+        // CID writes one command per surviving submesh; unused slots must stay
+        // zero (indexCount = 0) because the prepass walks the whole region.
+        auto* d = fr.depth_commands.Map(0, fr.depth_commands.GetSize());
+        if (d) {
+            std::memset(d, 0, fr.depth_commands.GetSize());
+            fr.depth_commands.Unmap();
+        }
+        auto* o = fr.occluder_commands.Map(0, fr.occluder_commands.GetSize());
+        if (o) {
+            std::memset(o, 0, fr.occluder_commands.GetSize());
+            fr.occluder_commands.Unmap();
         }
     }
 
@@ -239,11 +249,12 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
                 vk::DescriptorType::eStorageBuffer);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 3, technique_flags, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 4, fr.draw_indices, dev);
-    WriteBuffer(fr.occluder_select_set.GetHandle(), 5,
-                mid ? fr.occluder_commands : fr.occluder_indices, dev);
-    WriteBuffer(fr.occluder_select_set.GetHandle(), 6,
-                mid ? fr.occluder_out_command_count : fr.occluder_out_draw_command, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 5, fr.occluder_commands, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 6, fr.occluder_out_counter, dev);
     WriteBuffer(fr.occluder_select_set.GetHandle(), 7, fr.occluder_candidate_count, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 8, fr.technique_region_bases, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 9, fr.occluder_technique_counts, dev);
+    WriteBuffer(fr.occluder_select_set.GetHandle(), 10, fr.occluder_indices, dev);
 
     sync_blocks(FrameResources::BlockBindingSlot::submesh_vertex,
                 fr.submesh_vertex_set.GetHandle(), 0, fr.submesh_vertex_entries,
@@ -285,12 +296,13 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         w.pBufferInfo = &bi;
         dev.updateDescriptorSets(w, nullptr);
     }
-    // Pre-cull survivor compaction bindings 6-8.
+    // Pre-cull survivor compaction bindings 6-11.
     WriteBuffer(fr.occlusion_set.GetHandle(), 6, fr.draw_indices, dev);
-    WriteBuffer(fr.occlusion_set.GetHandle(), 7,
-                mid ? fr.depth_commands : fr.depth_indices, dev);
-    WriteBuffer(fr.occlusion_set.GetHandle(), 8,
-                mid ? fr.depth_out_command_count : fr.depth_out_draw_command, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 7, fr.depth_commands, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 8, fr.depth_out_counter, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 9, fr.technique_region_bases, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 10, fr.depth_technique_counts, dev);
+    WriteBuffer(fr.occlusion_set.GetHandle(), 11, fr.depth_indices, dev);
 
     // Collect bindings 1-4.
     sync_blocks(FrameResources::BlockBindingSlot::collect_cull,
@@ -393,8 +405,14 @@ void SceneRenderer::UpdateTechniqueFlags(
         auto* tech = tm.GetTechnique(tech_id);
         if (!tech) continue;
         const auto& f = tech->pipeline_flags;
+        const auto group = static_cast<std::uint16_t>(g);
+        const std::uint32_t render_state = tm.GetDrawGroupRenderState(group);
+        const std::uint32_t variant = tm.GetDrawGroupVariant(group);
+        const auto coverage = tech->GetDepthCoverage(variant);
         std::uint32_t bits = 0;
-        if (f.participates_in_depth_pass) bits |= TECHNIQUE_FLAG_DEPTH_PASS;
+        if (GroupWritesPrepassDepth(f.participates_in_depth_pass, render_state, coverage)) {
+            bits |= TECHNIQUE_FLAG_DEPTH_PASS;
+        }
         if (f.receives_occlusion)        bits |= TECHNIQUE_FLAG_RECEIVES_OCCLUSION;
         if (f.participates_in_collect)   bits |= TECHNIQUE_FLAG_COLLECT;
         if (f.bounds_conservative)       bits |= TECHNIQUE_FLAG_OCCLUDER_SAFE;
@@ -416,7 +434,57 @@ void SceneRenderer::SetTechniqueFlags(std::span<const std::uint32_t> flags) {
     }
 }
 
-void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
+bool SceneRenderer::BindGroupDepthPipeline(
+    vk::CommandBuffer cmd,
+    VulkanEngine::TechniqueManager::BaseTechnique& tech,
+    std::uint32_t draw_key,
+    VulkanEngine::TechniqueManager::DepthCoverage coverage,
+    vk::DescriptorSet bindless_set,
+    const std::array<vk::DescriptorSet, 4>& engine_sets,
+    vk::DescriptorSet scene_uniform_set,
+    const float camera_pos[4]) {
+    if (!GroupUsesCustomDepthPipeline(coverage)) {
+        // EngineDepthOnly: the global pipeline ignores the technique's custom
+        // sets, so bind sets 0-3 only.
+        if (!depth_slot_.Get() || !depth_pipeline_layout_) return false;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
+                               0, engine_sets, {});
+        return true;
+    }
+
+    if (!tech.HasDepthVariant(draw_key) &&
+        !tech.EnsureDepthVariant(draw_key, *shader_mgr_, *pipeline_factory_)) {
+        return false;
+    }
+    auto pipeline = tech.GetDepthPipeline(draw_key);
+    auto layout = tech.GetPipelineLayout();
+    if (!pipeline || !layout) return false;
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+    std::array<vk::DescriptorSet, 16> ds{};
+    std::uint32_t slot = 0;
+    ds[slot++] = bindless_set;        // set 0: bindless textures
+    ds[slot++] = engine_sets[1];      // set 1: submesh vertex data
+    ds[slot++] = engine_sets[2];      // set 2: raw vertex buffers
+    ds[slot++] = engine_sets[3];      // set 3: indirection
+    ds[slot++] = scene_uniform_set;   // set 4: scene uniforms
+    for (const auto& tech_ds : tech.GetCustomDescriptorSets()) {
+        ds[slot++] = tech_ds;
+    }
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 0,
+                           vk::ArrayProxy<const vk::DescriptorSet>(slot, ds.data()), {});
+    // Coverage fragment shaders may read the camera position. The technique
+    // layout always declares this 16-byte range.
+    cmd.pushConstants(layout, vk::ShaderStageFlagBits::eFragment, 0, 16, camera_pos);
+    return true;
+}
+
+void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,
+                                 std::uint32_t fi,
+                                 VulkanEngine::TechniqueManager::TechniqueManager& tm,
+                                 VulkanEngine::BindlessManager::BindlessManager& bm,
+                                 const glm::mat4& view) {
     auto& fr = frames_[fi % frames_in_flight_];
     if (!depth_slot_.Get()) {
         LOGIFACE_LOG(warn, "DepthPrepass: depth pipeline is null, skipping");
@@ -430,30 +498,83 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
                  " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
     cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
-    LOGIFACE_LOG(trace, std::format("DepthPrepass: bound pipeline 0x{:x}",
-                                    HandleToU64(depth_slot_.Get())));
-    const std::array<vk::DescriptorSet, 4> ds{
+
+    const bool mid = draw_mode_ == DrawMode::MID;
+    if (mid) {
+        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+    } else {
+        cmd.bindIndexBuffer(*fr.depth_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+    }
+
+    // Engine descriptor sets, shared by the global depth pipeline and every
+    // technique depth pipeline (the layouts agree on sets 0-4).
+    const std::array<vk::DescriptorSet, 4> engine_sets{
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.vertex_buffers_set),
         *fr.indirection_raw_set
     };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
-                             0, ds, {});
-    if (draw_mode_ == DrawMode::MID) {
-        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirectCount(*fr.depth_commands.GetBuffer(), 0,
-            *fr.depth_out_command_count.GetBuffer(), 0,
-            scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
-    } else {
-        cmd.bindIndexBuffer(*fr.depth_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirect(*fr.depth_out_draw_command.GetBuffer(), 0, 1,
-            sizeof(vk::DrawIndexedIndirectCommand));
+    const vk::DescriptorSet bindless_set = bm.GetDescriptorSet();
+    const vk::DescriptorSet scene_uniform_set = GetSceneUniformSet();
+    const glm::mat4 inv_view = glm::inverse(view);
+    float camera_pos[4] = {inv_view[3][0], inv_view[3][1], inv_view[3][2], 0.0f};
+
+    const std::uint32_t group_count =
+        std::min<std::uint32_t>(tm.GetDrawGroupCount(), MAX_DRAW_GROUPS);
+    for (std::uint32_t g = 0; g < group_count; ++g) {
+        const auto group = static_cast<std::uint16_t>(g);
+        const std::uint32_t base = g < region_base_.size() ? region_base_[g] : 0u;
+        const std::uint32_t count = g < region_count_.size() ? region_count_[g] : 0u;
+        if (count == 0) continue;
+
+        const std::uint16_t tech_id = tm.GetDrawGroupTechnique(group);
+        if (tech_id == std::numeric_limits<std::uint16_t>::max()) continue;
+        auto* tech = tm.GetTechnique(tech_id);
+        if (!tech) continue;
+
+        const std::uint32_t variant = tm.GetDrawGroupVariant(group);
+        const std::uint32_t render_state = tm.GetDrawGroupRenderState(group);
+        const auto coverage = tech->GetDepthCoverage(variant);
+        if (!GroupWritesPrepassDepth(tech->pipeline_flags.participates_in_depth_pass,
+                                     render_state, coverage)) {
+            continue;
+        }
+
+        const std::uint32_t draw_key = TechniqueManager::DrawKeyState::PackDrawKey(
+            variant, render_state);
+        if (!BindGroupDepthPipeline(cmd, *tech, draw_key, coverage, bindless_set,
+                                    engine_sets, scene_uniform_set, camera_pos)) {
+            LOGIFACE_LOG(error, std::format(
+                "DepthPrepass: group {} depth pipeline unavailable, skipping", g));
+            continue;
+        }
+
+        if (mid) {
+            cmd.drawIndexedIndirectCount(
+                *fr.depth_commands.GetBuffer(),
+                static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
+                *fr.depth_technique_counts.GetBuffer(),
+                static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
+                count, sizeof(vk::DrawIndexedIndirectCommand));
+        } else {
+            // CID: one draw per surviving submesh. Unused slots in the group's
+            // region were zeroed by PrepareCompute (indexCount 0).
+            for (std::uint32_t i = 0; i < count; ++i) {
+                cmd.drawIndexedIndirect(
+                    *fr.depth_commands.GetBuffer(),
+                    static_cast<vk::DeviceSize>(base + i) *
+                        sizeof(vk::DrawIndexedIndirectCommand),
+                    1, sizeof(vk::DrawIndexedIndirectCommand));
+            }
+        }
     }
 }
 
-void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h, std::uint32_t fi) {
+void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,
+                                    std::uint32_t fi,
+                                    VulkanEngine::TechniqueManager::TechniqueManager& tm,
+                                    VulkanEngine::BindlessManager::BindlessManager& bm,
+                                    const glm::mat4& view) {
     auto& fr = frames_[fi % frames_in_flight_];
     if (!depth_slot_.Get()) {
         LOGIFACE_LOG(warn, "OccluderPrepass: depth pipeline is null, skipping");
@@ -467,24 +588,68 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
                  std::to_string(h) + ")");
     cmd.setViewport(0, VulkanEngine::PipelinePass::SceneViewport(w, h));
     cmd.setScissor(0, vk::Rect2D({0, 0}, {w, h}));
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
-    const std::array<vk::DescriptorSet, 4> ds{
+
+    const bool mid = draw_mode_ == DrawMode::MID;
+    if (mid) {
+        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+    } else {
+        cmd.bindIndexBuffer(*fr.occluder_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+    }
+
+    const std::array<vk::DescriptorSet, 4> engine_sets{
         empty_sets_[fi % frames_in_flight_].GetHandle(),
         fr.submesh_vertex_set.GetHandle(),
         static_cast<vk::DescriptorSet>(*fr.vertex_buffers_set),
         *fr.indirection_raw_set
     };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
-                             0, ds, {});
-    if (draw_mode_ == DrawMode::MID) {
-        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirectCount(*fr.occluder_commands.GetBuffer(), 0,
-            *fr.occluder_out_command_count.GetBuffer(), 0,
-            scene_capacity_.submesh_count, sizeof(vk::DrawIndexedIndirectCommand));
-    } else {
-        cmd.bindIndexBuffer(*fr.occluder_indices.GetBuffer(), 0, vk::IndexType::eUint32);
-        cmd.drawIndexedIndirect(*fr.occluder_out_draw_command.GetBuffer(), 0, 1,
-            sizeof(vk::DrawIndexedIndirectCommand));
+    const vk::DescriptorSet bindless_set = bm.GetDescriptorSet();
+    const vk::DescriptorSet scene_uniform_set = GetSceneUniformSet();
+    const glm::mat4 inv_view = glm::inverse(view);
+    float camera_pos[4] = {inv_view[3][0], inv_view[3][1], inv_view[3][2], 0.0f};
+
+    const std::uint32_t group_count =
+        std::min<std::uint32_t>(tm.GetDrawGroupCount(), MAX_DRAW_GROUPS);
+    for (std::uint32_t g = 0; g < group_count; ++g) {
+        const auto group = static_cast<std::uint16_t>(g);
+        const std::uint32_t base = g < region_base_.size() ? region_base_[g] : 0u;
+        const std::uint32_t count = g < region_count_.size() ? region_count_[g] : 0u;
+        if (count == 0) continue;
+
+        const std::uint16_t tech_id = tm.GetDrawGroupTechnique(group);
+        if (tech_id == std::numeric_limits<std::uint16_t>::max()) continue;
+        auto* tech = tm.GetTechnique(tech_id);
+        if (!tech) continue;
+
+        const std::uint32_t variant = tm.GetDrawGroupVariant(group);
+        const std::uint32_t render_state = tm.GetDrawGroupRenderState(group);
+        const auto coverage = tech->GetDepthCoverage(variant);
+        // Occluder selection already required the depth-pass bit, so an
+        // excluded row cannot appear here; only the pipeline choice is left.
+        const std::uint32_t draw_key = TechniqueManager::DrawKeyState::PackDrawKey(
+            variant, render_state);
+        if (!BindGroupDepthPipeline(cmd, *tech, draw_key, coverage, bindless_set,
+                                    engine_sets, scene_uniform_set, camera_pos)) {
+            LOGIFACE_LOG(error, std::format(
+                "OccluderPrepass: group {} depth pipeline unavailable, skipping", g));
+            continue;
+        }
+
+        if (mid) {
+            cmd.drawIndexedIndirectCount(
+                *fr.occluder_commands.GetBuffer(),
+                static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
+                *fr.occluder_technique_counts.GetBuffer(),
+                static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
+                count, sizeof(vk::DrawIndexedIndirectCommand));
+        } else {
+            for (std::uint32_t i = 0; i < count; ++i) {
+                cmd.drawIndexedIndirect(
+                    *fr.occluder_commands.GetBuffer(),
+                    static_cast<vk::DeviceSize>(base + i) *
+                        sizeof(vk::DrawIndexedIndirectCommand),
+                    1, sizeof(vk::DrawIndexedIndirectCommand));
+            }
+        }
     }
 }
 

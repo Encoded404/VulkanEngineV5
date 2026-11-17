@@ -91,10 +91,10 @@ inline constexpr SetPlan kExpandPlan{"expand", 5, 3, 0, 0};
 inline constexpr SetPlan kDeformPlan{
     "deform", 1, kMaxSkinBuffers * 2 + 3, 0, 0};
 // Set 5: occlusion -- submesh vertex/cull/sphere/obb blocks (4) plus the
-// pre-cull survivor bindings (4) and one Hi-Z combined image sampler.
-inline constexpr SetPlan kOcclusionPlan{"occlusion", 4, 4, 1, 1};
-// Set 8: occluder select -- cull/vertex/obb blocks (3) + 5 singles.
-inline constexpr SetPlan kOccluderSelectPlan{"occluder-select", 3, 5, 0, 0};
+// pre-cull survivor bindings (7) and one Hi-Z combined image sampler.
+inline constexpr SetPlan kOcclusionPlan{"occlusion", 4, 7, 1, 1};
+// Set 8: occluder select -- cull/vertex/obb blocks (3) + 8 singles.
+inline constexpr SetPlan kOccluderSelectPlan{"occluder-select", 3, 8, 0, 0};
 // Set 6: collect -- cull blocks (1) + 5 singles.
 inline constexpr SetPlan kCollectPlan{"collect", 1, 5, 0, 0};
 // The depth/main graphics pipelines bind submesh-vertex (blocks) together with

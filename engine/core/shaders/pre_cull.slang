@@ -45,16 +45,30 @@ StructuredBuffer<uint, CDataLayout> techniqueFlags;
 [[vk::binding(6, 0)]]
 StructuredBuffer<uint, CDataLayout> drawIndices;
 
-// Compaction destination, viewed as raw u32:
-//   CID: a packed uint index list
-//   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
+// Depth-prepass command output, viewed as 20 B (5 x u32)
+// VkDrawIndexedIndirectCommand records in both draw modes. Commands are grouped
+// by technique: techniqueRegionBases[group] is the group's first slot.
 [[vk::binding(7, 0)]]
 RWStructuredBuffer<uint, CDataLayout> depthOut;
 
-// Counter word. CID: word 0 accumulates the survivor index total.
-// MID: increments once per emitted command. Zeroed by the CPU each frame.
+// CID: word 0 accumulates the survivor index total, reserving the range the
+// workgroup copies into depthIndices. Unused in MID. Zeroed by the CPU.
 [[vk::binding(8, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> depthOutCounter;
+
+// First depth-command slot of each draw group (SceneRenderer's CPU prefix sum).
+[[vk::binding(9, 0)]]
+StructuredBuffer<uint, CDataLayout> techniqueRegionBases;
+
+// One counter per draw group: the number of survivors this frame. MID passes it
+// to vkCmdDrawIndexedIndirectCount; CID uses it to place the group's commands.
+[[vk::binding(10, 0)]]
+globallycoherent RWStructuredBuffer<uint, CDataLayout> depthTechniqueCounts;
+
+// CID only: the compacted index list the per-submesh depth commands index into.
+// MID binds a dummy because the shader path is specialized out there.
+[[vk::binding(11, 0)]]
+RWStructuredBuffer<uint, CDataLayout> depthIndices;
 
 // 0 = CID (compact index copy), 1 = MID (command emission).
 #include "technique_packing.slang"
@@ -201,23 +215,34 @@ void CullSubmesh(uint submeshIndex) {
 
     } // kCullNoCullTest
 
-    // ── Survivor compaction into the depth-prepass indirection ──
+    // ── Survivor compaction into the depth-prepass command list ──
     // Techniques with participates_in_depth_pass == false keep their
     // indexCount (collect still emits them for the main pass) but are not
     // part of the depth prepass.
     if ((flags & kFlagDepthPass) == 0) return;
 
+    // Every group owns a fixed command region. The atomic also yields the
+    // group-relative slot, so the commands land in techniqueRegionBases[group]
+    // .. + depthTechniqueCounts[group].
+    uint local;
+    InterlockedAdd(depthTechniqueCounts[entry.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[entry.techniqueId] + local) * kCmdWords;
+
     if (kCompactionMode == 0) {
-        // CID: reserve the destination range; the workgroup copies it in main().
+        // CID: reserve the index range; the workgroup copies it in main(). The
+        // command indexes the compacted list with firstIndex = destOffset and
+        // never uses firstInstance (the depth vertex shader reads the entry).
         uint destOffset;
         InterlockedAdd(depthOutCounter[0], entry.indexCount, destOffset);
         g_depthDest = destOffset;
         g_depthCount = entry.indexCount;
+        depthOut[base + 0] = entry.indexCount;
+        depthOut[base + 1] = 1u;
+        depthOut[base + 2] = destOffset;
+        depthOut[base + 3] = 0u;
+        depthOut[base + 4] = 0u;
     } else {
         // MID: one 20 B indexed draw command per survivor.
-        uint slot;
-        InterlockedAdd(depthOutCounter[0], 1u, slot);
-        uint base = slot * kCmdWords;
         depthOut[base + 0] = entry.indexCount;
         depthOut[base + 1] = 1u;
         depthOut[base + 2] = entry.indexBase;
@@ -245,7 +270,7 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
         uint elementIndex = submeshIndex % kEntriesPerBlock;
         CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
         for (uint i = tid; i < g_depthCount; i += 256) {
-            depthOut[g_depthDest + i] = drawIndices[entry.indexBase + i];
+            depthIndices[g_depthDest + i] = drawIndices[entry.indexBase + i];
         }
     }
 }

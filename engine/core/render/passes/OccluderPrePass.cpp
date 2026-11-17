@@ -48,9 +48,14 @@ void OccluderPrePass::Setup(VulkanEngine::PipelinePass::PassSetupContext& ctx) {
 
 void OccluderPrePass::Execute(const VulkanEngine::PipelinePass::FrameContext& ctx,
                                 vk::CommandBuffer cmd) {
+    auto* techniques = ctx.techniques;
+    auto* bindless = ctx.bindless;
+    if (techniques == nullptr || bindless == nullptr) {
+        return;
+    }
     scene_renderer_.OccluderPrepass(cmd,
         ctx.render_extent.width, ctx.render_extent.height,
-        ctx.frame_index);
+        ctx.frame_index, *techniques, *bindless, ctx.view);
 }
 
 } // namespace VulkanEngine::SceneRenderer

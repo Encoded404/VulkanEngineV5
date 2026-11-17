@@ -1,6 +1,7 @@
 module;
 
 #include <cassert>
+#include <logging/logging_macros.hpp>
 
 export module VulkanEngine.TechniqueManager.BaseTechnique;
 
@@ -8,6 +9,8 @@ import std;
 import std.compat;
 
 import vulkan;
+
+import logiface;
 
 export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.StandardMeshPipeline;
@@ -34,17 +37,40 @@ struct DrawKeyPipelineState {
 [[nodiscard]] DrawKeyPipelineState DeriveDrawKeyPipelineState(
     std::uint32_t render_state_key, vk::CullModeFlags base_cull_mode);
 
+// ── DepthCoverage — how a variant row reaches the depth prepass ──
+// The prepass normally runs one global depth pipeline. A row that can discard
+// needs its own depth-only pipeline, or must stay out of the prepass:
+//   Exclude            — skip this row in the prepass. Default for a row.
+//   EngineDepthOnly    — the row never discards; the engine depth pipeline is
+//                        sufficient. Only valid for rows whose position output
+//                        matches the engine depth vertex shader.
+//   ReuseColorFragment — run the row's color fragment shader in a depth-only
+//                        pipeline. Correct, but pays the full fragment cost.
+//   Custom             — run `depth_frag`, a coverage-only fragment shader.
+enum class DepthCoverage : std::uint8_t {
+    Exclude,
+    EngineDepthOnly,
+    ReuseColorFragment,
+    Custom,
+};
+
 // A technique that owns named entry-point rows maps a dense interface-variant
-// slot to its (vert, frag) shader rows. Pure, so the slot mapping is
-// unit-testable without a device. The slot layout is each technique's
-// contract; the default mesh technique uses uv bit + alpha-mask bit (4 rows).
-struct VariantShaderPair {
-    ShaderSystem::ShaderId vert{};
-    ShaderSystem::ShaderId frag{};
+// slot to its shader rows. Pure, so the slot mapping is unit-testable without
+// a device. The slot layout is each technique's contract; the default mesh
+// technique uses uv bit + alpha-mask bit (4 rows).
+//
+// `depth_coverage` says how the row reaches the depth prepass. The default is
+// Exclude so a new row cannot silently write prepass depth it cannot reproduce.
+struct VariantShaderRow {
+    ShaderSystem::ShaderId vert{ShaderSystem::kInvalidShaderId};
+    ShaderSystem::ShaderId frag{ShaderSystem::kInvalidShaderId};
+    // Required for Custom; ignored by the other policies.
+    ShaderSystem::ShaderId depth_frag{ShaderSystem::kInvalidShaderId};
+    DepthCoverage depth_coverage{DepthCoverage::Exclude};
 };
 
 [[nodiscard]] inline bool GetVariantShaderRow(
-    std::span<const VariantShaderPair> rows, std::uint32_t variant_slot,
+    std::span<const VariantShaderRow> rows, std::uint32_t variant_slot,
     ShaderSystem::ShaderId& out_vert, ShaderSystem::ShaderId& out_frag) {
     if (variant_slot >= rows.size()) return false;
     out_vert = rows[variant_slot].vert;
@@ -313,12 +339,78 @@ public:
                                      ShaderSystem::ShaderManager& shaders,
                                      ShaderSystem::PipelineFactory& factory);
 
+    // ── Depth-prepass pipelines ──
+    // A row whose policy is Custom or ReuseColorFragment gets a depth-only
+    // pipeline built from this technique's layout and the row's vertex shader.
+    // Keyed by the composite draw key because the render-state bits select the
+    // cull mode (depth test/write are forced on). EngineDepthOnly and Exclude
+    // rows never create one; the prepass uses the global pipeline or skips the
+    // group instead.
+    [[nodiscard]] bool HasDepthVariant(std::uint32_t draw_key) const;
+    [[nodiscard]] bool EnsureDepthVariant(std::uint32_t draw_key,
+                                          ShaderSystem::ShaderManager& shaders,
+                                          ShaderSystem::PipelineFactory& factory);
+    // The depth pipeline for a key, or null when it was never materialized.
+    [[nodiscard]] vk::Pipeline GetDepthPipeline(std::uint32_t draw_key) const;
+
     // Dense interface-variant rows: [0] = default (UV0), [k] = out-of-line UV
     // set k. A technique that owns entry-point rows fills this; a technique
     // that does not leaves it empty and has only slot 0.
-    void SetVariantShaderRows(std::span<const VariantShaderPair> rows) {
+    void SetVariantShaderRows(std::span<const VariantShaderRow> rows) {
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const VariantShaderRow& row = rows[i];
+            assert(row.vert != ShaderSystem::kInvalidShaderId &&
+                   "a variant row needs a vertex shader");
+            assert(row.frag != ShaderSystem::kInvalidShaderId &&
+                   "a variant row needs a fragment shader");
+            if (row.depth_coverage == DepthCoverage::Custom) {
+                assert(row.depth_frag != ShaderSystem::kInvalidShaderId &&
+                       "Custom depth coverage needs depth_frag");
+            }
+            if (row.depth_coverage == DepthCoverage::Exclude) {
+                LOGIFACE_LOG(debug, std::format(
+                    "BaseTechnique {}: variant row {} has no depth coverage policy; "
+                    "it is excluded from the depth prepass", id_.value, i));
+            }
+        }
         variant_shader_rows_.assign(rows.begin(), rows.end());
     }
+
+    // Policy for a technique with no variant rows (its only row is slot 0).
+    // `depth_frag` is required for Custom and ignored otherwise.
+    void SetBaseDepthCoverage(DepthCoverage coverage,
+                              ShaderSystem::ShaderId depth_frag =
+                                  ShaderSystem::kInvalidShaderId) {
+        assert((coverage != DepthCoverage::Custom ||
+                depth_frag != ShaderSystem::kInvalidShaderId) &&
+               "Custom base depth coverage needs a depth fragment shader");
+        base_depth_coverage_ = coverage;
+        base_depth_frag_ = depth_frag;
+    }
+
+    // How a variant row reaches the depth prepass. A row that does not set a
+    // policy defaults to Exclude; for a technique with no rows, slot 0 uses the
+    // base policy and every other slot is excluded.
+    [[nodiscard]] DepthCoverage GetDepthCoverage(std::uint32_t variant_slot) const {
+        if (variant_shader_rows_.empty()) {
+            return variant_slot == 0 ? base_depth_coverage_ : DepthCoverage::Exclude;
+        }
+        if (variant_slot >= variant_shader_rows_.size()) return DepthCoverage::Exclude;
+        return variant_shader_rows_[variant_slot].depth_coverage;
+    }
+
+    // The coverage-only fragment shader for a Custom row, or kInvalidShaderId.
+    [[nodiscard]] ShaderSystem::ShaderId GetVariantDepthShader(
+        std::uint32_t variant_slot) const {
+        if (variant_shader_rows_.empty()) {
+            return variant_slot == 0 ? base_depth_frag_ : ShaderSystem::kInvalidShaderId;
+        }
+        if (variant_slot >= variant_shader_rows_.size()) {
+            return ShaderSystem::kInvalidShaderId;
+        }
+        return variant_shader_rows_[variant_slot].depth_frag;
+    }
+
     [[nodiscard]] std::uint32_t VariantCount() const {
         return variant_shader_rows_.empty() ? 1u
                                             : static_cast<std::uint32_t>(variant_shader_rows_.size());
@@ -504,7 +596,13 @@ private:
     std::vector<TechniqueVariant> variants_;  // [0] is the base pipeline
     // Interface-variant shader rows (empty when the technique has only the
     // default pipeline). Set before Compile.
-    std::vector<VariantShaderPair> variant_shader_rows_;
+    std::vector<VariantShaderRow> variant_shader_rows_;
+    // Depth prepass policy for a technique with no rows. EngineDepthOnly keeps
+    // the historical behavior for opaque techniques; a technique whose payload
+    // can discard must override it, and MaterialManager rejects a discarding
+    // payload under EngineDepthOnly.
+    DepthCoverage base_depth_coverage_{DepthCoverage::EngineDepthOnly};
+    ShaderSystem::ShaderId base_depth_frag_{ShaderSystem::kInvalidShaderId};
     bool compiled_ = false;
 
     // Base pipeline config, kept to build a new variant's desc on demand (the
@@ -517,6 +615,22 @@ private:
     // attachments. `vert`/`frag` are the variant's shader rows and their entry
     // points are set from the slot.
     ShaderSystem::GraphicsPipelineDesc MakeVariantDesc(
+        const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t draw_key,
+        const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const;
+
+    // DepthVariant — one depth-only pipeline per materialized draw key.
+    // `desc` is kept so hot reload and draw-mode rebuilds can recreate it.
+    struct DepthVariant {
+        std::uint32_t draw_key = 0;
+        ShaderSystem::GraphicsPipelineDesc desc{};
+        ShaderSystem::PipelineSlot slot;
+    };
+    std::vector<DepthVariant> depth_variants_;
+
+    // Builds a depth-only desc for `draw_key`: no color attachments, depth
+    // test/write on with eLess, the draw key's cull mode, and the coverage
+    // fragment the row's policy selects.
+    ShaderSystem::GraphicsPipelineDesc MakeDepthDesc(
         const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t draw_key,
         const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const;
 

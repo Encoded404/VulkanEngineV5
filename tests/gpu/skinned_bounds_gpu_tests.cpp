@@ -18,6 +18,7 @@ import VulkanEngine.ShaderRegistration;
 import VulkanEngine.SceneRenderer;
 import VulkanEngine.GpuResources;
 import VulkanEngine.ModifierManager;
+import VulkanEngine.TechniqueManager;
 
 namespace {
 
@@ -71,7 +72,10 @@ protected:
         renderer_->EnsureRenderExtent(kWidth, kHeight);
 
         // One submesh in the frame: PrepareCompute grows the block arrays and
-        // writes the cull-pass descriptors for it.
+        // writes the cull-pass descriptors for it. The depth-command regions
+        // come from the CPU prefix sum, which gather normally fills; seed the
+        // one group this fixture drives so pre-cull has a real command slot.
+        renderer_->SetTechniqueCommandRegions(std::array<std::uint32_t, 2>{1u, 0u});
         renderer_->SetCurrentEntityCount(1);
         renderer_->PrepareCompute({}, registry_, view_, projection_, kWidth, kHeight, 0);
     }
@@ -271,4 +275,86 @@ TEST_F(SkinnedBoundsGpuTest, NoOccluderBitKeepsTheSubmeshOutOfTheOccluderSet) {
     });
     EXPECT_EQ(skipped.flags & VulkanEngine::SceneRenderer::kOccluderBit, 0u)
         << "a deformed submesh was selected as an occluder on its rest-pose bounds";
+}
+
+TEST_F(SkinnedBoundsGpuTest, CustomDepthVariantBuildsADepthOnlyPipeline) {
+    // Exercises MakeDepthDesc / EnsureDepthVariant end to end: the mask row's
+    // depth_frag must produce a colorless pipeline on the technique layout.
+    using VulkanEngine::TechniqueManager::DefaultMeshTechnique;
+    using VulkanEngine::TechniqueManager::DepthCoverage;
+    using VulkanEngine::TechniqueManager::VariantShaderRow;
+    using VulkanEngine::ShaderSystem::kInvalidShaderId;
+    namespace DrawKeyState = VulkanEngine::TechniqueManager::DrawKeyState;
+
+    // BaseTechnique::Compile takes the concrete bootstrap even though it only
+    // reads the backend, so wrap the fixture's headless backend without taking
+    // ownership and without initializing the swapchain path.
+    std::shared_ptr<VulkanBackend::Vulkan::IVulkanBootstrap> backend_ref(
+        &backend_, [](VulkanBackend::Vulkan::IVulkanBootstrap*) {});
+    VulkanBackend::Vulkan::VulkanBootstrap bootstrap(backend_ref);
+
+    DefaultMeshTechnique tech;
+    const std::array<VariantShaderRow, 3> rows{{
+        {.vert = ids_.main_indir_vert, .frag = ids_.standard_mesh_frag,
+         .depth_frag = kInvalidShaderId, .depth_coverage = DepthCoverage::EngineDepthOnly},
+        {.vert = ids_.main_indir_vert_uv1, .frag = ids_.standard_mesh_frag_uv1,
+         .depth_frag = kInvalidShaderId, .depth_coverage = DepthCoverage::EngineDepthOnly},
+        {.vert = ids_.main_indir_vert, .frag = ids_.standard_mesh_frag_mask,
+         .depth_frag = ids_.standard_mesh_depth_mask, .depth_coverage = DepthCoverage::Custom},
+    }};
+    tech.SetVariantShaderRows(rows);
+
+    // Set 0 is the bindless table in the real engine; the depth mask shader's
+    // bindings only need a valid layout at pipeline-creation time, so an empty
+    // one is enough here. Sets 1-4 come from the renderer's live layouts.
+    vk::raii::DescriptorSetLayout empty_layout(
+        backend_.GetDevice(), vk::DescriptorSetLayoutCreateInfo{});
+    VulkanEngine::StandardMeshPipeline::PipelineConfig config{};
+    config.draw_mode = static_cast<std::uint32_t>(DrawMode::CID);
+    ASSERT_TRUE(tech.CompileDefaultMesh(
+        bootstrap, *shaders_, *pipeline_factory_,
+        ids_.main_indir_vert, ids_.standard_mesh_frag, config,
+        *empty_layout,
+        *renderer_->GetSubmeshVertexEntriesLayout(),
+        *renderer_->GetVertexBuffersLayout(),
+        *renderer_->GetIndirectionLayout(),
+        renderer_->GetSceneUniformLayout()));
+
+    const std::uint32_t key = DrawKeyState::PackDrawKey(2u, 0u); // uv0 + mask
+    EXPECT_FALSE(tech.HasDepthVariant(key));
+    ASSERT_TRUE(tech.EnsureDepthVariant(key, *shaders_, *pipeline_factory_));
+    EXPECT_TRUE(tech.HasDepthVariant(key));
+    EXPECT_NE(tech.GetDepthPipeline(key), nullptr);
+
+    tech.Shutdown();
+}
+
+TEST_F(SkinnedBoundsGpuTest, ReuseColorFragmentDepthVariantBuilds) {
+    // The unlit technique reuses its color fragment as the prepass coverage
+    // shader. That shader writes SV_TARGET; a depth-only pipeline must still be
+    // creatable (the output has no attachment to land in).
+    using VulkanEngine::TechniqueManager::UnlitTextureTechnique;
+
+    std::shared_ptr<VulkanBackend::Vulkan::IVulkanBootstrap> backend_ref(
+        &backend_, [](VulkanBackend::Vulkan::IVulkanBootstrap*) {});
+    VulkanBackend::Vulkan::VulkanBootstrap bootstrap(backend_ref);
+
+    vk::raii::DescriptorSetLayout empty_layout(
+        backend_.GetDevice(), vk::DescriptorSetLayoutCreateInfo{});
+    VulkanEngine::StandardMeshPipeline::PipelineConfig config{};
+    config.draw_mode = static_cast<std::uint32_t>(DrawMode::CID);
+
+    UnlitTextureTechnique unlit;
+    ASSERT_TRUE(unlit.CompileUnlit(
+        bootstrap, *shaders_, *pipeline_factory_,
+        ids_.main_indir_vert, ids_.unlit_frag, config,
+        *empty_layout,
+        *renderer_->GetSubmeshVertexEntriesLayout(),
+        *renderer_->GetVertexBuffersLayout(),
+        *renderer_->GetIndirectionLayout(),
+        renderer_->GetSceneUniformLayout()));
+
+    ASSERT_TRUE(unlit.EnsureDepthVariant(0u, *shaders_, *pipeline_factory_));
+    EXPECT_NE(unlit.GetDepthPipeline(0u), nullptr);
+    unlit.Shutdown();
 }

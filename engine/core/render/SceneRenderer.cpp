@@ -406,11 +406,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         expand_pool_->SetDebugName(dev, "expand-pool");
     }
 
-    // Set 5: Occlusion layout (10 bindings: vertex info, cull, spheres, Hi-Z,
+    // Set 5: Occlusion layout (12 bindings: vertex info, cull, spheres, Hi-Z,
     // OBBs, flag table — shared by the occlusion pass and the pre-cull pass,
-    // which adds the survivor compaction bindings 6-8)
+    // which adds the survivor compaction bindings 6-11)
     {
-        std::array<vk::DescriptorSetLayoutBinding, 9> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 12> bs{};
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -425,7 +425,7 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
         bs[4].descriptorCount = max_blocks_;
         bs[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        for (std::uint32_t i = 5; i < 9; ++i) {
+        for (std::uint32_t i = 5; i < 12; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1;
@@ -445,18 +445,19 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         occlusion_pool_->SetDebugName(dev, "occlusion-pool");
     }
 
-    // Set 8: Occluder-select layout (8 bindings: cull blocks, transform blocks,
-    // OBB blocks, flag table, full indirection, occluder indirection, draw
-    // command, selection counter)
+    // Set 8: Occluder-select layout (11 bindings: cull blocks, transform blocks,
+    // OBB blocks, flag table, full indirection, occluder commands, command
+    // counter, selection counter, region bases, per-group counts, occluder
+    // indices)
     {
-        std::array<vk::DescriptorSetLayoutBinding, 8> bs{};
+        std::array<vk::DescriptorSetLayoutBinding, 11> bs{};
         for (std::uint32_t i = 0; i < 3; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = max_blocks_;
             bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
         }
-        for (std::uint32_t i = 3; i < 8; ++i) {
+        for (std::uint32_t i = 3; i < 11; ++i) {
             bs[i].binding = i;
             bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
             bs[i].descriptorCount = 1;
@@ -857,18 +858,20 @@ bool SceneRenderer::CreateFrameBuffers() {
             VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indices.GetBuffer(),
                                                        vk::ObjectType::eBuffer, "occluder-indices");
 
-            fr.depth_out_draw_command = GpuResources::GpuBuffer::Create(
-                be, sizeof(vk::DrawIndexedIndirectCommand), indirect_usage,
+            fr.depth_commands = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
+                indirect_usage,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
-            fr.occluder_out_draw_command = GpuResources::GpuBuffer::Create(
-                be, sizeof(vk::DrawIndexedIndirectCommand), indirect_usage,
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-commands");
+            fr.occluder_commands = GpuResources::GpuBuffer::Create(
+                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
+                indirect_usage,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                     vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_out_draw_command.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-out-draw-command");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_out_draw_command.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-out-draw-command");
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_commands.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-commands");
         } else {
             fr.main_commands = GpuResources::GpuBuffer::Create(
                 be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
@@ -886,18 +889,16 @@ bool SceneRenderer::CreateFrameBuffers() {
             VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_commands.GetBuffer(),
                                                        vk::ObjectType::eBuffer, "occluder-commands");
 
-            fr.depth_out_command_count = GpuResources::GpuBuffer::Create(
-                be, sizeof(std::uint32_t), indirect_usage,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            fr.occluder_out_command_count = GpuResources::GpuBuffer::Create(
-                be, sizeof(std::uint32_t), indirect_usage,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_out_command_count.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-out-command-count");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_out_command_count.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-out-command-count");
+            // MID never writes the depth/occluder index lists, but the shared
+            // occlusion set binds them, so keep 4 B dummies there.
+            fr.depth_indices = GpuResources::GpuBuffer::Create(
+                be, 4u, storage_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indices.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "depth-indices-dummy");
+            fr.occluder_indices = GpuResources::GpuBuffer::Create(
+                be, 4u, storage_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indices.GetBuffer(),
+                                                       vk::ObjectType::eBuffer, "occluder-indices-dummy");
         }
 
         // Allocated in both modes so the collect layout bindings are always valid.
@@ -907,6 +908,38 @@ bool SceneRenderer::CreateFrameBuffers() {
                 vk::MemoryPropertyFlagBits::eHostCoherent);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_region_bases.GetBuffer(),
                                                    vk::ObjectType::eBuffer, "technique-region-bases");
+
+        // Depth prepass counters. Both are host-visible; MID reads the per-group
+        // counts as the drawIndirectCount buffer, so it needs eIndirectBuffer.
+        fr.depth_out_counter = GpuResources::GpuBuffer::Create(
+            be, sizeof(std::uint32_t), storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_out_counter.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "depth-out-counter");
+        fr.depth_technique_counts = GpuResources::GpuBuffer::Create(
+            be, tech_counts_size,
+            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_technique_counts.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "depth-technique-counts");
+
+        // Occluder prepass mirrors the depth prepass: one counter and one
+        // per-group count table, host-visible, counts indirect in MID.
+        fr.occluder_out_counter = GpuResources::GpuBuffer::Create(
+            be, sizeof(std::uint32_t), storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_out_counter.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "occluder-out-counter");
+        fr.occluder_technique_counts = GpuResources::GpuBuffer::Create(
+            be, tech_counts_size,
+            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_technique_counts.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "occluder-technique-counts");
 
         // technique_draw_commands: CID main pass only. In MID the
         // per-technique commands live in main_commands, so nothing is bound to
@@ -990,14 +1023,14 @@ void SceneRenderer::DestroyFrameBuffers() {
         fr.main_indices = GpuResources::GpuBuffer{};
         fr.depth_indices = GpuResources::GpuBuffer{};
         fr.occluder_indices = GpuResources::GpuBuffer{};
-        fr.depth_out_draw_command = GpuResources::GpuBuffer{};
-        fr.occluder_out_draw_command = GpuResources::GpuBuffer{};
         fr.main_commands = GpuResources::GpuBuffer{};
         fr.depth_commands = GpuResources::GpuBuffer{};
         fr.occluder_commands = GpuResources::GpuBuffer{};
-        fr.depth_out_command_count = GpuResources::GpuBuffer{};
-        fr.occluder_out_command_count = GpuResources::GpuBuffer{};
         fr.technique_region_bases = GpuResources::GpuBuffer{};
+        fr.depth_out_counter = GpuResources::GpuBuffer{};
+        fr.depth_technique_counts = GpuResources::GpuBuffer{};
+        fr.occluder_out_counter = GpuResources::GpuBuffer{};
+        fr.occluder_technique_counts = GpuResources::GpuBuffer{};
         fr.occluder_candidate_count = GpuResources::GpuBuffer{};
         fr.technique_draw_commands = GpuResources::GpuBuffer{};
         fr.technique_counts = GpuResources::GpuBuffer{};

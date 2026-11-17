@@ -39,9 +39,10 @@ Two modes share one vertex-fetch path and differ only in the compaction output:
 | | CID | MID |
 |---|---|---|
 | Compaction output | 4 B absolute slot indices, packed per pass/technique | 20 B `DrawIndexedIndirectCommand` per alive submesh + a 4 B count; `firstInstance` = submesh id |
-| Depth/occluder prepass | one `drawIndexedIndirect` with a GPU-written command | `drawIndexedIndirectCount` |
+| Depth prepass | one `drawIndexedIndirect` per surviving submesh, grouped by draw group; each command indexes the compacted depth list | one `drawIndexedIndirectCount` per draw group over that group's command region |
+| Occluder prepass | one `drawIndexedIndirect` per selected occluder, grouped by draw group; each command indexes the compacted occluder list | one `drawIndexedIndirectCount` per draw group over that group's command region |
 | Main pass | one `drawIndexedIndirect` per technique | one `drawIndexedIndirectCount` per technique |
-| Commands per technique | 1 | one per alive submesh |
+| Commands per technique | 1 (main), one per surviving submesh (depth), one per selected occluder | one per alive submesh |
 | Vulkan feature | none (`drawIndexedIndirect` is core 1.0) | `drawIndirectCount` + `drawIndirectFirstInstance` |
 
 Both modes produce the same survivors and the same vertex-cache behavior. They are

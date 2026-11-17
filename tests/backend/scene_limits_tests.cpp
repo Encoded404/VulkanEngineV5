@@ -42,10 +42,10 @@ TEST(SceneLimitsTest, PlanStorageBufferCountsMatchTheirLayouts) {
     EXPECT_EQ(StorageBuffersForPlan(kSubmeshVertexPlan, blocks), 8u);
     // expand: 5 block arrays + 3 singles.
     EXPECT_EQ(StorageBuffersForPlan(kExpandPlan, blocks), 43u);
-    // occlusion: 4 block arrays + 4 singles.
-    EXPECT_EQ(StorageBuffersForPlan(kOcclusionPlan, blocks), 36u);
-    // occluder-select: 3 block arrays + 5 singles.
-    EXPECT_EQ(StorageBuffersForPlan(kOccluderSelectPlan, blocks), 29u);
+    // occlusion: 4 block arrays + 7 singles.
+    EXPECT_EQ(StorageBuffersForPlan(kOcclusionPlan, blocks), 39u);
+    // occluder-select: 3 block arrays + 8 singles.
+    EXPECT_EQ(StorageBuffersForPlan(kOccluderSelectPlan, blocks), 32u);
     // collect: 1 block array + 5 singles.
     EXPECT_EQ(StorageBuffersForPlan(kCollectPlan, blocks), 13u);
     // depth-graphics-stage: 1 block array + vertex/UV tables + deformed vertices.

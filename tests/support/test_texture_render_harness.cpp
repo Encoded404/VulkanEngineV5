@@ -73,6 +73,7 @@ TextureRenderHarness::~TextureRenderHarness() {
 }
 
 void TextureRenderHarness::Shutdown() {
+    depth_pipeline_.reset();
     pipeline_.reset();
     pipeline_layout_.reset();
     host_buffers_.clear();
@@ -99,7 +100,7 @@ bool TextureRenderHarness::CreateDescriptorLayouts() {
             device, vk::DescriptorSetLayoutCreateInfo{{}, 1, &binding});
     }
 
-    if (config_.mode == HarnessMode::Standard) {
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::DepthMask) {
         const std::array<vk::DescriptorSetLayoutBinding, 2> scene_bindings{{
             vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageBuffer, 1,
                                            vk::ShaderStageFlagBits::eFragment, nullptr),
@@ -109,7 +110,8 @@ bool TextureRenderHarness::CreateDescriptorLayouts() {
         scene_set4_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
             device, vk::DescriptorSetLayoutCreateInfo{{}, 2, scene_bindings.data()});
     }
-    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::Unlit) {
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::Unlit ||
+        config_.mode == HarnessMode::DepthMask) {
         const vk::DescriptorSetLayoutBinding material_binding(
             0, vk::DescriptorType::eStorageBuffer, 1,
             vk::ShaderStageFlagBits::eFragment, nullptr);
@@ -125,7 +127,7 @@ bool TextureRenderHarness::CreatePipeline() {
 
     std::vector<vk::DescriptorSetLayout> set_layouts;
     std::vector<vk::PushConstantRange> push_ranges;
-    if (config_.mode == HarnessMode::Standard) {
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::DepthMask) {
         // The engine shader declares its sets as 0 (bindless), 4 (scene), 5
         // (material); the reserved sets 1..3 must exist as empty layouts so the
         // scene/material layouts land at the indices the shader names.
@@ -181,6 +183,40 @@ bool TextureRenderHarness::CreatePipeline() {
     return true;
 }
 
+bool TextureRenderHarness::CreateDepthPipeline() {
+    const vk::raii::Device& device = backend_->GetDevice();
+
+    VulkanEngine::ShaderSystem::GraphicsPipelineDesc desc{};
+    desc.vertex_shader = config_.vertex_shader;
+    desc.fragment_shader = config_.depth_fragment_shader;
+    desc.vertex_input = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+    desc.input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, vk::PrimitiveTopology::eTriangleList);
+    desc.viewport = vk::PipelineViewportStateCreateInfo({}, 1, nullptr, 1, nullptr);
+    desc.rasterization = vk::PipelineRasterizationStateCreateInfo(
+        {}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone,
+        vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f);
+    desc.multisample = vk::PipelineMultisampleStateCreateInfo({}, vk::SampleCountFlagBits::e1);
+    desc.depth_stencil = vk::PipelineDepthStencilStateCreateInfo(
+        {}, vk::True, vk::True, vk::CompareOp::eLess);
+    desc.color_blend = vk::PipelineColorBlendStateCreateInfo({}, vk::False, vk::LogicOp::eCopy, 0, nullptr);
+    // No color attachments: the coverage shader writes no color.
+    desc.dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+    desc.layout = **pipeline_layout_;
+    desc.depth_format = vk::Format::eD32Sfloat;
+
+    VulkanEngine::ShaderSystem::PipelineFactory factory(device, backend_->GetCapabilities(),
+                                                        shaders_->GetPipelineCacheRAII());
+    auto product = factory.CreateGraphics(desc, *shaders_);
+    if (!product.has_value()) {
+        LOGIFACE_LOG(error, "TextureRenderHarness: depth pipeline creation failed: " +
+                     product.error().message);
+        return false;
+    }
+    depth_pipeline_ = std::make_unique<VulkanEngine::ShaderSystem::PipelineProduct>(
+        std::move(*product));
+    return true;
+}
+
 bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backend,
                                       VulkanEngine::ShaderSystem::ShaderManager& shaders,
                                       const TextureRenderHarnessConfig& config) {
@@ -205,7 +241,7 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
         backend_->GetDevice(), vk::DescriptorPoolCreateInfo({}, 3, sizes.size(), sizes.data()));
 
     std::vector<vk::DescriptorSetLayout> layouts{**bindless_set0_layout_};
-    if (config_.mode == HarnessMode::Standard) {
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::DepthMask) {
         layouts.push_back(**scene_set4_layout_);
         layouts.push_back(**material_set5_layout_);
     } else if (config_.mode == HarnessMode::Unlit) {
@@ -217,7 +253,7 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
         return false;
     }
     bindless_set0_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
-    if (config_.mode == HarnessMode::Standard) {
+    if (config_.mode == HarnessMode::Standard || config_.mode == HarnessMode::DepthMask) {
         scene_set4_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[1]));
         material_set5_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[2]));
     } else if (config_.mode == HarnessMode::Unlit) {
@@ -226,7 +262,13 @@ bool TextureRenderHarness::Initialize(TestSupport::HeadlessVulkanBackend& backen
 
     // Unlit mode does not use the scene set; the pool is only sized for what
     // each mode allocates.
-    return CreatePipeline();
+    if (!CreatePipeline()) {
+        return false;
+    }
+    if (config_.mode == HarnessMode::DepthMask) {
+        return CreateDepthPipeline();
+    }
+    return true;
 }
 
 void TextureRenderHarness::WriteDescriptors(const VulkanEngine::GpuResources::GpuTexture& albedo,
@@ -258,7 +300,8 @@ void TextureRenderHarness::WriteDescriptors(const VulkanEngine::GpuResources::Gp
                                              images.data());
     device.updateDescriptorSets(image_write, {});
 
-    if (config_.mode != HarnessMode::Standard) {
+    if (config_.mode != HarnessMode::Standard &&
+        config_.mode != HarnessMode::DepthMask) {
         return;
     }
 
@@ -479,6 +522,132 @@ std::vector<std::uint8_t> TextureRenderHarness::RenderFrame(
     std::memcpy(pixels.data(), mapped, pixels.size());
     read_memory.unmapMemory();
     return pixels;
+}
+
+std::vector<float> TextureRenderHarness::RenderDepthMaskAndReadBack(
+    const VulkanEngine::GpuResources::GpuTexture& albedo,
+    const HarnessMaterialData& material_in,
+    const HarnessSceneHeader& scene) {
+    if (!albedo.IsValid() || depth_pipeline_ == nullptr) {
+        return {};
+    }
+    HarnessMaterialData material = material_in;
+    material.albedo_texture = 0;
+    WriteDescriptors(albedo, {}, {}, material, scene, {});
+
+    const vk::raii::Device& device = backend_->GetDevice();
+    const std::uint32_t width = config_.width;
+    const std::uint32_t height = config_.height;
+    const vk::DeviceSize pixel_bytes =
+        static_cast<vk::DeviceSize>(width) * height * sizeof(float);
+
+    const vk::ImageCreateInfo depth_info(
+        {}, vk::ImageType::e2D, vk::Format::eD32Sfloat, vk::Extent3D{width, height, 1},
+        1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eTransferSrc,
+        vk::SharingMode::eExclusive);
+    vk::raii::Image depth_image(device, depth_info);
+    const vk::MemoryRequirements depth_req = depth_image.getMemoryRequirements();
+    vk::raii::DeviceMemory depth_memory(
+        device, vk::MemoryAllocateInfo(
+                    depth_req.size,
+                    VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
+                        backend_->GetPhysicalDevice(), depth_req.memoryTypeBits,
+                        vk::MemoryPropertyFlagBits::eDeviceLocal)));
+    depth_image.bindMemory(*depth_memory, 0);
+    const vk::raii::ImageView depth_view(
+        device, vk::ImageViewCreateInfo({}, *depth_image, vk::ImageViewType::e2D,
+                                        vk::Format::eD32Sfloat,
+                                        vk::ComponentMapping{},
+                                        vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1)));
+
+    const vk::raii::Buffer readback_buffer(
+        device, vk::BufferCreateInfo({}, pixel_bytes, vk::BufferUsageFlagBits::eTransferDst));
+    const vk::MemoryRequirements read_req = readback_buffer.getMemoryRequirements();
+    vk::raii::DeviceMemory read_memory(
+        device, vk::MemoryAllocateInfo(
+                    read_req.size,
+                    VulkanBackend::Vulkan::MemoryUtils::FindMemoryType(
+                        backend_->GetPhysicalDevice(), read_req.memoryTypeBits,
+                        vk::MemoryPropertyFlagBits::eHostVisible |
+                            vk::MemoryPropertyFlagBits::eHostCoherent)));
+    readback_buffer.bindMemory(*read_memory, 0);
+
+    vk::raii::CommandBuffer& cmd = backend_->GetCommandBuffer(0);
+    cmd.reset({});
+    cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+    const vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1);
+    const vk::ImageMemoryBarrier to_depth(
+        {}, vk::AccessFlagBits::eDepthStencilAttachmentWrite, vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eDepthAttachmentOptimal, vk::QueueFamilyIgnored,
+        vk::QueueFamilyIgnored, *depth_image, range);
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                            vk::PipelineStageFlagBits::eLateFragmentTests,
+                        {}, {}, {}, to_depth);
+
+    vk::RenderingAttachmentInfo depth_attachment{};
+    depth_attachment.imageView = *depth_view;
+    depth_attachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    depth_attachment.resolveMode = vk::ResolveModeFlagBits::eNone;
+    depth_attachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depth_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+    depth_attachment.clearValue = vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
+    vk::RenderingInfo rendering{};
+    rendering.renderArea = vk::Rect2D({0, 0}, {width, height});
+    rendering.layerCount = 1;
+    rendering.colorAttachmentCount = 0;
+    rendering.pColorAttachments = nullptr;
+    rendering.pDepthAttachment = &depth_attachment;
+
+    cmd.beginRendering(rendering);
+    cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width),
+                                    static_cast<float>(height), 0.0f, 1.0f));
+    cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_pipeline_->Get());
+    const std::array<vk::DescriptorSet, 1> set0{**bindless_set0_};
+    const std::array<vk::DescriptorSet, 1> set4{**scene_set4_};
+    const std::array<vk::DescriptorSet, 1> set5{**material_set5_};
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 0, set0, {});
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 4, set4, {});
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout_, 5, set5, {});
+    const std::array<float, 4> camera{kCameraZ, 0.0f, 0.0f, 0.0f};
+    cmd.pushConstants<float>(**pipeline_layout_, vk::ShaderStageFlagBits::eFragment, 0, camera);
+    cmd.draw(3, 1, 0, 0);
+    cmd.endRendering();
+
+    const vk::ImageMemoryBarrier to_src(
+        vk::AccessFlagBits::eDepthStencilAttachmentWrite, vk::AccessFlagBits::eTransferRead,
+        vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal,
+        vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *depth_image, range);
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                            vk::PipelineStageFlagBits::eLateFragmentTests,
+                        vk::PipelineStageFlagBits::eTransfer,
+                        {}, {}, {}, to_src);
+
+    const vk::BufferImageCopy region(
+        0, 0, 0, vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eDepth, 0, 0, 1),
+        vk::Offset3D{0, 0, 0}, vk::Extent3D{width, height, 1});
+    cmd.copyImageToBuffer(*depth_image, vk::ImageLayout::eTransferSrcOptimal,
+                          *readback_buffer, region);
+
+    const vk::BufferMemoryBarrier to_host(
+        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eHostRead,
+        vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *readback_buffer, 0, pixel_bytes);
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                        vk::PipelineStageFlagBits::eHost, {}, {}, to_host, {});
+    cmd.end();
+
+    const vk::SubmitInfo submit(0, nullptr, nullptr, 1, &*cmd);
+    backend_->GetGraphicsQueue().submit(submit, {});
+    backend_->GetGraphicsQueue().waitIdle();
+
+    std::vector<float> depth(static_cast<std::size_t>(width) * height);
+    const void* mapped = read_memory.mapMemory(0, pixel_bytes);
+    std::memcpy(depth.data(), mapped, static_cast<std::size_t>(pixel_bytes));
+    read_memory.unmapMemory();
+    return depth;
 }
 
 }  // namespace TestSupport

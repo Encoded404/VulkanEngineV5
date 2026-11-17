@@ -34,6 +34,10 @@ class UnlitTextureTechnique final : public BaseTechnique {
 public:
     UnlitTextureTechnique() {
         DeclarePerMaterial<UnlitPerMaterialData>(5, 0);
+        // The single unlit fragment shader discards below alpha_cutoff, so the
+        // engine's empty depth shader would be wrong. It is cheap enough to
+        // reuse as the prepass coverage shader.
+        SetBaseDepthCoverage(DepthCoverage::ReuseColorFragment);
     }
 
     // ── MaterialHandle<Tech> requires these static helpers ──

@@ -48,6 +48,7 @@ void BaseTechnique::Shutdown() {
     shared_buffers_.clear();
     shared_cpu_data_.clear();
     variants_.clear();
+    depth_variants_.clear();
     pipeline_layout_ = nullptr;
     bindings_.clear();
     compiled_ = false;
@@ -283,6 +284,7 @@ bool BaseTechnique::Compile(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
         }
 
         variants_.clear();
+        depth_variants_.clear();
         TechniqueVariant base_variant{};
         base_variant.draw_key = 0;
         base_variant.vert = vert_id;
@@ -550,6 +552,101 @@ bool BaseTechnique::EnsureVariant(std::uint32_t draw_key,
     return true;
 }
 
+// ── Depth-prepass pipelines ──
+
+ShaderSystem::GraphicsPipelineDesc BaseTechnique::MakeDepthDesc(
+    const ShaderSystem::GraphicsPipelineDesc& base, std::uint32_t draw_key,
+    const VulkanEngine::StandardMeshPipeline::PipelineConfig& config) const {
+    // Start from the color variant so the layout, vertex input, rasterization
+    // (including the draw key's cull mode), sample count and depth format stay
+    // identical; only the color target and the depth state differ.
+    ShaderSystem::GraphicsPipelineDesc desc = MakeVariantDesc(base, draw_key, config);
+
+    const std::uint32_t variant_slot = DrawKeyState::VariantOf(draw_key);
+    ShaderSystem::ShaderId vert = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId frag = ShaderSystem::kInvalidShaderId;
+    if (!GetVariantShaders(variant_slot, vert, frag)) {
+        desc.vertex_shader = ShaderSystem::kInvalidShaderId;
+        desc.fragment_shader = ShaderSystem::kInvalidShaderId;
+        return desc;
+    }
+
+    desc.vertex_shader = vert;
+    if (GetDepthCoverage(variant_slot) == DepthCoverage::ReuseColorFragment) {
+        // The row's color fragment already applies the same discard rule.
+        desc.fragment_shader = frag;
+    } else {
+        desc.fragment_shader = GetVariantDepthShader(variant_slot);
+    }
+
+    // Depth-only: no color attachments, no blending.
+    desc.color_formats.clear();
+    desc.color_blend_attachments.clear();
+
+    // The prepass always fills depth, regardless of the color pass's state.
+    desc.depth_stencil.depthTestEnable = true;
+    desc.depth_stencil.depthWriteEnable = true;
+    desc.depth_stencil.depthCompareOp = vk::CompareOp::eLess;
+    desc.depth_stencil.depthBoundsTestEnable = false;
+    desc.depth_stencil.stencilTestEnable = false;
+    return desc;
+}
+
+bool BaseTechnique::HasDepthVariant(std::uint32_t draw_key) const {
+    return std::any_of(depth_variants_.begin(), depth_variants_.end(),
+        [draw_key](const DepthVariant& variant) {
+            return variant.draw_key == draw_key;
+        });
+}
+
+vk::Pipeline BaseTechnique::GetDepthPipeline(std::uint32_t draw_key) const {
+    for (const auto& variant : depth_variants_) {
+        if (variant.draw_key == draw_key) return variant.slot.Get();
+    }
+    return nullptr;
+}
+
+bool BaseTechnique::EnsureDepthVariant(std::uint32_t draw_key,
+                                       ShaderSystem::ShaderManager& shaders,
+                                       ShaderSystem::PipelineFactory& factory) {
+    if (!compiled_) return false;
+    if (HasDepthVariant(draw_key)) return true;
+    if (variants_.empty()) return false;
+
+    const std::uint32_t variant_slot = DrawKeyState::VariantOf(draw_key);
+    if (variant_slot >= VariantCount()) return false;
+    const DepthCoverage coverage = GetDepthCoverage(variant_slot);
+    if (coverage != DepthCoverage::Custom &&
+        coverage != DepthCoverage::ReuseColorFragment) {
+        return false;
+    }
+
+    DepthVariant variant{};
+    variant.draw_key = draw_key;
+    variant.desc = MakeDepthDesc(variants_[0].desc, draw_key, pipeline_config_);
+    if (variant.desc.vertex_shader == ShaderSystem::kInvalidShaderId ||
+        variant.desc.fragment_shader == ShaderSystem::kInvalidShaderId) {
+        LOGIFACE_LOG(error, std::format(
+            "BaseTechnique {}: depth variant 0x{:x} has no shader pair", id_.value, draw_key));
+        return false;
+    }
+    variant.slot.SetFramesInFlight(variants_[0].slot.FramesInFlight());
+
+    auto result = factory.CreateGraphics(variant.desc, shaders);
+    if (!result.has_value()) {
+        LOGIFACE_LOG(error, std::format(
+            "BaseTechnique {}: depth variant 0x{:x} pipeline creation failed: {}",
+            id_.value, draw_key, result.error().message));
+        return false;
+    }
+    variant.slot.Swap(std::move(result.value()), 0);
+    LOGIFACE_LOG(debug, std::format(
+        "BaseTechnique {}: materialized depth variant 0x{:x} (uv slot {})",
+        id_.value, draw_key, variant_slot));
+    depth_variants_.push_back(std::move(variant));
+    return true;
+}
+
 void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,
                                    ShaderSystem::PipelineFactory& factory,
                                    std::uint32_t frame_index) {
@@ -559,6 +656,32 @@ void BaseTechnique::PollAndRebuild(ShaderSystem::ShaderManager& shaders,
     for (auto& variant : variants_) {
         variant.slot.RetireFrame(frame_index);
         variant.slot.PollAndRebuild(shaders, variant.vert, variant.frag,
+            [&factory, &variant](ShaderSystem::ShaderManager& s)
+                -> std::optional<ShaderSystem::PipelineProduct> {
+                auto result = factory.CreateGraphics(variant.desc, s);
+                return result
+                    ? std::optional<ShaderSystem::PipelineProduct>(std::move(*result))
+                    : std::nullopt;
+            }, frame_index);
+    }
+
+    // Depth variants watch the stage their policy actually runs: depth_frag for
+    // Custom, the row's color fragment for ReuseColorFragment.
+    for (auto& variant : depth_variants_) {
+        const std::uint32_t variant_slot = DrawKeyState::VariantOf(variant.draw_key);
+        const DepthCoverage coverage = GetDepthCoverage(variant_slot);
+        ShaderSystem::ShaderId vert = ShaderSystem::kInvalidShaderId;
+        ShaderSystem::ShaderId frag = ShaderSystem::kInvalidShaderId;
+        if (!GetVariantShaders(variant_slot, vert, frag)) continue;
+        if (coverage == DepthCoverage::ReuseColorFragment) {
+            variant.desc.fragment_shader = frag;
+        } else if (coverage == DepthCoverage::Custom) {
+            variant.desc.fragment_shader = GetVariantDepthShader(variant_slot);
+        } else {
+            continue;
+        }
+        variant.slot.RetireFrame(frame_index);
+        variant.slot.PollAndRebuild(shaders, vert, variant.desc.fragment_shader,
             [&factory, &variant](ShaderSystem::ShaderManager& s)
                 -> std::optional<ShaderSystem::PipelineProduct> {
                 auto result = factory.CreateGraphics(variant.desc, s);
@@ -588,9 +711,23 @@ bool BaseTechnique::RebuildForDrawMode(ShaderSystem::ShaderManager& shaders,
         }
         variant.slot.Swap(std::move(result.value()), frame_index);
     }
+    for (auto& variant : depth_variants_) {
+        variant.slot.RetireFrame(frame_index);
+        ApplyDrawModeSpec(variant.desc, draw_mode);
+        auto result = factory.CreateGraphics(variant.desc, shaders);
+        if (!result.has_value()) {
+            LOGIFACE_LOG(error, std::format(
+                "BaseTechnique {}: draw-mode depth rebuild failed for variant 0x{:x}: {}",
+                id_.value, variant.draw_key, result.error().message));
+            ok = false;
+            continue;
+        }
+        variant.slot.Swap(std::move(result.value()), frame_index);
+    }
     if (ok) {
-        LOGIFACE_LOG(debug, std::format("BaseTechnique {}: re-specialized {} variant(s) for draw mode {}",
-                                        id_.value, variants_.size(), draw_mode));
+        LOGIFACE_LOG(debug, std::format(
+            "BaseTechnique {}: re-specialized {} variant(s) and {} depth variant(s) for draw mode {}",
+            id_.value, variants_.size(), depth_variants_.size(), draw_mode));
     }
     return ok;
 }

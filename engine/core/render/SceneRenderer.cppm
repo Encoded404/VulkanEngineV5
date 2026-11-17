@@ -280,6 +280,33 @@ inline constexpr std::uint32_t TECHNIQUE_FLAG_RECEIVES_OCCLUSION = 1u << 1;   //
 inline constexpr std::uint32_t TECHNIQUE_FLAG_COLLECT = 1u << 2;              // participates_in_collect
 inline constexpr std::uint32_t TECHNIQUE_FLAG_OCCLUDER_SAFE = 1u << 3;        // bounds_conservative (§5.5)
 
+// True when the group needs its technique's depth-only pipeline rather than the
+// engine depth pipeline. `ReuseColorFragment` and `Custom` both discard, in the
+// depth prepass and in the occluder prepass.
+[[nodiscard]] inline bool GroupUsesCustomDepthPipeline(
+    const VulkanEngine::TechniqueManager::DepthCoverage depth_coverage) {
+    return depth_coverage == VulkanEngine::TechniqueManager::DepthCoverage::ReuseColorFragment ||
+           depth_coverage == VulkanEngine::TechniqueManager::DepthCoverage::Custom;
+}
+
+// ── Depth-prepass participation ──
+// One decision for both the GPU flag table (UpdateTechniqueFlags) and the
+// prepass draw loop, so a group cannot be compacted by pre-cull but skipped by
+// the prepass (or the reverse). Pure and device-free.
+//
+// A transparent group is excluded: the prepass would store its nearest
+// fragment and the main pass would then reject the layers behind it. A group
+// whose row is Exclude is excluded too: its prepass depth cannot reproduce the
+// row's coverage.
+[[nodiscard]] inline bool GroupWritesPrepassDepth(
+    const bool participates_in_depth_pass,
+    const std::uint32_t render_state,
+    const VulkanEngine::TechniqueManager::DepthCoverage depth_coverage) {
+    if (!participates_in_depth_pass) return false;
+    if (VulkanEngine::TechniqueManager::DrawKeyState::BlendEnabled(render_state)) return false;
+    return depth_coverage != VulkanEngine::TechniqueManager::DepthCoverage::Exclude;
+}
+
 // Occluder selection: coverage threshold as a fraction of screen area and the
 // entry budget (docs/pre-prepass-occlusion-culling.md §5.1-A).
 inline constexpr float kOccluderMinAreaFraction = 0.0025f; // 0.25 % of the screen
@@ -489,10 +516,32 @@ public:
 
     void PollShaders(std::uint32_t frame_counter);
 
+    // Depth prepass. Iterates the draw groups so each group can bind either the
+    // engine depth pipeline (EngineDepthOnly) or the technique's coverage
+    // pipeline (Custom / ReuseColorFragment). `view` supplies the camera
+    // position push constant the coverage fragment may read.
     void DepthPrepass(vk::CommandBuffer cmd,
                       std::uint32_t width,
                       std::uint32_t height,
-                      std::uint32_t frame_index);
+                      std::uint32_t frame_index,
+                      VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
+                      VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
+                      const glm::mat4& view);
+
+    // Binds the engine depth pipeline (EngineDepthOnly) or the group's
+    // technique depth-only pipeline (Custom / ReuseColorFragment). The caller
+    // has set the viewport/scissor and bound the index buffer already. Returns
+    // false when a technique pipeline cannot be created; the caller skips the
+    // group for this frame.
+    [[nodiscard]] bool BindGroupDepthPipeline(
+        vk::CommandBuffer cmd,
+        VulkanEngine::TechniqueManager::BaseTechnique& tech,
+        std::uint32_t draw_key,
+        VulkanEngine::TechniqueManager::DepthCoverage coverage,
+        vk::DescriptorSet bindless_set,
+        const std::array<vk::DescriptorSet, 4>& engine_sets,
+        vk::DescriptorSet scene_uniform_set,
+        const float camera_pos[4]);
 
     void Render(vk::CommandBuffer cmd,
                 VulkanEngine::ComponentRegistry& registry,
@@ -522,10 +571,15 @@ public:
 
     // Hardware raster of the selected occluder meshes into the depth prepass
     // buffer (load_op = CLEAR, store = STORE; render graph node).
+    // Early occluder depth pass. Loops the draw groups so a cutout occluder can
+    // bind its coverage pipeline instead of the engine depth shader.
     void OccluderPrepass(vk::CommandBuffer cmd,
                          std::uint32_t width,
                          std::uint32_t height,
-                         std::uint32_t frame_index);
+                         std::uint32_t frame_index,
+                         VulkanEngine::TechniqueManager::TechniqueManager& technique_mgr,
+                         VulkanEngine::BindlessManager::BindlessManager& bindless_mgr,
+                         const glm::mat4& view);
 
     void DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t frame_index);
 
@@ -659,20 +713,27 @@ private:
 
         // ── CID destinations (4 B compact index lists) ──
         VulkanEngine::GpuResources::GpuBuffer main_indices{};
+        // CID: the depth pass's compact index list. MID binds a 4 B dummy
+        // because the shader path that writes it is specialized out.
         VulkanEngine::GpuResources::GpuBuffer depth_indices{};
+        // CID: the occluder prepass's compact index list; 4 B dummy in MID.
         VulkanEngine::GpuResources::GpuBuffer occluder_indices{};
-        // CID GPU-accumulated indexed draw commands (word 0 = indexCount).
-        VulkanEngine::GpuResources::GpuBuffer depth_out_draw_command{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_out_draw_command{};
 
         // ── MID destinations (20 B indexed indirect commands + count) ──
         VulkanEngine::GpuResources::GpuBuffer main_commands{};
+        // Both modes: one command per surviving submesh, grouped by draw group.
         VulkanEngine::GpuResources::GpuBuffer depth_commands{};
         VulkanEngine::GpuResources::GpuBuffer occluder_commands{};
-        VulkanEngine::GpuResources::GpuBuffer depth_out_command_count{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_out_command_count{};
         // CPU prefix sum of submeshes per technique (host-visible, MID main pass).
         VulkanEngine::GpuResources::GpuBuffer technique_region_bases{};
+        // Depth and occluder prepass counters. One uint each: CID reserves the
+        // index range; MID does not need it now that commands are placed per
+        // group.
+        VulkanEngine::GpuResources::GpuBuffer depth_out_counter{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_out_counter{};
+        // One count per draw group (MID's drawIndirectCount buffers).
+        VulkanEngine::GpuResources::GpuBuffer depth_technique_counts{};
+        VulkanEngine::GpuResources::GpuBuffer occluder_technique_counts{};
 
         VulkanEngine::GpuResources::GpuBuffer occluder_candidate_count{};
         VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};

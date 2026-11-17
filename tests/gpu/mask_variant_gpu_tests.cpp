@@ -65,6 +65,10 @@ protected:
         frag_mask_ = shaders_->RegisterManual(
             std::format("{}/StandardMeshFragMask.spv", VKENGINE_ENGINE_SHADER_DIR), "",
             ShaderStage::eFragment, "main");
+        // Depth-only coverage pair used by the depth prepass.
+        frag_depth_mask_ = shaders_->RegisterManual(
+            std::format("{}/StandardMeshDepthMask.spv", VKENGINE_ENGINE_SHADER_DIR), "",
+            ShaderStage::eFragment, "main");
     }
 
     void TearDown() override {
@@ -130,6 +134,54 @@ protected:
         return harness.RenderAndReadBack(albedo, {}, {}, material, scene, light);
     }
 
+    // DepthMask mode: same full-screen triangle, depth-only coverage pipeline,
+    // D32 depth readback (one float per pixel, 1.0 = far).
+    [[nodiscard]] std::vector<float> RenderDepth(
+        const GpuTexture& albedo,
+        const TestSupport::HarnessMaterialData& material,
+        const TestSupport::HarnessSceneHeader& scene = {}) {
+        harnesses_.push_back(std::make_unique<TestSupport::TextureRenderHarness>());
+        TestSupport::TextureRenderHarnessConfig config{};
+        config.width = kSize;
+        config.height = kSize;
+        config.mode = TestSupport::HarnessMode::DepthMask;
+        config.vertex_shader = vs_;
+        config.fragment_shader = frag_mask_;
+        config.depth_fragment_shader = frag_depth_mask_;
+        TestSupport::TextureRenderHarness& harness = *harnesses_.back();
+        if (!harness.Initialize(backend_, *shaders_, config)) {
+            ADD_FAILURE() << "depth harness init failed";
+            return {};
+        }
+        return harness.RenderDepthMaskAndReadBack(albedo, material, scene);
+    }
+
+    // Left half opaque, right half fully transparent. The mask entry points
+    // must keep exactly the left half in both the color and the depth pass.
+    [[nodiscard]] GpuTexture MakeSplitAlphaTexture() {
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kSize) * kSize * 4U);
+        for (std::uint32_t y = 0; y < kSize; ++y) {
+            for (std::uint32_t x = 0; x < kSize; ++x) {
+                const std::size_t i = (static_cast<std::size_t>(y) * kSize + x) * 4U;
+                pixels[i + 0] = 128;
+                pixels[i + 1] = 128;
+                pixels[i + 2] = 128;
+                pixels[i + 3] = x < kSize / 2 ? 255 : 0;
+            }
+        }
+        const auto ktx = TestSupport::MakeKtx2Rgba8(kSize, kSize, 1, pixels);
+        TextureData data{};
+        std::string error;
+        const FileLoader::ByteBuffer buffer(ktx.begin(), ktx.end());
+        if (!VulkanEngine::FileLoaders::Textures::LoadTextureFromBuffer(
+                "split.ktx2", buffer, data, &error)) {
+            ADD_FAILURE() << "loader failed: " << error;
+            return {};
+        }
+        return GpuTexture::CreateFromTextureData(backend_, heap_, data,
+                                                 vk::Format::eR8G8B8A8Unorm);
+    }
+
     [[nodiscard]] std::uint64_t Hash(const std::vector<std::uint8_t>& pixels) const {
         std::uint64_t hash = 14695981039346656037ULL;
         for (std::uint8_t byte : pixels) {
@@ -151,6 +203,7 @@ protected:
     VulkanEngine::ShaderSystem::ShaderId vs_{};
     VulkanEngine::ShaderSystem::ShaderId frag_base_{};
     VulkanEngine::ShaderSystem::ShaderId frag_mask_{};
+    VulkanEngine::ShaderSystem::ShaderId frag_depth_mask_{};
     std::vector<std::unique_ptr<TestSupport::TextureRenderHarness>> harnesses_;
 };
 
@@ -310,6 +363,63 @@ TEST_F(MaskVariantGpuTest, PointLightFallsOffInverseSquare) {
     EXPECT_GT(LuminanceAt(dir_pixels, 31, 31), near_lum)
         << "a point light must not reach the directional light's intensity "
            "at the closest point to it";
+}
+
+// ── Depth coverage parity (depth prepass) ──
+
+// The depth-only coverage shader must discard exactly the pixels the color MASK
+// entry point discards. The color pass writes the clear color where it dies; the
+// depth pass stores the cleared far value (1.0) where it dies and the quad depth
+// (eLess, so < 1.0) where it survives.
+TEST_F(MaskVariantGpuTest, DepthCoverageMatchesColorMask) {
+    auto albedo = MakeSplitAlphaTexture();
+    ASSERT_TRUE(albedo.IsValid());
+    const auto material = MaskMaterial(128);  // cutoff 0.5
+
+    const auto color = Render(frag_mask_, albedo, material, FlatScene());
+    ASSERT_EQ(color.size(), static_cast<std::size_t>(kSize) * kSize * 4U);
+    const auto depth = RenderDepth(albedo, material, FlatScene());
+    ASSERT_EQ(depth.size(), static_cast<std::size_t>(kSize) * kSize);
+
+    std::uint32_t kept = 0;
+    std::uint32_t holes = 0;
+    for (std::uint32_t y = 0; y < kSize; ++y) {
+        for (std::uint32_t x = 0; x < kSize; ++x) {
+            const std::size_t p = static_cast<std::size_t>(y) * kSize + x;
+            const bool color_discarded = LuminanceAt(color, x, y) == 0;
+            const bool depth_discarded = depth[p] > 0.9999f;
+            EXPECT_EQ(color_discarded, depth_discarded)
+                << "coverage diverged at (" << x << ", " << y << ")";
+            if (color_discarded) {
+                ++holes;
+            } else {
+                ++kept;
+            }
+        }
+    }
+    // The fixture must exercise both outcomes, or the parity check is vacuous.
+    EXPECT_GT(kept, 0u);
+    EXPECT_GT(holes, 0u);
+}
+
+TEST_F(MaskVariantGpuTest, DepthCoverageHonorsCutoff) {
+    auto albedo = MakeConstantTexture(128, 128, 128, 128);  // alpha ~0.50
+    ASSERT_TRUE(albedo.IsValid());
+
+    // Cutoff above the sampled alpha: every fragment dies, depth stays far.
+    const auto discarded = RenderDepth(albedo, MaskMaterial(193), FlatScene());
+    ASSERT_EQ(discarded.size(), static_cast<std::size_t>(kSize) * kSize);
+    for (float d : discarded) {
+        EXPECT_GT(d, 0.9999f);
+    }
+
+    // Cutoff below it: every fragment survives and writes quad depth.
+    const auto kept = RenderDepth(albedo, MaskMaterial(64), FlatScene());
+    ASSERT_EQ(kept.size(), static_cast<std::size_t>(kSize) * kSize);
+    for (float d : kept) {
+        EXPECT_LT(d, 0.9999f);
+        EXPECT_GE(d, 0.0f);
+    }
 }
 
 }  // namespace

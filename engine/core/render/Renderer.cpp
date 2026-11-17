@@ -134,6 +134,7 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     (void)pipeline_->ImportBuffer("deform-vertices");
     (void)pipeline_->ImportBuffer("draw-indirect");
     (void)pipeline_->ImportBuffer("depth-indirect");
+    (void)pipeline_->ImportBuffer("depth-counts");
     (void)pipeline_->ImportBuffer("occluder-indirect");
     // The text overlay's per-frame glyph instance buffer. It lives in the pass
     // (one host-visible slot per frames-in-flight) and is resolved back into the

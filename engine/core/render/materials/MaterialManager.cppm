@@ -129,6 +129,21 @@ public:
                          "still renders, though pass ordering will treat it as fully opaque");
         }
 
+        // The MASK contract needs the prepass policy to match. EngineDepthOnly
+        // uses the empty engine depth shader, so a payload whose entry points
+        // can discard must not select it. Exclude is always safe (the main pass
+        // still renders the material; only the prepass skips it), and Custom
+        // was validated when the row was declared.
+        const auto depth_coverage = tech_ptr->GetDepthCoverage(variant_slot);
+        if (alpha_mask_support != VulkanEngine::TechniqueManager::AlphaMaskSupport::Never &&
+            depth_coverage == VulkanEngine::TechniqueManager::DepthCoverage::EngineDepthOnly) {
+            LOGIFACE_LOG(error, "MaterialManager::Register: discarding material for technique " +
+                         std::to_string(tech_id.value) +
+                         " rejected: its depth coverage policy is EngineDepthOnly, whose empty "
+                         "prepass shader cannot reproduce the discard");
+            return MaterialHandle<Tech>{};
+        }
+
         // The intern stores the interface variant and the 16-bit render state
         // separately; the main pass reconstructs the composite draw key with
         // PackDrawKey(variant, render state).

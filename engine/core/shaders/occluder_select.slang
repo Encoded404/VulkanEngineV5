@@ -35,20 +35,34 @@ StructuredBuffer<uint, CDataLayout> techniqueFlags;
 [[vk::binding(4, 0)]]
 StructuredBuffer<uint, CDataLayout> drawIndices;
 
-// Compaction destination, viewed as raw u32:
-//   CID: a packed uint index list
-//   MID:        20 B (5 x u32) VkDrawIndexedIndirectCommand records
+// Occluder command output, viewed as 20 B (5 x u32)
+// VkDrawIndexedIndirectCommand records in both draw modes. Commands are grouped
+// by technique: techniqueRegionBases[group] is the group's first slot.
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<uint, CDataLayout> occluderOut;
 
-// Word 0. CID: accumulates the occluder index total. MID: increments
-// once per emitted command. Zeroed by the CPU each frame.
+// Word 0. CID: accumulates the occluder index total, reserving the range the
+// workgroup copies into occluderIndices. Unused in MID. Zeroed by the CPU.
 [[vk::binding(6, 0)]]
 globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderOutCounter;
 
 // Entry budget counter, zeroed by the CPU each frame.
 [[vk::binding(7, 0)]]
 RWStructuredBuffer<uint, CDataLayout> occluderCandidateCount;
+
+// First occluder-command slot of each draw group (CPU prefix sum).
+[[vk::binding(8, 0)]]
+StructuredBuffer<uint, CDataLayout> techniqueRegionBases;
+
+// One counter per draw group: selected occluders this frame. MID passes it to
+// vkCmdDrawIndexedIndirectCount; CID uses it to place the group's commands.
+[[vk::binding(9, 0)]]
+globallycoherent RWStructuredBuffer<uint, CDataLayout> occluderTechniqueCounts;
+
+// CID only: the compacted occluder index list the per-submesh commands index
+// into. MID binds a dummy because the shader path is specialized out there.
+[[vk::binding(10, 0)]]
+RWStructuredBuffer<uint, CDataLayout> occluderIndices;
 
 #include "technique_packing.slang"
 
@@ -148,17 +162,27 @@ void SelectOccluder(uint submeshIndex) {
     InterlockedAdd(occluderCandidateCount[0], 1u, slot);
     if (slot >= kMaxOccluders) return;
 
+    // Every group owns a fixed command region. The atomic also yields the
+    // group-relative slot, so commands land in techniqueRegionBases[group]
+    // .. + occluderTechniqueCounts[group].
+    uint local;
+    InterlockedAdd(occluderTechniqueCounts[entry.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[entry.techniqueId] + local) * kCmdWords;
+
     if (kCompactionMode == 0) {
-        // CID: reserve the range; the workgroup copies it in main().
+        // CID: reserve the range; the workgroup copies it in main(). The command
+        // indexes the compacted list and never uses firstInstance.
         uint destOffset;
         InterlockedAdd(occluderOutCounter[0], entry.indexCount, destOffset);
         g_occluderDest = destOffset;
         g_occluderCount = entry.indexCount;
+        occluderOut[base + 0] = entry.indexCount;
+        occluderOut[base + 1] = 1u;
+        occluderOut[base + 2] = destOffset;
+        occluderOut[base + 3] = 0u;
+        occluderOut[base + 4] = 0u;
     } else {
         // MID: one 20 B indexed draw command per selected occluder.
-        uint cmdSlot;
-        InterlockedAdd(occluderOutCounter[0], 1u, cmdSlot);
-        uint base = cmdSlot * kCmdWords;
         occluderOut[base + 0] = entry.indexCount;
         occluderOut[base + 1] = 1u;
         occluderOut[base + 2] = entry.indexBase;
@@ -188,7 +212,7 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
         uint elementIndex = submeshIndex % kEntriesPerBlock;
         CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
         for (uint i = tid; i < g_occluderCount; i += 256) {
-            occluderOut[g_occluderDest + i] = drawIndices[entry.indexBase + i];
+            occluderIndices[g_occluderDest + i] = drawIndices[entry.indexBase + i];
         }
     }
 }

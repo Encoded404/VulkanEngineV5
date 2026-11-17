@@ -21,4 +21,12 @@ export namespace Examples::SceneExplorer {
 // `--list-downloads` and the panel share one list.
 [[nodiscard]] std::vector<Examples::Explorer::DownloadableAsset> BuildDownloadCatalog();
 
+// Filters the catalog by a case-insensitive substring query and exact license
+// and category values. An empty filter means "all", and the result holds
+// indexes into `catalog` in catalog order. Exposed so the device-free tests can
+// cover the asset library's search without a UI.
+[[nodiscard]] std::vector<std::size_t> FilterCatalog(
+    std::span<const Examples::Explorer::DownloadableAsset> catalog, std::string_view query,
+    std::string_view license, std::string_view category);
+
 } // namespace Examples::SceneExplorer

@@ -55,6 +55,11 @@ struct SceneBuildResult {
     // Informational text shown dim (not an error), e.g. "downloading...".
     std::string notice{};
     bool ok = true;
+    // Optional per-load camera paths. When non-empty they replace the
+    // definition's static paths, so a scene can offer a path shaped by what it
+    // just loaded (the asset library's orbit around the opened model). Empty
+    // keeps the definition's paths.
+    std::vector<CameraPath> paths{};
 };
 
 struct SceneDefinition {

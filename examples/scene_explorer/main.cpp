@@ -55,11 +55,12 @@ int VulkanEngine::AppMain(int argc, char* const argv[]) {
 
     std::string download_id;
     cli.App().add_option("--download", download_id,
-                         "Download a catalog asset by id, then open it (implies --scene sample-assets)");
+                         "Download a catalog asset by id, then open it (implies --scene asset-library)");
 
     bool list_downloads = false;
     cli.App().add_flag("--list-downloads", list_downloads,
-                       "Print the on-demand download catalog and exit");
+                       "Print the on-demand download catalog (id, name, category, license, "
+                       "size, url) and exit");
 
     if (!cli.Parse(argc, argv)) {
         return cli.ExitCode();
@@ -92,8 +93,9 @@ int VulkanEngine::AppMain(int argc, char* const argv[]) {
 
     if (list_downloads) {
         for (const auto& asset : Examples::SceneExplorer::BuildDownloadCatalog()) {
-            std::cout << asset.id << "  |  " << asset.name << "  |  " << asset.license << "  |  "
-                      << asset.size << " bytes  |  " << asset.url << '\n';
+            std::cout << asset.id << "  |  " << asset.name << "  |  " << asset.category
+                      << "  |  " << asset.license << "  |  " << asset.size << " bytes  |  "
+                      << asset.url << '\n';
         }
         return 0;
     }
@@ -105,7 +107,9 @@ int VulkanEngine::AppMain(int argc, char* const argv[]) {
     config.initial_action = download_id;
     config.initial_mode = initial_mode;
     if (!download_id.empty() && config.initial_scene.empty()) {
-        config.initial_scene = "sample-assets";
+        // The library shows the catalog, the progress and the entry the download
+        // is for; `sample-assets` stays the browse-your-own-files scene.
+        config.initial_scene = "asset-library";
     }
     config.gpl_policy = cli.GetOverrides().gpl_policy;
     config.gpl_structure = cli.GetOverrides().gpl_structure;

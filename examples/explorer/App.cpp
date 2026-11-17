@@ -188,7 +188,11 @@ bool ExplorerApp::LoadScene(std::size_t index,
     // paths).
     const CameraMode wanted_mode =
         first_scene_loaded_ ? camera_.Mode() : config_.initial_mode;
-    camera_.SetPaths(definition.paths);
+    if (result.paths.empty()) {
+        camera_.SetPaths(definition.paths);
+    } else {
+        camera_.SetPaths(result.paths);
+    }
     camera_.SetMode(wanted_mode);
     camera_.SetBounds(result.bounds);
     camera_.FrameBounds();

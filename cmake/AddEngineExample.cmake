@@ -1,5 +1,7 @@
 include_guard(GLOBAL)
 
+include(GenerateAssetCredits)
+
 #[=======================================================================
 # add_engine_example
 #
@@ -34,7 +36,7 @@ include_guard(GLOBAL)
 function(add_engine_example NAME)
     cmake_parse_arguments(PARSE_ARGV 1 AEG
         ""
-        "MODULE_PREFIX;SHADER_NAMESPACE;APP_TITLE;ORG_ID;APP_ID"
+        "MODULE_PREFIX;SHADER_NAMESPACE;APP_TITLE;ORG_ID;APP_ID;LICENSE_CATALOG;LICENSE_DIR"
         "SOURCES;MODULES;SHADERS;ASSET_DIRS"
     )
 
@@ -61,11 +63,70 @@ function(add_engine_example NAME)
 
     # Every example lands in bin/examples/<Config>/<name>/ — the shader and
     # asset deploys below follow automatically via $<TARGET_FILE_DIR>.
+    # The path is kept in a variable because the credits deploy target needs
+    # the same literal: a $<TARGET_FILE_DIR> reference from a custom target
+    # would add a target dependency and cycle with add_dependencies below.
     if(OUTPUT_PATH)
+        set(_example_dir "${OUTPUT_PATH}/examples/$<CONFIG>/${NAME}")
         set_target_properties(${NAME} PROPERTIES
             OUTPUT_NAME ${NAME}
-            RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_PATH}/examples/$<CONFIG>/${NAME}"
+            RUNTIME_OUTPUT_DIRECTORY "${_example_dir}"
         )
+    endif()
+
+    # ---- asset catalog: generated header and credits folder ----
+    # Configure time turns one JSON file into the compiled catalog and the
+    # credits folder staged under generated/credits; build time deploys that
+    # folder next to the executable for every configuration. A human has no
+    # step to forget: validation fails the configure and the deploy is an ALL
+    # target, so even a no-op build refreshes it.
+    if(AEG_LICENSE_CATALOG)
+        if(NOT AEG_LICENSE_DIR)
+            set(AEG_LICENSE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/licenses")
+        endif()
+        set(_catalog_header "${CMAKE_BINARY_DIR}/generated/catalog/${NAME}_catalog.hpp")
+        set(_credits_stage "${CMAKE_BINARY_DIR}/generated/credits/${NAME}")
+
+        generate_asset_credits(
+            TARGET          ${NAME}
+            CATALOG         "${AEG_LICENSE_CATALOG}"
+            LICENSE_DIR     "${AEG_LICENSE_DIR}"
+            PROJECT_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE"
+            HEADER_OUT      "${_catalog_header}"
+            CREDITS_OUT     "${_credits_stage}")
+
+        # Re-run configure when the catalog, any license text or the project
+        # license changes: all three are copied into the credits folder at
+        # configure time, so a stale one would ship silently. The glob only sees
+        # files that exist at configure time, which is why the README tells
+        # contributors to reconfigure after adding a license text.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${AEG_LICENSE_CATALOG}" "${CMAKE_SOURCE_DIR}/LICENSE")
+        file(GLOB _license_texts "${AEG_LICENSE_DIR}/*.txt")
+        if(_license_texts)
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                         ${_license_texts})
+        endif()
+
+        # The generated header is compiled by the example's own sources (or,
+        # for the scene explorer, by its core library).
+        target_include_directories(${NAME} PRIVATE "${CMAKE_BINARY_DIR}/generated/catalog")
+        target_sources(${NAME} PRIVATE "${_catalog_header}")
+
+        if(OUTPUT_PATH)
+            set(_credits_dest "${_example_dir}/credits")
+            add_custom_target(${NAME}_credits ALL
+                COMMAND ${CMAKE_COMMAND} -E remove_directory "${_credits_dest}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${_credits_dest}"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${_credits_stage}" "${_credits_dest}"
+                COMMENT "Deploying asset credits for ${NAME}"
+                VERBATIM)
+            add_dependencies(${NAME} ${NAME}_credits)
+        endif()
+    elseif(AEG_LICENSE_DIR)
+        message(FATAL_ERROR
+            "${NAME}: LICENSE_DIR was given without LICENSE_CATALOG")
     endif()
 
     # Windows: build as a GUI-subsystem executable so no console window appears
@@ -172,11 +233,15 @@ function(add_engine_example NAME)
 
 
     # ---- C++ module registration ----
-    target_sources(${NAME} PUBLIC
-        FILE_SET CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES ${AEG_MODULES}
-    )
+    # An example whose modules live in a core library registers none here;
+    # an empty FILES list would be a configure error.
+    if(AEG_MODULES)
+        target_sources(${NAME} PUBLIC
+            FILE_SET CXX_MODULES
+            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
+            FILES ${AEG_MODULES}
+        )
+    endif()
 
     # Register generated slang shader module files (only when this example
     # declared its own shaders; engine-only examples have no shader target).

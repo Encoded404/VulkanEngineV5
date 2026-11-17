@@ -6,6 +6,8 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "scene_explorer_catalog.hpp"
+
 #include <logging/logging_macros.hpp>
 
 module Examples.SceneExplorer.Scenes;
@@ -38,6 +40,7 @@ using Examples::Explorer::CameraPath;
 using Examples::Explorer::OptionsUi;
 using Examples::Explorer::SceneBuildResult;
 using Examples::Explorer::SceneContext;
+using Examples::Explorer::DownloadOutcome;
 using Examples::Explorer::DownloadState;
 using Examples::Explorer::DownloadableAsset;
 using Examples::Explorer::SceneDefinition;
@@ -52,6 +55,13 @@ using VulkanEngine::TechniqueManager::DefaultMeshTechnique;
 constexpr std::uint32_t kInvalidMesh = 0xFFFFFFFFu;
 
 // ── shared helpers ──────────────────────────────────────────────────────
+
+[[nodiscard]] std::string LowerText(std::string_view text) {
+    std::string lowered{text};
+    std::ranges::transform(lowered, lowered.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lowered;
+}
 
 [[nodiscard]] std::string LowerExtension(const std::filesystem::path& path) {
     std::string ext = path.extension().string();
@@ -140,22 +150,6 @@ struct TextureCache {
 
 // ── on-demand download catalog ──────────────────────────────────────────
 
-// Pinned commit of KhronosGroup/glTF-Sample-Assets. These URLs must never point
-// at a branch: the SHA-256 below only means something if the bytes cannot
-// change underneath it.
-constexpr const char* kGltfSampleAssetsCommit = "8f492390ddc7a2ae221a1369ef560589cf8c70fb";
-
-[[nodiscard]] std::string PinnedAssetUrl(std::string_view model, std::string_view file) {
-    return std::string{"https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/"} +
-           kGltfSampleAssetsCommit + "/Models/" + std::string{model} + "/glTF-Binary/" +
-           std::string{file};
-}
-
-[[nodiscard]] std::string SourcePage(std::string_view model) {
-    return "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/" +
-           std::string{model};
-}
-
 [[nodiscard]] std::string FormatByteSize(std::uint64_t bytes) {
     if (bytes >= 1024ull * 1024ull) {
         return std::format("{:.1f} MiB", static_cast<double>(bytes) / (1024.0 * 1024.0));
@@ -164,24 +158,6 @@ constexpr const char* kGltfSampleAssetsCommit = "8f492390ddc7a2ae221a1369ef56058
         return std::format("{:.1f} KiB", static_cast<double>(bytes) / 1024.0);
     }
     return std::format("{} B", bytes);
-}
-
-[[nodiscard]] DownloadableAsset MakeDownloadable(std::string id, std::string name,
-                                                 std::string summary, std::string license,
-                                                 std::string attribution, std::string model,
-                                                 std::uint64_t size, std::string sha256) {
-    DownloadableAsset asset{};
-    asset.id = std::move(id);
-    asset.name = std::move(name);
-    asset.summary = std::move(summary);
-    asset.license = std::move(license);
-    asset.attribution = std::move(attribution);
-    asset.source_page = SourcePage(model);
-    asset.url = PinnedAssetUrl(model, model + ".glb");
-    asset.file_name = asset.id + ".glb";
-    asset.size = size;
-    asset.sha256 = std::move(sha256);
-    return asset;
 }
 
 // ── glTF asset scene ────────────────────────────────────────────────────
@@ -205,7 +181,7 @@ struct GltfAsset {
     Bounds bounds{};
 };
 
-struct SampleAssetsState {
+struct AssetSession {
     std::filesystem::path asset_dir{};
     std::vector<std::filesystem::path> files{};
     int index = 0;
@@ -216,7 +192,7 @@ struct SampleAssetsState {
     float scale = 1.0f;
     float spin_angle = 0.0f;
 
-    bool unlit = false;
+       bool unlit = false;
     bool unlit_applied = false;
 
     bool override_factors = false;
@@ -235,7 +211,10 @@ struct SampleAssetsState {
     TextureCache textures{};
 
     // On-demand downloads: created lazily on the first load, because the cache
-    // root only exists once the engine's per-user storage is up.
+    // root only exists once the engine's per-user storage is up. One session is
+    // shared by every scene that shows downloaded assets, so the process has
+    // exactly one transfer (two downloaders over one cache root would truncate
+    // each other's ".part" file) and one --download one-shot flag.
     std::unique_ptr<SceneDownloader> downloader{};
     std::vector<DownloadableAsset> library{};
     int library_index = 0;
@@ -244,29 +223,44 @@ struct SampleAssetsState {
     bool auto_download_started = false;
 
     GltfAsset* active_asset = nullptr;
+    std::filesystem::path active_path{};
     Bounds active_bounds{};
     EntityId root_entity{};
 };
 
-void EnsureDownloader(SceneContext& ctx, SampleAssetsState& state) {
-    if (state.downloader) return;
+// Presentation state of the library scene: what the user is looking at and
+// what is actually loaded. It is separate from the session because a scene
+// switch must not lose the filter, and because the session is shared with
+// `sample-assets`, which has no library selection at all.
+struct LibraryState {
+    std::string search{};
+    int license_filter = 0;   // 0 = all, otherwise index into the sorted license list
+    int category_filter = 0;  // 0 = all, otherwise index into the sorted category list
+    int selected = 0;         // index into the unfiltered catalog
+    // Catalog index the loaded scene is showing, or -1 when nothing is open.
+    // The library's unload resets it, and its load sets it as an output.
+    int open_index = -1;
+};
+
+void EnsureDownloader(SceneContext& ctx, AssetSession& session) {
+    if (session.downloader) return;
     if (ctx.app == nullptr || ctx.app->storage == nullptr) {
-        state.download_message =
+        session.download_message =
             "Per-user storage is unavailable, so on-demand downloads are disabled.";
         return;
     }
-    state.download_root = ctx.app->storage->CacheDir() / "scenes";
-    state.library = BuildDownloadCatalog();
-    state.downloader = std::make_unique<SceneDownloader>(state.download_root);
-    state.downloader->SetCatalog(state.library);
+    session.download_root = ctx.app->storage->CacheDir() / "scenes";
+    session.library = BuildDownloadCatalog();
+    session.downloader = std::make_unique<SceneDownloader>(session.download_root);
+    session.downloader->SetCatalog(session.library);
 }
 
 // Local assets plus everything already downloaded. Sorted and deduplicated, so
 // the combo order is stable across frames.
-[[nodiscard]] std::vector<std::filesystem::path> CollectAssetFiles(SampleAssetsState& state) {
-    std::vector<std::filesystem::path> files = DiscoverAssets(state.asset_dir);
-    if (state.downloader) {
-        for (const auto& downloaded : state.downloader->InstalledFiles()) {
+[[nodiscard]] std::vector<std::filesystem::path> CollectAssetFiles(AssetSession& session) {
+    std::vector<std::filesystem::path> files = DiscoverAssets(session.asset_dir);
+    if (session.downloader) {
+        for (const auto& downloaded : session.downloader->InstalledFiles()) {
             files.push_back(downloaded);
         }
     }
@@ -284,17 +278,20 @@ void EnsureDownloader(SceneContext& ctx, SampleAssetsState& state) {
 // Applies the scene's scale and spin about the model's own center. The entity
 // transform is R*S*v + p, so the pivot stays fixed by setting
 // p = center - R*(S*center).
-void ApplyModelTransform(SceneContext& ctx, const SampleAssetsState& state) {
+void ApplyModelTransform(SceneContext& ctx, const AssetSession& session) {
+    // Nothing loaded (or the load failed) means there is no root entity to
+    // move; a default EntityId has generation 0 and must not be looked up.
+    if (!session.root_entity.IsValid()) return;
     auto& registry = ctx.Registry();
-    auto* entity = registry.TryGetEntity(state.root_entity);
+    auto* entity = registry.TryGetEntity(session.root_entity);
     if (entity == nullptr) return;
     auto* transform = entity->GetComponent<VulkanEngine::Components::Transform>();
     if (transform == nullptr) return;
 
-    const glm::vec3 center = state.active_bounds.Center() * state.scale;
+    const glm::vec3 center = session.active_bounds.Center() * session.scale;
     const glm::quat rotation =
-        glm::angleAxis(glm::radians(state.spin_angle), glm::vec3{0.0f, 1.0f, 0.0f});
-    transform->scale = glm::vec3{state.scale};
+        glm::angleAxis(glm::radians(session.spin_angle), glm::vec3{0.0f, 1.0f, 0.0f});
+    transform->scale = glm::vec3{session.scale};
     transform->rotation = rotation;
     transform->position = center - rotation * center;
 }
@@ -477,7 +474,7 @@ void EnsureUnlitMaterials(SceneContext& ctx, GltfAsset& asset) {
 // Maps every submesh to the unlit sibling of its lit material, or back to the
 // asset's own material when disabled. The override is installed once at load;
 // toggling only rewrites its sparse ref list.
-void ApplyUnlit(SceneContext& ctx, SampleAssetsState& state, bool enabled) {
+void ApplyUnlit(SceneContext& ctx, AssetSession& state, bool enabled) {
     if (state.active_asset == nullptr) return;
     auto* entity = ctx.Registry().TryGetEntity(state.root_entity);
     if (entity == nullptr) return;
@@ -548,7 +545,297 @@ void ReleaseGltfAsset(SceneContext& ctx, GltfAsset& asset) {
     asset.bounds = {};
 }
 
-[[nodiscard]] SceneDefinition MakeSampleAssetsScene(std::shared_ptr<SampleAssetsState> state) {
+// Imports one asset path and makes it the scene's content. The per-path import
+// cache lives here: a hit skips the import, a miss inserts the result. The
+// caller owns the index bookkeeping, because only it knows whether it has a
+// file list (`sample-assets`) or a catalog selection (the library).
+[[nodiscard]] SceneBuildResult LoadSessionAsset(SceneContext& ctx, AssetSession& session,
+                                                const std::filesystem::path& path) {
+    SceneBuildResult result{};
+
+    GltfAsset* asset = nullptr;
+    if (const auto it = session.cache.find(path.string()); it != session.cache.end()) {
+        asset = &it->second;
+    } else {
+        std::string error{};
+        GltfAsset loaded{};
+        if (!LoadGltfAsset(ctx, path, session.textures, loaded, error) ||
+            loaded.mesh_id == kInvalidMesh) {
+            result.ok = false;
+            result.error = error.empty() ? "The asset produced no mesh." : error;
+            session.active_asset = nullptr;
+            session.active_path.clear();
+            return result;
+        }
+        asset = &session.cache.emplace(path.string(), std::move(loaded)).first->second;
+    }
+
+    session.active_asset = asset;
+    session.active_path = path;
+    session.active_bounds = asset->bounds;
+    session.spin_angle = 0.0f;
+    session.override_applied = false;
+    session.root_entity = ctx.CreateMeshEntity(asset->mesh_id);
+    if (auto* root = ctx.Registry().TryGetEntity(session.root_entity)) {
+        auto& override_comp =
+            ctx.Registry().AddComponent<VulkanEngine::Components::MaterialOverride>(*root);
+        override_comp.mesh_id = asset->mesh_id;
+    }
+    session.unlit_applied = false;
+    result.entities.push_back(session.root_entity);
+    result.bounds = ScaledBounds(asset->bounds, session.scale);
+    ApplyModelTransform(ctx, session);
+    return result;
+}
+
+// Consumes the downloader's one-shot completion record, refreshes the file
+// list and queues a reload on success. The caller still owns the selection
+// policy: `sample-assets` maps the path back into its file list, the library
+// maps the asset id back into the catalog.
+[[nodiscard]] std::optional<DownloadOutcome> PollDownload(SceneContext& ctx,
+                                                          AssetSession& session) {
+    if (session.downloader == nullptr) return std::nullopt;
+    auto outcome = session.downloader->TakeOutcome();
+    if (!outcome.has_value()) return std::nullopt;
+
+    if (outcome->ok) {
+        session.download_message = "Downloaded " + outcome->path.filename().string();
+        LOGIFACE_LOG(info, "SceneExplorer: downloaded '" + outcome->path.string() + "' (" +
+                               FormatByteSize(std::filesystem::file_size(outcome->path)) + ")");
+        session.files = CollectAssetFiles(session);
+        ctx.RequestReload();
+    } else {
+        session.download_message = "Download failed: " + outcome->error;
+        LOGIFACE_LOG(warn, "SceneExplorer: " + session.download_message);
+    }
+    return outcome;
+}
+
+// Consumes the reload and rescan requests a scene set from its options panel.
+// Returns true when a reload is already queued, so the caller must stop this
+// frame. The reload tears the scene down first, and the unload releases and
+// drops every cached import, so the next load re-reads the file from disk.
+[[nodiscard]] bool ConsumeSessionReload(SceneContext& ctx, AssetSession& session) {
+    if (session.rescan_requested) {
+        session.rescan_requested = false;
+        session.files = CollectAssetFiles(session);
+        session.index = session.files.empty()
+                            ? 0
+                            : std::clamp(session.index, 0,
+                                         static_cast<int>(session.files.size()) - 1);
+        ctx.RequestReload();
+        return true;
+    }
+    if (session.reload_requested) {
+        session.reload_requested = false;
+        ctx.RequestReload();
+        return true;
+    }
+    return false;
+}
+
+// Per-frame animation and material state: spin, scale, unlit and factor
+// overrides. Selection and index changes stay with the scene, because they
+// differ between the file-list scene and the catalog scene.
+void UpdateSession(SceneContext& ctx, AssetSession& session, float delta_time) {
+    if (session.active_asset == nullptr) return;
+    if (session.unlit != session.unlit_applied) {
+        ApplyUnlit(ctx, session, session.unlit);
+        session.unlit_applied = session.unlit;
+    }
+
+    if (session.spin) {
+        session.spin_angle =
+            std::fmod(session.spin_angle + session.spin_speed * delta_time, 360.0f);
+    }
+    ApplyModelTransform(ctx, session);
+
+    const auto apply = [&](const std::function<void(DefaultMeshPerMaterialData&)>& mutate) {
+        for (auto& handle : session.active_asset->handles) {
+            if (!handle.Valid()) continue;
+            handle.Modify<DefaultMeshPerMaterialData>(mutate);
+        }
+    };
+
+    if (session.override_factors) {
+        const bool changed = !session.override_applied ||
+                             session.applied_roughness != session.roughness ||
+                             session.applied_metallic != session.metallic ||
+                             session.applied_emissive != session.emissive_strength;
+        if (changed) {
+            apply([&session](DefaultMeshPerMaterialData& data) {
+                data.roughness_factor = session.roughness;
+                data.metallic_factor = session.metallic;
+                data.emissive_factor[3] = session.emissive_strength;
+            });
+            session.applied_roughness = session.roughness;
+            session.applied_metallic = session.metallic;
+            session.applied_emissive = session.emissive_strength;
+            session.override_applied = true;
+        }
+    } else if (session.override_applied) {
+        // Restore what the asset declared.
+        const auto& base = session.active_asset->base_data;
+        for (std::size_t i = 0; i < session.active_asset->handles.size() && i < base.size(); ++i) {
+            auto& handle = session.active_asset->handles[i];
+            if (!handle.Valid()) continue;
+            const DefaultMeshPerMaterialData original = base[i];
+            handle.Modify<DefaultMeshPerMaterialData>(
+                [original](DefaultMeshPerMaterialData& data) { data = original; });
+        }
+        session.override_applied = false;
+    }
+}
+
+// Releases every cached import. A scene unload calls this, so switching scenes
+// or reloading re-imports from disk instead of keeping GPU memory alive.
+void UnloadSession(SceneContext& ctx, AssetSession& session) {
+    session.active_asset = nullptr;
+    session.active_path.clear();
+    for (auto& [path, asset] : session.cache) {
+        (void)path;
+        ReleaseGltfAsset(ctx, asset);
+    }
+    session.cache.clear();
+    session.loaded_index = -1;
+}
+
+// The Transform, Shading and Material override sections are safe to declare
+// once per load: none of their values depends on per-frame state.
+void BuildSessionOptions(OptionsUi& ui, AssetSession& session) {
+    ui.Section("Transform");
+    ui.Checkbox("Spin", session.spin);
+    ui.SliderFloat("Spin speed", session.spin_speed, -180.0f, 180.0f, "%.0f deg/s");
+    ui.SliderFloat("Scale", session.scale, 0.01f, 20.0f, "%.2f");
+
+    ui.Section("Shading");
+    ui.Checkbox("Unlit", session.unlit,
+                "Sample the albedo texture only: no lights, normal map or ORM.");
+
+    ui.Section("Material override");
+    ui.Checkbox("Override factors", session.override_factors,
+                "Applies one set of factors to every lit material of this asset.");
+    if (session.override_factors) {
+        ui.SliderFloat("Roughness", session.roughness, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Metallic", session.metallic, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Emissive strength", session.emissive_strength, 0.0f, 10.0f, "%.2f");
+    }
+}
+
+// The combo-box download panel of `sample-assets`. It owns a Dynamic callback
+// because its contents depend on the live install and transfer state.
+void BuildDownloadSection(OptionsUi& ui, AssetSession& session) {
+    ui.Section("Download");
+    ui.Dynamic([&session](OptionsUi& download) {
+        if (session.downloader == nullptr) {
+            download.TextWrapped(session.download_message.empty()
+                                     ? "On-demand downloads are unavailable."
+                                     : session.download_message);
+            return;
+        }
+
+        SceneDownloader& downloader = *session.downloader;
+        const auto& catalog = downloader.Catalog();
+        if (catalog.empty()) {
+            download.TextDisabled("This build has no downloadable assets.");
+            return;
+        }
+
+        std::vector<std::string> labels{};
+        labels.reserve(catalog.size());
+        for (const auto& asset : catalog) labels.push_back(asset.name);
+        std::vector<std::string_view> views{};
+        views.reserve(labels.size());
+        for (const auto& label : labels) views.push_back(label);
+
+        session.library_index =
+            std::clamp(session.library_index, 0, static_cast<int>(catalog.size()) - 1);
+        download.Combo("Asset library", session.library_index, views,
+                       "Fetched on demand into the per-user cache; nothing is bundled.");
+
+        const DownloadableAsset& asset =
+            catalog[static_cast<std::size_t>(session.library_index)];
+        download.TextDisabled(asset.license + "  ·  " + FormatByteSize(asset.size));
+        download.TextWrapped(asset.summary);
+        download.TextDisabled(asset.attribution);
+
+        const auto progress = downloader.Progress();
+        const bool installed = downloader.IsInstalled(asset);
+        const bool running_this =
+            progress.state == DownloadState::Running && progress.asset_id == asset.id;
+
+        if (installed) {
+            download.TextDisabled("Installed in the cache.");
+            download.Button("Remove downloaded asset", [&session, asset] {
+                if (session.downloader->Remove(asset)) {
+                    session.download_message = "Removed " + asset.name + " from the cache.";
+                    session.rescan_requested = true;
+                }
+            });
+        } else if (running_this) {
+            download.ProgressBar(progress.Fraction(),
+                                 FormatByteSize(progress.bytes_received) + " / " +
+                                     FormatByteSize(progress.bytes_total));
+            download.Button("Cancel download", [&session] { session.downloader->Cancel(); });
+        } else {
+            download.Button("Download and open", [&session, asset] {
+                if (session.downloader->Start(asset)) {
+                    session.download_message = "Downloading " + asset.name + "...";
+                } else {
+                    session.download_message =
+                        "Another download is already running (one at a time).";
+                }
+            });
+        }
+
+        if (progress.state == DownloadState::Running && !running_this &&
+            !progress.asset_id.empty()) {
+            download.TextDisabled("Downloading " + progress.asset_id + "...");
+        }
+        if (!session.download_message.empty()) {
+            download.TextWrapped(session.download_message);
+        }
+    });
+}
+
+// Honors `--download <id>` exactly once per process. Both scenes call it; the
+// flag it sets lives in the shared session, so whichever scene loads first wins
+// and neither repeats the attempt on reload.
+[[nodiscard]] std::optional<std::size_t> StartInitialDownload(SceneContext& ctx,
+                                                             AssetSession& session) {
+    if (ctx.initial_action.empty() || session.auto_download_started) return std::nullopt;
+    session.auto_download_started = true;
+
+    if (session.downloader == nullptr) {
+        session.download_message = "Downloads are unavailable.";
+        return std::nullopt;
+    }
+
+    const auto found = std::ranges::find_if(session.library, [&ctx](const auto& asset) {
+        return asset.id == ctx.initial_action;
+    });
+    if (found == session.library.end()) {
+        session.download_message = "Unknown --download id '" + ctx.initial_action + "'.";
+        LOGIFACE_LOG(warn, "SceneExplorer: " + session.download_message);
+        return std::nullopt;
+    }
+
+    const auto index =
+        static_cast<std::size_t>(std::distance(session.library.begin(), found));
+    if (session.downloader->IsInstalled(*found)) {
+        session.download_message = found->name + " is already installed.";
+        LOGIFACE_LOG(info, "SceneExplorer: " + session.download_message);
+    } else if (session.downloader->Start(*found)) {
+        session.download_message = "Downloading " + found->name + "...";
+        LOGIFACE_LOG(info, "SceneExplorer: " + session.download_message);
+    } else {
+        session.download_message = "Could not start the download.";
+        LOGIFACE_LOG(warn, "SceneExplorer: " + session.download_message);
+    }
+    return index;
+}
+
+[[nodiscard]] SceneDefinition MakeSampleAssetsScene(std::shared_ptr<AssetSession> session) {
     SceneDefinition scene{};
     scene.id = "sample-assets";
     scene.name = "glTF Sample Assets";
@@ -562,310 +849,332 @@ void ReleaseGltfAsset(SceneContext& ctx, GltfAsset& asset) {
         "license and attribution files with the download.";
     scene.source = "Khronos glTF-Sample-Assets, or any local glTF download.";
 
-    scene.load = [state](SceneContext& ctx) -> SceneBuildResult {
+    scene.load = [session](SceneContext& ctx) -> SceneBuildResult {
         SceneBuildResult result{};
-        EnsureDownloader(ctx, *state);
-        state->files = CollectAssetFiles(*state);
-
-        if (!ctx.initial_action.empty() && !state->auto_download_started) {
-            state->auto_download_started = true;
-            if (state->downloader == nullptr) {
-                state->download_message = "Downloads are unavailable.";
-            } else {
-                const auto found = std::ranges::find_if(state->library, [&ctx](const auto& asset) {
-                    return asset.id == ctx.initial_action;
-                });
-                if (found == state->library.end()) {
-                    state->download_message = "Unknown --download id '" + ctx.initial_action + "'.";
-                    LOGIFACE_LOG(warn, "SceneExplorer: " + state->download_message);
-                } else if (state->downloader->IsInstalled(*found)) {
-                    state->download_message = found->name + " is already installed.";
-                    LOGIFACE_LOG(info, "SceneExplorer: " + state->download_message);
-                } else if (state->downloader->Start(*found)) {
-                    state->download_message = "Downloading " + found->name + "...";
-                    LOGIFACE_LOG(info, "SceneExplorer: " + state->download_message);
-                } else {
-                    state->download_message = "Could not start the download.";
-                    LOGIFACE_LOG(warn, "SceneExplorer: " + state->download_message);
-                }
-            }
+        EnsureDownloader(ctx, *session);
+        session->files = CollectAssetFiles(*session);
+        if (const auto requested = StartInitialDownload(ctx, *session); requested.has_value()) {
+            session->library_index = static_cast<int>(*requested);
         }
 
-        if (state->files.empty()) {
+        if (session->files.empty()) {
             const bool downloading =
-                state->downloader != nullptr &&
-                state->downloader->Progress().state == DownloadState::Running;
+                session->downloader != nullptr &&
+                session->downloader->Progress().state == DownloadState::Running;
             result.ok = downloading;
             if (downloading) {
-                result.notice = state->download_message;
+                result.notice = session->download_message;
             } else {
                 result.error =
-                    "No .glb/.gltf files found in '" + state->asset_dir.string() +
+                    "No .glb/.gltf files found in '" + session->asset_dir.string() +
                     "'. Pass --assets <dir>, download one in the panel, or use --download <id>.";
             }
             return result;
         }
-        state->index = std::clamp(state->index, 0, static_cast<int>(state->files.size()) - 1);
-        const std::filesystem::path path = state->files[static_cast<std::size_t>(state->index)];
-
-        GltfAsset* asset = nullptr;
-        if (const auto it = state->cache.find(path.string()); it != state->cache.end()) {
-            asset = &it->second;
-        } else {
-            std::string error{};
-            GltfAsset loaded{};
-            if (!LoadGltfAsset(ctx, path, state->textures, loaded, error) ||
-                loaded.mesh_id == kInvalidMesh) {
-                result.ok = false;
-                result.error = error.empty() ? "The asset produced no mesh." : error;
-                // Remember the attempt so the update loop does not re-import (and
-                // re-log) the same broken file every frame; Reload retries it.
-                state->loaded_index = state->index;
-                state->active_asset = nullptr;
-                return result;
-            }
-            asset = &state->cache.emplace(path.string(), std::move(loaded)).first->second;
-        }
-
-        state->active_asset = asset;
-        state->active_bounds = asset->bounds;
-        state->loaded_index = state->index;
-        state->spin_angle = 0.0f;
-        state->override_applied = false;
-        state->root_entity = ctx.CreateMeshEntity(asset->mesh_id);
-        if (auto* root = ctx.Registry().TryGetEntity(state->root_entity)) {
-            auto& override_comp =
-                ctx.Registry().AddComponent<VulkanEngine::Components::MaterialOverride>(*root);
-            override_comp.mesh_id = asset->mesh_id;
-        }
-        state->unlit_applied = false;
-        result.entities.push_back(state->root_entity);
-        result.bounds = ScaledBounds(asset->bounds, state->scale);
-        ApplyModelTransform(ctx, *state);
+        session->index = std::clamp(session->index, 0,
+                                    static_cast<int>(session->files.size()) - 1);
+        result = LoadSessionAsset(
+            ctx, *session,
+            session->files[static_cast<std::size_t>(session->index)]);
+        // Remember the attempt whether it worked or not, so the update loop does
+        // not re-import (and re-log) a broken file every frame; Reload retries it.
+        session->loaded_index = session->index;
         return result;
     };
 
-    scene.unload = [state](SceneContext& ctx) {
-        state->active_asset = nullptr;
-        for (auto& [path, asset] : state->cache) {
-            (void)path;
-            ReleaseGltfAsset(ctx, asset);
+    scene.unload = [session](SceneContext& ctx) { UnloadSession(ctx, *session); };
+
+    scene.update = [session](SceneContext& ctx, float delta_time) {
+        if (auto outcome = PollDownload(ctx, *session);
+            outcome.has_value() && outcome->ok) {
+            const auto found = std::ranges::find(session->files, outcome->path);
+            if (found != session->files.end()) {
+                session->index = static_cast<int>(
+                    std::distance(session->files.begin(), found));
+            }
+            session->loaded_index = -1;
+            return;
         }
-        state->cache.clear();
-        state->loaded_index = -1;
+        if (ConsumeSessionReload(ctx, *session)) return;
+        if (session->files.empty()) return;
+        if (session->index != session->loaded_index) {
+            ctx.RequestReload();
+            return;
+        }
+        UpdateSession(ctx, *session, delta_time);
     };
 
-    scene.update = [state](SceneContext& ctx, float delta_time) {
-        if (state->unlit != state->unlit_applied && state->active_asset != nullptr) {
-            ApplyUnlit(ctx, *state, state->unlit);
-            state->unlit_applied = state->unlit;
-        }
-        if (state->downloader != nullptr) {
-            if (auto outcome = state->downloader->TakeOutcome(); outcome.has_value()) {
-                if (outcome->ok) {
-                    state->download_message =
-                        "Downloaded " + outcome->path.filename().string();
-                    LOGIFACE_LOG(info, "SceneExplorer: downloaded '" + outcome->path.string() +
-                                           "' (" + FormatByteSize(
-                                               std::filesystem::file_size(outcome->path)) +
-                                           ")");
-                    state->files = CollectAssetFiles(*state);
-                    const auto found = std::ranges::find(state->files, outcome->path);
-                    if (found != state->files.end()) {
-                        state->index = static_cast<int>(
-                            std::distance(state->files.begin(), found));
-                    }
-                    state->loaded_index = -1;
-                    ctx.RequestReload();
-                    return;
-                }
-                state->download_message = "Download failed: " + outcome->error;
-                LOGIFACE_LOG(warn, "SceneExplorer: " + state->download_message);
-            }
-        }
-
-        if (state->rescan_requested) {
-            state->rescan_requested = false;
-            state->files = DiscoverAssets(state->asset_dir);
-            state->index = state->files.empty() ? 0 : std::clamp(state->index, 0,
-                                                                 static_cast<int>(state->files.size()) - 1);
-            ctx.RequestReload();
-            return;
-        }
-        if (state->reload_requested) {
-            state->reload_requested = false;
-            // An explicit reload means "re-read from disk": drop the cached
-            // import for the current file so an edited asset is picked up.
-            if (!state->files.empty()) {
-                const auto index = static_cast<std::size_t>(
-                    std::clamp(state->index, 0, static_cast<int>(state->files.size()) - 1));
-                state->cache.erase(state->files[index].string());
-                state->active_asset = nullptr;
-                state->loaded_index = -1;
-            }
-            ctx.RequestReload();
-            return;
-        }
-        if (state->files.empty()) return;
-        if (state->index != state->loaded_index) {
-            ctx.RequestReload();
-            return;
-        }
-
-        if (state->spin) {
-            state->spin_angle =
-                std::fmod(state->spin_angle + state->spin_speed * delta_time, 360.0f);
-        }
-        ApplyModelTransform(ctx, *state);
-
-        if (state->active_asset == nullptr) return;
-        const auto apply = [&](const std::function<void(DefaultMeshPerMaterialData&)>& mutate) {
-            for (auto& handle : state->active_asset->handles) {
-                if (!handle.Valid()) continue;
-                handle.Modify<DefaultMeshPerMaterialData>(mutate);
-            }
-        };
-
-        if (state->override_factors) {
-            const bool changed = !state->override_applied ||
-                                 state->applied_roughness != state->roughness ||
-                                 state->applied_metallic != state->metallic ||
-                                 state->applied_emissive != state->emissive_strength;
-            if (changed) {
-                apply([state](DefaultMeshPerMaterialData& data) {
-                    data.roughness_factor = state->roughness;
-                    data.metallic_factor = state->metallic;
-                    data.emissive_factor[3] = state->emissive_strength;
-                });
-                state->applied_roughness = state->roughness;
-                state->applied_metallic = state->metallic;
-                state->applied_emissive = state->emissive_strength;
-                state->override_applied = true;
-            }
-        } else if (state->override_applied) {
-            // Restore what the asset declared.
-            const auto& base = state->active_asset->base_data;
-            for (std::size_t i = 0; i < state->active_asset->handles.size() && i < base.size(); ++i) {
-                auto& handle = state->active_asset->handles[i];
-                if (!handle.Valid()) continue;
-                const DefaultMeshPerMaterialData original = base[i];
-                handle.Modify<DefaultMeshPerMaterialData>(
-                    [original](DefaultMeshPerMaterialData& data) { data = original; });
-            }
-            state->override_applied = false;
-        }
-    };
-
-    scene.options = [state](OptionsUi& ui) {
+    scene.options = [session](OptionsUi& ui) {
         ui.Section("Asset");
-        if (state->files.empty()) {
+        if (session->files.empty()) {
             ui.TextDisabled("No glTF files discovered.");
             ui.TextWrapped("Pass --assets <dir> at launch, or --asset <file> (repeatable), then "
                            "press Rescan.");
         } else {
             std::vector<std::string> labels{};
-            labels.reserve(state->files.size());
-            for (const auto& file : state->files) labels.push_back(AssetLabel(file));
+            labels.reserve(session->files.size());
+            for (const auto& file : session->files) labels.push_back(AssetLabel(file));
             std::vector<std::string_view> views{};
             views.reserve(labels.size());
             for (const auto& label : labels) views.push_back(label);
-            ui.Combo("Asset", state->index, views, "Switching rebuilds the scene.");
-            ui.TextDisabled(std::to_string(state->index + 1) + " / " +
-                            std::to_string(state->files.size()) + " files");
+            ui.Combo("Asset", session->index, views, "Switching rebuilds the scene.");
+            ui.TextDisabled(std::to_string(session->index + 1) + " / " +
+                            std::to_string(session->files.size()) + " files");
         }
-        ui.Button("Rescan directory", [state] { state->rescan_requested = true; });
+        ui.Button("Rescan directory", [session] { session->rescan_requested = true; });
         ui.SameLine();
-        ui.Button("Reload asset", [state] { state->reload_requested = true; });
+        ui.Button("Reload asset", [session] { session->reload_requested = true; });
 
-        ui.Section("Transform");
-        ui.Checkbox("Spin", state->spin);
-        ui.SliderFloat("Spin speed", state->spin_speed, -180.0f, 180.0f, "%.0f deg/s");
-        ui.SliderFloat("Scale", state->scale, 0.01f, 20.0f, "%.2f");
+        BuildSessionOptions(ui, *session);
+        BuildDownloadSection(ui, *session);
+    };
 
-        ui.Section("Shading");
-        ui.Checkbox("Unlit", state->unlit,
-                    "Sample the albedo texture only: no lights, normal map or ORM.");
+    return scene;
+}
 
-        ui.Section("Material override");
-        ui.Checkbox("Override factors", state->override_factors,
-                    "Applies one set of factors to every lit material of this asset.");
-        if (state->override_factors) {
-            ui.SliderFloat("Roughness", state->roughness, 0.0f, 1.0f, "%.2f");
-            ui.SliderFloat("Metallic", state->metallic, 0.0f, 1.0f, "%.2f");
-            ui.SliderFloat("Emissive strength", state->emissive_strength, 0.0f, 10.0f, "%.2f");
+// ── asset library: browse, download, open ───────────────────────────────
+
+// The library's panel. The whole live part sits in one Dynamic callback because
+// the explorer declares a scene's options once per load, and this UI depends on
+// the current filter, selection and transfer state.
+void BuildLibrarySection(OptionsUi& ui, AssetSession& session, LibraryState& state) {
+    if (session.downloader == nullptr) {
+        ui.TextWrapped(session.download_message.empty() ? "On-demand downloads are unavailable."
+                                                        : session.download_message);
+        return;
+    }
+    SceneDownloader& downloader = *session.downloader;
+    const auto& catalog = downloader.Catalog();
+    if (catalog.empty()) {
+        ui.TextDisabled("This build has no downloadable assets.");
+        return;
+    }
+
+    // The filter values come from the catalog every frame, so a new entry or a
+    // new category shows up in the combos with no extra state to keep in sync.
+    // An empty value is the "all" slot and sorts first.
+    std::vector<std::string> licenses{""};
+    std::vector<std::string> categories{""};
+    for (const auto& asset : catalog) {
+        if (std::ranges::find(licenses, asset.license) == licenses.end()) {
+            licenses.push_back(asset.license);
         }
+        if (std::ranges::find(categories, asset.category) == categories.end()) {
+            categories.push_back(asset.category);
+        }
+    }
+    std::ranges::sort(licenses);
+    std::ranges::sort(categories);
+    state.license_filter =
+        std::clamp(state.license_filter, 0, static_cast<int>(licenses.size()) - 1);
+    state.category_filter =
+        std::clamp(state.category_filter, 0, static_cast<int>(categories.size()) - 1);
 
-        ui.Section("Download");
-        ui.Dynamic([state](OptionsUi& download) {
-            if (state->downloader == nullptr) {
-                download.TextWrapped(state->download_message.empty()
-                                         ? "On-demand downloads are unavailable."
-                                         : state->download_message);
+    // Declared before the list so their ImGui ids stay put while the list
+    // length changes.
+    ui.InputText("Search", state.search, 128,
+                 "Matches name, summary, attribution and category.");
+    std::vector<std::string> license_labels{};
+    license_labels.reserve(licenses.size());
+    for (const auto& value : licenses) {
+        license_labels.push_back(value.empty() ? "All licenses" : value);
+    }
+    std::vector<std::string> category_labels{};
+    category_labels.reserve(categories.size());
+    for (const auto& value : categories) {
+        category_labels.push_back(value.empty() ? "All categories" : value);
+    }
+    std::vector<std::string_view> license_views{};
+    license_views.reserve(license_labels.size());
+    for (const auto& label : license_labels) license_views.push_back(label);
+    std::vector<std::string_view> category_views{};
+    category_views.reserve(category_labels.size());
+    for (const auto& label : category_labels) category_views.push_back(label);
+    ui.Combo("License", state.license_filter, license_views);
+    ui.Combo("Category", state.category_filter, category_views);
+
+    const std::vector<std::size_t> visible =
+        FilterCatalog(catalog, state.search, licenses[static_cast<std::size_t>(state.license_filter)],
+                      categories[static_cast<std::size_t>(state.category_filter)]);
+    state.selected = std::clamp(state.selected, 0, static_cast<int>(catalog.size()) - 1);
+
+    ui.TextDisabled(std::to_string(visible.size()) + " of " + std::to_string(catalog.size()) +
+                    " entries");
+    for (const std::size_t index : visible) {
+        const DownloadableAsset& asset = catalog[index];
+        std::string label = asset.name + "  ·  " + asset.license + "  ·  " +
+                            FormatByteSize(asset.size);
+        if (downloader.IsInstalled(asset)) label += "  ·  installed";
+        ui.Selectable(label, state.selected == static_cast<int>(index),
+                      [&state, index] { state.selected = static_cast<int>(index); },
+                      asset.summary);
+    }
+
+    const DownloadableAsset& asset = catalog[static_cast<std::size_t>(state.selected)];
+    ui.Separator();
+    ui.Text(asset.name);
+    ui.TextDisabled(asset.category + "  ·  " + asset.license + "  ·  " +
+                    FormatByteSize(asset.size));
+    ui.TextWrapped(asset.summary);
+    ui.TextDisabled(asset.attribution);
+    ui.TextWrapped("Source: " + asset.source_page);
+
+    const auto progress = downloader.Progress();
+    const bool installed = downloader.IsInstalled(asset);
+    const bool running_this =
+        progress.state == DownloadState::Running && progress.asset_id == asset.id;
+    const int selected = state.selected;
+
+    if (installed) {
+        ui.TextDisabled(state.open_index == selected ? "Open in the scene."
+                                                     : "Installed in the cache.");
+        ui.Button("Open", [&session, &state, selected] {
+            state.selected = selected;
+            session.reload_requested = true;
+        });
+        ui.SameLine();
+        ui.Button("Remove downloaded asset", [&session, &state, asset, selected] {
+            if (!session.downloader->Remove(asset)) {
+                session.download_message =
+                    "Could not remove " + asset.name + " (it may still be downloading).";
                 return;
             }
-
-            SceneDownloader& downloader = *state->downloader;
-            const auto& catalog = downloader.Catalog();
-            if (catalog.empty()) {
-                download.TextDisabled("This build has no downloadable assets.");
-                return;
-            }
-
-            std::vector<std::string> labels{};
-            labels.reserve(catalog.size());
-            for (const auto& asset : catalog) labels.push_back(asset.name);
-            std::vector<std::string_view> views{};
-            views.reserve(labels.size());
-            for (const auto& label : labels) views.push_back(label);
-
-            state->library_index = std::clamp(state->library_index, 0,
-                                              static_cast<int>(catalog.size()) - 1);
-            download.Combo("Asset library", state->library_index, views,
-                           "Fetched on demand into the per-user cache; nothing is bundled.");
-
-            const DownloadableAsset& asset =
-                catalog[static_cast<std::size_t>(state->library_index)];
-            download.TextDisabled(asset.license + "  ·  " + FormatByteSize(asset.size));
-            download.TextWrapped(asset.summary);
-            download.TextDisabled(asset.attribution);
-
-            const auto progress = downloader.Progress();
-            const bool installed = downloader.IsInstalled(asset);
-            const bool running_this =
-                progress.state == DownloadState::Running && progress.asset_id == asset.id;
-
-            if (installed) {
-                download.TextDisabled("Installed in the cache.");
-                download.Button("Remove downloaded asset", [state, asset] {
-                    if (state->downloader->Remove(asset)) {
-                        state->download_message = "Removed " + asset.name + " from the cache.";
-                        state->rescan_requested = true;
-                    }
-                });
-            } else if (running_this) {
-                download.ProgressBar(progress.Fraction(),
-                                     FormatByteSize(progress.bytes_received) + " / " +
-                                         FormatByteSize(progress.bytes_total));
-                download.Button("Cancel download", [state] { state->downloader->Cancel(); });
+            session.download_message = "Removed " + asset.name + " from the cache.";
+            // Removing a merely selected entry leaves the scene alone; removing
+            // the open one has to drop it from view.
+            if (state.open_index == selected) session.reload_requested = true;
+        });
+    } else if (running_this) {
+        ui.ProgressBar(progress.Fraction(), FormatByteSize(progress.bytes_received) + " / " +
+                                                 FormatByteSize(progress.bytes_total));
+        ui.Button("Cancel download", [&session] { session.downloader->Cancel(); });
+    } else {
+        ui.Button("Download and open", [&session, asset] {
+            if (session.downloader->Start(asset)) {
+                session.download_message = "Downloading " + asset.name + "...";
             } else {
-                download.Button("Download and open", [state, asset] {
-                    if (state->downloader->Start(asset)) {
-                        state->download_message = "Downloading " + asset.name + "...";
-                    } else {
-                        state->download_message =
-                            "Another download is already running (one at a time).";
-                    }
-                });
-            }
-
-            if (progress.state == DownloadState::Running && !running_this &&
-                !progress.asset_id.empty()) {
-                download.TextDisabled("Downloading " + progress.asset_id + "...");
-            }
-            if (!state->download_message.empty()) {
-                download.TextWrapped(state->download_message);
+                session.download_message =
+                    "Another download is already running (one at a time).";
             }
         });
+    }
+
+    if (progress.state == DownloadState::Running && !running_this &&
+        !progress.asset_id.empty()) {
+        ui.TextDisabled("Downloading " + progress.asset_id + "...");
+    }
+    if (!session.download_message.empty()) {
+        ui.TextWrapped(session.download_message);
+    }
+}
+
+[[nodiscard]] SceneDefinition MakeAssetLibraryScene(std::shared_ptr<AssetSession> session,
+                                                    std::shared_ptr<LibraryState> state) {
+    SceneDefinition scene{};
+    scene.id = "asset-library";
+    scene.name = "Asset Library";
+    scene.summary =
+        "Browses the pinned sample-asset catalog with license, size and install state, and "
+        "opens a downloaded asset for viewing.";
+    scene.license = "per-asset";
+    scene.attribution =
+        "Each entry keeps its own license and attribution; see the entry details and "
+        "credits/ next to the executable.";
+    scene.source = "Khronos glTF-Sample-Assets and other pinned permissive sources.";
+
+    scene.load = [session, state](SceneContext& ctx) -> SceneBuildResult {
+        SceneBuildResult result{};
+        state->open_index = -1;
+        EnsureDownloader(ctx, *session);
+        if (const auto requested = StartInitialDownload(ctx, *session); requested.has_value()) {
+            state->selected = static_cast<int>(*requested);
+        }
+        if (session->downloader == nullptr) {
+            result.notice = session->download_message.empty()
+                                ? "On-demand downloads are unavailable."
+                                : session->download_message;
+            return result;
+        }
+
+        const auto& catalog = session->downloader->Catalog();
+        if (catalog.empty()) {
+            result.notice = "This build has no downloadable assets.";
+            return result;
+        }
+        state->selected = std::clamp(state->selected, 0, static_cast<int>(catalog.size()) - 1);
+        const DownloadableAsset& asset = catalog[static_cast<std::size_t>(state->selected)];
+
+        if (!session->downloader->IsInstalled(asset)) {
+            // A missing download is not a scene error: nothing is broken, the
+            // user just has not asked for this file yet. LoadScene logs
+            // ok == false as an error, so report the empty scene as fine.
+            result.notice = "Download \"" + asset.name + "\" to view it.";
+            if (!session->download_message.empty()) {
+                result.notice += "\n" + session->download_message;
+            }
+            return result;
+        }
+
+        result = LoadSessionAsset(ctx, *session, session->downloader->InstallPath(asset));
+        if (!result.ok) return result;
+
+        state->open_index = state->selected;
+
+        // One orbit around the loaded asset, so Path mode is useful for every
+        // entry without declaring a path per catalog row. The pivot is where
+        // ApplyModelTransform keeps the model's own center, not the symmetric
+        // box the camera frames: Bounds::Center() of that box is the origin.
+        CameraPath orbit{};
+        orbit.name = asset.name + " orbit";
+        orbit.closed = true;
+        const glm::vec3 pivot = session->active_bounds.Center() * session->scale;
+        const float radius = result.bounds.Radius();
+        // A PathKey target of exactly (0,0,0) is the "unset, aim along the
+        // tangent" sentinel, so a model that happens to sit on the origin gets
+        // a negligible lift instead of a sideways camera.
+        glm::vec3 target = pivot;
+        if (glm::dot(target, target) < 1e-6f) target.y = 0.01f * radius;
+        for (int i = 0; i < 8; ++i) {
+            const float angle =
+                static_cast<float>(i) / 8.0f * 2.0f * std::numbers::pi_v<float>;
+            orbit.keys.push_back({pivot + glm::vec3{std::cos(angle) * 2.2f * radius,
+                                                    0.35f * radius,
+                                                    std::sin(angle) * 2.2f * radius},
+                                  target});
+        }
+        result.paths.push_back(std::move(orbit));
+        return result;
+    };
+
+    scene.unload = [session, state](SceneContext& ctx) {
+        UnloadSession(ctx, *session);
+        state->open_index = -1;
+    };
+
+    scene.update = [session, state](SceneContext& ctx, float delta_time) {
+        if (auto outcome = PollDownload(ctx, *session);
+            outcome.has_value() && outcome->ok) {
+            const auto& catalog = session->downloader->Catalog();
+            const auto found =
+                std::ranges::find_if(catalog, [&outcome](const auto& asset) {
+                    return asset.id == outcome->asset_id;
+                });
+            if (found != catalog.end()) {
+                state->selected = static_cast<int>(
+                    std::distance(catalog.begin(), found));
+            }
+            return;
+        }
+        if (ConsumeSessionReload(ctx, *session)) return;
+        UpdateSession(ctx, *session, delta_time);
+    };
+
+    scene.options = [session, state](OptionsUi& ui) {
+        ui.Section("Library");
+        ui.Dynamic([session, state](OptionsUi& dynamic) {
+            BuildLibrarySection(dynamic, *session, *state);
+        });
+        BuildSessionOptions(ui, *session);
     };
 
     return scene;
@@ -1209,61 +1518,89 @@ void UploadLabLighting(SceneContext& ctx, const LabState& state) {
 } // namespace
 
 std::vector<Examples::Explorer::DownloadableAsset> BuildDownloadCatalog() {
-    // Licenses are the ones the upstream README/LICENSE declares; only CC0 and
-    // CC BY 4.0 entries belong here (see Examples.Explorer.Download's policy).
-    return {
-        MakeDownloadable("toy-car", "Toy Car",
-                         "Toy car with transmission, clearcoat and sheen.", "CC0-1.0",
-                         "Guido Odendahl (model); Eric Chadwick (extensions, scene). CC0 1.0.",
-                         "ToyCar", 5422412,
-                         "01a60862de55cd4b9f3acfab0b0def86451800f9c42467fcd61052c16cb9838c"),
-        MakeDownloadable("sheen-chair", "Sheen Chair",
-                         "Chair using material variants and sheen.", "CC0-1.0",
-                         "Eric Chadwick / Wayfair. CC0 1.0.", "SheenChair", 4125648,
-                         "f0af2a2b102d28d540236306ae19f8fb36842df76bd38cf76f063f9bd2853399"),
-        MakeDownloadable("iridescence-lamp", "Iridescence Lamp",
-                         "Wayfair lamp with transmission, volume and iridescence.", "CC-BY-4.0",
-                         "Eric Chadwick / Wayfair. CC BY 4.0.", "IridescenceLamp", 4083912,
-                         "17cfdc79ec9e38fadb28db159734c5f9592ca423977b546e5057e350ba29ff13"),
-        MakeDownloadable("commercial-refrigerator", "Commercial Refrigerator",
-                         "Refrigerator with glass condensation, bottles and a door animation.",
-                         "CC-BY-4.0",
-                         "Eric Chadwick / Darmstadt Graphics Group; based on 'Commercial Fridge' "
-                         "by Sean Thomas. CC BY 4.0.",
-                         "CommercialRefrigerator", 10131180,
-                         "ef8da8b144e650c277ac953e6d9e50ac1689ff1ee88c2c5bd9551ae8bccb6065"),
-        MakeDownloadable("mosquito-in-amber", "Mosquito in Amber",
-                         "Mosquito in amber: transmission, IOR and volume.", "CC-BY-4.0",
-                         "Loic Norgeot; real-time refraction by Sketchfab. CC BY 4.0.",
-                         "MosquitoInAmber", 24229904,
-                         "1c0b49000650e8a8c00d69bc8d64e46d33527871a47d74e4f2278887325cc35f"),
-        MakeDownloadable("a-beautiful-game", "A Beautiful Game",
-                         "Chess set using transmission and volume. Largest entry (33 images); "
-                         "slowest to open on software renderers.",
-                         "CC-BY-4.0",
-                         "ASWF / MaterialX Project; glTF conversion by Ed Mackey. CC BY 4.0.",
-                         "ABeautifulGame", 42977928,
-                         "bd7133b4b322aae97c589b8839dae8155ad2546acb35ae32a127e722a959d007"),
-    };
+    // The rows come from examples/scene_explorer/catalog.json, turned into this
+    // header at configure time. That keeps the panel, `--list-downloads` and the
+    // deployed credits/ folder from ever disagreeing about an entry, its
+    // license or its checksum. Only CC0 and CC BY entries belong in the catalog:
+    // Examples.Explorer.Download rejects everything else at run time, and the
+    // generator rejects it at configure time.
+    std::vector<Examples::Explorer::DownloadableAsset> catalog;
+    catalog.reserve(SceneExplorerCatalog::kEntryCount);
+    for (const auto& entry : SceneExplorerCatalog::kEntries) {
+        DownloadableAsset asset{};
+        asset.id = entry.id;
+        asset.name = entry.name;
+        asset.category = entry.category;
+        asset.summary = entry.summary;
+        asset.license = entry.license;
+        asset.attribution = entry.attribution;
+        asset.source_page = entry.source_page;
+        asset.url = entry.url;
+        asset.file_name = entry.file_name;
+        asset.size = entry.size;
+        asset.sha256 = entry.sha256;
+        catalog.push_back(std::move(asset));
+    }
+    return catalog;
+}
+
+std::vector<std::size_t> FilterCatalog(
+    std::span<const Examples::Explorer::DownloadableAsset> catalog, std::string_view query,
+    std::string_view license, std::string_view category) {
+    std::vector<std::size_t> matches{};
+    const std::string needle = LowerText(query);
+    for (std::size_t index = 0; index < catalog.size(); ++index) {
+        const Examples::Explorer::DownloadableAsset& asset = catalog[index];
+        if (!license.empty() && asset.license != license) continue;
+        if (!category.empty() && asset.category != category) continue;
+        if (!needle.empty()) {
+            // Name, summary, attribution and category are what a user would
+            // search by; the id and URLs stay out so "github" does not match
+            // everything.
+            const std::string haystack =
+                LowerText(asset.name + "\n" + asset.summary + "\n" + asset.attribution +
+                          "\n" + asset.category);
+            if (haystack.find(needle) == std::string::npos) continue;
+        }
+        matches.push_back(index);
+    }
+    return matches;
 }
 
 Examples::Explorer::SceneCatalog BuildCatalog(const Examples::Explorer::CatalogContext& context) {
-    auto assets = std::make_shared<SampleAssetsState>();
-    assets->asset_dir = context.asset_dir;
-    assets->files = DiscoverAssets(context.asset_dir);
+    // A hand-copied executable is the one case the build cannot cover. The
+    // credits folder is text that names every downloaded asset's license and
+    // attribution, so losing it is worth a warning even though the program
+    // itself runs fine.
+    if (!context.exe_dir.empty()) {
+        std::error_code ec{};
+        if (!std::filesystem::is_regular_file(context.exe_dir / "credits" / "CREDITS.md", ec)) {
+            LOGIFACE_LOG(warn, "SceneExplorer: no credits/CREDITS.md next to the executable; "
+                                   "the deployed asset licenses and attribution are missing");
+        }
+    }
+
+    // One session for every scene that can show a downloaded asset. Two
+    // sessions would mean two downloaders over one cache root, so two
+    // transfers could truncate each other's ".part" file, and `--download`
+    // would no longer be one-shot per process.
+    auto session = std::make_shared<AssetSession>();
+    session->asset_dir = context.asset_dir;
+    session->files = DiscoverAssets(context.asset_dir);
     for (const auto& file : context.asset_files) {
         if (!std::filesystem::is_regular_file(file)) {
             LOGIFACE_LOG(warn, "SceneExplorer: --asset '" + file.string() + "' does not exist");
             continue;
         }
-        if (std::ranges::find(assets->files, file) == assets->files.end()) {
-            assets->files.push_back(file);
+        if (std::ranges::find(session->files, file) == session->files.end()) {
+            session->files.push_back(file);
         }
     }
-    std::ranges::sort(assets->files);
+    std::ranges::sort(session->files);
 
     Examples::Explorer::SceneCatalog catalog{};
-    catalog.push_back(MakeSampleAssetsScene(std::move(assets)));
+    catalog.push_back(MakeSampleAssetsScene(session));
+    catalog.push_back(MakeAssetLibraryScene(session, std::make_shared<LibraryState>()));
     catalog.push_back(MakeMaterialLabScene(std::make_shared<LabState>()));
     return catalog;
 }

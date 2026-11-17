@@ -173,6 +173,36 @@ void OptionsUi::Button(std::string_view label, Action action, std::string_view t
     });
 }
 
+void OptionsUi::Selectable(std::string_view label, bool selected, Action on_click,
+                           std::string_view tooltip) {
+    std::string id = MakeLabel(label);
+    std::string tip{tooltip};
+    entries_.push_back([id = std::move(id), selected, action = std::move(on_click),
+                        tip = std::move(tip)] {
+        if (ImGui::Selectable(id.c_str(), selected)) action();
+        ShowTooltip(tip);
+    });
+}
+
+void OptionsUi::InputText(std::string_view label, std::string& value, std::size_t max_length,
+                          std::string_view tooltip) {
+    std::string id = MakeLabel(label);
+    std::string tip{tooltip};
+    entries_.push_back([this, id = std::move(id), &value, max_length, tip = std::move(tip),
+                        buffer = std::vector<char>(max_length + 1, '\0')]() mutable {
+        // ImGui edits the buffer in place, so `value` has to be copied in every
+        // frame and written back only when ImGui reports a change.
+        const std::size_t length = std::min(value.size(), max_length);
+        std::copy_n(value.begin(), static_cast<std::ptrdiff_t>(length), buffer.begin());
+        buffer[length] = '\0';
+        if (ImGui::InputText(id.c_str(), buffer.data(), buffer.size())) {
+            value.assign(buffer.data());
+            changed_ = true;
+        }
+        ShowTooltip(tip);
+    });
+}
+
 void OptionsUi::Custom(std::function<void()> draw) {
     entries_.push_back([draw = std::move(draw)] { draw(); });
 }

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "toy-car",
+      "name": "Toy Car",
+      "category": "Materials",
+      "summary": "Toy car with transmission, clearcoat and sheen.",
+      "license": "CC0-1.0",
+      "attribution": "Guido Odendahl (model); Eric Chadwick (extensions, scene). CC0 1.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ToyCar",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/ToyCar/glTF-Binary/ToyCar.glb",
+      "file_name": "toy-car.glb",
+      "size": 5422412,
+      "sha256": "01a60862de55cd4b9f3acfab0b0def86451800f9c42467fcd61052c16cb9838c"
+    },
+    {
+      "id": "sheen-chair",
+      "name": "Sheen Chair",
+      "category": "Materials",
+      "summary": "Chair using material variants and sheen.",
+      "license": "CC0-1.0",
+      "attribution": "Eric Chadwick / Wayfair. CC0 1.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/SheenChair",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/SheenChair/glTF-Binary/SheenChair.glb",
+      "file_name": "sheen-chair.glb",
+      "size": 4125648,
+      "sha256": "f0af2a2b102d28d540236306ae19f8fb36842df76bd38cf76f063f9bd2853399"
+    },
+    {
+      "id": "iridescence-lamp",
+      "name": "Iridescence Lamp",
+      "category": "Materials",
+      "summary": "Wayfair lamp with transmission, volume and iridescence.",
+      "license": "CC-BY-4.0",
+      "attribution": "Eric Chadwick / Wayfair. CC BY 4.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/IridescenceLamp",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/IridescenceLamp/glTF-Binary/IridescenceLamp.glb",
+      "file_name": "iridescence-lamp.glb",
+      "size": 4083912,
+      "sha256": "17cfdc79ec9e38fadb28db159734c5f9592ca423977b546e5057e350ba29ff13"
+    },
+    {
+      "id": "commercial-refrigerator",
+      "name": "Commercial Refrigerator",
+      "category": "Scenes",
+      "summary": "Refrigerator with glass condensation, bottles and a door animation.",
+      "license": "CC-BY-4.0",
+      "attribution": "Eric Chadwick / Darmstadt Graphics Group; based on 'Commercial Fridge' by Sean Thomas. CC BY 4.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CommercialRefrigerator",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/CommercialRefrigerator/glTF-Binary/CommercialRefrigerator.glb",
+      "file_name": "commercial-refrigerator.glb",
+      "size": 10131180,
+      "sha256": "ef8da8b144e650c277ac953e6d9e50ac1689ff1ee88c2c5bd9551ae8bccb6065"
+    },
+    {
+      "id": "mosquito-in-amber",
+      "name": "Mosquito in Amber",
+      "category": "Materials",
+      "summary": "Mosquito in amber: transmission, IOR and volume.",
+      "license": "CC-BY-4.0",
+      "attribution": "Loic Norgeot; real-time refraction by Sketchfab. CC BY 4.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/MosquitoInAmber",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/MosquitoInAmber/glTF-Binary/MosquitoInAmber.glb",
+      "file_name": "mosquito-in-amber.glb",
+      "size": 24229904,
+      "sha256": "1c0b49000650e8a8c00d69bc8d64e46d33527871a47d74e4f2278887325cc35f"
+    },
+    {
+      "id": "a-beautiful-game",
+      "name": "A Beautiful Game",
+      "category": "Scenes",
+      "summary": "Chess set using transmission and volume. 33 embedded images; heavy to open on software renderers.",
+      "license": "CC-BY-4.0",
+      "attribution": "ASWF / MaterialX Project; glTF conversion by Ed Mackey. CC BY 4.0.",
+      "source_page": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ABeautifulGame",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/ABeautifulGame/glTF-Binary/ABeautifulGame.glb",
+      "file_name": "a-beautiful-game.glb",
+      "size": 42977928,
+      "sha256": "bd7133b4b322aae97c589b8839dae8155ad2546acb35ae32a127e722a959d007"
+    },
+    {
+      "id": "powerplant",
+      "name": "Power Plant",
+      "category": "Environments",
+      "summary": "Full industrial environment: cranes, containers, pipework and railings. 65 embedded textures, the largest entry (43 MB).",
+      "license": "CC-BY-4.0",
+      "attribution": "Babylon.js Assets project, CC BY 4.0 (as declared by the source repository).",
+      "source_page": "https://github.com/BabylonJS/Assets/tree/master/meshes/PowerPlant",
+      "url": "https://raw.githubusercontent.com/BabylonJS/Assets/d0564229900f4e80b00b0a3c8a47fe47150c70db/meshes/PowerPlant/powerplant.glb",
+      "file_name": "powerplant.glb",
+      "size": 43694588,
+      "sha256": "4d40766d82853780869d7072b233a011cae1e03847a446ce82c6276785c9e347"
+    },
+    {
+      "id": "haunted-house",
+      "name": "Haunted House",
+      "category": "Environments",
+      "summary": "Full haunted-house scene with two material sets and eleven embedded textures (39 MB).",
+      "license": "CC-BY-4.0",
+      "attribution": "Babylon.js Assets project, CC BY 4.0 (as declared by the source repository).",
+      "source_page": "https://github.com/BabylonJS/Assets/blob/master/meshes/haunted_house.glb",
+      "url": "https://raw.githubusercontent.com/BabylonJS/Assets/d0564229900f4e80b00b0a3c8a47fe47150c70db/meshes/haunted_house.glb",
+      "file_name": "haunted-house.glb",
+      "size": 38976908,
+      "sha256": "f3becee42bc890e39502babe6cc4a4ea13e335a2f5a52e7909aebbfc1edf8269"
+    }
+  ]
+}

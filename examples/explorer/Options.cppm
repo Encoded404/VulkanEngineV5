@@ -46,6 +46,19 @@ public:
     // ── One-shot actions ────────────────────────────────────────────────
     void Button(std::string_view label, Action action, std::string_view tooltip = {});
 
+    // A clickable row that draws as selected when `selected` is true. The
+    // selection itself stays with the caller; `on_click` only fires on a click.
+    void Selectable(std::string_view label, bool selected, Action on_click,
+                    std::string_view tooltip = {});
+
+    // A single-line text field bound to `value`, capped at `max_length` bytes.
+    // The buffer is rebuilt from `value` every draw, so clearing or replacing
+    // the string elsewhere shows up immediately; cursor and selection are ImGui
+    // state keyed by the widget id, which is why the field must keep a stable
+    // position in the declaration order.
+    void InputText(std::string_view label, std::string& value, std::size_t max_length = 128,
+                   std::string_view tooltip = {});
+
     // Escape hatch: emit an arbitrary ImGui widget when the controls above are
     // not enough. `draw` must be self-contained (no dangling captures).
     void Custom(std::function<void()> draw);

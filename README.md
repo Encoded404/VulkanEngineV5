@@ -164,9 +164,12 @@ because the Visual Studio generators cannot consume CMake's imported `std` BMI.
   text), the shared shaping/layout/cache pipeline and the tests that pin it,
   with the `examples/text_demo` walkthrough.
 - **[examples/scene_explorer](examples/scene_explorer/README.md)** — a
-  catalog-driven explorer with freefly/showcase/path camera modes and a
-  declarative per-scene options panel, built on the reusable
-  [explorer library](examples/explorer/README.md).
+  catalog-driven explorer with freefly/showcase/path camera modes, a
+  declarative per-scene options panel and an asset library that downloads
+  pinned samples, built on the reusable
+  [explorer library](examples/explorer/README.md). Its generated `credits/`
+  folder keeps every downloaded asset's license and attribution next to the
+  executable.
 - **[docs/display-scaling.md](docs/display-scaling.md)** — logical points versus
   physical pixels: why the window flag is not optional, the single conversion
   screen text goes through, and what is deliberately left unscaled.

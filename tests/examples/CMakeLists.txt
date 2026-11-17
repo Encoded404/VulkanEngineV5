@@ -7,10 +7,12 @@ add_executable(examples_tests
   text_demo_tests.cpp
   basic_scene_component_tests.cpp
   explorer_tests.cpp
+  scene_explorer_tests.cpp
 )
 target_link_libraries(examples_tests PRIVATE
   basic_scene_core
   explorer_core
+  scene_explorer_core
   custom_pass_core
   text_demo_core
   infinite_runner_core

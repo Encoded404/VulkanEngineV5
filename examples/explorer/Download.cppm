@@ -19,6 +19,7 @@ export namespace Examples::Explorer {
 struct DownloadableAsset {
     std::string id{};
     std::string name{};
+    std::string category{};     // grouping shown by the asset library, e.g. "Materials"
     std::string summary{};
     std::string license{};      // SPDX identifier; only permissive ones are accepted
     std::string attribution{};  // what the credits/UI must show for CC BY

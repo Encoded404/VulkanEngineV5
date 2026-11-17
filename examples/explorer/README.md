@@ -21,11 +21,20 @@ engine. `examples/scene_explorer` is one host; any example can link
   - A scene declares controls with plain calls (`ui.SliderFloat("Roughness",
     state.roughness, 0, 1)`); the explorer draws them in its panel. No
     `<imgui.h>` in scene code, no manual widget ids, no reflection.
+  - `Selectable(label, selected, on_click)` draws a clickable row (the asset
+    library's list) and `InputText(label, std::string&, max_length)` a bound
+    text field (its search box). Both keep `MakeLabel`'s stable id and the
+    tooltip behavior of the other widgets.
+  - `Dynamic(std::function<void(OptionsUi&)>)` rebuilds a sub-panel every frame
+    for content that depends on live state. Use it whenever the set of visible
+    controls changes (a download in progress, a filtered list); a value that
+    only changes what `load` does belongs in the once-per-load callbacks.
   - `Custom(std::function<void()>)` is the escape hatch for anything the
     built-in controls do not cover.
 - **On-demand downloads** (`Examples.Explorer.Download`)
   - The binary carries only a catalog of pinned HTTPS URLs plus a SHA-256 per
-    asset; bytes are fetched when the user asks for them.
+    asset; bytes are fetched when the user asks for them. `category` is
+    presentation metadata for a browsing host; the downloader ignores it.
   - A permissive-license gate rejects anything that is not CC0 / CC BY before a
     transfer starts, and every entry is validated (HTTPS only, single-component
     file name, 64-hex checksum, non-zero size).
@@ -48,6 +57,9 @@ engine. `examples/scene_explorer` is one host; any example can link
 - **Scene lifecycle** (`Examples.Explorer.Scene`)
   - A `SceneDefinition` is data: `load`, optional `unload`/`update`/`options`,
     and a `std::vector<CameraPath>`.
+  - `SceneBuildResult::paths` lets one load replace those static paths for the
+    scene it just built. The asset library uses it to offer an orbit around
+    whatever model it opened; an empty vector keeps the definition's paths.
   - `SceneContext::CreateMeshEntity` creates the `Transform` + `MeshReference`
     pair; every entity a scene creates is returned in `SceneBuildResult` so the
     explorer can destroy it on a switch.

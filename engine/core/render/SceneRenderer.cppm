@@ -339,6 +339,9 @@ public:
     // base+1). The generator and the initialization-time coverage assert share
     // this value so the two cannot drift apart.
     static constexpr std::uint32_t HIZ_BATCH = 2;
+    // Source tile one generator thread reduces per dimension: the shader's STRIDE (1 << BATCH_LEVELS) in hiz_gen.slang.
+    // A dispatch covers the tile grid (source extent / HIZ_TILE_STRIDE), never the source extent itself.
+    static constexpr std::uint32_t HIZ_TILE_STRIDE = 1u << HIZ_BATCH;
     // Fixed descriptor-table sizes. Single source: SceneLimits.
     static constexpr std::uint32_t MAX_VERTEX_BUFFERS = SceneLimits::kMaxVertexBuffers;
     static constexpr std::uint32_t MAX_INDEX_BUFFERS = SceneLimits::kMaxIndexBuffers;

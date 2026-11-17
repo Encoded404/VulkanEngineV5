@@ -3,6 +3,9 @@
 #define HALF (STRIDE >> 1)
 
 // Generates two Hi-Z mip levels per dispatch by 4x4 → 2x2 → 1x1 reduction (max-depth).
+// One thread consumes a STRIDE x STRIDE tile of the source level, so the caller dispatches the tile grid (source extent / STRIDE, rounded up).
+// A source-extent dispatch leaves 15/16 of the threads on the guard below.
+// The caller mirrors this tile size as SceneRenderer::HIZ_TILE_STRIDE.
 [[vk::binding(0, 0)]]
 Texture2D<float> depthTexture;
 [[vk::binding(1, 0)]]

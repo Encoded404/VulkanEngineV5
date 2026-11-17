@@ -158,7 +158,8 @@ function(add_engine_example NAME)
     if(AEG_SHADERS)
         list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
         include(SlangSpirVCompiler)
-        set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/examples/${NAME}")
+        # Per configuration: the shader command differs by config, so a shared directory would turn every config switch into a module rebuild.
+        set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/examples/${NAME}/$<CONFIG>")
         set(_shader_opt_level
             "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
         add_slang_shaders(

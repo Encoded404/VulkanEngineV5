@@ -339,7 +339,8 @@ target_sources(${ENGINE_TARGET} PRIVATE
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
 include(SlangSpirVCompiler)
-set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine")
+# Per configuration, because the compiler path and -O flag differ by config: a shared output directory would make ninja rerun every shader on a config switch, and then every module that imports a generated shader module.
+set(_shader_gen_dir "${CMAKE_BINARY_DIR}/generated/shaders/engine/$<CONFIG>")
 set(_shader_opt_level "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 set(_engine_shaders
     ExpandComp              expand.slang              compute  main

@@ -55,7 +55,8 @@ target_sources(gpu_tests PRIVATE
 # real standard_mesh fragment shader declares.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/SlangSpriVCompilerHelper/cmake")
 include(SlangSpirVCompiler)
-set(_gpu_test_shader_dir "${CMAKE_BINARY_DIR}/generated/shaders/tests/gpu")
+# Per configuration: the shader command differs by config, so a shared directory would turn every config switch into a module rebuild.
+set(_gpu_test_shader_dir "${CMAKE_BINARY_DIR}/generated/shaders/tests/gpu/$<CONFIG>")
 set(_gpu_test_shader_opt "$<$<CONFIG:Debug>:0>$<$<CONFIG:RelWithDebInfo>:2>$<$<CONFIG:Release>:3>")
 add_slang_shaders(
   TARGET gpu_test_shaders

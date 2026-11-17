@@ -82,27 +82,40 @@ ConstantBuffer<OccluderSelectPC> pc;
 groupshared uint g_occluderDest;
 groupshared uint g_occluderCount;
 
-// Thread 0 of each submesh workgroup: area test + selection. Early returns are
-// safe here because the caller reaches the workgroup barrier afterwards.
-void SelectOccluder(uint submeshIndex) {
-    if (submeshIndex >= pc.elementCount) return;
+struct OccluderResult {
+    bool selected;
+    uint techniqueId;
+    uint indexCount;
+    uint indexBase;
+};
+
+// Returns whether the submesh was selected as an occluder, plus the range the
+// caller needs to emit its command or copy its indices.
+OccluderResult SelectOccluder(uint submeshIndex) {
+    OccluderResult result;
+    result.selected = false;
+    result.techniqueId = 0;
+    result.indexCount = 0;
+    result.indexBase = 0;
+
+    if (submeshIndex >= pc.elementCount) return result;
 
     uint block = submeshIndex / kEntriesPerBlock;
     uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
-    if (entry.indexCount == 0) return;
-    if (entry.indexCount > kMaxOccluderIndices) return;
-    if (entry.techniqueId >= kMaxDrawGroups) return;
+    if (entry.indexCount == 0) return result;
+    if (entry.indexCount > kMaxOccluderIndices) return result;
+    if (entry.techniqueId >= kMaxDrawGroups) return result;
     // An object with an active deform is not an occluder: its rest-pose OBB
     // under-approximates the deformed geometry, so selecting it could cull
     // things that are actually visible (docs/pre-prepass-occlusion-culling.md
     // §5.8).
-    if ((entry.flags & kCullNoOccluder) != 0) return;
+    if ((entry.flags & kCullNoOccluder) != 0) return result;
 
     uint flags = techniqueFlags[entry.techniqueId];
-    if ((flags & kFlagDepthPass) == 0) return;    // no prepass depth → never occludes
-    if ((flags & kFlagOccluderSafe) == 0) return; // displaced bounds not conservative (§5.5)
+    if ((flags & kFlagDepthPass) == 0) return result;    // no prepass depth → never occludes
+    if ((flags & kFlagOccluderSafe) == 0) return result; // displaced bounds not conservative (§5.5)
 
     float4x4 mvp = submeshVertexEntries[NonUniformResourceIndex(block)][elementIndex].mvp;
     ObbEntry obb = obbEntries[NonUniformResourceIndex(block)][elementIndex];
@@ -150,48 +163,56 @@ void SelectOccluder(uint submeshIndex) {
         float2 lo = min(pA, pB);
         float2 hi = max(pA, pB);
         // Fully off-screen occluders occlude nothing visible.
-        if (hi.x <= 0.0 || lo.x >= float(pc.screenW) || hi.y <= 0.0 || lo.y >= float(pc.screenH)) return;
+        if (hi.x <= 0.0 || lo.x >= float(pc.screenW) || hi.y <= 0.0 || lo.y >= float(pc.screenH)) return result;
         extentPx = hi - lo;
     }
 
-    if (extentPx.x * extentPx.y < pc.minAreaPx) return;
+    if (extentPx.x * extentPx.y < pc.minAreaPx) return result;
 
     // Budgeted selection: no sort, no scan. Any set of large real-geometry
     // occluders is a valid occluder set — overflow only misses culls.
     uint slot;
     InterlockedAdd(occluderCandidateCount[0], 1u, slot);
-    if (slot >= kMaxOccluders) return;
+    if (slot >= kMaxOccluders) return result;
 
-    // Every group owns a fixed command region. The atomic also yields the
-    // group-relative slot, so commands land in techniqueRegionBases[group]
-    // .. + occluderTechniqueCounts[group].
-    uint local;
-    InterlockedAdd(occluderTechniqueCounts[entry.techniqueId], 1u, local);
-    uint base = (techniqueRegionBases[entry.techniqueId] + local) * kCmdWords;
-
-    if (kCompactionMode == 0) {
-        // CID: reserve the range; the workgroup copies it in main(). The command
-        // indexes the compacted list and never uses firstInstance.
-        uint destOffset;
-        InterlockedAdd(occluderOutCounter[0], entry.indexCount, destOffset);
-        g_occluderDest = destOffset;
-        g_occluderCount = entry.indexCount;
-        occluderOut[base + 0] = entry.indexCount;
-        occluderOut[base + 1] = 1u;
-        occluderOut[base + 2] = destOffset;
-        occluderOut[base + 3] = 0u;
-        occluderOut[base + 4] = 0u;
-    } else {
-        // MID: one 20 B indexed draw command per selected occluder.
-        occluderOut[base + 0] = entry.indexCount;
-        occluderOut[base + 1] = 1u;
-        occluderOut[base + 2] = entry.indexBase;
-        occluderOut[base + 3] = 0u;
-        // firstInstance carries the submesh id (see collect_count_compact.slang).
-        occluderOut[base + 4] = submeshIndex;
-    }
-
+    result.selected = true;
+    result.techniqueId = entry.techniqueId;
+    result.indexCount = entry.indexCount;
+    result.indexBase = entry.indexBase;
     cullEntries[NonUniformResourceIndex(block)][elementIndex].flags |= kOccluderBit;
+    return result;
+}
+
+void EmitOccluderCid(OccluderResult result) {
+    uint local;
+    InterlockedAdd(occluderTechniqueCounts[result.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[result.techniqueId] + local) * kCmdWords;
+
+    // CID: reserve the range; the workgroup copies it in main().
+    uint destOffset;
+    InterlockedAdd(occluderOutCounter[0], result.indexCount, destOffset);
+    g_occluderDest = destOffset;
+    g_occluderCount = result.indexCount;
+
+    occluderOut[base + 0] = result.indexCount;
+    occluderOut[base + 1] = 1u;
+    occluderOut[base + 2] = destOffset;
+    occluderOut[base + 3] = 0u;
+    occluderOut[base + 4] = 0u;
+}
+
+void EmitOccluderMid(OccluderResult result, uint submeshIndex) {
+    uint local;
+    InterlockedAdd(occluderTechniqueCounts[result.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[result.techniqueId] + local) * kCmdWords;
+
+    // MID: one 20 B indexed draw command per selected occluder.
+    occluderOut[base + 0] = result.indexCount;
+    occluderOut[base + 1] = 1u;
+    occluderOut[base + 2] = result.indexBase;
+    occluderOut[base + 3] = 0u;
+    // firstInstance carries the submesh id (see collect_count_compact.slang).
+    occluderOut[base + 4] = submeshIndex;
 }
 
 [numthreads(256, 1, 1)]
@@ -203,7 +224,14 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
     if (tid == 0) {
         g_occluderDest = 0;
         g_occluderCount = 0;
-        SelectOccluder(submeshIndex);
+        OccluderResult result = SelectOccluder(submeshIndex);
+        if (result.selected) {
+            if (kCompactionMode == 0) {
+                EmitOccluderCid(result);
+            } else {
+                EmitOccluderMid(result, submeshIndex);
+            }
+        }
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -214,5 +242,15 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
         for (uint i = tid; i < g_occluderCount; i += 256) {
             occluderIndices[g_occluderDest + i] = drawIndices[entry.indexBase + i];
         }
+    }
+}
+
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void main_mid(uint3 dispatchThreadId : SV_DispatchThreadID) {
+    const uint submeshIndex = dispatchThreadId.x;
+    OccluderResult result = SelectOccluder(submeshIndex);
+    if (result.selected) {
+        EmitOccluderMid(result, submeshIndex);
     }
 }

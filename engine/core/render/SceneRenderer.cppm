@@ -844,12 +844,18 @@ private:
     std::unique_ptr<vk::raii::PipelineLayout> occluder_select_pipeline_layout_{};
     ShaderSystem::PipelineSlot occluder_select_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> occluder_select_desc_;
+    // MID variant: one thread per submesh, no group copy or barrier.
+    ShaderSystem::PipelineSlot occluder_select_mid_slot_;
+    std::optional<ShaderSystem::ComputePipelineDesc> occluder_select_mid_desc_;
 
     // Pre-cull compute: reuses the occlusion set (extended with the survivor
     // compaction bindings 6-8) + its own pipeline.
     std::unique_ptr<vk::raii::PipelineLayout> pre_cull_pipeline_layout_{};
     ShaderSystem::PipelineSlot pre_cull_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> pre_cull_desc_;
+    // MID variant: one thread per submesh, no group copy or barrier.
+    ShaderSystem::PipelineSlot pre_cull_mid_slot_;
+    std::optional<ShaderSystem::ComputePipelineDesc> pre_cull_mid_desc_;
 
     // Set 6: Collect count + compact (cull blocks + indirections + intermediate)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_layout_{};
@@ -857,6 +863,9 @@ private:
     std::unique_ptr<vk::raii::PipelineLayout> collect_pipeline_layout_{};
     ShaderSystem::PipelineSlot collect_count_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> collect_count_desc_;
+    // MID variant: one thread per submesh, no group copy or barrier.
+    ShaderSystem::PipelineSlot collect_count_mid_slot_;
+    std::optional<ShaderSystem::ComputePipelineDesc> collect_count_mid_desc_;
     // Collect write shaders (use separate layout)
     std::unique_ptr<vk::raii::DescriptorSetLayout> collect_write_layout_{};
     std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> collect_write_pool_;

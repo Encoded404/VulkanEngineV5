@@ -37,7 +37,7 @@ using VulkanEngine::ShaderSystem::ShaderManager;
 // rest-pose bounds are stale) and a submesh with kCullNoOccluder must never be
 // selected as an occluder. The control entry in each test proves the test
 // geometry really would have been culled/selected without the bit.
-class SkinnedBoundsGpuTest : public ::testing::Test {
+class SkinnedBoundsGpuTest : public ::testing::TestWithParam<DrawMode> {
 protected:
     void SetUp() override {
         if (!TestSupport::IsGpuDeviceAvailable()) {
@@ -65,7 +65,12 @@ protected:
         renderer_ = std::make_unique<SceneRenderer>();
         ASSERT_TRUE(renderer_->Initialize(backend_, vertex_heap_, capacity, *shaders_,
                                           *pipeline_factory_, ids_, /*frames_in_flight=*/1,
-                                          DrawMode::CID, modifier_mgr_));
+                                          GetParam(), modifier_mgr_));
+        // Initialize falls back to CID when the device lacks the indirect-count
+        // or first-instance feature; the MID case would silently re-test CID.
+        if (renderer_->GetDrawMode() != GetParam()) {
+            GTEST_SKIP() << "device fell back to CID";
+        }
         // A headless bootstrap has no swapchain extent; the pre-cull dispatch
         // binds the Hi-Z descriptors, so give the renderer the test extent before
         // PrepareCompute writes them.
@@ -232,7 +237,7 @@ protected:
 
 }  // namespace
 
-TEST_F(SkinnedBoundsGpuTest, NoCullTestBitSurvivesTheFrustumCull) {
+TEST_P(SkinnedBoundsGpuTest, NoCullTestBitSurvivesTheFrustumCull) {
     // Technique flags: depth pass on (so the survivor is compacted), occlusion
     // off (this test targets the frustum test, not Hi-Z).
     const std::array<std::uint32_t, 2> flags{
@@ -251,7 +256,7 @@ TEST_F(SkinnedBoundsGpuTest, NoCullTestBitSurvivesTheFrustumCull) {
         << "a deformed submesh was culled against its stale rest-pose bounds";
 }
 
-TEST_F(SkinnedBoundsGpuTest, NoOccluderBitKeepsTheSubmeshOutOfTheOccluderSet) {
+TEST_P(SkinnedBoundsGpuTest, NoOccluderBitKeepsTheSubmeshOutOfTheOccluderSet) {
     // A technique that is otherwise a perfect occluder: depth pass and
     // conservative bounds.
     const std::array<std::uint32_t, 2> flags{
@@ -277,7 +282,7 @@ TEST_F(SkinnedBoundsGpuTest, NoOccluderBitKeepsTheSubmeshOutOfTheOccluderSet) {
         << "a deformed submesh was selected as an occluder on its rest-pose bounds";
 }
 
-TEST_F(SkinnedBoundsGpuTest, CustomDepthVariantBuildsADepthOnlyPipeline) {
+TEST_P(SkinnedBoundsGpuTest, CustomDepthVariantBuildsADepthOnlyPipeline) {
     // Exercises MakeDepthDesc / EnsureDepthVariant end to end: the mask row's
     // depth_frag must produce a colorless pipeline on the technique layout.
     using VulkanEngine::TechniqueManager::DefaultMeshTechnique;
@@ -329,7 +334,7 @@ TEST_F(SkinnedBoundsGpuTest, CustomDepthVariantBuildsADepthOnlyPipeline) {
     tech.Shutdown();
 }
 
-TEST_F(SkinnedBoundsGpuTest, ReuseColorFragmentDepthVariantBuilds) {
+TEST_P(SkinnedBoundsGpuTest, ReuseColorFragmentDepthVariantBuilds) {
     // The unlit technique reuses its color fragment as the prepass coverage
     // shader. That shader writes SV_TARGET; a depth-only pipeline must still be
     // creatable (the output has no attachment to land in).
@@ -358,3 +363,17 @@ TEST_F(SkinnedBoundsGpuTest, ReuseColorFragmentDepthVariantBuilds) {
     EXPECT_NE(unlit.GetDepthPipeline(0u), nullptr);
     unlit.Shutdown();
 }
+
+// The two cull passes have a flat MID entry and the fused CID entry.
+// Running the fixture in both modes compares their cull entries; a device that
+// falls back to CID skips the MID case rather than silently re-testing CID.
+INSTANTIATE_TEST_SUITE_P(BothDrawModes, SkinnedBoundsGpuTest,
+                         ::testing::Values(VulkanEngine::SceneRenderer::DrawMode::CID,
+                                           VulkanEngine::SceneRenderer::DrawMode::MID),
+                         [](const ::testing::TestParamInfo<
+                                VulkanEngine::SceneRenderer::DrawMode>& info) {
+                             return info.param ==
+                                            VulkanEngine::SceneRenderer::DrawMode::MID
+                                        ? "MID"
+                                        : "CID";
+                         });

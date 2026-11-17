@@ -347,9 +347,12 @@ set(_engine_shaders
     DeformComp              deform.slang              compute  main
     OcclusionCullComp       occlusion_cull.slang       compute  main
     OccluderSelectComp      occluder_select.slang      compute  main
+    OccluderSelectCompMid   occluder_select.slang      compute  main_mid
     PreCullComp             pre_cull.slang             compute  main
+    PreCullCompMid          pre_cull.slang             compute  main_mid
     HizGenComp              hiz_gen.slang              compute  main
     CollectCountCompactComp collect_count_compact.slang compute  main
+    CollectCountCompactMid  collect_count_compact.slang compute  main_mid
     CollectWriteComp        collect_write.slang        compute  main
     MainIndirVert           main_indir.slang           vertex   main
     MainIndirVertUV1        main_indir.slang           vertex   main_uv1

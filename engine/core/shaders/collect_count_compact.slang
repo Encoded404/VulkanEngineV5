@@ -171,3 +171,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID,
         }
     }
 }
+
+// MID has no index copy, so the whole submesh space can be one flat dispatch.
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void main_mid(uint3 dispatchThreadId : SV_DispatchThreadID) {
+    passCompactMid(dispatchThreadId.x);
+}

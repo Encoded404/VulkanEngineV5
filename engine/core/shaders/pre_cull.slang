@@ -89,23 +89,36 @@ ConstantBuffer<PreCullPC> pc;
 groupshared uint g_depthDest;
 groupshared uint g_depthCount;
 
-// Thread 0 of each submesh workgroup. Early returns are safe here: the caller
-// always reaches the workgroup barrier afterwards.
-void CullSubmesh(uint submeshIndex) {
-    if (submeshIndex >= pc.elementCount) return;
+struct CullResult {
+    bool survivor;
+    uint techniqueId;
+    uint indexCount;
+    uint indexBase;
+};
+
+// Returns whether the submesh survives into the depth prepass, plus the range
+// the caller needs to emit its command or copy its indices.
+CullResult CullSubmesh(uint submeshIndex) {
+    CullResult result;
+    result.survivor = false;
+    result.techniqueId = 0;
+    result.indexCount = 0;
+    result.indexBase = 0;
+
+    if (submeshIndex >= pc.elementCount) return result;
 
     uint block = submeshIndex / kEntriesPerBlock;
     uint elementIndex = submeshIndex % kEntriesPerBlock;
 
     CullEntry entry = cullEntries[NonUniformResourceIndex(block)][elementIndex];
-    if (entry.indexCount == 0) return; // already culled earlier this frame
+    if (entry.indexCount == 0) return result; // already culled earlier this frame
 
     // Occluders already wrote their depth in the occluder prepass; they are
     // visible and must reach the main pass through collect — never re-test
     // them and never compact them into the survivor list.
-    if ((entry.flags & kOccluderBit) != 0) return;
+    if ((entry.flags & kOccluderBit) != 0) return result;
 
-    if (entry.techniqueId >= kMaxDrawGroups) return;
+    if (entry.techniqueId >= kMaxDrawGroups) return result;
     uint flags = techniqueFlags[entry.techniqueId];
 
     // An object with an active deform has no trustworthy rest-pose bounds: skip
@@ -120,11 +133,11 @@ void CullSubmesh(uint submeshIndex) {
     // ── Bounding sphere frustum test: cheap conservative early-out ──
     float4 sphere = boundingSpheres[NonUniformResourceIndex(block)][elementIndex];
     float4 clipPos = mul(float4(sphere.xyz, 1.0), mvp);
-    if (clipPos.w <= 0.0) return;   // sphere center behind the camera, but the
+    if (clipPos.w <= 0.0) return result;   // sphere center behind the camera, but the
                                     // sphere may still be visible → keep alive
 
     float worldRadius = sphere.w * maxScaleVal;
-    if (NearPoleClipped(clipPos, worldRadius, pc.projInfo)) return;   // intersects near plane
+    if (NearPoleClipped(clipPos, worldRadius, pc.projInfo)) return result;   // intersects near plane
 
     float2 centerUV = clipPos.xy / clipPos.w * 0.5 + 0.5;
     centerUV.y = 1.0 - centerUV.y;
@@ -136,7 +149,7 @@ void CullSubmesh(uint submeshIndex) {
     // off-screen) — see occlusion_cull.slang for the full rationale.
     if (maxUV.x <= 0.0 || minUV.x >= 1.0 || maxUV.y <= 0.0 || minUV.y >= 1.0) {
         cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
-        return;
+        return result;
     }
 
     // ── Hi-Z occlusion test (only techniques that receive occlusion) ──
@@ -149,7 +162,7 @@ void CullSubmesh(uint submeshIndex) {
         float hizDepthVal = hizTex.SampleLevel((clampedMin + clampedMax) * 0.5, float(mip));
         if (nearZ > hizDepthVal + kDepthEps) {
             cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
-            return;
+            return result;
         }
 
         // OBB test: exact screen AABB from the transformed corners, with the
@@ -207,7 +220,7 @@ void CullSubmesh(uint submeshIndex) {
                 float obbHizDepth = hizTex.SampleLevel(centerUV_OBB, float(obbMip));
                 if (nearZ_OBB > obbHizDepth + kDepthEps) {
                     cullEntries[NonUniformResourceIndex(block)][elementIndex].indexCount = 0;
-                    return;
+                    return result;
                 }
             }
         }
@@ -219,37 +232,45 @@ void CullSubmesh(uint submeshIndex) {
     // Techniques with participates_in_depth_pass == false keep their
     // indexCount (collect still emits them for the main pass) but are not
     // part of the depth prepass.
-    if ((flags & kFlagDepthPass) == 0) return;
+    if ((flags & kFlagDepthPass) == 0) return result;
 
-    // Every group owns a fixed command region. The atomic also yields the
-    // group-relative slot, so the commands land in techniqueRegionBases[group]
-    // .. + depthTechniqueCounts[group].
+    result.survivor = true;
+    result.techniqueId = entry.techniqueId;
+    result.indexCount = entry.indexCount;
+    result.indexBase = entry.indexBase;
+    return result;
+}
+
+void EmitCid(CullResult result) {
     uint local;
-    InterlockedAdd(depthTechniqueCounts[entry.techniqueId], 1u, local);
-    uint base = (techniqueRegionBases[entry.techniqueId] + local) * kCmdWords;
+    InterlockedAdd(depthTechniqueCounts[result.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[result.techniqueId] + local) * kCmdWords;
 
-    if (kCompactionMode == 0) {
-        // CID: reserve the index range; the workgroup copies it in main(). The
-        // command indexes the compacted list with firstIndex = destOffset and
-        // never uses firstInstance (the depth vertex shader reads the entry).
-        uint destOffset;
-        InterlockedAdd(depthOutCounter[0], entry.indexCount, destOffset);
-        g_depthDest = destOffset;
-        g_depthCount = entry.indexCount;
-        depthOut[base + 0] = entry.indexCount;
-        depthOut[base + 1] = 1u;
-        depthOut[base + 2] = destOffset;
-        depthOut[base + 3] = 0u;
-        depthOut[base + 4] = 0u;
-    } else {
-        // MID: one 20 B indexed draw command per survivor.
-        depthOut[base + 0] = entry.indexCount;
-        depthOut[base + 1] = 1u;
-        depthOut[base + 2] = entry.indexBase;
-        depthOut[base + 3] = 0u;
-        // firstInstance carries the submesh id (see collect_count_compact.slang).
-        depthOut[base + 4] = submeshIndex;
-    }
+    // CID: reserve the index range; the workgroup copies it in main().
+    uint destOffset;
+    InterlockedAdd(depthOutCounter[0], result.indexCount, destOffset);
+    g_depthDest = destOffset;
+    g_depthCount = result.indexCount;
+
+    depthOut[base + 0] = result.indexCount;
+    depthOut[base + 1] = 1u;
+    depthOut[base + 2] = destOffset;
+    depthOut[base + 3] = 0u;
+    depthOut[base + 4] = 0u;
+}
+
+void EmitMid(CullResult result, uint submeshIndex) {
+    uint local;
+    InterlockedAdd(depthTechniqueCounts[result.techniqueId], 1u, local);
+    uint base = (techniqueRegionBases[result.techniqueId] + local) * kCmdWords;
+
+    // MID: one 20 B indexed draw command per survivor.
+    depthOut[base + 0] = result.indexCount;
+    depthOut[base + 1] = 1u;
+    depthOut[base + 2] = result.indexBase;
+    depthOut[base + 3] = 0u;
+    // firstInstance carries the submesh id (see collect_count_compact.slang).
+    depthOut[base + 4] = submeshIndex;
 }
 
 [numthreads(256, 1, 1)]
@@ -261,7 +282,14 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
     if (tid == 0) {
         g_depthDest = 0;
         g_depthCount = 0;
-        CullSubmesh(submeshIndex);
+        CullResult result = CullSubmesh(submeshIndex);
+        if (result.survivor) {
+            if (kCompactionMode == 0) {
+                EmitCid(result);
+            } else {
+                EmitMid(result, submeshIndex);
+            }
+        }
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -272,5 +300,15 @@ void main(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
         for (uint i = tid; i < g_depthCount; i += 256) {
             depthIndices[g_depthDest + i] = drawIndices[entry.indexBase + i];
         }
+    }
+}
+
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void main_mid(uint3 dispatchThreadId : SV_DispatchThreadID) {
+    const uint submeshIndex = dispatchThreadId.x;
+    CullResult result = CullSubmesh(submeshIndex);
+    if (result.survivor) {
+        EmitMid(result, submeshIndex);
     }
 }

@@ -955,13 +955,14 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
             {}, mb, {}, {});
     };
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_slot_.Get());
     const std::array<vk::DescriptorSet, 1> ds1{ fr.collect_set.GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
-                            0, ds1, {});
 
     const std::uint32_t groups = (current_entity_count_ + 255) / 256;
     if (!mid) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_slot_.Get());
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
+                                0, ds1, {});
+
         // CID: count -> global prefix -> compact -> command emission.
         CollectPC pc0{ current_entity_count_, 0, key_count, 0 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
@@ -994,12 +995,16 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
                           0, sizeof(WritePC), &pcw);
         cmd.dispatch(1, 1, 1);
     } else {
-        // MID: single compact pass appends commands into CPU-prefixed regions
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_mid_slot_.Get());
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
+                                0, ds1, {});
+
+        // MID: one flat compact pass appends commands into CPU-prefixed regions
         // and publishes the per-technique alive count. No epilogue dispatch.
         CollectPC pcMid{ current_entity_count_, 0, key_count, 2 };
         cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pcMid);
-        cmd.dispatch(current_entity_count_, 1, 1);
+        cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
     }
 }
 
@@ -1015,13 +1020,15 @@ void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,
         return;
     }
     auto& fr = frames_[fi % frames_in_flight_];
-    if (!occluder_select_slot_.Get()) {
+    const bool mid = draw_mode_ == DrawMode::MID;
+    auto& slot = mid ? occluder_select_mid_slot_ : occluder_select_slot_;
+    if (!slot.Get()) {
         LOGIFACE_LOG(warn, "DispatchOccluderSelect: pipeline is null, skipping");
         return;
     }
     LOGIFACE_LOG(trace, "DispatchOccluderSelect: submeshes=" + std::to_string(current_entity_count_));
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, occluder_select_slot_.Get());
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, slot.Get());
     const std::array<vk::DescriptorSet, 1> ds{ fr.occluder_select_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occluder_select_pipeline_layout_,
                              0, ds, {});
@@ -1032,8 +1039,8 @@ void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,
         w, h };
     cmd.pushConstants(*occluder_select_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccluderSelectPC), &pc);
-    // One workgroup per submesh: the whole group cooperates on the copy.
-    cmd.dispatch(current_entity_count_, 1, 1);
+    // MID: one thread per submesh. CID: one workgroup per submesh for the copy.
+    cmd.dispatch(mid ? (current_entity_count_ + 63) / 64 : current_entity_count_, 1, 1);
 }
 
 void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
@@ -1046,9 +1053,11 @@ void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
         return;
     }
     auto& fr = frames_[fi % frames_in_flight_];
+    const bool mid = draw_mode_ == DrawMode::MID;
+    auto& slot = mid ? pre_cull_mid_slot_ : pre_cull_slot_;
     LOGIFACE_LOG(trace, "DispatchPreCull: submeshes=" + std::to_string(current_entity_count_));
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pre_cull_slot_.Get());
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, slot.Get());
     const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pre_cull_pipeline_layout_,
                              0, ds, {});
@@ -1057,8 +1066,8 @@ void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
     PreCullPC pc{ current_entity_count_, hiz_w, hiz_h, 0, fr.proj_info };
     cmd.pushConstants(*pre_cull_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(PreCullPC), &pc);
-    // One workgroup per submesh: the whole group cooperates on the copy.
-    cmd.dispatch(current_entity_count_, 1, 1);
+    // MID: one thread per submesh. CID: one workgroup per submesh for the copy.
+    cmd.dispatch(mid ? (current_entity_count_ + 63) / 64 : current_entity_count_, 1, 1);
 }
 
 void SceneRenderer::InitializeHizFirstFrame(vk::CommandBuffer cmd) {

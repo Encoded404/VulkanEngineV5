@@ -120,7 +120,10 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     collect_write_slot_.SetFramesInFlight(frames_in_flight_);
     depth_slot_.SetFramesInFlight(frames_in_flight_);
     occluder_select_slot_.SetFramesInFlight(frames_in_flight_);
+    occluder_select_mid_slot_.SetFramesInFlight(frames_in_flight_);
     pre_cull_slot_.SetFramesInFlight(frames_in_flight_);
+    pre_cull_mid_slot_.SetFramesInFlight(frames_in_flight_);
+    collect_count_mid_slot_.SetFramesInFlight(frames_in_flight_);
 
     // Set 1: SubmeshVertexData (block array, simple layout)
     {
@@ -1333,9 +1336,14 @@ void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
     poll(expand_slot_, shader_ids_.expand_comp, expand_desc_);
     poll(occlusion_slot_, shader_ids_.occlusion_cull_comp, occlusion_desc_);
     poll(occluder_select_slot_, shader_ids_.occluder_select_comp, occluder_select_desc_);
+    poll(occluder_select_mid_slot_, shader_ids_.occluder_select_comp_mid,
+         occluder_select_mid_desc_);
     poll(pre_cull_slot_, shader_ids_.pre_cull_comp, pre_cull_desc_);
+    poll(pre_cull_mid_slot_, shader_ids_.pre_cull_comp_mid, pre_cull_mid_desc_);
     poll(hiz_slot_, shader_ids_.hiz_gen_comp, hiz_desc_);
     poll(collect_count_slot_, shader_ids_.collect_count_compact_comp, collect_count_desc_);
+    poll(collect_count_mid_slot_, shader_ids_.collect_count_compact_comp_mid,
+         collect_count_mid_desc_);
     poll(collect_write_slot_, shader_ids_.collect_write_comp, collect_write_desc_);
     poll_graphics(depth_slot_, shader_ids_.depth_indir_vert, shader_ids_.depth_prepass_frag, depth_desc_);
 }

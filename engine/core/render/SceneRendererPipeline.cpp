@@ -151,7 +151,7 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
         std::optional<ShaderSystem::ComputePipelineDesc>& desc_out;
     };
     std::vector<ComputeRow> rows;
-    rows.reserve(8);
+    rows.reserve(11);
     rows.push_back({
         .pipeline_name = "expand", .shader = shader_ids.expand_comp,
         .layout = **expand_pipeline_layout_, .draw_mode_specialized = true,
@@ -165,13 +165,25 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
         .layout = **occluder_select_pipeline_layout_, .draw_mode_specialized = true,
         .slot = occluder_select_slot_, .desc_out = occluder_select_desc_});
     rows.push_back({
+        .pipeline_name = "occluder-select-mid", .shader = shader_ids.occluder_select_comp_mid,
+        .layout = **occluder_select_pipeline_layout_, .draw_mode_specialized = false,
+        .slot = occluder_select_mid_slot_, .desc_out = occluder_select_mid_desc_});
+    rows.push_back({
         .pipeline_name = "pre-cull", .shader = shader_ids.pre_cull_comp,
         .layout = **pre_cull_pipeline_layout_, .draw_mode_specialized = true,
         .slot = pre_cull_slot_, .desc_out = pre_cull_desc_});
     rows.push_back({
+        .pipeline_name = "pre-cull-mid", .shader = shader_ids.pre_cull_comp_mid,
+        .layout = **pre_cull_pipeline_layout_, .draw_mode_specialized = false,
+        .slot = pre_cull_mid_slot_, .desc_out = pre_cull_mid_desc_});
+    rows.push_back({
         .pipeline_name = "collect-count", .shader = shader_ids.collect_count_compact_comp,
         .layout = **collect_pipeline_layout_, .draw_mode_specialized = true,
         .slot = collect_count_slot_, .desc_out = collect_count_desc_});
+    rows.push_back({
+        .pipeline_name = "collect-count-mid", .shader = shader_ids.collect_count_compact_comp_mid,
+        .layout = **collect_pipeline_layout_, .draw_mode_specialized = false,
+        .slot = collect_count_mid_slot_, .desc_out = collect_count_mid_desc_});
     rows.push_back({
         .pipeline_name = "collect-write", .shader = shader_ids.collect_write_comp,
         .layout = **collect_write_pipeline_layout_, .draw_mode_specialized = false,

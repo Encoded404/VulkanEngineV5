@@ -11,9 +11,12 @@ import Shaders.Engine.ExpandComp;
 import Shaders.Engine.DeformComp;
 import Shaders.Engine.OcclusionCullComp;
 import Shaders.Engine.OccluderSelectComp;
+import Shaders.Engine.OccluderSelectCompMid;
 import Shaders.Engine.PreCullComp;
+import Shaders.Engine.PreCullCompMid;
 import Shaders.Engine.HizGenComp;
 import Shaders.Engine.CollectCountCompactComp;
+import Shaders.Engine.CollectCountCompactMid;
 import Shaders.Engine.CollectWriteComp;
 import Shaders.Engine.MainIndirVert;
 import Shaders.Engine.MainIndirVertUV1;
@@ -52,9 +55,13 @@ struct EngineShaderIds {
     ShaderSystem::ShaderId deform_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId occlusion_cull_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId occluder_select_comp = ShaderSystem::kInvalidShaderId;
+    // Flat one-thread-per-submesh variants: MID has no index copy to feed.
+    ShaderSystem::ShaderId occluder_select_comp_mid = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId pre_cull_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId pre_cull_comp_mid = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId hiz_gen_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId collect_count_compact_comp = ShaderSystem::kInvalidShaderId;
+    ShaderSystem::ShaderId collect_count_compact_comp_mid = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId collect_write_comp = ShaderSystem::kInvalidShaderId;
     ShaderSystem::ShaderId main_indir_vert = ShaderSystem::kInvalidShaderId;
     // Out-of-line UV1 interface variant rows (named entry point main_uv1).
@@ -101,9 +108,13 @@ struct EngineShaderIds {
         deform_comp              = Shaders::Engine::DeformComp::Register(mgr, data_dir);
         occlusion_cull_comp      = Shaders::Engine::OcclusionCullComp::Register(mgr, data_dir);
         occluder_select_comp     = Shaders::Engine::OccluderSelectComp::Register(mgr, data_dir);
+        occluder_select_comp_mid = Shaders::Engine::OccluderSelectCompMid::Register(mgr, data_dir);
         pre_cull_comp            = Shaders::Engine::PreCullComp::Register(mgr, data_dir);
+        pre_cull_comp_mid        = Shaders::Engine::PreCullCompMid::Register(mgr, data_dir);
         hiz_gen_comp             = Shaders::Engine::HizGenComp::Register(mgr, data_dir);
         collect_count_compact_comp = Shaders::Engine::CollectCountCompactComp::Register(mgr, data_dir);
+        collect_count_compact_comp_mid =
+            Shaders::Engine::CollectCountCompactMid::Register(mgr, data_dir);
         collect_write_comp       = Shaders::Engine::CollectWriteComp::Register(mgr, data_dir);
         main_indir_vert          = Shaders::Engine::MainIndirVert::Register(mgr, data_dir);
         main_indir_vert_uv1      = Shaders::Engine::MainIndirVertUV1::Register(mgr, data_dir);

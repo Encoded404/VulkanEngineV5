@@ -56,7 +56,8 @@ embed_example_secrets(infinite_runner_secrets
     SECRETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/secrets"
     MODULE      Examples.InfiniteRunner.Secrets
     NAMESPACE   Examples::InfiniteRunner::Secrets
-    OUT_DIR     "${CMAKE_BINARY_DIR}/generated/secrets/infinite_runner"
+    # Per configuration: secrets-gen lives under bin/$<CONFIG>, so a shared output would make every config switch rerun the sealer and its importers.
+    OUT_DIR     "${CMAKE_BINARY_DIR}/generated/secrets/infinite_runner/$<CONFIG>"
 )
 
 # ── Leaderboard library + headless server ───────────────────────────────

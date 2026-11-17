@@ -25,7 +25,23 @@ function(embed_example_secrets TARGET)
         message(FATAL_ERROR "embed_example_secrets: MODULE, NAMESPACE and OUT_DIR are required")
     endif()
 
-    file(MAKE_DIRECTORY "${ES_OUT_DIR}")
+    # An output directory may contain "$<CONFIG>", which file(MAKE_DIRECTORY) cannot expand: create one directory per configuration instead.
+    # The directories have to exist before the generator writes into them.
+    if(ES_OUT_DIR MATCHES "\\$<CONFIG>")
+        if(CMAKE_CONFIGURATION_TYPES)
+            set(_secrets_configs ${CMAKE_CONFIGURATION_TYPES})
+        else()
+            set(_secrets_configs "${CMAKE_BUILD_TYPE}")
+        endif()
+        foreach(_secrets_config IN LISTS _secrets_configs)
+            string(REPLACE "$<CONFIG>" "${_secrets_config}" _secrets_dir "${ES_OUT_DIR}")
+            file(MAKE_DIRECTORY "${_secrets_dir}")
+        endforeach()
+        unset(_secrets_dir)
+        unset(_secrets_configs)
+    else()
+        file(MAKE_DIRECTORY "${ES_OUT_DIR}")
+    endif()
     set(_out "${ES_OUT_DIR}/Secrets.cppm")
 
     # Dependency tracking. CONFIGURE_DEPENDS makes CMake re-run when the set of
@@ -52,18 +68,20 @@ function(embed_example_secrets TARGET)
             VERBATIM
         )
     else()
-        # No generator available in this configuration: emit a stub so consumers
-        # still compile and the example runs without a leaderboard endpoint.
-        file(WRITE "${_out}" "// stub: secrets-gen unavailable in this configuration\nmodule;\n\n")
-        file(APPEND "${_out}" "export module ${ES_MODULE};\n\nimport std;\n\nimport VulkanEngine.DataCipher;\n\nexport namespace ${ES_NAMESPACE} {\n\n")
-        file(APPEND "${_out}" "struct Entry { std::string_view name; std::string_view aad; std::uint16_t cipher_variant; std::uint8_t key_id; std::span<const std::byte> sealed; };\n\n")
-        file(APPEND "${_out}" "inline constexpr std::array<Entry, 0> kEntries{};\n\n")
-        file(APPEND "${_out}" "[[nodiscard]] inline std::span<const Entry> Entries() noexcept { return kEntries; }\n")
-        file(APPEND "${_out}" "[[nodiscard]] inline const Entry* Find(std::string_view) noexcept { return nullptr; }\n")
-        file(APPEND "${_out}" "[[nodiscard]] inline std::optional<std::vector<std::byte>> GetRaw(std::string_view) { return std::nullopt; }\n")
-        file(APPEND "${_out}" "[[nodiscard]] inline std::optional<std::string> GetString(std::string_view) { return std::nullopt; }\n")
-        file(APPEND "${_out}" "[[nodiscard]] inline std::optional<std::int64_t> GetInt(std::string_view) { return std::nullopt; }\n\n")
-        file(APPEND "${_out}" "} // namespace ${ES_NAMESPACE}\n")
+        # No generator available in this configuration: emit a stub so consumers still compile and the example runs without a leaderboard endpoint.
+        # The content is assembled first because file(GENERATE) expands "$<CONFIG>" in the output path and writes one stub per configuration.
+        set(_stub "// stub: secrets-gen unavailable in this configuration\nmodule;\n\n")
+        string(APPEND _stub "export module ${ES_MODULE};\n\nimport std;\n\nimport VulkanEngine.DataCipher;\n\nexport namespace ${ES_NAMESPACE} {\n\n")
+        string(APPEND _stub "struct Entry { std::string_view name; std::string_view aad; std::uint16_t cipher_variant; std::uint8_t key_id; std::span<const std::byte> sealed; };\n\n")
+        string(APPEND _stub "inline constexpr std::array<Entry, 0> kEntries{};\n\n")
+        string(APPEND _stub "[[nodiscard]] inline std::span<const Entry> Entries() noexcept { return kEntries; }\n")
+        string(APPEND _stub "[[nodiscard]] inline const Entry* Find(std::string_view) noexcept { return nullptr; }\n")
+        string(APPEND _stub "[[nodiscard]] inline std::optional<std::vector<std::byte>> GetRaw(std::string_view) { return std::nullopt; }\n")
+        string(APPEND _stub "[[nodiscard]] inline std::optional<std::string> GetString(std::string_view) { return std::nullopt; }\n")
+        string(APPEND _stub "[[nodiscard]] inline std::optional<std::int64_t> GetInt(std::string_view) { return std::nullopt; }\n\n")
+        string(APPEND _stub "} // namespace ${ES_NAMESPACE}\n")
+        file(GENERATE OUTPUT "${_out}" CONTENT "${_stub}")
+        unset(_stub)
     endif()
 
     target_sources(${TARGET} PUBLIC

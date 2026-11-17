@@ -9,6 +9,7 @@ add_executable(backend_tests
   component_system_tests.cpp
   system_schedule_tests.cpp
   scene_limits_tests.cpp
+  scene_tables_tests.cpp
   block_array_limit_tests.cpp
   vulkan_capabilities_tests.cpp
   format_utils_tests.cpp

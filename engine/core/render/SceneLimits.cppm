@@ -1,4 +1,4 @@
-// Single source of truth for scene-scale capacity.
+// Single source of truth for scene-scale capacity: the block budget, the gather entity cap and the record sizes everything else derives from.
 //
 // Three things used to be independent magic numbers: the gather-time entity
 // cap, the storage-buffer block count, and the 256 entries-per-block literal
@@ -12,12 +12,16 @@
 //        v  clamped by the device at SceneRenderer::Initialize
 //   max_blocks_        -- descriptor arrays, descriptor pools, BlockArray
 //                         limits, and the gather submesh budget all derive here.
+//
+// Nothing here describes a GPU resource: the descriptor-set rows, the buffer rows and the block-array rows live in VulkanEngine.SceneGpuLayout, which imports this module for the numbers below.
+// These are plain integers on purpose, so a caller that only needs a capacity (gather, mesh upload, bootstrap) does not pull in a descriptor schema it never reads.
 
 module;
 
 export module VulkanEngine.SceneLimits;
 
 import std;
+import std.compat;
 
 export namespace VulkanEngine::SceneLimits {
 
@@ -60,106 +64,23 @@ inline constexpr std::uint32_t kMaxSkinBuffers = 64;
 // modifier does not have to grow (and device-idle) before it can record.
 inline constexpr std::uint32_t kInitialModifierParamBytes = 1u << 20;
 
-// ── Descriptor-set plans ──
+// ── Lighting set sizes ──
 //
-// One row per SceneRenderer-owned descriptor set. Layout creation and
-// descriptor-pool sizing both read the same row, so a block-array size can no
-// longer be declared in one place and budgeted in another.
+// One LightBlock is a fixed 256 lights, mirrored by standard_mesh.slang.
+// The block table is a fixed descriptor array, so these bound both the layout and the BlockArray.
+inline constexpr std::uint32_t kLightsPerBlock = 256;
+inline constexpr std::uint32_t kMaxLightBlocks = 16;
+
+// ── Hi-Z pyramid ──
 //
-// `block_bindings` counts bindings whose descriptorCount is the runtime block
-// count; `single_storage_buffers` counts fixed-count storage-buffer bindings in
-// the same set.
-struct SetPlan {
-    std::string_view name;
-    std::uint32_t block_bindings = 0;
-    std::uint32_t single_storage_buffers = 0;
-    std::uint32_t combined_image_samplers = 0;
-    std::uint32_t sampled_images = 0;
-};
+// Storage-image descriptor array size for the hiz set; also the level cap the generator and the cull shaders agree on.
+inline constexpr std::uint32_t kMaxHiZMips = 12;
 
-inline constexpr SetPlan kSubmeshVertexPlan{"submesh-vertex", 1, 0, 0, 0};
-// Set 4: expand -- 5 block arrays + vertex_indirection, draw_indices,
-// expand_counter. The fifth block array (the per-submesh SkinEntry table) sits at
-// binding 7, above the three singles at 4-6, because it was added after the
-// singles were fixed; binding numbers need not be contiguous.
-inline constexpr SetPlan kExpandPlan{"expand", 5, 3, 0, 0};
-// Set 1 of the deform pipeline: the skin-influence table, the extra-influence
-// table (both fixed descriptor arrays), the flat bone palette, the SkinEntry
-// block array, the deformed-vertex output and the flat modifier parameters.
-// The two `kMaxSkinBuffers` arrays count as 128 descriptors, not 2: a descriptor
-// array reserves one descriptor per element in the pool.
-inline constexpr SetPlan kDeformPlan{
-    "deform", 1, kMaxSkinBuffers * 2 + 3, 0, 0};
-// Set 5: occlusion -- submesh vertex/cull/sphere/obb blocks (4) plus the
-// pre-cull survivor bindings (7) and one Hi-Z combined image sampler.
-inline constexpr SetPlan kOcclusionPlan{"occlusion", 4, 7, 1, 1};
-// Set 8: occluder select -- cull/vertex/obb blocks (3) + 8 singles.
-inline constexpr SetPlan kOccluderSelectPlan{"occluder-select", 3, 8, 0, 0};
-// Set 6: collect -- cull blocks (1) + 5 singles.
-inline constexpr SetPlan kCollectPlan{"collect", 1, 5, 0, 0};
-// The depth/main graphics pipelines bind submesh-vertex (blocks) together with
-// the vertex, UV and index/implicit tables plus the deformed-vertex output on one
-// stage. This row models that per-stage sum so the per-stage limit is checked too.
-inline constexpr SetPlan kDepthGraphicsStagePlan{
-    "depth-graphics-stage", 1, kMaxVertexBuffers + kMaxUvBuffers + 1, 0, 0};
-
-inline constexpr std::array<SetPlan, 7> kSceneSetPlans{{
-    kSubmeshVertexPlan,
-    kExpandPlan,
-    kOcclusionPlan,
-    kOccluderSelectPlan,
-    kCollectPlan,
-    kDepthGraphicsStagePlan,
-    kDeformPlan,
-}};
-
-// Storage buffers in one descriptor set for a plan at `blocks` blocks.
-[[nodiscard]] constexpr std::uint32_t
-StorageBuffersForPlan(const SetPlan& plan, const std::uint32_t blocks) noexcept {
-    return plan.block_bindings * blocks + plan.single_storage_buffers;
-}
-
-// Largest single-set storage-buffer count across all plans at `blocks` blocks.
-[[nodiscard]] constexpr std::uint32_t
-MaxStorageBuffersPerSet(const std::uint32_t blocks) noexcept {
-    std::uint32_t max_buffers = 0;
-    for (const SetPlan& plan : kSceneSetPlans) {
-        max_buffers = std::max(max_buffers, StorageBuffersForPlan(plan, blocks));
-    }
-    return max_buffers;
-}
-
-// Descriptor limits the block budget depends on, kept free of Vulkan types so
-// the derivation is unit-testable without a device.
-struct DeviceLimits {
-    std::uint32_t max_descriptor_set_storage_buffers = 0;
-    std::uint32_t max_per_stage_descriptor_storage_buffers = 0;
-};
-
-// Largest block count whose worst-case set fits every limit. Never returns 0:
-// a device that cannot fit even one block still gets one, and the caller
-// reports the condition rather than dividing by zero.
-[[nodiscard]] constexpr std::uint32_t
-MaxBlocksForDevice(const DeviceLimits& limits) noexcept {
-    std::uint32_t best = kMaxBlocksCeiling;
-    for (const SetPlan& plan : kSceneSetPlans) {
-        if (plan.block_bindings == 0) {
-            continue;
-        }
-        for (const std::uint32_t limit :
-             {limits.max_descriptor_set_storage_buffers,
-              limits.max_per_stage_descriptor_storage_buffers}) {
-            if (limit <= plan.single_storage_buffers) {
-                // Even zero blocks would not fit this binding's fixed part.
-                best = 0;
-                continue;
-            }
-            const std::uint32_t fit =
-                (limit - plan.single_storage_buffers) / plan.block_bindings;
-            best = std::min(best, fit);
-        }
-    }
-    return std::max<std::uint32_t>(best, 1u);
-}
+// ── GPU-side record sizes that are engine constants, not types ──
+//
+// 20 B is sizeof(vk::DrawIndexedIndirectCommand), pinned by a static_assert in SceneRenderer.cpp so the Vulkan header cannot drift away from the layout rows.
+inline constexpr std::uint32_t kIndirectCommandBytes = 20;
+// 32 B is sizeof(SkinEntry); pinned by the static_assert next to SkinEntry.
+inline constexpr std::uint32_t kSkinEntryBytes = 32;
 
 } // namespace VulkanEngine::SceneLimits

@@ -75,11 +75,13 @@ void DescriptorPool::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& backend
         pool_sizes.emplace_back(vk::DescriptorType::eSampler, config.max_samplers);
     }
 
-    if (pool_sizes.empty()) {
-        throw std::runtime_error("DescriptorPoolConfig must specify at least one descriptor type");
-    }
+    // A pool with no descriptor types is legal, and it is what the empty placeholder set needs: it can allocate sets from an empty layout and nothing else.
 
-    const vk::DescriptorPoolCreateInfo pool_info(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, config.max_sets, pool_sizes);
+    vk::DescriptorPoolCreateFlags pool_flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    if (config.update_after_bind) {
+        pool_flags |= vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind;
+    }
+    const vk::DescriptorPoolCreateInfo pool_info(pool_flags, config.max_sets, pool_sizes);
     pool_ = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
 
     LOGIFACE_LOG(trace, "leaving DescriptorPool::Initialize successfully");
@@ -104,7 +106,24 @@ GpuDescriptorSet DescriptorPool::Allocate(vk::DescriptorSetLayout layout) {
     }
 
     const vk::DescriptorSetAllocateInfo alloc_info(**pool_, layout);
-    
+
+    auto sets = backend_->GetDevice().allocateDescriptorSets(alloc_info);
+
+    return GpuDescriptorSet::Create(backend_, shared_from_this(), sets[0].release(), layout);
+}
+
+GpuDescriptorSet DescriptorPool::Allocate(const vk::DescriptorSetLayout layout,
+                                          const std::uint32_t variable_descriptor_count) {
+    if (!pool_) {
+        throw std::runtime_error("Descriptor pool not initialized");
+    }
+
+    // The pNext chain must outlive the allocate call, not the set.
+    const vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_info(
+        1, &variable_descriptor_count);
+    vk::DescriptorSetAllocateInfo alloc_info(**pool_, layout);
+    alloc_info.pNext = &variable_info;
+
     auto sets = backend_->GetDevice().allocateDescriptorSets(alloc_info);
 
     return GpuDescriptorSet::Create(backend_, shared_from_this(), sets[0].release(), layout);

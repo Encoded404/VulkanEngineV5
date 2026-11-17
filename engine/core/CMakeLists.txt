@@ -491,6 +491,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         gpu/MeshData.cppm
         assets/ShaderLoader.cppm
         assets/DefaultTextures.cppm
+        render/SceneGpuLayout.cppm
         render/SceneLimits.cppm
         render/ModifierId.cppm
         render/ModifierManager.cppm

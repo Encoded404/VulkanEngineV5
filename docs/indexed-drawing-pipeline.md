@@ -190,15 +190,16 @@ used to be independent now derive from one budget
   GPU gets a larger budget without a recompile.
 
 Descriptor-set binding array sizes and descriptor-pool sizes are computed from
-the same `SetPlan` row per set, and each `BlockArray` is given an explicit block
-limit equal to `max_blocks_`, so it can no longer grow past its binding array.
+the same `kSceneSets` row per set (`engine/core/render/SceneGpuLayout.cppm`),
+and each `BlockArray` is given an explicit block limit equal to `max_blocks_`,
+so it can no longer grow past its binding array.
 
 The gather pass clamps the frame's submesh total to
 `max_blocks_ × kEntriesPerBlock` and truncates at a submesh boundary, logging
 once, instead of writing past the binding array. The entity-level gather cap is
 only a safety valve; the submesh budget is the real capacity limit.
 
-Per-submesh cost is fixed at 368 B per submesh per frame (48+36+16+64+188+16);
+Per-submesh cost is fixed at 372 B per submesh per frame (48+36+16+64+192+16);
 with 3 frames in flight that is about 1.1 KiB/submesh, so the ceiling is a
 capability bound, not a recommended working set.
 
@@ -210,8 +211,9 @@ only the blocks that do not exist yet, tracked by a per-frame `BlockBindingCache
 (`written_blocks` + `epoch`). `CreateFrameBuffers` bumps a renderer-level epoch
 that forces a full rewrite after the underlying buffers are re-created. Steady
 state therefore performs no block-descriptor writes at all; the previous
-unconditional rewrite cost nine bindings × used blocks `vkUpdateDescriptorSets`
-calls every frame.
+unconditional rewrite cost one call per block-array binding
+(`BlockBindingCount()`, 15 today) × used blocks `vkUpdateDescriptorSets` calls
+every frame.
 
 ### 2.10 Deformation: one extra vertex stream, no new draw path
 

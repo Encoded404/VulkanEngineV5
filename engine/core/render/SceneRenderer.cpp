@@ -19,14 +19,488 @@ import VulkanBackend.Vulkan.MemoryUtils;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.GpuResources;
 import VulkanEngine.StandardMeshPipeline;
+import VulkanEngine.SceneGpuLayout;
+import VulkanEngine.SceneLimits;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderRegistration;
 import VulkanBackend.Vulkan.VulkanCapabilities;
 
 namespace VulkanEngine::SceneRenderer {
 
+// SceneLimits is Vulkan-free, so its record sizes are plain integers; they are pinned to the types they describe here, where both are visible.
+static_assert(sizeof(vk::DrawIndexedIndirectCommand) == SceneLimits::kIndirectCommandBytes,
+              "SceneLimits::kIndirectCommandBytes must equal vk::DrawIndexedIndirectCommand");
+static_assert(sizeof(SkinEntry) == SceneLimits::kSkinEntryBytes,
+              "SceneLimits::kSkinEntryBytes must equal SkinEntry");
+
+namespace {
+
+// ── Table translation ──
+//
+// The rows already carry vk:: flag words, so the only translation left is the block-array memory kind, which has to produce a BlockArray::MemoryMode as well as a flag word.
+
+constexpr vk::MemoryPropertyFlags ToVkMemory(const SceneGpuLayout::BufMemory memory) {
+    return memory == SceneGpuLayout::BufMemory::host_visible
+        ? vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+        : vk::MemoryPropertyFlags(vk::MemoryPropertyFlagBits::eDeviceLocal);
+}
+
+// ── Binding numbers for the paths that write descriptors outside PrepareCompute ──
+//
+// The shaders hard-code these numbers, so the table is the only place the CPU side may name them.
+// Looking them up by kind and position keeps a renumbering to one edit, and the static_asserts turn a missing row into a compile error instead of a write to kNoBinding.
+
+inline constexpr std::uint32_t kVertexTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::vertex_buffers, vk::DescriptorType::eStorageBuffer, 0);
+inline constexpr std::uint32_t kUvTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::vertex_buffers, vk::DescriptorType::eStorageBuffer, 1);
+inline constexpr std::uint32_t kIndexTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::index_buffers, vk::DescriptorType::eStorageBuffer, 0);
+inline constexpr std::uint32_t kSkinTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::deform, vk::DescriptorType::eStorageBuffer, 0);
+inline constexpr std::uint32_t kSkinExtraTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::deform, vk::DescriptorType::eStorageBuffer, 1);
+inline constexpr std::uint32_t kLightTableBinding = SceneGpuLayout::BindingOfKind(
+    SceneGpuLayout::SetId::scene_uniform, vk::DescriptorType::eStorageBuffer, 1);
+
+static_assert(kVertexTableBinding != SceneGpuLayout::kNoBinding &&
+              kUvTableBinding != SceneGpuLayout::kNoBinding &&
+              kIndexTableBinding != SceneGpuLayout::kNoBinding &&
+              kSkinTableBinding != SceneGpuLayout::kNoBinding &&
+              kSkinExtraTableBinding != SceneGpuLayout::kNoBinding &&
+              kLightTableBinding != SceneGpuLayout::kNoBinding,
+              "the upload paths write these bindings, so the tables must keep the rows");
+
+// The vk:: create info for one set, plus the storage its pNext chain points at.
+// Build() must run once the object is in its final place: `info` keeps raw pointers into `bindings` and `binding_flags`.
+struct LayoutPlan {
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    std::vector<vk::DescriptorBindingFlags> binding_flags;
+    vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{};
+    vk::DescriptorSetLayoutCreateInfo info{};
+
+    void Build(const SceneGpuLayout::SetSpec& set, const std::uint32_t max_blocks) {
+        bindings.reserve(set.bindings.size());
+        binding_flags.reserve(set.bindings.size());
+        for (const SceneGpuLayout::BindingSpec& row : set.bindings) {
+            vk::DescriptorSetLayoutBinding binding{};
+            binding.binding = row.binding;
+            binding.descriptorType = row.kind;
+            binding.descriptorCount = SceneGpuLayout::DescriptorCount(row, max_blocks);
+            binding.stageFlags = row.stages;
+            bindings.push_back(binding);
+            binding_flags.push_back(row.flags);
+        }
+        if (!bindings.empty()) {
+            // pNext carries one flag word per binding; an all-zero word means no special behaviour, so this is safe for every set.
+            flag_info.bindingCount = static_cast<std::uint32_t>(binding_flags.size());
+            flag_info.pBindingFlags = binding_flags.data();
+            info.pNext = &flag_info;
+        }
+        if (SceneGpuLayout::UpdatesAfterBind(set.id)) {
+            // Required when any binding uses eUpdateAfterBind, and required on the pool the set is allocated from.
+            // Deriving it from the rows keeps the two from disagreeing.
+            info.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
+        }
+        info.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        info.pBindings = bindings.data();
+    }
+};
+
+GpuResources::DescriptorPoolConfig ToPoolConfig(const SceneGpuLayout::SetSpec& set,
+                                                const SceneGpuLayout::PoolCounts& counts) {
+    GpuResources::DescriptorPoolConfig config{};
+    config.max_sets = counts.max_sets;
+    config.max_storage_buffers = counts.storage_buffers;
+    config.max_combined_image_samplers = counts.combined_image_samplers;
+    config.max_sampled_images = counts.sampled_images;
+    config.max_storage_images = counts.storage_images;
+    config.max_samplers = counts.samplers;
+    // A layout created with eUpdateAfterBindPool requires a pool with the same flag, and both must agree with the binding flags.
+    config.update_after_bind = SceneGpuLayout::UpdatesAfterBind(set.id);
+    return config;
+}
+
+} // anonymous namespace
+
 SceneRenderer::~SceneRenderer() {
     Shutdown();
+}
+
+// ── FrameResources slot accessors ──
+//
+// One switch per slot kind keeps the tables free of member pointers (and of this private struct).
+// The cost is three small functions; the benefit is that a missing enum value fails to compile here rather than becoming a silent null handle.
+
+GpuResources::GpuDescriptorSet& SceneRenderer::FrameResources::SetFor(
+    const SceneGpuLayout::SetId id) {
+    switch (id) {
+        case SceneGpuLayout::SetId::expand: return expand_set;
+        case SceneGpuLayout::SetId::occlusion: return occlusion_set;
+        case SceneGpuLayout::SetId::collect: return collect_set;
+        case SceneGpuLayout::SetId::collect_write: return collect_write_set;
+        case SceneGpuLayout::SetId::occluder_select: return occluder_select_set;
+        case SceneGpuLayout::SetId::submesh_vertex: return submesh_vertex_set;
+        case SceneGpuLayout::SetId::indirection: return indirection_raw_set;
+        case SceneGpuLayout::SetId::vertex_buffers: return vertex_buffers_set;
+        case SceneGpuLayout::SetId::index_buffers: return index_buffers_set;
+        case SceneGpuLayout::SetId::deform: return deform_set;
+        case SceneGpuLayout::SetId::hiz: return hiz_set;
+        case SceneGpuLayout::SetId::empty: return empty_set;
+        case SceneGpuLayout::SetId::scene_uniform: break;   // owned by the renderer
+        case SceneGpuLayout::SetId::count: break;
+    }
+    // The lighting set is a single set on the renderer, not part of the ring.
+    // There is no valid handle to return: a misbind here is exactly the failure the tables exist to prevent, so it traps instead of binding the wrong set.
+    assert(id != SceneGpuLayout::SetId::scene_uniform &&
+           "SetFor(SetId::scene_uniform) is not part of the frame ring");
+    std::unreachable();
+}
+
+const GpuResources::GpuDescriptorSet& SceneRenderer::FrameResources::SetFor(
+    const SceneGpuLayout::SetId id) const {
+    return const_cast<FrameResources*>(this)->SetFor(id);
+}
+
+GpuResources::GpuBuffer& SceneRenderer::FrameResources::BufferFor(
+    const SceneGpuLayout::BufferSlot slot) {
+    switch (slot) {
+        case SceneGpuLayout::BufferSlot::vertex_indirection: return vertex_indirection;
+        case SceneGpuLayout::BufferSlot::draw_indices: return draw_indices;
+        case SceneGpuLayout::BufferSlot::expand_counter: return expand_counter;
+        case SceneGpuLayout::BufferSlot::main_indices: return main_indices;
+        case SceneGpuLayout::BufferSlot::depth_indices: return depth_indices;
+        case SceneGpuLayout::BufferSlot::occluder_indices: return occluder_indices;
+        case SceneGpuLayout::BufferSlot::main_commands: return main_commands;
+        case SceneGpuLayout::BufferSlot::depth_commands: return depth_commands;
+        case SceneGpuLayout::BufferSlot::occluder_commands: return occluder_commands;
+        case SceneGpuLayout::BufferSlot::technique_region_bases: return technique_region_bases;
+        case SceneGpuLayout::BufferSlot::depth_out_counter: return depth_out_counter;
+        case SceneGpuLayout::BufferSlot::depth_technique_counts: return depth_technique_counts;
+        case SceneGpuLayout::BufferSlot::occluder_out_counter: return occluder_out_counter;
+        case SceneGpuLayout::BufferSlot::occluder_technique_counts: return occluder_technique_counts;
+        case SceneGpuLayout::BufferSlot::technique_draw_commands: return technique_draw_commands;
+        case SceneGpuLayout::BufferSlot::occluder_candidate_count: return occluder_candidate_count;
+        case SceneGpuLayout::BufferSlot::technique_counts: return technique_counts;
+        case SceneGpuLayout::BufferSlot::technique_results: return technique_results;
+        case SceneGpuLayout::BufferSlot::bone_palettes: return bone_palettes;
+        case SceneGpuLayout::BufferSlot::modifier_params: return modifier_params;
+        case SceneGpuLayout::BufferSlot::deform_vertices: return deform_vertices;
+        case SceneGpuLayout::BufferSlot::technique_flags:
+        case SceneGpuLayout::BufferSlot::scene_header:
+            break;   // singletons: see SceneRenderer::BufferRef
+        case SceneGpuLayout::BufferSlot::count: break;
+    }
+    assert(slot != SceneGpuLayout::BufferSlot::technique_flags &&
+           slot != SceneGpuLayout::BufferSlot::scene_header &&
+           "singleton buffers are not part of the frame ring");
+    std::unreachable();
+}
+
+const GpuResources::GpuBuffer& SceneRenderer::FrameResources::BufferFor(
+    const SceneGpuLayout::BufferSlot slot) const {
+    return const_cast<FrameResources*>(this)->BufferFor(slot);
+}
+
+GpuResources::BlockArray& SceneRenderer::FrameResources::BlockArrayFor(
+    const SceneGpuLayout::BlockSlot slot) {
+    switch (slot) {
+        case SceneGpuLayout::BlockSlot::dynamic_entries: return dynamic_entries;
+        case SceneGpuLayout::BlockSlot::static_entries: return static_entries;
+        case SceneGpuLayout::BlockSlot::bounding_spheres: return bounding_spheres;
+        case SceneGpuLayout::BlockSlot::obb_entries: return obb_entries;
+        case SceneGpuLayout::BlockSlot::submesh_vertex_entries: return submesh_vertex_entries;
+        case SceneGpuLayout::BlockSlot::cull_entries: return cull_entries;
+        case SceneGpuLayout::BlockSlot::skin_entries: return skin_entries;
+        case SceneGpuLayout::BlockSlot::count: break;
+    }
+    assert(false && "unknown BlockSlot");
+    std::unreachable();
+}
+
+const GpuResources::BlockArray& SceneRenderer::FrameResources::BlockArrayFor(
+    const SceneGpuLayout::BlockSlot slot) const {
+    return const_cast<FrameResources*>(this)->BlockArrayFor(slot);
+}
+
+GpuResources::GpuBuffer& SceneRenderer::BufferRef(FrameResources& fr,
+                                                  const SceneGpuLayout::BufferSlot slot) {
+    if (slot == SceneGpuLayout::BufferSlot::technique_flags) return technique_flags;
+    if (slot == SceneGpuLayout::BufferSlot::scene_header) return scene_header;
+    return fr.BufferFor(slot);
+}
+
+vk::DescriptorSetLayout SceneRenderer::GetSetLayout(const SceneGpuLayout::SetId id) const {
+    const SetHandles& slot = sets_[static_cast<std::size_t>(id)];
+    return slot.layout ? static_cast<vk::DescriptorSetLayout>(**slot.layout)
+                       : vk::DescriptorSetLayout{};
+}
+
+std::uint64_t SceneRenderer::ComputeSize(const SceneGpuLayout::SizeKind kind) const {
+    const auto& capacity = scene_capacity_;
+    switch (kind) {
+        // One 8 B entry per slot in each submesh's tight vertex window.
+        case SceneGpuLayout::SizeKind::vertex_indirection:
+            return static_cast<std::uint64_t>(capacity.vertex_span) * 8u;
+        // One 4 B index/vertex slot per index occurrence.
+        case SceneGpuLayout::SizeKind::draw_indices:
+        case SceneGpuLayout::SizeKind::compact_indices:
+            return static_cast<std::uint64_t>(capacity.index_count) * 4u;
+        // One indirect command per submesh occurrence.
+        case SceneGpuLayout::SizeKind::command_list:
+            return static_cast<std::uint64_t>(capacity.submesh_count) *
+                   SceneLimits::kIndirectCommandBytes;
+        case SceneGpuLayout::SizeKind::technique_counts:
+            return static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
+        case SceneGpuLayout::SizeKind::technique_commands:
+            return static_cast<std::uint64_t>(MAX_DRAW_GROUPS) *
+                   SceneLimits::kIndirectCommandBytes;
+        case SceneGpuLayout::SizeKind::technique_results:
+            return static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(TechniqueResult);
+        case SceneGpuLayout::SizeKind::counter:
+            return sizeof(std::uint32_t);
+        // [0] entry base, [1] index base, [2] deform-region base.
+        // The third word is expand's per-frame deform allocator.
+        case SceneGpuLayout::SizeKind::expand_counter:
+            return 3u * sizeof(std::uint32_t);
+        // One mat4 per palette matrix.
+        case SceneGpuLayout::SizeKind::bone_palettes:
+            return static_cast<std::uint64_t>(capacity.palette_matrix_count) *
+                   16u * sizeof(float);
+        case SceneGpuLayout::SizeKind::modifier_params:
+            return static_cast<std::uint64_t>(capacity.modifier_param_bytes);
+        // Two regions of T vertices each: the modifier stack writes A, B, A..., and the final region is what the vertex shaders read.
+        case SceneGpuLayout::SizeKind::deform_vertices:
+            return static_cast<std::uint64_t>(2u * capacity.deform_vertex_span) *
+                   sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
+        case SceneGpuLayout::SizeKind::scene_header:
+            return sizeof(SceneHeader);
+    }
+    std::unreachable();
+}
+
+std::uint64_t SceneRenderer::BufferBytes(const SceneGpuLayout::SizeRule& rule) const {
+    // The row owns the floor, so this only applies it: the formula is raw, and a zero-capacity scene is kept off the zero-byte allocation by the default floor of 1.
+    return std::max<std::uint64_t>(ComputeSize(rule.kind), rule.min_bytes);
+}
+
+bool SceneRenderer::CreateDescriptorSets(
+    GpuResources::DeviceBufferHeap& vh) {
+    if (!backend_) return false;
+    auto& be = *backend_;
+    const auto& dev = be.GetDevice();
+
+    for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+        SetHandles& slot = SetSlot(set.id);
+        LayoutPlan plan;
+        plan.Build(set, max_blocks_);
+        slot.layout = std::make_unique<vk::raii::DescriptorSetLayout>(dev, plan.info);
+        VulkanBackend::Vulkan::SetVulkanObjectName(
+            dev, *slot.layout, std::string(set.name) + "-layout");
+        slot.pool = GpuResources::DescriptorPool::Create(
+            be, ToPoolConfig(set, SceneGpuLayout::PoolCountsFor(set.id, max_blocks_,
+                                                             frames_in_flight_)));
+        slot.pool->SetDebugName(dev, std::string(set.name) + "-pool");
+    }
+
+    // One allocation shape for both kinds of row: a variable-count set (the bindless index table) is allocated at its full binding count, so the shader's array length matches the descriptor array.
+    const auto allocate = [this](const SceneGpuLayout::SetSpec& set) {
+        SetHandles& slot = SetSlot(set.id);
+        const std::uint32_t variable = SceneGpuLayout::VariableBinding(set.id);
+        if (variable == SceneGpuLayout::kNoBinding) {
+            return slot.pool->Allocate(**slot.layout);
+        }
+        // VariableBinding only returns a binding number it found in this set, so the row is here.
+        for (const SceneGpuLayout::BindingSpec& row : set.bindings) {
+            if (row.binding == variable) {
+                return slot.pool->Allocate(**slot.layout,
+                                           SceneGpuLayout::DescriptorCount(row, max_blocks_));
+            }
+        }
+        std::unreachable();
+    };
+
+    // A fixed row owns one set, allocated here from the pool its `fixed_sets` sized.
+    // The field now has one mechanism behind it instead of a flag plus a special case in this function.
+    for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+        if (set.fixed_sets == 0) continue;
+        VulkanEngine::GpuResources::GpuDescriptorSet& owned =
+            owned_sets_[static_cast<std::size_t>(set.id)];
+        owned = allocate(set);
+        owned.SetDebugName(dev, std::string(set.name) + "-set");
+    }
+
+    // Every other row gets one set per frame in flight.
+    for (auto& fr : frames_) {
+        for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+            if (set.fixed_sets != 0) continue;
+            fr.SetFor(set.id) = allocate(set);
+            fr.SetFor(set.id).SetDebugName(dev, std::string(set.name) + "-set");
+        }
+    }
+
+    // Publish the blocks the vertex heap already holds.
+    // Every later block is written when it is allocated (UpdateVertexBufferArrayElement), but a heap populated before the renderer existed has no such event, so the initial descriptors are written here.
+    for (auto& fr : frames_) {
+        for (std::uint32_t block = 0; block < vh.GetBufferCount(); ++block) {
+            const vk::DescriptorBufferInfo info(vh.GetBuffer(block), 0, vk::WholeSize);
+            vk::WriteDescriptorSet write{};
+            write.dstSet = fr.vertex_buffers_set.GetHandle();
+            write.dstBinding = kVertexTableBinding;
+            write.dstArrayElement = block;
+            write.descriptorCount = 1;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.pBufferInfo = &info;
+            dev.updateDescriptorSets(write, nullptr);
+        }
+    }
+
+    return true;
+}
+
+void SceneRenderer::WriteBinding(FrameResources& fr, const SceneGpuLayout::SetSpec& set,
+                                 const SceneGpuLayout::BindingSpec& binding) {
+    if (!backend_) return;
+    auto& dev = backend_->GetDevice();
+    const vk::DescriptorSet dst = fr.SetFor(set.id).GetHandle();
+    if (!dst) return;
+
+    switch (binding.source) {
+        case SceneGpuLayout::SourceKind::block_array: {
+            GpuResources::BlockArray& blocks = fr.BlockArrayFor(binding.block_slot);
+            const std::uint32_t cursor =
+                SceneGpuLayout::BlockBindingIndex(set.id, binding.binding);
+            if (cursor == SceneGpuLayout::kNoBinding) return;
+            auto& cache = fr.block_binding_cache[cursor];
+            if (cache.epoch != binding_epoch_) {
+                cache.written_blocks = 0;
+                cache.epoch = binding_epoch_;
+            }
+            // Only the blocks that do not exist yet: blocks are appended and never removed, and binding_epoch_ forces a full rewrite after a capacity change re-created the buffers.
+            for (std::uint32_t block = cache.written_blocks; block < blocks.BlockCount();
+                 ++block) {
+                const vk::DescriptorBufferInfo info(blocks.GetBlockArray(block), 0,
+                                                    blocks.BlockSize());
+                vk::WriteDescriptorSet write{};
+                write.dstSet = dst;
+                write.dstBinding = binding.binding;
+                write.dstArrayElement = block;
+                write.descriptorCount = 1;
+                write.descriptorType = binding.kind;
+                write.pBufferInfo = &info;
+                dev.updateDescriptorSets(write, nullptr);
+            }
+            cache.written_blocks = blocks.BlockCount();
+            break;
+        }
+        case SceneGpuLayout::SourceKind::buffer: {
+            GpuResources::GpuBuffer& buffer = BufferRef(fr, binding.buffer_slot);
+            if (!buffer.IsValid()) return;
+            const vk::DescriptorBufferInfo info(*buffer.GetBuffer(), 0, vk::WholeSize);
+            vk::WriteDescriptorSet write{};
+            write.dstSet = dst;
+            write.dstBinding = binding.binding;
+            write.descriptorCount = 1;
+            write.descriptorType = binding.kind;
+            write.pBufferInfo = &info;
+            dev.updateDescriptorSets(write, nullptr);
+            break;
+        }
+        case SceneGpuLayout::SourceKind::mode_buffer: {
+            const SceneGpuLayout::BufferSlot slot = draw_mode_ == DrawMode::MID
+                ? binding.buffer_slot_mid
+                : binding.buffer_slot;
+            GpuResources::GpuBuffer& buffer = BufferRef(fr, slot);
+            if (!buffer.IsValid()) return;
+            const vk::DescriptorBufferInfo info(*buffer.GetBuffer(), 0, vk::WholeSize);
+            vk::WriteDescriptorSet write{};
+            write.dstSet = dst;
+            write.dstBinding = binding.binding;
+            write.descriptorCount = 1;
+            write.descriptorType = binding.kind;
+            write.pBufferInfo = &info;
+            dev.updateDescriptorSets(write, nullptr);
+            break;
+        }
+        case SceneGpuLayout::SourceKind::hiz_image: {
+            // The occlusion set's combined image sampler.
+            // Both handles come from the Hi-Z ring, so a headless frame (which never created it) leaves the binding alone.
+            if (!hiz_sampler_ || !*fr.hiz_full_view) return;
+            const vk::DescriptorImageInfo info(**hiz_sampler_, *fr.hiz_full_view,
+                                               vk::ImageLayout::eShaderReadOnlyOptimal);
+            vk::WriteDescriptorSet write{};
+            write.dstSet = dst;
+            write.dstBinding = binding.binding;
+            write.descriptorCount = 1;
+            write.descriptorType = binding.kind;
+            write.pImageInfo = &info;
+            dev.updateDescriptorSets(write, nullptr);
+            break;
+        }
+        case SceneGpuLayout::SourceKind::none:
+            break;
+    }
+}
+
+void SceneRenderer::WriteHiZBindings(FrameResources& fr) {
+    if (!backend_ || !hiz_sampler_ || !*fr.hiz_image || hiz_mip_count_ == 0) return;
+    auto& dev = backend_->GetDevice();
+    const vk::DescriptorSet dst = fr.hiz_set.GetHandle();
+    if (!dst) return;
+
+    const std::uint32_t depth_binding = SceneGpuLayout::BindingOfKind(
+        SceneGpuLayout::SetId::hiz, vk::DescriptorType::eSampledImage);
+    const std::uint32_t sampler_binding = SceneGpuLayout::BindingOfKind(
+        SceneGpuLayout::SetId::hiz, vk::DescriptorType::eSampler);
+    const std::uint32_t levels_binding = SceneGpuLayout::BindingOfKind(
+        SceneGpuLayout::SetId::hiz, vk::DescriptorType::eStorageImage);
+    assert(depth_binding != SceneGpuLayout::kNoBinding &&
+           sampler_binding != SceneGpuLayout::kNoBinding &&
+           levels_binding != SceneGpuLayout::kNoBinding);
+
+    // Bind the whole storage-image array the layout declares (descriptorCount = MAX_HIZ_MIPS).
+    // Re-pointing the tail levels (beyond mip_levels) at the coarsest mip keeps every descriptor valid after a shrink; leaving them would dangle at the previous resize's views.
+    std::vector<vk::DescriptorImageInfo> storage_infos;
+    storage_infos.reserve(MAX_HIZ_MIPS);
+    const std::uint32_t last_level = hiz_mip_count_ - 1;
+    for (std::uint32_t mip = 0; mip < MAX_HIZ_MIPS; ++mip) {
+        const std::uint32_t view = std::min(mip, last_level);
+        storage_infos.emplace_back(nullptr, *fr.hiz_mip_views[view],
+                                   vk::ImageLayout::eGeneral);
+    }
+    {
+        vk::WriteDescriptorSet write{};
+        write.dstSet = dst;
+        write.dstBinding = levels_binding;
+        write.dstArrayElement = 0;
+        write.descriptorCount = MAX_HIZ_MIPS;
+        write.descriptorType = vk::DescriptorType::eStorageImage;
+        write.pImageInfo = storage_infos.data();
+        dev.updateDescriptorSets(write, nullptr);
+    }
+    // Bind hiz mip 0 as the placeholder depth input; eGeneral matches the storage-image binding on the same subresource.
+    {
+        const vk::DescriptorImageInfo info(nullptr, *fr.hiz_mip_views[0],
+                                           vk::ImageLayout::eGeneral);
+        vk::WriteDescriptorSet write{};
+        write.dstSet = dst;
+        write.dstBinding = depth_binding;
+        write.descriptorCount = 1;
+        write.descriptorType = vk::DescriptorType::eSampledImage;
+        write.pImageInfo = &info;
+        dev.updateDescriptorSets(write, nullptr);
+    }
+    {
+        const vk::DescriptorImageInfo info(**hiz_sampler_, nullptr,
+                                           vk::ImageLayout::eShaderReadOnlyOptimal);
+        vk::WriteDescriptorSet write{};
+        write.dstSet = dst;
+        write.dstBinding = sampler_binding;
+        write.descriptorCount = 1;
+        write.descriptorType = vk::DescriptorType::eSampler;
+        write.pImageInfo = &info;
+        dev.updateDescriptorSets(write, nullptr);
+    }
 }
 
 bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
@@ -71,13 +545,13 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     // ceiling bounds them and the device clamps below it.
     {
         const auto& limits = be.GetCapabilities().GetProperties().limits;
-        const SceneLimits::DeviceLimits device_limits{
+        const SceneGpuLayout::DeviceLimits device_limits{
             .max_descriptor_set_storage_buffers =
                 limits.maxDescriptorSetStorageBuffers,
             .max_per_stage_descriptor_storage_buffers =
                 limits.maxPerStageDescriptorStorageBuffers,
         };
-        max_blocks_ = std::clamp(SceneLimits::MaxBlocksForDevice(device_limits),
+        max_blocks_ = std::clamp(SceneGpuLayout::MaxBlocksForDevice(device_limits),
                                  1u, SceneLimits::kMaxBlocksCeiling);
         LOGIFACE_LOG(info, "SceneRenderer: submesh block budget max_blocks=" +
                      std::to_string(max_blocks_) + " (" + std::to_string(MaxSubmeshes()) +
@@ -109,8 +583,6 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     frames_in_flight_ = std::max(frames_in_flight, 1u);
     frames_.resize(frames_in_flight_);
     frame_modifier_dispatches_.assign(frames_in_flight_, {});
-    empty_sets_.clear();
-    empty_sets_.reserve(frames_in_flight_);
 
     // Size every pipeline retire ring consistently with the frame depth.
     expand_slot_.SetFramesInFlight(frames_in_flight_);
@@ -125,544 +597,38 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     pre_cull_mid_slot_.SetFramesInFlight(frames_in_flight_);
     collect_count_mid_slot_.SetFramesInFlight(frames_in_flight_);
 
-    // Set 1: SubmeshVertexData (block array, simple layout)
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = max_blocks_;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex |
-                           vk::ShaderStageFlagBits::eCompute;
-        submesh_vertex_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *submesh_vertex_layout_, "submesh-vertex-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ *
-            SceneLimits::StorageBuffersForPlan(SceneLimits::kSubmeshVertexPlan, max_blocks_);
-        submesh_vertex_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        submesh_vertex_pool_->SetDebugName(dev, "submesh-vertex-pool");
-    }
-
-    // Set 2: Vertex buffer table (binding 0), out-of-line UV table (binding 1)
-    // and the per-frame deformed-vertex buffer (binding 2). The two tables are
-    // fixed-count: the spec allows the variable-count flag only on the highest
-    // binding, and neither array's runtime length is ever queried, so the flag
-    // is dropped and both bindings are allocated at their full fixed count
-    // (partially bound, update-after-bind). Binding 2 is a single descriptor
-    // read only by the indirection vertex shaders.
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 3> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = MAX_VERTEX_BUFFERS;
-        // Compute is included so the deform pipeline can bind this table as its
-        // own set 0: the skinning stage reads the undeformed source vertices from
-        // it, and a vertex-only stage mask would make the same set invalid there.
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex |
-                           vk::ShaderStageFlagBits::eCompute;
-        bs[1].binding = 1;
-        bs[1].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[1].descriptorCount = MAX_UV_BUFFERS;
-        // The UV table is unused by the deform stage, but the binding lives in the
-        // same layout; leaving it vertex-only would make the two bindings disagree
-        // about the set's stage visibility for no benefit.
-        bs[1].stageFlags = vk::ShaderStageFlagBits::eVertex |
-                           vk::ShaderStageFlagBits::eCompute;
-        bs[2].binding = 2;
-        bs[2].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[2].descriptorCount = 1;
-        // Read by the depth and main indirection vertex shaders; the deform
-        // pass writes the same bytes through its own set (deform binding 4),
-        // so this binding is vertex-only.
-        bs[2].stageFlags = vk::ShaderStageFlagBits::eVertex;
-        const std::array<vk::DescriptorBindingFlags, 3> flags = {
-            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
-            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
-            vk::DescriptorBindingFlags{},
-        };
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
-        bind_flags.bindingCount = static_cast<std::uint32_t>(flags.size());
-        bind_flags.pBindingFlags = flags.data();
-        vk::DescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
-        layout_ci.pNext = &bind_flags;
-        layout_ci.bindingCount = static_cast<std::uint32_t>(bs.size());
-        layout_ci.pBindings = bs.data();
-        vertex_buffers_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *vertex_buffers_layout_, "vertex-buffers-layout");
-
-        // The +1 is per frame *set*: one deformed-vertex descriptor per frame.
-        const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer,
-            frames_in_flight_ * (MAX_VERTEX_BUFFERS + MAX_UV_BUFFERS + 1)
-        };
-        vk::DescriptorPoolCreateInfo pool_ci{};
-        pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
-                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = frames_in_flight_;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &ps;
-        vertex_buffers_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *vertex_buffers_pool_, "vertex-buffers-pool");
-
-        for (auto& fr : frames_) {
-            vk::DescriptorSetAllocateInfo alloc_ci{};
-            alloc_ci.descriptorPool = **vertex_buffers_pool_;
-            alloc_ci.descriptorSetCount = 1;
-            alloc_ci.pSetLayouts = &**vertex_buffers_layout_;
-            auto sets = dev.allocateDescriptorSets(alloc_ci);
-            fr.vertex_buffers_set = std::move(sets[0]);
-        }
-
-        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(
-                dev, frames_[i].vertex_buffers_set, "vertex-buffers-frame-" + std::to_string(i));
-        }
-
-        // Write initial static blocks into ALL frame vertex sets
-        for (auto& fr : frames_) {
-            for (std::uint32_t bi = 0; bi < vh.GetBufferCount(); ++bi) {
-                const vk::DescriptorBufferInfo bii(vh.GetBuffer(bi), 0, vk::WholeSize);
-                vk::WriteDescriptorSet w{};
-                w.dstSet = *fr.vertex_buffers_set;
-                w.dstBinding = 0;
-                w.dstArrayElement = bi;
-                w.descriptorCount = 1;
-                w.descriptorType = vk::DescriptorType::eStorageBuffer;
-                w.pBufferInfo = &bii;
-                dev.updateDescriptorSets(w, nullptr);
-            }
-            // UV table (binding 1) blocks are written as they are allocated, by
-            // the caller that uploads the mesh, exactly like vertex blocks.
-        }
-    }
-
-    // Set 3: Indirection buffer (single, update-after-bind for per-frame swapping)
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = 1;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
-        auto flags = vk::DescriptorBindingFlags(vk::DescriptorBindingFlagBits::eUpdateAfterBind);
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
-        bind_flags.bindingCount = 1;
-        bind_flags.pBindingFlags = &flags;
-        vk::DescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.pNext = &bind_flags;
-        layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
-        layout_ci.bindingCount = 1;
-        layout_ci.pBindings = bs.data();
-        indirection_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_layout_, "indirection-layout");
-        const vk::DescriptorPoolSize indir_ps{
-            vk::DescriptorType::eStorageBuffer, frames_in_flight_
-        };
-        vk::DescriptorPoolCreateInfo indir_pool_ci{};
-        indir_pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
-                              vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        indir_pool_ci.maxSets = frames_in_flight_;
-        indir_pool_ci.poolSizeCount = 1;
-        indir_pool_ci.pPoolSizes = &indir_ps;
-        indirection_raw_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, indir_pool_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *indirection_raw_pool_, "indirection-raw-pool");
-    }
-
-    // Index buffer table (bindless, update-after-bind) for expand - per-frame
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 1> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = MAX_INDEX_BUFFERS;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        auto flags = vk::DescriptorBindingFlagBits::ePartiallyBound |
-                     vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-                     vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
-        bind_flags.bindingCount = 1;
-        bind_flags.pBindingFlags = &flags;
-        vk::DescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
-        layout_ci.pNext = &bind_flags;
-        layout_ci.bindingCount = 1;
-        layout_ci.pBindings = bs.data();
-        index_buffers_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *index_buffers_layout_, "index-buffers-layout");
-
-        const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer, frames_in_flight_ * MAX_INDEX_BUFFERS
-        };
-        vk::DescriptorPoolCreateInfo pool_ci{};
-        pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
-                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = frames_in_flight_;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &ps;
-        index_buffers_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *index_buffers_pool_, "index-buffers-pool");
-
-        for (auto& fr : frames_) {
-            const std::uint32_t var_desc_count = MAX_INDEX_BUFFERS;
-            vk::DescriptorSetVariableDescriptorCountAllocateInfo var_desc{};
-            var_desc.descriptorSetCount = 1;
-            var_desc.pDescriptorCounts = &var_desc_count;
-            vk::DescriptorSetAllocateInfo alloc_ci{};
-            alloc_ci.pNext = &var_desc;
-            alloc_ci.descriptorPool = **index_buffers_pool_;
-            alloc_ci.descriptorSetCount = 1;
-            alloc_ci.pSetLayouts = &**index_buffers_layout_;
-            auto sets = dev.allocateDescriptorSets(alloc_ci);
-            fr.index_buffers_set = std::move(sets[0]);
-        }
-
-        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
-            VulkanBackend::Vulkan::SetVulkanObjectName(
-                dev, frames_[i].index_buffers_set, "index-buffers-frame-" + std::to_string(i));
-        }
-    }
-
-    // Deform input set (set 1 of the deform pipeline): skin-influence table,
-    // extra-influence table, flat bone palette, per-submesh SkinEntry block array,
-    // deformed-vertex output and the flat modifier parameters.
-    //
-    // The two skin tables are fixed-size descriptor arrays with the same
-    // partially-bound/update-after-bind flags as the vertex table: a mesh upload
-    // publishes a newly allocated skin block from the middle of the frame loop,
-    // while earlier frames may still be reading the set.
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
-        for (std::uint32_t i = 0; i < bs.size(); ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        bs[0].descriptorCount = MAX_SKIN_BUFFERS;
-        bs[1].descriptorCount = MAX_SKIN_BUFFERS;
-        // Binding 3 is the SkinEntry block array, one descriptor per block.
-        bs[3].descriptorCount = max_blocks_;
-        const std::array<vk::DescriptorBindingFlags, 6> flags = {
-            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
-            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                vk::DescriptorBindingFlagBits::eUpdateAfterBind,
-            vk::DescriptorBindingFlags{},
-            vk::DescriptorBindingFlags{},
-            vk::DescriptorBindingFlags{},
-            vk::DescriptorBindingFlags{},
-        };
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo bind_flags{};
-        bind_flags.bindingCount = static_cast<std::uint32_t>(flags.size());
-        bind_flags.pBindingFlags = flags.data();
-        vk::DescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
-        layout_ci.pNext = &bind_flags;
-        layout_ci.bindingCount = static_cast<std::uint32_t>(bs.size());
-        layout_ci.pBindings = bs.data();
-        deform_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *deform_layout_, "deform-layout");
-
-        const vk::DescriptorPoolSize ps{
-            vk::DescriptorType::eStorageBuffer,
-            frames_in_flight_ *
-                SceneLimits::StorageBuffersForPlan(SceneLimits::kDeformPlan, max_blocks_)};
-        vk::DescriptorPoolCreateInfo pool_ci{};
-        pool_ci.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
-                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        pool_ci.maxSets = frames_in_flight_;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &ps;
-        deform_pool_ = std::make_unique<vk::raii::DescriptorPool>(dev, pool_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *deform_pool_, "deform-pool");
-    }
-
-    // Set 4: Expand layout (8 bindings: 5 block arrays + vertex_indirection +
-    // draw_indices + expand counter). The fifth block array -- the per-submesh
-    // SkinEntry table -- sits at binding 7 so the three single bindings keep the
-    // numbers the shader already uses.
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 8> bs{};
-        for (std::uint32_t i = 0; i < 4; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = max_blocks_;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        for (std::uint32_t i = 4; i < 7; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        bs[7].binding = 7;
-        bs[7].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[7].descriptorCount = max_blocks_;
-        bs[7].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        expand_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{
-                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *expand_layout_, "expand-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ *
-            SceneLimits::StorageBuffersForPlan(SceneLimits::kExpandPlan, max_blocks_);
-        expand_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        expand_pool_->SetDebugName(dev, "expand-pool");
-    }
-
-    // Set 5: Occlusion layout (12 bindings: vertex info, cull, spheres, Hi-Z,
-    // OBBs, flag table — shared by the occlusion pass and the pre-cull pass,
-    // which adds the survivor compaction bindings 6-11)
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 12> bs{};
-        for (std::uint32_t i = 0; i < 3; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = max_blocks_;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        bs[3].binding = 3;
-        bs[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        bs[3].descriptorCount = 1;
-        bs[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        bs[4].binding = 4;
-        bs[4].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[4].descriptorCount = max_blocks_;
-        bs[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        for (std::uint32_t i = 5; i < 12; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        occlusion_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{
-                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occlusion_layout_, "occlusion-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ *
-            SceneLimits::StorageBuffersForPlan(SceneLimits::kOcclusionPlan, max_blocks_);
-        pc.max_sampled_images = frames_in_flight_;
-        pc.max_combined_image_samplers = frames_in_flight_;
-        occlusion_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        occlusion_pool_->SetDebugName(dev, "occlusion-pool");
-    }
-
-    // Set 8: Occluder-select layout (11 bindings: cull blocks, transform blocks,
-    // OBB blocks, flag table, full indirection, occluder commands, command
-    // counter, selection counter, region bases, per-group counts, occluder
-    // indices)
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 11> bs{};
-        for (std::uint32_t i = 0; i < 3; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = max_blocks_;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        for (std::uint32_t i = 3; i < 11; ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        occluder_select_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{
-                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *occluder_select_layout_, "occluder-select-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ *
-            SceneLimits::StorageBuffersForPlan(SceneLimits::kOccluderSelectPlan, max_blocks_);
-        occluder_select_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        occluder_select_pool_->SetDebugName(dev, "occluder-select-pool");
-    }
-
-    // Set 6: Collect count/compact layout (6 bindings: cull blocks,
-    // draw_indices, main output, technique results, technique region bases,
-    // technique counts)
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 6> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eStorageBuffer;
-        bs[0].descriptorCount = max_blocks_;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        for (std::uint32_t i = 1; i < bs.size(); ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        collect_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{
-                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_layout_, "collect-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_buffers = frames_in_flight_ *
-            SceneLimits::StorageBuffersForPlan(SceneLimits::kCollectPlan, max_blocks_);
-        collect_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        collect_pool_->SetDebugName(dev, "collect-pool");
-    }
-
-    // Set 7: Collect write shader layout (CID-only: emits one indexed
-    // indirect command per technique from the technique results).
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 2> bs{};
-        for (std::uint32_t i = 0; i < bs.size(); ++i) {
-            bs[i].binding = i;
-            bs[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            bs[i].descriptorCount = 1;
-            bs[i].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        }
-        collect_write_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{
-                {}, static_cast<std::uint32_t>(bs.size()), bs.data() });
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *collect_write_layout_, "collect-write-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_ + 1;
-        pc.max_storage_buffers = frames_in_flight_ * 2;
-        collect_write_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        collect_write_pool_->SetDebugName(dev, "collect-write-pool");
-    }
-
-    // Empty set (placeholder for set 0 in depth pass)
-    {
-        constexpr vk::DescriptorSetLayoutCreateInfo empty_ci{};
-        empty_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, empty_ci);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, *empty_layout_, "empty-layout");
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        empty_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-        empty_pool_->SetDebugName(dev, "empty-pool");
-        empty_sets_.reserve(frames_in_flight_);
-        for (std::uint32_t i = 0; i < frames_in_flight_; ++i) {
-            auto set = empty_pool_->Allocate(*empty_layout_);
-            set.SetDebugName(dev, "empty-set-" + std::to_string(i));
-            empty_sets_.push_back(std::move(set));
-        }
-    }
+    // Descriptor sets: layouts, pools and the per-frame sets.
+    // Every binding number, descriptor count, stage mask, binding flag and pool size comes from SceneGpuLayout::kSceneSets, so a set's shape is declared exactly once.
+    if (!CreateDescriptorSets(vh)) return false;
 
     // Create all compute/graphics pipelines in one batched submission
     if (!CreateScenePipelines(be, shader_mgr, pipeline_factory, shader_ids)) return false;
 
-    // Per-frame ring resources
+    // Per-frame ring resources.
     {
-        constexpr std::uint64_t technique_flags_size =
-            static_cast<uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
+        // The shared technique flag table is a singleton, not part of the ring.
+        const SceneGpuLayout::SingletonBufferSpec* flags_spec =
+            SceneGpuLayout::SingletonSpecOf(SceneGpuLayout::BufferSlot::technique_flags);
+        technique_flags = GpuResources::GpuBuffer::Create(be, BufferBytes(flags_spec->size),
+            flags_spec->flags.usage, flags_spec->flags.memory);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, technique_flags.GetBuffer(),
+                                                   vk::ObjectType::eBuffer, "technique-flags");
 
-        // Every per-submesh block array is bounded to the runtime block budget:
-        // its descriptors are a max_blocks_-sized binding array, so growing past
-        // that would write descriptors out of range.
-        auto make_block_config = [max_blocks = max_blocks_](std::uint32_t entry_size,
-                                                            std::uint32_t entries_per_block,
-                                                            vk::BufferUsageFlags extra_usage,
-                                                            vk::MemoryPropertyFlags memory) {
-            GpuResources::BlockArray::Config c{};
-            c.entry_size = entry_size;
-            c.entries_per_block = entries_per_block;
-            c.max_blocks = max_blocks;
-            c.extra_usage = extra_usage;
-            c.memory = memory;
-            return c;
-        };
-
-        // Shared technique flag table (single buffer, not per-frame — see
-        // SceneRenderer.cppm). Created before the ring loop because the
-        // per-frame depth-filter descriptor sets bind it.
-        technique_flags = GpuResources::GpuBuffer::Create(be,
-            technique_flags_size,
-            vk::BufferUsageFlagBits::eStorageBuffer |
-                vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, technique_flags.GetBuffer(), vk::ObjectType::eBuffer, "technique-flags");
-
+        // Per-submesh block arrays. Each row is bounded to the runtime block budget: its descriptors are a max_blocks_-sized binding array, so growing past that would write descriptors out of range.
         for (auto& fr : frames_) {
-            fr.dynamic_entries.Initialize(be,
-                make_block_config(48, BLOCK_ENTRIES, {},
-                    vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent));
-            fr.static_entries.Initialize(be,
-                make_block_config(36, BLOCK_ENTRIES, {},   // StaticEntry: 9 u32 total (incl. uvSlot/uvBias)
-                    vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent));
-            fr.bounding_spheres.Initialize(be,
-                make_block_config(16, BLOCK_ENTRIES, {},
-                    vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent));
-            fr.obb_entries.Initialize(be,
-                make_block_config(64, BLOCK_ENTRIES, {},
-                    vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent));
-            fr.submesh_vertex_entries.Initialize(be,
-                make_block_config(192, BLOCK_ENTRIES,   // sizeof(VertexEntry) = 192, Slang CDataLayout
-                                                        // (scalar block layout): 64 mvp + 12 (maxScale/mat/orm)
-                                                        // + 64 modelMatrix + 36 normalMatrix + 4 slot + 4 uvSlot
-                                                        // + 4 uvBias + 4 deformBias. No padding — matrices are
-                                                        // 4B-aligned. Byte-identical to the VertexEntry mirror +
-                                                        // static_assert in MeshGatherSystem.cpp. MUST match the
-                                                        // VertexEntry definition in scene_entries.slang.
-                    // TransferSrc|Dst: the engine only hands these to the GPU,
-                    // but diagnostics and the GPU tests seed and read them back
-                    // (they are written by expand, so there is no host mapping).
-                    vk::BufferUsageFlagBits::eTransferSrc |
-                        vk::BufferUsageFlagBits::eTransferDst,
-                    vk::MemoryPropertyFlagBits::eDeviceLocal));
-            fr.cull_entries.Initialize(be,
-                make_block_config(16, BLOCK_ENTRIES,
-                    vk::BufferUsageFlagBits::eTransferSrc |
-                        vk::BufferUsageFlagBits::eTransferDst,
-                    vk::MemoryPropertyFlagBits::eDeviceLocal));
-            // Deform addressing: one 32 B record per submesh. Host-visible because
-            // gather writes it directly; grow by gather with EnsureCapacity, not by
-            // PrepareCompute (gather runs first and must see the blocks).
-            fr.skin_entries.Initialize(be,
-                make_block_config(static_cast<std::uint32_t>(sizeof(SkinEntry)),
-                    BLOCK_ENTRIES, {},
-                    vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent));
-
-            // Capacity- and mode-dependent GPU buffers are created by
-            // CreateFrameBuffers() below (and re-created on capacity growth).
-            fr.expand_set = expand_pool_->Allocate(*expand_layout_);
-            fr.occlusion_set = occlusion_pool_->Allocate(*occlusion_layout_);
-            fr.collect_set = collect_pool_->Allocate(*collect_layout_);
-            fr.collect_write_set = collect_write_pool_->Allocate(*collect_write_layout_);
-            fr.occluder_select_set = occluder_select_pool_->Allocate(*occluder_select_layout_);
-            fr.submesh_vertex_set =
-                submesh_vertex_pool_->Allocate(*submesh_vertex_layout_);
-            {
-                vk::DescriptorSetAllocateInfo alloc_ci{};
-                alloc_ci.descriptorPool = **indirection_raw_pool_;
-                alloc_ci.descriptorSetCount = 1;
-                alloc_ci.pSetLayouts = &**indirection_layout_;
-                auto sets = dev.allocateDescriptorSets(alloc_ci);
-                fr.indirection_raw_set = std::move(sets[0]);
-                VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.indirection_raw_set, "indirection-raw-set");
+            for (const SceneGpuLayout::BlockArraySpec& spec : SceneGpuLayout::kBlockArrays) {
+                GpuResources::BlockArray::Config cfg{};
+                cfg.entry_size = spec.entry_size;
+                cfg.entries_per_block = spec.entries_per_block;
+                cfg.max_blocks = max_blocks_;
+                cfg.extra_usage = spec.extra_usage;
+                cfg.memory = ToVkMemory(spec.memory);
+                // One field produces both: an array that is mapped must be host-visible, and one that is not takes the staging path in UploadEntry.
+                cfg.memory_mode = spec.memory == SceneGpuLayout::BufMemory::device_local
+                    ? GpuResources::MemoryMode::DeviceLocal
+                    : GpuResources::MemoryMode::HostVisible;
+                fr.BlockArrayFor(spec.slot).Initialize(be, cfg);
             }
-            fr.hiz_set = hiz_pool_->Allocate(*hiz_layout_);
-            {
-                vk::DescriptorSetAllocateInfo deform_ci{};
-                deform_ci.descriptorPool = **deform_pool_;
-                deform_ci.descriptorSetCount = 1;
-                deform_ci.pSetLayouts = &**deform_layout_;
-                auto deform_sets = dev.allocateDescriptorSets(deform_ci);
-                fr.deform_set = std::move(deform_sets[0]);
-            }
-
-            fr.expand_set.SetDebugName(dev, "expand-set");
-            fr.occlusion_set.SetDebugName(dev, "occlusion-set");
-            fr.collect_set.SetDebugName(dev, "collect-set");
-            fr.collect_write_set.SetDebugName(dev, "collect-write-set");
-            fr.occluder_select_set.SetDebugName(dev, "occluder-select-set");
-            fr.submesh_vertex_set.SetDebugName(dev, "submesh-vertex-set");
-            fr.hiz_set.SetDebugName(dev, "hiz-set");
-
         }
 
         if (!CreateFrameBuffers()) return false;
@@ -685,71 +651,39 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     }
 
     // ── Lighting system (descriptor set 4) ──
+    //
+    // The layout and pool come from the set table; only the two objects and the initial descriptor writes live here.
     {
-        const vk::ShaderStageFlags stages = vk::ShaderStageFlagBits::eVertex |
-                                             vk::ShaderStageFlagBits::eFragment;
+        const SceneGpuLayout::SingletonBufferSpec* header_spec =
+            SceneGpuLayout::SingletonSpecOf(SceneGpuLayout::BufferSlot::scene_header);
+        scene_header = GpuResources::GpuBuffer::Create(be, BufferBytes(header_spec->size),
+            header_spec->flags.usage, header_spec->flags.memory, nullptr);
+        VulkanBackend::Vulkan::SetVulkanObjectName(dev, scene_header.GetBuffer(), "scene-header");
 
-        // Binding 0: SceneHeader (single storage buffer)
-        const vk::DescriptorSetLayoutBinding header_binding(0, vk::DescriptorType::eStorageBuffer,
-                                                             1, stages);
-        // Binding 1: Light[] BlockArray (array of storage buffers, partially bound)
-        const vk::DescriptorSetLayoutBinding lights_binding(1, vk::DescriptorType::eStorageBuffer,
-                                                             MAX_LIGHT_BLOCKS, stages);
-
-        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {header_binding, lights_binding};
-        std::array<vk::DescriptorBindingFlags, 2> flags_arr{};
-        flags_arr[1] = vk::DescriptorBindingFlagBits::ePartiallyBound;
-        const vk::DescriptorSetLayoutBindingFlagsCreateInfo flags_info(
-            static_cast<std::uint32_t>(flags_arr.size()), flags_arr.data());
-
-        const vk::DescriptorSetLayoutCreateInfo layout_info({}, bindings, &flags_info);
-        scene_uniform_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(dev, layout_info);
-
-        // Pool: 1 header buffer + MAX_LIGHT_BLOCKS light block buffers
-        std::vector<vk::DescriptorPoolSize> pool_sizes = {
-            {vk::DescriptorType::eStorageBuffer, 1 + MAX_LIGHT_BLOCKS}};
-        scene_uniform_pool_ = std::make_unique<vk::raii::DescriptorPool>(
-            dev, vk::DescriptorPoolCreateInfo{
-                vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1, pool_sizes});
-
-        vk::DescriptorSetAllocateInfo alloc_ci{};
-        alloc_ci.descriptorPool = **scene_uniform_pool_;
-        alloc_ci.descriptorSetCount = 1;
-        alloc_ci.pSetLayouts = &**scene_uniform_layout_;
-        auto sets = dev.allocateDescriptorSets(alloc_ci);
-        scene_uniform_set_ = std::make_unique<vk::raii::DescriptorSet>(std::move(sets[0]));
-
-        // Create device-local header buffer
-        scene_header = GpuResources::GpuBuffer::Create(
-            *backend_, sizeof(SceneHeader),
-            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eDeviceLocal, nullptr);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, scene_header.GetBuffer(),
-                                                     "scene-header");
-
-        // Write header buffer to descriptor set binding 0
+        const std::uint32_t header_binding = SceneGpuLayout::BindingOfKind(
+            SceneGpuLayout::SetId::scene_uniform, vk::DescriptorType::eStorageBuffer, 0);
+        static_assert(header_binding != SceneGpuLayout::kNoBinding,
+                      "the lighting set must keep a storage-buffer header binding");
+        const auto& header_buffer = scene_header.GetBuffer();
         const vk::DescriptorBufferInfo header_buf_info(
-            static_cast<vk::Buffer>(*scene_header.GetBuffer()), 0,
-            sizeof(SceneHeader));
+            static_cast<vk::Buffer>(*header_buffer), 0, sizeof(SceneHeader));
         vk::WriteDescriptorSet header_write{};
-        header_write.dstSet = **scene_uniform_set_;
-        header_write.dstBinding = 0;
+        header_write.dstSet = GetSceneUniformSet();
+        header_write.dstBinding = header_binding;
         header_write.descriptorCount = 1;
         header_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         header_write.pBufferInfo = &header_buf_info;
         dev.updateDescriptorSets(header_write, nullptr);
 
-        // Initialize BlockArray for lights
+        // Initialize the light block array. Its descriptor binding is a fixed kMaxLightBlocks array, so the BlockArray must not grow past it.
         GpuResources::BlockArray::Config light_cfg{};
-        light_cfg.entry_size = sizeof(Light);
+        light_cfg.entry_size = static_cast<std::uint32_t>(sizeof(Light));
         light_cfg.entries_per_block = LIGHTS_PER_BLOCK;
-        // The light descriptor binding is a fixed MAX_LIGHT_BLOCKS array; the
-        // BlockArray must not grow past it.
         light_cfg.max_blocks = MAX_LIGHT_BLOCKS;
         light_cfg.memory_mode = GpuResources::MemoryMode::DeviceLocal;
         light_cfg.memory = vk::MemoryPropertyFlagBits::eDeviceLocal;
-        light_cfg.extra_usage = vk::BufferUsageFlagBits::eTransferDst; // NOLINT
-        scene_lights.Initialize(*backend_, light_cfg);
+        light_cfg.extra_usage = vk::BufferUsageFlagBits::eTransferDst;
+        scene_lights.Initialize(be, light_cfg);
     }
 
     LOGIFACE_LOG(info, "SceneRenderer initialized");
@@ -780,238 +714,22 @@ bool SceneRenderer::CreateFrameBuffers() {
     // full block-descriptor rewrite on the next PrepareCompute.
     ++binding_epoch_;
 
-    const std::uint64_t vertex_indirection_size =
-        static_cast<std::uint64_t>(scene_capacity_.vertex_span) * 8u;
-    const std::uint64_t draw_indices_size =
-        static_cast<std::uint64_t>(scene_capacity_.index_count) * 4u;
-    const std::uint64_t compact_size = draw_indices_size;
-    const std::uint64_t command_size =
-        static_cast<std::uint64_t>(scene_capacity_.submesh_count) *
-            sizeof(vk::DrawIndexedIndirectCommand);
-    constexpr std::uint64_t tech_counts_size =
-        static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(std::uint32_t);
-    constexpr std::uint64_t technique_results_size =
-        static_cast<std::uint64_t>(MAX_DRAW_GROUPS) * sizeof(TechniqueResult);
-    constexpr std::uint64_t occluder_count_size = sizeof(std::uint32_t);
-    const std::uint64_t palette_bytes =
-        static_cast<std::uint64_t>(std::max(scene_capacity_.palette_matrix_count, 1u)) *
-        16u * sizeof(float);
-    const std::uint64_t modifier_param_bytes =
-        static_cast<std::uint64_t>(std::max(scene_capacity_.modifier_param_bytes, 16u));
-
     const bool mid = draw_mode_ == DrawMode::MID;
-    const vk::BufferUsageFlags index_dest_usage =
-        vk::BufferUsageFlagBits::eStorageBuffer |
-        vk::BufferUsageFlagBits::eIndexBuffer |
-        vk::BufferUsageFlagBits::eTransferDst;
-    const vk::BufferUsageFlags indirect_usage =
-        vk::BufferUsageFlagBits::eStorageBuffer |
-        vk::BufferUsageFlagBits::eIndirectBuffer |
-        vk::BufferUsageFlagBits::eTransferDst;
-    const vk::BufferUsageFlags storage_usage =
-        vk::BufferUsageFlagBits::eStorageBuffer |
-        vk::BufferUsageFlagBits::eTransferDst;
-
     for (auto& fr : frames_) {
-        // MID neither writes nor reads vertex_indirection: it carries the
-        // vertex buffer slot in VertexEntry and the vertex index in
-        // draw_indices. A fixed 8 B dummy keeps both descriptor writes (the
-        // shared indirection set and the expand set) valid without allocating
-        // 8 B per vertex window slot that MID would never touch.
-        const std::uint64_t indirection_bytes =
-            mid ? 8u : std::max<std::uint64_t>(vertex_indirection_size, 8u);
-        fr.vertex_indirection = GpuResources::GpuBuffer::Create(
-            be, indirection_bytes,
-            vk::BufferUsageFlagBits::eStorageBuffer |
-                vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.vertex_indirection.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "vertex-indirection");
-
-        // draw_indices is bound as an index buffer only in MID mode.
-        const vk::BufferUsageFlags draw_indices_usage =
-            mid ? index_dest_usage : storage_usage;
-        fr.draw_indices = GpuResources::GpuBuffer::Create(
-            be, std::max<std::uint64_t>(draw_indices_size, 4u),
-            draw_indices_usage,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.draw_indices.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "draw-indices");
-
-        // [0] entry base, [1] index base, [2] deform-region base. The third
-        // word is expand's per-frame deform allocator; PrepareCompute zeroes
-        // all three, and an 8-byte allocation would put word 2 out of range.
-        fr.expand_counter = GpuResources::GpuBuffer::Create(
-            be, 3u * sizeof(std::uint32_t), storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.expand_counter.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "expand-counter");
-
-        if (!mid) {
-            fr.main_indices = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            fr.depth_indices = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            fr.occluder_indices = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(compact_size, 4u), index_dest_usage,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.main_indices.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "main-indices");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indices.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-indices");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indices.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-indices");
-
-            fr.depth_commands = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
-                indirect_usage,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-commands");
-            fr.occluder_commands = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
-                indirect_usage,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-commands");
-        } else {
-            fr.main_commands = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
-                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-            fr.depth_commands = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
-                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-            fr.occluder_commands = GpuResources::GpuBuffer::Create(
-                be, std::max<std::uint64_t>(command_size, sizeof(vk::DrawIndexedIndirectCommand)),
-                indirect_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.main_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "main-commands");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-commands");
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-commands");
-
-            // MID never writes the depth/occluder index lists, but the shared
-            // occlusion set binds them, so keep 4 B dummies there.
-            fr.depth_indices = GpuResources::GpuBuffer::Create(
-                be, 4u, storage_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_indices.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "depth-indices-dummy");
-            fr.occluder_indices = GpuResources::GpuBuffer::Create(
-                be, 4u, storage_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_indices.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "occluder-indices-dummy");
+        for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
+            const SceneGpuLayout::ModeSpec& mode = mid ? spec.mid : spec.cid;
+            if (!mode.present) continue;
+            // A fixed size is a placeholder for a shader path this mode specializes out; otherwise the size derives from the capacity.
+            const std::uint64_t bytes = mode.fixed_bytes != 0
+                ? mode.fixed_bytes
+                : BufferBytes(spec.size);
+            GpuResources::GpuBuffer& buffer = fr.BufferFor(spec.slot);
+            buffer = GpuResources::GpuBuffer::Create(be, bytes, mode.flags.usage,
+                                                     mode.flags.memory);
+            VulkanBackend::Vulkan::SetVulkanObjectName(
+                dev, buffer.GetBuffer(), vk::ObjectType::eBuffer,
+                std::string(spec.name) + (mode.fixed_bytes != 0 ? "-dummy" : ""));
         }
-
-        // Allocated in both modes so the collect layout bindings are always valid.
-        fr.technique_region_bases = GpuResources::GpuBuffer::Create(
-            be, tech_counts_size, storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_region_bases.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "technique-region-bases");
-
-        // Depth prepass counters. Both are host-visible; MID reads the per-group
-        // counts as the drawIndirectCount buffer, so it needs eIndirectBuffer.
-        fr.depth_out_counter = GpuResources::GpuBuffer::Create(
-            be, sizeof(std::uint32_t), storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_out_counter.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "depth-out-counter");
-        fr.depth_technique_counts = GpuResources::GpuBuffer::Create(
-            be, tech_counts_size,
-            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.depth_technique_counts.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "depth-technique-counts");
-
-        // Occluder prepass mirrors the depth prepass: one counter and one
-        // per-group count table, host-visible, counts indirect in MID.
-        fr.occluder_out_counter = GpuResources::GpuBuffer::Create(
-            be, sizeof(std::uint32_t), storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_out_counter.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "occluder-out-counter");
-        fr.occluder_technique_counts = GpuResources::GpuBuffer::Create(
-            be, tech_counts_size,
-            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_technique_counts.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "occluder-technique-counts");
-
-        // technique_draw_commands: CID main pass only. In MID the
-        // per-technique commands live in main_commands, so nothing is bound to
-        // the CID-only collect-write set.
-        if (!mid) {
-            fr.technique_draw_commands = GpuResources::GpuBuffer::Create(
-                be, static_cast<std::uint64_t>(MAX_DRAW_GROUPS) *
-                        sizeof(vk::DrawIndexedIndirectCommand),
-                indirect_usage,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                    vk::MemoryPropertyFlagBits::eHostCoherent);
-            VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_draw_commands.GetBuffer(),
-                                                       vk::ObjectType::eBuffer, "technique-draw-cmds");
-        }
-
-        fr.occluder_candidate_count = GpuResources::GpuBuffer::Create(
-            be, occluder_count_size, storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.occluder_candidate_count.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "occluder-candidate-count");
-
-        fr.technique_counts = GpuResources::GpuBuffer::Create(
-            be, tech_counts_size,
-            mid ? (storage_usage | vk::BufferUsageFlagBits::eIndirectBuffer) : storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_counts.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "technique-counts");
-
-        fr.technique_results = GpuResources::GpuBuffer::Create(
-            be, technique_results_size, storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.technique_results.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "technique-results");
-
-        // Deform inputs sized by the scene capacity. Both are host-visible so
-        // gather can copy palettes and parameter blocks straight into them.
-        fr.bone_palettes = GpuResources::GpuBuffer::Create(
-            be, palette_bytes, storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.bone_palettes.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "bone-palettes");
-        fr.modifier_params = GpuResources::GpuBuffer::Create(
-            be, modifier_param_bytes, storage_usage,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.modifier_params.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "modifier-params");
-        // Two regions of T vertices each: the modifier stack writes A, B, A...
-        // and the final region is what the vertex shaders read. Device-local:
-        // only the deform pass writes it and only the draws read it.
-        const std::uint64_t deform_vertex_bytes =
-            static_cast<std::uint64_t>(std::max(2u * scene_capacity_.deform_vertex_span, 1u)) *
-            sizeof(VulkanEngine::StandardMeshPipeline::Vertex);
-        // TransferSrc as well: the engine never reads this buffer back, but the
-        // GPU tests and diagnostics copy a deform result out of it.
-        fr.deform_vertices = GpuResources::GpuBuffer::Create(
-            be, deform_vertex_bytes,
-            storage_usage | vk::BufferUsageFlagBits::eTransferSrc,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.deform_vertices.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "deform-vertices");
     }
 
     // CPU-prefix region bases for MID (recomputed when topology changes).
@@ -1023,28 +741,11 @@ bool SceneRenderer::CreateFrameBuffers() {
 }
 
 void SceneRenderer::DestroyFrameBuffers() {
+    // Every row, not a hand-maintained list: a slot that gains a buffer cannot be forgotten here, and a mode that has no buffer for a slot just holds an already-invalid one.
     for (auto& fr : frames_) {
-        fr.vertex_indirection = GpuResources::GpuBuffer{};
-        fr.draw_indices = GpuResources::GpuBuffer{};
-        fr.expand_counter = GpuResources::GpuBuffer{};
-        fr.main_indices = GpuResources::GpuBuffer{};
-        fr.depth_indices = GpuResources::GpuBuffer{};
-        fr.occluder_indices = GpuResources::GpuBuffer{};
-        fr.main_commands = GpuResources::GpuBuffer{};
-        fr.depth_commands = GpuResources::GpuBuffer{};
-        fr.occluder_commands = GpuResources::GpuBuffer{};
-        fr.technique_region_bases = GpuResources::GpuBuffer{};
-        fr.depth_out_counter = GpuResources::GpuBuffer{};
-        fr.depth_technique_counts = GpuResources::GpuBuffer{};
-        fr.occluder_out_counter = GpuResources::GpuBuffer{};
-        fr.occluder_technique_counts = GpuResources::GpuBuffer{};
-        fr.occluder_candidate_count = GpuResources::GpuBuffer{};
-        fr.technique_draw_commands = GpuResources::GpuBuffer{};
-        fr.technique_counts = GpuResources::GpuBuffer{};
-        fr.technique_results = GpuResources::GpuBuffer{};
-        fr.bone_palettes = GpuResources::GpuBuffer{};
-        fr.modifier_params = GpuResources::GpuBuffer{};
-        fr.deform_vertices = GpuResources::GpuBuffer{};
+        for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
+            fr.BufferFor(spec.slot) = GpuResources::GpuBuffer{};
+        }
     }
 }
 
@@ -1088,6 +789,9 @@ bool SceneRenderer::CreateHiZResources() {
     sampler_ci.maxLod = static_cast<float>(mip_levels);
     hiz_sampler_ = std::make_unique<vk::raii::Sampler>(dev, sampler_ci);
     VulkanBackend::Vulkan::SetVulkanObjectName(dev, *hiz_sampler_, "hiz-sampler");
+
+    // The level count describes the ring being built, and WriteHiZBindings below already needs it to clamp the tail descriptors, so publish it before the frames are created rather than after.
+    hiz_mip_count_ = mip_levels;
 
     for (auto& fr : frames_) {
         vk::ImageCreateInfo img_ci{};
@@ -1144,56 +848,9 @@ bool SceneRenderer::CreateHiZResources() {
         fr.hiz_full_view = vk::raii::ImageView(dev, full_view_ci);
         VulkanBackend::Vulkan::SetVulkanObjectName(dev, fr.hiz_full_view, "hiz-full-view");
 
-        // Bind the whole storage-image array declared by the layout
-        // (descriptorCount = MAX_HIZ_MIPS). Re-pointing the tail levels (beyond
-        // mip_levels) at the coarsest mip keeps every descriptor valid after a
-        // shrink; leaving them would dangle at the previous resize's views.
-        std::vector<vk::DescriptorImageInfo> storage_infos;
-        storage_infos.reserve(MAX_HIZ_MIPS);
-        for (std::uint32_t mip = 0; mip < MAX_HIZ_MIPS; ++mip) {
-            const std::uint32_t view_index = std::min(mip, mip_levels - 1);
-            storage_infos.emplace_back(
-                nullptr, *fr.hiz_mip_views[view_index],
-                vk::ImageLayout::eGeneral);
-        }
-        {
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.hiz_set.GetHandle();
-            w.dstBinding = 2;
-            w.dstArrayElement = 0;
-            w.descriptorCount = MAX_HIZ_MIPS;
-            w.descriptorType = vk::DescriptorType::eStorageImage;
-            w.pImageInfo = storage_infos.data();
-            dev.updateDescriptorSets(w, nullptr);
-        }
-        // Bind hiz mip 0 as placeholder depth input (binding 0). Uses eGeneral
-        // layout to match the storage image binding at binding 2 on same subresource.
-        {
-            const vk::DescriptorImageInfo depth_info(
-                nullptr, *fr.hiz_mip_views[0],
-                vk::ImageLayout::eGeneral);
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.hiz_set.GetHandle();
-            w.dstBinding = 0;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eSampledImage;
-            w.pImageInfo = &depth_info;
-            dev.updateDescriptorSets(w, nullptr);
-        }
-        {
-            const vk::DescriptorImageInfo sampler_info(
-                **hiz_sampler_, nullptr,
-                vk::ImageLayout::eShaderReadOnlyOptimal);
-            vk::WriteDescriptorSet w{};
-            w.dstSet = fr.hiz_set.GetHandle();
-            w.dstBinding = 1;
-            w.descriptorCount = 1;
-            w.descriptorType = vk::DescriptorType::eSampler;
-            w.pImageInfo = &sampler_info;
-            dev.updateDescriptorSets(w, nullptr);
-        }
+        // Storage images, sampler and the depth placeholder; binding numbers come from the hiz set's table rows.
+        WriteHiZBindings(fr);
     }
-    hiz_mip_count_ = mip_levels;
 
 #ifndef NDEBUG
     // Invariant: DispatchHiZGen must produce every level the cull shaders can
@@ -1350,53 +1007,61 @@ void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
 
 void SceneRenderer::Shutdown() {
     for (auto& fr : frames_) {
-        fr.dynamic_entries.Shutdown();
-        fr.static_entries.Shutdown();
-        fr.bounding_spheres.Shutdown();
-        fr.obb_entries.Shutdown();
-        fr.submesh_vertex_entries.Shutdown();
-        fr.cull_entries.Shutdown();
-        fr.skin_entries.Shutdown();
-        fr.deform_set = vk::raii::DescriptorSet(nullptr);
-        fr.bone_palettes = GpuResources::GpuBuffer{};
-        fr.modifier_params = GpuResources::GpuBuffer{};
-        fr.deform_vertices = GpuResources::GpuBuffer{};
+        for (const SceneGpuLayout::BlockArraySpec& spec : SceneGpuLayout::kBlockArrays) {
+            fr.BlockArrayFor(spec.slot).Shutdown();
+        }
+        for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
+            fr.BufferFor(spec.slot) = GpuResources::GpuBuffer{};
+        }
+        for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+            if (set.fixed_sets != 0) continue;   // the lighting set is not ringed
+            fr.SetFor(set.id) = GpuResources::GpuDescriptorSet{};
+        }
     }
     frame_modifier_dispatches_.clear();
     has_active_deform_ = false;
-    // Pipelines reference the deform layout; drop them before it.
+    // Pipelines reference the set layouts, so drop them before the sets.
     modifier_pipelines_.clear();
     modifier_registry_version_ = 0;
     deform_pipeline_layout_.reset();
     modifier_mgr_ = nullptr;
-    deform_pool_.reset();
-    deform_layout_.reset();
+    expand_pipeline_layout_.reset();
+    occlusion_pipeline_layout_.reset();
+    occluder_select_pipeline_layout_.reset();
+    pre_cull_pipeline_layout_.reset();
+    collect_pipeline_layout_.reset();
+    collect_write_pipeline_layout_.reset();
+    depth_pipeline_layout_.reset();
+    hiz_pipeline_layout_.reset();
     scene_lights.Shutdown();
     scene_header = GpuResources::GpuBuffer{};
     technique_flags = GpuResources::GpuBuffer{};
     technique_flags_cache_.clear();
-    scene_uniform_set_.reset();
-    scene_uniform_pool_.reset();
-    scene_uniform_layout_.reset();
+    for (auto& owned : owned_sets_) owned = GpuResources::GpuDescriptorSet{};
+    // Drops every set layout and pool. The sets above already released theirs.
+    sets_ = {};
     backend_ = nullptr;
 }
 
+namespace {
+// A layout handle for the public accessors, or null when the renderer is not initialized.
+// The accessors hand out a pointer that the caller dereferences.
+vk::DescriptorSetLayout* LayoutPointer(
+    const std::unique_ptr<vk::raii::DescriptorSetLayout>& layout) {
+    return layout ? const_cast<vk::DescriptorSetLayout*>(&**layout) : nullptr;
+}
+} // anonymous namespace
+
 vk::DescriptorSetLayout* SceneRenderer::GetSubmeshVertexEntriesLayout() const {
-    return submesh_vertex_layout_
-        ? const_cast<vk::DescriptorSetLayout*>(&**submesh_vertex_layout_)
-        : nullptr;
+    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::submesh_vertex)].layout);
 }
 
 vk::DescriptorSetLayout* SceneRenderer::GetVertexBuffersLayout() const {
-    return vertex_buffers_layout_
-        ? const_cast<vk::DescriptorSetLayout*>(&**vertex_buffers_layout_)
-        : nullptr;
+    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::vertex_buffers)].layout);
 }
 
 vk::DescriptorSetLayout* SceneRenderer::GetIndirectionLayout() const {
-    return indirection_layout_
-        ? const_cast<vk::DescriptorSetLayout*>(&**indirection_layout_)
-        : nullptr;
+    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::indirection)].layout);
 }
 
 void SceneRenderer::UpdateVertexBufferArrayElement(std::uint32_t frame_index,
@@ -1411,8 +1076,8 @@ void SceneRenderer::UpdateVertexBufferArrayElement(std::uint32_t frame_index,
     }
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
-    w.dstSet = *fr.vertex_buffers_set;
-    w.dstBinding = 0;
+    w.dstSet = fr.vertex_buffers_set.GetHandle();
+    w.dstBinding = kVertexTableBinding;
     w.dstArrayElement = buffer_index;
     w.descriptorCount = 1;
     w.descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -1432,8 +1097,8 @@ void SceneRenderer::UpdateIndexBufferArrayElement(std::uint32_t frame_index,
     }
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
-    w.dstSet = *fr.index_buffers_set;
-    w.dstBinding = 0;
+    w.dstSet = fr.index_buffers_set.GetHandle();
+    w.dstBinding = kIndexTableBinding;
     w.dstArrayElement = buffer_index;
     w.descriptorCount = 1;
     w.descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -1453,8 +1118,8 @@ void SceneRenderer::UpdateUvBufferArrayElement(std::uint32_t frame_index,
     }
     const vk::DescriptorBufferInfo bii(buffer, 0, size);
     vk::WriteDescriptorSet w{};
-    w.dstSet = *fr.vertex_buffers_set;
-    w.dstBinding = 1;
+    w.dstSet = fr.vertex_buffers_set.GetHandle();
+    w.dstBinding = kUvTableBinding;
     w.dstArrayElement = buffer_index;
     w.descriptorCount = 1;
     w.descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -1537,8 +1202,9 @@ void SceneRenderer::UpdateSkinBufferArrayElement(std::uint32_t frame_index,
                                                  std::uint64_t size) {
     if (!backend_ || frames_.empty()) return;
     WriteSkinTableElement(backend_->GetDevice(),
-                          frames_[frame_index % frames_in_flight_].deform_set,
-                          0, buffer_index, buffer, size, "UpdateSkinBufferArrayElement");
+                          frames_[frame_index % frames_in_flight_].deform_set.GetHandle(),
+                          kSkinTableBinding, buffer_index, buffer, size,
+                          "UpdateSkinBufferArrayElement");
 }
 
 void SceneRenderer::UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index,
@@ -1547,8 +1213,9 @@ void SceneRenderer::UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index,
                                                       std::uint64_t size) {
     if (!backend_ || frames_.empty()) return;
     WriteSkinTableElement(backend_->GetDevice(),
-                          frames_[frame_index % frames_in_flight_].deform_set,
-                          1, buffer_index, buffer, size, "UpdateSkinExtraBufferArrayElement");
+                          frames_[frame_index % frames_in_flight_].deform_set.GetHandle(),
+                          kSkinExtraTableBinding, buffer_index, buffer, size,
+                          "UpdateSkinExtraBufferArrayElement");
 }
 
 void SceneRenderer::UpdateAllFrameSkinBufferArrayElements(std::uint32_t buffer_index,
@@ -1744,34 +1411,18 @@ VulkanEngine::GpuResources::BlockArray& SceneRenderer::GetFrameCullEntries(
     return frames_[frame_index % frames_in_flight_].cull_entries;
 }
 
-void SceneRenderer::UpdateBlockArrayDescriptor(vk::DescriptorSet desc_set,
-                                                 std::uint32_t binding,
-                                                 GpuResources::BlockArray& buf,
-                                                 vk::DescriptorType desc_type) {
-    if (!backend_) return;
-    auto& dev = backend_->GetDevice();
-    for (std::uint32_t bi = 0; bi < buf.BlockCount(); ++bi) {
-        const vk::DescriptorBufferInfo bii(buf.GetBlockArray(bi), 0, buf.BlockSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = desc_set;
-        w.dstBinding = binding;
-        w.dstArrayElement = bi;
-        w.descriptorCount = 1;
-        w.descriptorType = desc_type;
-        w.pBufferInfo = &bii;
-        dev.updateDescriptorSets(w, nullptr);
-    }
-}
-
 void SceneRenderer::UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view) {
     auto& fr = frames_[frame_index % frames_in_flight_];
     if (!backend_) return;
     auto& dev = backend_->GetDevice();
+    const std::uint32_t binding = SceneGpuLayout::BindingOfKind(
+        SceneGpuLayout::SetId::hiz, vk::DescriptorType::eSampledImage);
+    if (binding == SceneGpuLayout::kNoBinding) return;
     const vk::DescriptorImageInfo depth_info(
         nullptr, depth_view, vk::ImageLayout::eShaderReadOnlyOptimal);
     vk::WriteDescriptorSet w{};
     w.dstSet = fr.hiz_set.GetHandle();
-    w.dstBinding = 0;
+    w.dstBinding = binding;
     w.descriptorCount = 1;
     w.descriptorType = vk::DescriptorType::eSampledImage;
     w.pImageInfo = &depth_info;
@@ -1837,8 +1488,8 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
         const vk::DescriptorBufferInfo buf_info(scene_lights.GetBlockArray(bi),
                                                  0, scene_lights.BlockSize());
         vk::WriteDescriptorSet w{};
-        w.dstSet = **scene_uniform_set_;
-        w.dstBinding = 1;
+        w.dstSet = GetSceneUniformSet();
+        w.dstBinding = kLightTableBinding;
         w.dstArrayElement = bi;
         w.descriptorCount = 1;
         w.descriptorType = vk::DescriptorType::eStorageBuffer;

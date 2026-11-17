@@ -18,14 +18,19 @@ namespace VulkanEngine::GpuResources {
 
 export namespace VulkanEngine::GpuResources {
 
+    // Every count defaults to zero: a pool reserves exactly the descriptor types its set declares.
+    // The old defaults (100 combined-image samplers, 10 uniform buffers, 10 storage images) silently reserved descriptors no set ever bound.
     struct DescriptorPoolConfig {
-        std::uint32_t max_sets = 100;
-        std::uint32_t max_combined_image_samplers = 100;
-        std::uint32_t max_uniform_buffers = 10;
-        std::uint32_t max_storage_buffers = 10;
-        std::uint32_t max_storage_images = 10;
+        std::uint32_t max_sets = 1;
+        std::uint32_t max_combined_image_samplers = 0;
+        std::uint32_t max_uniform_buffers = 0;
+        std::uint32_t max_storage_buffers = 0;
+        std::uint32_t max_storage_images = 0;
         std::uint32_t max_sampled_images = 0;
         std::uint32_t max_samplers = 0;
+        // Sets whose layout was created with eUpdateAfterBindPool must come from a pool created with eUpdateAfterBindPool (VUID-VkDescriptorSetAllocateInfo).
+        // The SceneRenderer sets that re-point descriptors per frame set this.
+        bool update_after_bind = false;
     };
 
     class DescriptorPool : public std::enable_shared_from_this<DescriptorPool> {
@@ -42,6 +47,10 @@ export namespace VulkanEngine::GpuResources {
         DescriptorPool& operator=(DescriptorPool&&) = delete;
 
         GpuDescriptorSet Allocate(vk::DescriptorSetLayout layout);
+        // Allocates one set whose eVariableDescriptorCount binding gets `variable_descriptor_count` descriptors.
+        // The layout must declare that binding (SceneGpuLayout::VariableBinding).
+        GpuDescriptorSet Allocate(vk::DescriptorSetLayout layout,
+                                  std::uint32_t variable_descriptor_count);
 
         void SetDebugName(const vk::raii::Device& dev, const std::string& name) const;
 

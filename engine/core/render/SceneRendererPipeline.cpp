@@ -17,6 +17,7 @@ import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.PipelineCompiler;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.PipelineTemplates;
+import VulkanEngine.SceneGpuLayout;
 
 namespace VulkanEngine::SceneRenderer {
     namespace {
@@ -68,45 +69,21 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
                                           ShaderSystem::PipelineFactory& pipeline_factory,
                                           const EngineShaderIds& shader_ids) {
     LOGIFACE_LOG(debug, "Creating scene pipelines...");
-    const auto& dev = be.GetDevice();
 
-    // ── Hi-Z set layout + pool (bindings sized by MAX_HIZ_MIPS) ──
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 3> bs{};
-        bs[0].binding = 0;
-        bs[0].descriptorType = vk::DescriptorType::eSampledImage;
-        bs[0].descriptorCount = 1;
-        bs[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        bs[1].binding = 1;
-        bs[1].descriptorType = vk::DescriptorType::eSampler;
-        bs[1].descriptorCount = 1;
-        bs[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        bs[2].binding = 2;
-        bs[2].descriptorType = vk::DescriptorType::eStorageImage;
-        bs[2].descriptorCount = MAX_HIZ_MIPS;
-        bs[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
-        hiz_layout_ = std::make_unique<vk::raii::DescriptorSetLayout>(
-            dev, vk::DescriptorSetLayoutCreateInfo{{}, static_cast<std::uint32_t>(bs.size()), bs.data()});
-        GpuResources::DescriptorPoolConfig pc{};
-        pc.max_sets = frames_in_flight_;
-        pc.max_storage_images = frames_in_flight_ * MAX_HIZ_MIPS;
-        pc.max_sampled_images = frames_in_flight_;
-        pc.max_samplers = frames_in_flight_;
-        hiz_pool_ = GpuResources::DescriptorPool::Create(be, pc);
-    }
+    // The descriptor-set layouts and pools are created from SceneGpuLayout::kSceneSets before this runs; the pipeline layouts below only borrow the handles.
 
     // ── Pipeline layouts ──
     {
         const std::array<vk::DescriptorSetLayout, 2> expand_sets{
-            **expand_layout_, **index_buffers_layout_};
+            GetSetLayout(SceneGpuLayout::SetId::expand), GetSetLayout(SceneGpuLayout::SetId::index_buffers)};
         expand_pipeline_layout_ =
             MakePipelineLayout(be, "expand-pipeline-layout", expand_sets, sizeof(ExpandPC));
 
-        const std::array<vk::DescriptorSetLayout, 1> occlusion_sets{**occlusion_layout_};
+        const std::array<vk::DescriptorSetLayout, 1> occlusion_sets{GetSetLayout(SceneGpuLayout::SetId::occlusion)};
         occlusion_pipeline_layout_ =
             MakePipelineLayout(be, "occlusion-pipeline-layout", occlusion_sets, sizeof(OccPC));
 
-        const std::array<vk::DescriptorSetLayout, 1> occluder_select_sets{**occluder_select_layout_};
+        const std::array<vk::DescriptorSetLayout, 1> occluder_select_sets{GetSetLayout(SceneGpuLayout::SetId::occluder_select)};
         occluder_select_pipeline_layout_ =
             MakePipelineLayout(be, "occluder-select-pipeline-layout", occluder_select_sets, sizeof(OccluderSelectPC));
 
@@ -114,15 +91,15 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
         pre_cull_pipeline_layout_ =
             MakePipelineLayout(be, "pre-cull-pipeline-layout", occlusion_sets, sizeof(PreCullPC));
 
-        const std::array<vk::DescriptorSetLayout, 1> collect_counts{**collect_layout_};
+        const std::array<vk::DescriptorSetLayout, 1> collect_counts{GetSetLayout(SceneGpuLayout::SetId::collect)};
         collect_pipeline_layout_ =
             MakePipelineLayout(be, "collect-count-pipeline-layout", collect_counts, sizeof(CollectPC));
 
-        const std::array<vk::DescriptorSetLayout, 1> collect_writes{**collect_write_layout_};
+        const std::array<vk::DescriptorSetLayout, 1> collect_writes{GetSetLayout(SceneGpuLayout::SetId::collect_write)};
         collect_write_pipeline_layout_ =
             MakePipelineLayout(be, "collect-write-pipeline-layout", collect_writes, sizeof(WritePC));
 
-        const std::array<vk::DescriptorSetLayout, 1> hiz_sets{**hiz_layout_};
+        const std::array<vk::DescriptorSetLayout, 1> hiz_sets{GetSetLayout(SceneGpuLayout::SetId::hiz)};
         hiz_pipeline_layout_ =
             MakePipelineLayout(be, "hiz-gen-pipeline-layout", hiz_sets, sizeof(HiZPC));
 
@@ -130,12 +107,12 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
         // the skinning stage can read the undeformed source vertices), set 1 is
         // the deform input set. Every modifier pipeline shares this layout.
         const std::array<vk::DescriptorSetLayout, 2> deform_sets{
-            **vertex_buffers_layout_, **deform_layout_};
+            GetSetLayout(SceneGpuLayout::SetId::vertex_buffers), GetSetLayout(SceneGpuLayout::SetId::deform)};
         deform_pipeline_layout_ =
             MakePipelineLayout(be, "deform-pipeline-layout", deform_sets, sizeof(ModifierPC));
 
         const std::array<vk::DescriptorSetLayout, 4> depth_sets{
-            **empty_layout_, **submesh_vertex_layout_, **vertex_buffers_layout_, **indirection_layout_};
+            GetSetLayout(SceneGpuLayout::SetId::empty), GetSetLayout(SceneGpuLayout::SetId::submesh_vertex), GetSetLayout(SceneGpuLayout::SetId::vertex_buffers), GetSetLayout(SceneGpuLayout::SetId::indirection)};
         depth_pipeline_layout_ = MakePipelineLayout(be, "depth-prepass-pipeline-layout", depth_sets);
     }
 

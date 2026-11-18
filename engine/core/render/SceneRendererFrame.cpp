@@ -645,45 +645,43 @@ void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi
     }
 }
 
-void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::uint32_t h,
-                                    std::uint32_t fi, std::uint32_t) {
-    auto& fr = frames_[fi % frames_in_flight_];
+void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t width, std::uint32_t height,
+                                    std::uint32_t frame_index, std::uint32_t) {
+    auto& frame_resource = frames_[frame_index % frames_in_flight_];
     if (!current_entity_count_) {
         LOGIFACE_LOG(trace, "DispatchHiZGen: current_entity_count_ is 0, skipping");
         return;
     }
-    if (!fr[SetIdx::hiz].IsValid()) {
+    if (!frame_resource[SetIdx::hiz].IsValid()) {
         LOGIFACE_LOG(trace, "DispatchHiZGen: hiz_set invalid, skipping");
         return;
     }
-    if (w != depth_width_ || h != depth_height_) {
-        LOGIFACE_LOG(warn, "DispatchHiZGen: dimensions changed (" + std::to_string(w) + "x" +
-                     std::to_string(h) + " != " + std::to_string(depth_width_) + "x" +
+    if (width != depth_width_ || height != depth_height_) {
+        LOGIFACE_LOG(warn, "DispatchHiZGen: dimensions changed (" + std::to_string(width) + "x" +
+                     std::to_string(height) + " != " + std::to_string(depth_width_) + "x" +
                      std::to_string(depth_height_) + "), skipping");
         return;
     }
-    LOGIFACE_LOG(trace, "DispatchHiZGen: " + std::to_string(w) + "x" + std::to_string(h) +
+
+    LOGIFACE_LOG(trace, "DispatchHiZGen: " + std::to_string(width) + "x" + std::to_string(height) +
                  " mips=" + std::to_string(hiz_mip_count_));
+
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, hiz_slot_.Get());
-    const std::array<vk::DescriptorSet, 1> ds{ fr[SetIdx::hiz].GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::hiz),
-                             0, ds, {});
+    const std::array<vk::DescriptorSet, 1> ds { frame_resource[SetIdx::hiz].GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::hiz), 0, ds, {});
     // Mirrors hiz_gen.slang's numthreads(16, 16, 1).
     constexpr std::uint32_t kHiZGroupThreads = 16;
-    // Every level the cull shaders can sample must be produced here. Iterating
-    // to hiz_mip_count_ (not hiz_mip_count_ - 1) lets the final iteration run
-    // with bc == 1, whose second reduction the shader already guards out; the
-    // old bound skipped the top level whenever hiz_mip_count_ was odd.
+    // Every level the cull shaders can sample must be produced here.
+    // Iterating to hiz_mip_count_ (not hiz_mip_count_ - 1) lets the final iteration run with bc == 1, whose second reduction the shader already guards out.
     for (std::uint32_t bl = 0; bl < hiz_mip_count_; bl += HIZ_BATCH) {
         const std::uint32_t bc = std::min(HIZ_BATCH, hiz_mip_count_ - bl);
-        const std::uint32_t sw = w >> bl;
-        const std::uint32_t sh = h >> bl;
+        const std::uint32_t sw = width >> bl;
+        const std::uint32_t sh = height >> bl;
         HiZPC pc{ bl, sw, sh, bc };
         cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::hiz), vk::ShaderStageFlagBits::eCompute,
                            0, sizeof(HiZPC), &pc);
-        // Each thread reduces one HIZ_TILE_STRIDE x HIZ_TILE_STRIDE tile of the source level, so the dispatch covers the tile grid, not the source extent.
-        // Dispatching the source extent instead launches 16x the groups at level 0, and 15/16 of those threads exit on the shader's read guard.
-        // The shader's bound guards already handle a partial trailing tile.
+        // Each thread reduces one HIZ_TILE_STRIDE x HIZ_TILE_STRIDE tile of the source level.
+        // The shader's bound guards handle a partial trailing tile.
         const std::uint32_t tiles_x = (sw + HIZ_TILE_STRIDE - 1) / HIZ_TILE_STRIDE;
         const std::uint32_t tiles_y = (sh + HIZ_TILE_STRIDE - 1) / HIZ_TILE_STRIDE;
         cmd.dispatch((tiles_x + kHiZGroupThreads - 1) / kHiZGroupThreads,

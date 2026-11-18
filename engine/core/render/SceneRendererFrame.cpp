@@ -669,8 +669,10 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t width, s
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, hiz_slot_.Get());
     const std::array<vk::DescriptorSet, 1> ds { frame_resource[SetIdx::hiz].GetHandle() };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::hiz), 0, ds, {});
+
     // Mirrors hiz_gen.slang's numthreads(16, 16, 1).
     constexpr std::uint32_t kHiZGroupThreads = 16;
+
     // Every level the cull shaders can sample must be produced here.
     // Iterating to hiz_mip_count_ (not hiz_mip_count_ - 1) lets the final iteration run with bc == 1, whose second reduction the shader already guards out.
     for (std::uint32_t bl = 0; bl < hiz_mip_count_; bl += HIZ_BATCH) {
@@ -678,17 +680,20 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t width, s
         const std::uint32_t sw = width >> bl;
         const std::uint32_t sh = height >> bl;
         HiZPC pc{ bl, sw, sh, bc };
-        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::hiz), vk::ShaderStageFlagBits::eCompute,
-                           0, sizeof(HiZPC), &pc);
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::hiz), vk::ShaderStageFlagBits::eCompute, 0, sizeof(HiZPC), &pc);
+
         // Each thread reduces one HIZ_TILE_STRIDE x HIZ_TILE_STRIDE tile of the source level.
         // The shader's bound guards handle a partial trailing tile.
         const std::uint32_t tiles_x = (sw + HIZ_TILE_STRIDE - 1) / HIZ_TILE_STRIDE;
         const std::uint32_t tiles_y = (sh + HIZ_TILE_STRIDE - 1) / HIZ_TILE_STRIDE;
         cmd.dispatch((tiles_x + kHiZGroupThreads - 1) / kHiZGroupThreads,
                      (tiles_y + kHiZGroupThreads - 1) / kHiZGroupThreads, 1);
+
         vk::MemoryBarrier hiz_mb{};
+
         hiz_mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
         hiz_mb.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
         cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
                             vk::PipelineStageFlagBits::eComputeShader,
                             {}, hiz_mb, {}, {});

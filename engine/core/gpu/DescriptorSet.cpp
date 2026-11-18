@@ -219,150 +219,115 @@ GpuDescriptorSet GpuDescriptorSet::Create(
     return GpuDescriptorSet(backend, std::move(pool), set, layout);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
+void GpuDescriptorSet::UpdateBuffers(const std::uint32_t binding,
+                                     const vk::DescriptorType type,
+                                     const std::span<const vk::DescriptorBufferInfo> infos,
+                                     const std::uint32_t first) const {
+    if (!backend_ || !descriptor_set_ || infos.empty()) {
+        return;
+    }
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = first;
+    write.descriptorCount = static_cast<std::uint32_t>(infos.size());
+    write.descriptorType = type;
+    write.pBufferInfo = infos.data();
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateImages(const std::uint32_t binding,
+                                    const vk::DescriptorType type,
+                                    const std::span<const vk::DescriptorImageInfo> infos,
+                                    const std::uint32_t first) const {
+    if (!backend_ || !descriptor_set_ || infos.empty()) {
+        return;
+    }
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding;
+    write.dstArrayElement = first;
+    write.descriptorCount = static_cast<std::uint32_t>(infos.size());
+    write.descriptorType = type;
+    write.pImageInfo = infos.data();
+
+    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+}
+
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
                                      const GpuTexture& texture,
-                                     vk::ImageLayout layout) const {
-    if (!backend_ || !descriptor_set_ || !texture.IsValid()) {
+                                     const vk::ImageLayout layout) const {
+    if (!texture.IsValid()) {
         return;
     }
 
-    vk::DescriptorImageInfo image_info{};
-    image_info.sampler = texture.GetSampler();
-    image_info.imageView = texture.GetImageView();
-    image_info.imageLayout = layout;
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    write.pImageInfo = &image_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+    const std::array<vk::DescriptorImageInfo, 1> info{vk::DescriptorImageInfo{
+        texture.GetSampler(), texture.GetImageView(), layout}};
+    UpdateImages(binding, vk::DescriptorType::eCombinedImageSampler, info);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
                                      const GpuBuffer& buffer,
-                                     vk::DescriptorType type,
-                                     std::uint64_t size,
-                                     std::uint64_t offset) const {
-    if (!backend_ || !descriptor_set_) {
-        return;
-    }
-
-    const std::uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
-
-    const vk::DescriptorBufferInfo buffer_info(
-        *buffer.GetBuffer(),
-        offset,
-        buffer_size);
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = type;
-    write.pBufferInfo = &buffer_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+                                     const vk::DescriptorType type,
+                                     const std::uint64_t size,
+                                     const std::uint64_t offset) const {
+    UpdateBinding(binding, 0, buffer, type, size, offset);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
-                                     std::uint32_t array_element,
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
+                                     const std::uint32_t array_element,
                                      const GpuBuffer& buffer,
-                                     vk::DescriptorType type,
-                                     std::uint64_t size,
-                                     std::uint64_t offset) const {
-    if (!backend_ || !descriptor_set_) {
+                                     const vk::DescriptorType type,
+                                     const std::uint64_t size,
+                                     const std::uint64_t offset) const {
+    if (!buffer.IsValid()) {
         return;
     }
 
-    const std::uint64_t buffer_size = size > 0 ? size : buffer.GetSize();
-
-    const vk::DescriptorBufferInfo buffer_info(
-        *buffer.GetBuffer(),
-        offset,
-        buffer_size);
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = array_element;
-    write.descriptorCount = 1;
-    write.descriptorType = type;
-    write.pBufferInfo = &buffer_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+    const std::array<vk::DescriptorBufferInfo, 1> info{vk::DescriptorBufferInfo{
+        *buffer.GetBuffer(), offset, size > 0 ? size : buffer.GetSize()}};
+    UpdateBuffers(binding, type, info, array_element);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
-                                     vk::Buffer buffer,
-                                     vk::DescriptorType type,
-                                     std::uint64_t size,
-                                     std::uint64_t offset) const {
-    if (!backend_ || !descriptor_set_) {
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
+                                     const vk::Buffer buffer,
+                                     const vk::DescriptorType type,
+                                     const std::uint64_t size,
+                                     const std::uint64_t offset) const {
+    if (!buffer) {
         return;
     }
 
-    const vk::DescriptorBufferInfo buffer_info(
-        buffer,
-        offset,
-        size);
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = type;
-    write.pBufferInfo = &buffer_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+    const std::array<vk::DescriptorBufferInfo, 1> info{
+        vk::DescriptorBufferInfo{buffer, offset, size}};
+    UpdateBuffers(binding, type, info);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
-                                     vk::ImageView image_view,
-                                     vk::DescriptorType type,
-                                     vk::ImageLayout layout) const {
-    if (!backend_ || !descriptor_set_ || !image_view) {
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
+                                     const vk::ImageView image_view,
+                                     const vk::DescriptorType type,
+                                     const vk::ImageLayout layout) const {
+    if (!image_view) {
         return;
     }
 
-    vk::DescriptorImageInfo image_info{};
-    image_info.imageView = image_view;
-    image_info.imageLayout = layout;
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = type;
-    write.pImageInfo = &image_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+    const std::array<vk::DescriptorImageInfo, 1> info{vk::DescriptorImageInfo{
+        nullptr, image_view, layout}};
+    UpdateImages(binding, type, info);
 }
 
-void GpuDescriptorSet::UpdateBinding(std::uint32_t binding,
-                                     vk::Sampler sampler) const {
-    if (!backend_ || !descriptor_set_ || !sampler) {
+void GpuDescriptorSet::UpdateBinding(const std::uint32_t binding,
+                                     const vk::Sampler sampler) const {
+    if (!sampler) {
         return;
     }
 
-    vk::DescriptorImageInfo image_info{};
-    image_info.sampler = sampler;
-
-    vk::WriteDescriptorSet write{};
-    write.dstSet = descriptor_set_;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = vk::DescriptorType::eSampler;
-    write.pImageInfo = &image_info;
-
-    backend_->GetDevice().updateDescriptorSets(write, nullptr);
+    const std::array<vk::DescriptorImageInfo, 1> info{vk::DescriptorImageInfo{
+        sampler, nullptr, vk::ImageLayout::eUndefined}};
+    UpdateImages(binding, vk::DescriptorType::eSampler, info);
 }
 
 } // namespace VulkanEngine::GpuResources

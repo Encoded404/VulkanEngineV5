@@ -20,6 +20,68 @@ import VulkanEngine.PipelineTemplates;
 import VulkanEngine.SceneGpuLayout;
 
 namespace VulkanEngine::SceneRenderer {
+
+// The built-in compute passes, in creation order.
+// Every field is a member pointer or a table id, so creation (CreateScenePipelines), hot-reload polling (PollShaders) and the draw-mode rebuild (RebuildCompactionPipelines) all read this one list.
+// The depth prepass is the renderer's only graphics pipeline and stays next to its template below.
+std::span<const SceneRenderer::ComputePipelineRow> SceneRenderer::ComputePipelineRows() noexcept {
+    using LayoutId = SceneGpuLayout::PipelineLayoutId;
+    static constexpr std::array kRows{
+        ComputePipelineRow{.name = "expand", .shader = &EngineShaderIds::expand_comp,
+                           .layout = LayoutId::expand, .slot = &SceneRenderer::expand_slot_,
+                           .desc = &SceneRenderer::expand_desc_, .draw_mode_specialized = true},
+        ComputePipelineRow{.name = "occlusion", .shader = &EngineShaderIds::occlusion_cull_comp,
+                           .layout = LayoutId::occlusion,
+                           .slot = &SceneRenderer::occlusion_slot_,
+                           .desc = &SceneRenderer::occlusion_desc_,
+                           .draw_mode_specialized = false},
+        ComputePipelineRow{.name = "occluder-select",
+                           .shader = &EngineShaderIds::occluder_select_comp,
+                           .layout = LayoutId::occluder_select,
+                           .slot = &SceneRenderer::occluder_select_slot_,
+                           .desc = &SceneRenderer::occluder_select_desc_,
+                           .draw_mode_specialized = true},
+        // The MID variants are rows of their own: one thread per submesh, no group copy or barrier, and no draw-mode specialization constant to rebuild.
+        ComputePipelineRow{.name = "occluder-select-mid",
+                           .shader = &EngineShaderIds::occluder_select_comp_mid,
+                           .layout = LayoutId::occluder_select,
+                           .slot = &SceneRenderer::occluder_select_mid_slot_,
+                           .desc = &SceneRenderer::occluder_select_mid_desc_,
+                           .draw_mode_specialized = false},
+        ComputePipelineRow{.name = "pre-cull", .shader = &EngineShaderIds::pre_cull_comp,
+                           .layout = LayoutId::pre_cull, .slot = &SceneRenderer::pre_cull_slot_,
+                           .desc = &SceneRenderer::pre_cull_desc_, .draw_mode_specialized = true},
+        ComputePipelineRow{.name = "pre-cull-mid", .shader = &EngineShaderIds::pre_cull_comp_mid,
+                           .layout = LayoutId::pre_cull,
+                           .slot = &SceneRenderer::pre_cull_mid_slot_,
+                           .desc = &SceneRenderer::pre_cull_mid_desc_,
+                           .draw_mode_specialized = false},
+        ComputePipelineRow{.name = "collect-count",
+                           .shader = &EngineShaderIds::collect_count_compact_comp,
+                           .layout = LayoutId::collect_count,
+                           .slot = &SceneRenderer::collect_count_slot_,
+                           .desc = &SceneRenderer::collect_count_desc_,
+                           .draw_mode_specialized = true},
+        ComputePipelineRow{.name = "collect-count-mid",
+                           .shader = &EngineShaderIds::collect_count_compact_comp_mid,
+                           .layout = LayoutId::collect_count,
+                           .slot = &SceneRenderer::collect_count_mid_slot_,
+                           .desc = &SceneRenderer::collect_count_mid_desc_,
+                           .draw_mode_specialized = false},
+        // collect-write runs only in CID, reads no kCompactionMode constant, and shares no layout with the count pass.
+        ComputePipelineRow{.name = "collect-write",
+                           .shader = &EngineShaderIds::collect_write_comp,
+                           .layout = LayoutId::collect_write,
+                           .slot = &SceneRenderer::collect_write_slot_,
+                           .desc = &SceneRenderer::collect_write_desc_,
+                           .draw_mode_specialized = false},
+        ComputePipelineRow{.name = "hiz-gen", .shader = &EngineShaderIds::hiz_gen_comp,
+                           .layout = LayoutId::hiz, .slot = &SceneRenderer::hiz_slot_,
+                           .desc = &SceneRenderer::hiz_desc_, .draw_mode_specialized = false},
+    };
+    return kRows;
+}
+
     namespace {
         struct ExpandPC {
             glm::mat4 vp;
@@ -38,10 +100,27 @@ namespace VulkanEngine::SceneRenderer {
         struct OccluderSelectPC { std::uint32_t cnt; std::uint32_t minAreaPx; std::uint32_t screenW; std::uint32_t screenH; };
         struct PreCullPC { std::uint32_t cnt; std::uint32_t hizW; std::uint32_t hizH; std::uint32_t p0; glm::vec4 projInfo; };
 
-        // One pipeline-layout creation shape for every scene pipeline: set
-        // layouts (borrowed views into the owning raii objects) plus an
-        // optional compute push-constant range. The layouts stay named members
-        // owned by the frame code that binds them; only creation collapses.
+        constexpr std::uint32_t PushConstantBytes(const SceneGpuLayout::PipelineLayoutId id) {
+            return SceneGpuLayout::LayoutOf(id).push_constant_bytes;
+        }
+
+        // The layout rows own the push-constant sizes; these pin each row to the struct the recording code pushes.
+        static_assert(sizeof(ExpandPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::expand),
+                      "the expand layout row must declare sizeof(ExpandPC)");
+        static_assert(sizeof(OccPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::occlusion),
+                      "the occlusion layout row must declare sizeof(OccPC)");
+        static_assert(sizeof(OccluderSelectPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::occluder_select),
+                      "the occluder-select layout row must declare sizeof(OccluderSelectPC)");
+        static_assert(sizeof(PreCullPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::pre_cull),
+                      "the pre-cull layout row must declare sizeof(PreCullPC)");
+        static_assert(sizeof(CollectPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::collect_count),
+                      "the collect layout row must declare sizeof(CollectPC)");
+        static_assert(sizeof(WritePC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::collect_write),
+                      "the collect-write layout row must declare sizeof(WritePC)");
+        static_assert(sizeof(HiZPC) == PushConstantBytes(SceneGpuLayout::PipelineLayoutId::hiz),
+                      "the hiz layout row must declare sizeof(HiZPC)");
+
+        // One pipeline-layout creation shape for every scene pipeline: borrowed set layouts plus an optional compute push-constant range.
         std::unique_ptr<vk::raii::PipelineLayout> MakePipelineLayout(
                 const VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 std::string_view layout_name,
@@ -73,102 +152,18 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
     // The descriptor-set layouts and pools are created from SceneGpuLayout::kSceneSets before this runs; the pipeline layouts below only borrow the handles.
 
     // ── Pipeline layouts ──
-    {
-        const std::array<vk::DescriptorSetLayout, 2> expand_sets{
-            GetSetLayout(SceneGpuLayout::SetId::expand), GetSetLayout(SceneGpuLayout::SetId::index_buffers)};
-        expand_pipeline_layout_ =
-            MakePipelineLayout(be, "expand-pipeline-layout", expand_sets, sizeof(ExpandPC));
-
-        const std::array<vk::DescriptorSetLayout, 1> occlusion_sets{GetSetLayout(SceneGpuLayout::SetId::occlusion)};
-        occlusion_pipeline_layout_ =
-            MakePipelineLayout(be, "occlusion-pipeline-layout", occlusion_sets, sizeof(OccPC));
-
-        const std::array<vk::DescriptorSetLayout, 1> occluder_select_sets{GetSetLayout(SceneGpuLayout::SetId::occluder_select)};
-        occluder_select_pipeline_layout_ =
-            MakePipelineLayout(be, "occluder-select-pipeline-layout", occluder_select_sets, sizeof(OccluderSelectPC));
-
-        // Pre-cull shares the occlusion set (+ survivor compaction bindings 6-8).
-        pre_cull_pipeline_layout_ =
-            MakePipelineLayout(be, "pre-cull-pipeline-layout", occlusion_sets, sizeof(PreCullPC));
-
-        const std::array<vk::DescriptorSetLayout, 1> collect_counts{GetSetLayout(SceneGpuLayout::SetId::collect)};
-        collect_pipeline_layout_ =
-            MakePipelineLayout(be, "collect-count-pipeline-layout", collect_counts, sizeof(CollectPC));
-
-        const std::array<vk::DescriptorSetLayout, 1> collect_writes{GetSetLayout(SceneGpuLayout::SetId::collect_write)};
-        collect_write_pipeline_layout_ =
-            MakePipelineLayout(be, "collect-write-pipeline-layout", collect_writes, sizeof(WritePC));
-
-        const std::array<vk::DescriptorSetLayout, 1> hiz_sets{GetSetLayout(SceneGpuLayout::SetId::hiz)};
-        hiz_pipeline_layout_ =
-            MakePipelineLayout(be, "hiz-gen-pipeline-layout", hiz_sets, sizeof(HiZPC));
-
-        // Deform: set 0 is the shared vertex-buffer table (widened to compute so
-        // the skinning stage can read the undeformed source vertices), set 1 is
-        // the deform input set. Every modifier pipeline shares this layout.
-        const std::array<vk::DescriptorSetLayout, 2> deform_sets{
-            GetSetLayout(SceneGpuLayout::SetId::vertex_buffers), GetSetLayout(SceneGpuLayout::SetId::deform)};
-        deform_pipeline_layout_ =
-            MakePipelineLayout(be, "deform-pipeline-layout", deform_sets, sizeof(ModifierPC));
-
-        const std::array<vk::DescriptorSetLayout, 4> depth_sets{
-            GetSetLayout(SceneGpuLayout::SetId::empty), GetSetLayout(SceneGpuLayout::SetId::submesh_vertex), GetSetLayout(SceneGpuLayout::SetId::vertex_buffers), GetSetLayout(SceneGpuLayout::SetId::indirection)};
-        depth_pipeline_layout_ = MakePipelineLayout(be, "depth-prepass-pipeline-layout", depth_sets);
+    //
+    // One loop over SceneGpuLayout::kPipelineLayouts: a row names the layout, its set order and its push-constant range.
+    // The set order is the only place a pipeline's set index lives, so a set can be bound at a different index without touching the set row.
+    for (const SceneGpuLayout::PipelineLayoutSpec& spec : SceneGpuLayout::kPipelineLayouts) {
+        std::vector<vk::DescriptorSetLayout> set_layouts;
+        set_layouts.reserve(spec.sets.size());
+        for (const SceneGpuLayout::SetId set : spec.sets) {
+            set_layouts.push_back(GetSetLayout(set));
+        }
+        LayoutSlot(spec.id) = MakePipelineLayout(be, spec.name, set_layouts,
+                                                 spec.push_constant_bytes);
     }
-
-    // ── Compute pipeline table ──
-    // One row per built-in compute pass. Creation and the draw-mode rebuild
-    // (RebuildCompactionPipelines) cover the same set via this table shape.
-    struct ComputeRow {
-        std::string_view pipeline_name;
-        ShaderSystem::ShaderId shader;
-        vk::PipelineLayout layout;
-        bool draw_mode_specialized;
-        ShaderSystem::PipelineSlot& slot;
-        std::optional<ShaderSystem::ComputePipelineDesc>& desc_out;
-    };
-    std::vector<ComputeRow> rows;
-    rows.reserve(11);
-    rows.push_back({
-        .pipeline_name = "expand", .shader = shader_ids.expand_comp,
-        .layout = **expand_pipeline_layout_, .draw_mode_specialized = true,
-        .slot = expand_slot_, .desc_out = expand_desc_});
-    rows.push_back({
-        .pipeline_name = "occlusion", .shader = shader_ids.occlusion_cull_comp,
-        .layout = **occlusion_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = occlusion_slot_, .desc_out = occlusion_desc_});
-    rows.push_back({
-        .pipeline_name = "occluder-select", .shader = shader_ids.occluder_select_comp,
-        .layout = **occluder_select_pipeline_layout_, .draw_mode_specialized = true,
-        .slot = occluder_select_slot_, .desc_out = occluder_select_desc_});
-    rows.push_back({
-        .pipeline_name = "occluder-select-mid", .shader = shader_ids.occluder_select_comp_mid,
-        .layout = **occluder_select_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = occluder_select_mid_slot_, .desc_out = occluder_select_mid_desc_});
-    rows.push_back({
-        .pipeline_name = "pre-cull", .shader = shader_ids.pre_cull_comp,
-        .layout = **pre_cull_pipeline_layout_, .draw_mode_specialized = true,
-        .slot = pre_cull_slot_, .desc_out = pre_cull_desc_});
-    rows.push_back({
-        .pipeline_name = "pre-cull-mid", .shader = shader_ids.pre_cull_comp_mid,
-        .layout = **pre_cull_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = pre_cull_mid_slot_, .desc_out = pre_cull_mid_desc_});
-    rows.push_back({
-        .pipeline_name = "collect-count", .shader = shader_ids.collect_count_compact_comp,
-        .layout = **collect_pipeline_layout_, .draw_mode_specialized = true,
-        .slot = collect_count_slot_, .desc_out = collect_count_desc_});
-    rows.push_back({
-        .pipeline_name = "collect-count-mid", .shader = shader_ids.collect_count_compact_comp_mid,
-        .layout = **collect_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = collect_count_mid_slot_, .desc_out = collect_count_mid_desc_});
-    rows.push_back({
-        .pipeline_name = "collect-write", .shader = shader_ids.collect_write_comp,
-        .layout = **collect_write_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = collect_write_slot_, .desc_out = collect_write_desc_});
-    rows.push_back({
-        .pipeline_name = "hiz-gen", .shader = shader_ids.hiz_gen_comp,
-        .layout = **hiz_pipeline_layout_, .draw_mode_specialized = false,
-        .slot = hiz_slot_, .desc_out = hiz_desc_});
 
     bool ok = true;
 
@@ -190,28 +185,25 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
     };
     auto depth_desc = ShaderSystem::MakeGraphicsDesc(
         depth_tmpl, shader_ids.depth_indir_vert, shader_ids.depth_prepass_frag,
-        **depth_pipeline_layout_, {}, be.GetDepthFormat());
+        Layout(SceneGpuLayout::PipelineLayoutId::depth), {}, be.GetDepthFormat());
     ApplyDrawModeSpec(depth_desc, ShaderSystem::DrawModeSpecValue(draw_mode_));
     depth_desc_ = depth_desc;
 
     // ── Compile the whole window in one submission ──
-    // One batched driver call for all seven compute pipelines plus the depth
-    // pipeline (per-path batching inside the factory: compute is always one
-    // call; graphics batching applies on the monolithic path). Every delivery
-    // that fails records the error and fails initialization — the previous
-    // per-helper code swallowed these.
+    // One batched driver call for every compute row plus the depth pipeline (per-path batching inside the factory: compute is always one call; graphics batching applies on the monolithic path).
+    // Every delivery that fails records the error and fails initialization; the previous per-helper code swallowed these.
     ShaderSystem::PipelineFactoryExecutor executor{pipeline_factory};
     ShaderSystem::PipelineCompiler compiler{executor};
-    for (auto& row : rows) {
+    for (const ComputePipelineRow& row : ComputePipelineRows()) {
         auto desc = ShaderSystem::MakeComputeDesc(
-            ShaderSystem::ComputePipelineTemplate{.debug_name = row.pipeline_name},
-            row.shader, row.layout);
+            ShaderSystem::ComputePipelineTemplate{.debug_name = row.name},
+            shader_ids.*row.shader, Layout(row.layout));
         if (row.draw_mode_specialized) {
             ApplyDrawModeSpec(desc, ShaderSystem::DrawModeSpecValue(draw_mode_));
         }
-        row.desc_out = desc;
-        auto& slot = row.slot;
-        const auto name = row.pipeline_name;
+        this->*row.desc = desc;
+        ShaderSystem::PipelineSlot& slot = this->*row.slot;
+        const std::string_view name = row.name;
         compiler.SubmitCompute(std::move(desc), name,
             [this, &slot, &ok, name](ShaderSystem::PipelineOutcome&& outcome) {
                 if (!outcome.has_value()) {
@@ -251,29 +243,11 @@ bool SceneRenderer::CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap
 
 bool SceneRenderer::RebuildCompactionPipelines() {
     if (!backend_ || !shader_mgr_ || !pipeline_factory_) return false;
-    // Rebuild only the pipeline objects: the existing pipeline layouts are
-    // reused so pipelines still in a retire ring keep valid layouts. The
-    // draw-mode spec value is updated on each stored desc first.
+    // Rebuild only the pipeline objects: the pipeline layouts are reused so pipelines still in a retire ring keep valid layouts.
+    // The draw-mode spec value is updated on each stored desc first.
     //
-    // Technique pipelines also carry the draw-mode spec, but TechniqueManager
-    // owns them. The caller of Reinitialize re-specializes them
-    // (GameEngine::SetDrawMode); this function covers only SceneRenderer's own
-    // pipelines. Occlusion is absent: it reads no kCompactionMode constant, so
-    // its pipeline is mode-independent.
-    struct RebuildRow {
-        ShaderSystem::PipelineSlot SceneRenderer::* slot;
-        std::optional<ShaderSystem::ComputePipelineDesc> SceneRenderer::* desc;
-    };
-    static constexpr std::array kRebuildRows{
-        RebuildRow{&SceneRenderer::expand_slot_, &SceneRenderer::expand_desc_},
-        RebuildRow{&SceneRenderer::occluder_select_slot_, &SceneRenderer::occluder_select_desc_},
-        RebuildRow{&SceneRenderer::pre_cull_slot_, &SceneRenderer::pre_cull_desc_},
-        RebuildRow{&SceneRenderer::collect_count_slot_, &SceneRenderer::collect_count_desc_},
-        // collect_write is CID-only and has no specialization constant, but its
-        // pipeline still rebuilds so a shader edit swaps it too.
-        RebuildRow{&SceneRenderer::collect_write_slot_, &SceneRenderer::collect_write_desc_},
-    };
-
+    // The set to rebuild is the table's own `draw_mode_specialized` flag, so a pass that starts reading kCompactionMode only has to set that flag.
+    // Technique pipelines also carry the draw-mode spec, but TechniqueManager owns them; the caller of Reinitialize re-specializes those (GameEngine::SetDrawMode).
     const auto rebuild = [this](ShaderSystem::PipelineSlot& slot, auto& desc) {
         if (!desc) return true;
         using Desc = std::remove_cvref_t<decltype(*desc)>;
@@ -293,7 +267,8 @@ bool SceneRenderer::RebuildCompactionPipelines() {
     };
 
     bool ok = true;
-    for (auto& row : kRebuildRows) {
+    for (const ComputePipelineRow& row : ComputePipelineRows()) {
+        if (!row.draw_mode_specialized) continue;
         auto& desc = this->*row.desc;
         if (!desc) continue;
         ApplyDrawModeSpec(*desc, ShaderSystem::DrawModeSpecValue(draw_mode_));

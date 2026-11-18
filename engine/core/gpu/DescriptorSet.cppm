@@ -83,6 +83,19 @@ export namespace VulkanEngine::GpuResources {
         GpuDescriptorSet(GpuDescriptorSet&& other) noexcept;
         GpuDescriptorSet& operator=(GpuDescriptorSet&& other) noexcept;
 
+        // ── The two write primitives every binding write funnels through ──
+        //
+        // One vkUpdateDescriptorSets call per span, and a span may cover consecutive array elements, so a whole block array is one call rather than one call per block.
+        // `first` is the destination array element; the single-element overloads below are conveniences built on these.
+        void UpdateBuffers(std::uint32_t binding,
+                           vk::DescriptorType type,
+                           std::span<const vk::DescriptorBufferInfo> infos,
+                           std::uint32_t first = 0) const;
+        void UpdateImages(std::uint32_t binding,
+                          vk::DescriptorType type,
+                          std::span<const vk::DescriptorImageInfo> infos,
+                          std::uint32_t first = 0) const;
+
         void UpdateBinding(std::uint32_t binding,
                            const GpuTexture& texture,
                            vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) const;

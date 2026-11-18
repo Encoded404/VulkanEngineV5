@@ -1185,8 +1185,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const vk::Buffer vbuf = mesh_mgr.GetDynamicVertexBuffer(fif, bi);
         LOGIFACE_LOG(trace, "ProcessFrame: update vertex_buffers_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_vtx_count + bi));
-        renderer.UpdateVertexBufferArrayElement(
-            frame_index,
+        renderer.UpdateTableElement(SceneGpuLayout::TableId::vertex, frame_index,
             static_vtx_count + bi,
             vbuf,
             mesh_mgr.GetDynamicVertexBlockSize(fif));
@@ -1195,8 +1194,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const vk::Buffer ibuf = mesh_mgr.GetDynamicIndexBuffer(fif, bi);
         LOGIFACE_LOG(trace, "ProcessFrame: update index_buffers_set frame=" +
                      std::to_string(frame_index) + " slot=" + std::to_string(static_idx_count + bi));
-        renderer.UpdateIndexBufferArrayElement(
-            frame_index,
+        renderer.UpdateTableElement(SceneGpuLayout::TableId::index, frame_index,
             static_idx_count + bi,
             ibuf,
             mesh_mgr.GetDynamicIndexBlockSize(fif));

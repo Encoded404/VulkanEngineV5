@@ -22,8 +22,9 @@ export import VulkanEngine.GpuResources;
 export import VulkanEngine.GpuResources.BlockArray;
 export import VulkanEngine.DrawMode;
 export import VulkanEngine.ModifierId;
-import VulkanEngine.SceneGpuLayout;
-import VulkanEngine.SceneLimits;
+// Exported because the table row identifiers (TableId) appear in the public upload API.
+export import VulkanEngine.SceneGpuLayout;
+export import VulkanEngine.SceneLimits;
 import VulkanEngine.ModifierManager;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
@@ -56,9 +57,6 @@ struct alignas(16) SceneHeader {
     std::uint32_t light_count = 0;
 };
 // NOLINTEND(modernize-avoid-c-arrays)
-
-constexpr std::uint32_t LIGHTS_PER_BLOCK = SceneLimits::kLightsPerBlock;
-constexpr std::uint32_t MAX_LIGHT_BLOCKS = SceneLimits::kMaxLightBlocks;
 
 // ── Deform addressing contract (mirrored in shaders/skin_layout.slang) ──
 //
@@ -335,8 +333,6 @@ struct SceneCapacity {
 
 class SceneRenderer {
 public:
-    // Hi-Z level cap. Single source: SceneLimits, shared with the hiz set's storage-image descriptor array.
-    static constexpr std::uint32_t MAX_HIZ_MIPS = SceneLimits::kMaxHiZMips;
     // DispatchHiZGen emits up to this many levels per iteration (base and
     // base+1). The generator and the initialization-time coverage assert share
     // this value so the two cannot drift apart.
@@ -344,20 +340,6 @@ public:
     // Source tile one generator thread reduces per dimension: the shader's STRIDE (1 << BATCH_LEVELS) in hiz_gen.slang.
     // A dispatch covers the tile grid (source extent / HIZ_TILE_STRIDE), never the source extent itself.
     static constexpr std::uint32_t HIZ_TILE_STRIDE = 1u << HIZ_BATCH;
-    // Fixed descriptor-table sizes. Single source: SceneLimits.
-    static constexpr std::uint32_t MAX_VERTEX_BUFFERS = SceneLimits::kMaxVertexBuffers;
-    static constexpr std::uint32_t MAX_INDEX_BUFFERS = SceneLimits::kMaxIndexBuffers;
-    // Out-of-line UV buffer table (engine set 2, binding 1). Same block-growth
-    // model as the vertex table; a mesh without out-of-line UVs stores a
-    // sentinel in its vertex entry and never indexes this table.
-    static constexpr std::uint32_t MAX_UV_BUFFERS = SceneLimits::kMaxUvBuffers;
-    // Skin-influence table size (deform set bindings 0 and 1). Same block-growth
-    // model as the vertex table: a skinned mesh allocates one block in this heap
-    // and addresses it by slot.
-    static constexpr std::uint32_t MAX_SKIN_BUFFERS = SceneLimits::kMaxSkinBuffers;
-    // Entries per storage-buffer block. Single source: SceneLimits; mirrored in
-    // shaders/scene_block_layout.slang.
-    static constexpr std::uint32_t BLOCK_ENTRIES = SceneLimits::kEntriesPerBlock;
     // Draw-key table capacity: the full technique/draw-group bit width, owned
     // by TechniquePacking (TECHNIQUE_BITS = 14 -> 16384). Every per-key GPU
     // table (flags, counts, results, command regions) is sized to this, and the
@@ -447,21 +429,17 @@ public:
     [[nodiscard]] vk::DescriptorSetLayout* GetVertexBuffersLayout() const;
     [[nodiscard]] vk::DescriptorSetLayout* GetIndirectionLayout() const;
 
-    void UpdateVertexBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateIndexBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    // Out-of-line UV table (set 2, binding 1).
-    void UpdateUvBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateAllFrameUvBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    // Skin-influence tables (deform set, bindings 0 and 1). Written as mesh skin
-    // streams become resident, exactly like the vertex/UV tables: the deform set
-    // outlives the frame buffers, so a newly allocated skin block has to be
-    // published to every frame in flight.
-    void UpdateSkinBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateAllFrameSkinBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index, std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
-    void UpdateAllFrameSkinExtraBufferArrayElements(std::uint32_t buffer_index, vk::Buffer buffer, std::uint64_t size);
+    // ── Descriptor-array upload ──
+    // The mesh upload and the lighting upload publish one element of a fixed descriptor array (the vertex, UV, index, skin or light table).
+    // The array is named by a SceneGpuLayout::TableId row, which resolves the set, the binding number and the capacity, so a renumbering stays one table edit.
+    // `frame` picks one frame in flight (taken modulo the ring size); nullopt writes every frame in flight.
+    // A set that is not ringed (the lighting set) has one set, so it is written once either way.
+    // The write goes through GpuDescriptorSet::UpdateBuffers, the same primitive the frame loop uses.
+    void UpdateTableElement(SceneGpuLayout::TableId table,
+                            std::optional<std::uint32_t> frame,
+                            std::uint32_t index,
+                            vk::Buffer buffer,
+                            std::uint64_t size);
 
     // ── Per-frame deform state, produced by gather ──
     // The SkinEntry block array for `frame_index`. Gather grows it with
@@ -629,21 +607,21 @@ public:
     // Engine-standard descriptor sets 1-3 for a frame (set 0 is the bindless
     // manager's, set 4 is GetSceneUniformSet()).
     [[nodiscard]] vk::DescriptorSet GetFrameSubmeshVertexEntriesSet(std::uint32_t frame_index) const {
-        return frames_[frame_index % frames_in_flight_].submesh_vertex_set.GetHandle();
+        return frames_[frame_index % frames_in_flight_][SceneGpuLayout::SetId::submesh_vertex].GetHandle();
     }
     [[nodiscard]] vk::DescriptorSet GetFrameVertexBuffersSet(std::uint32_t frame_index) const {
-        return frames_[frame_index % frames_in_flight_].vertex_buffers_set.GetHandle();
+        return frames_[frame_index % frames_in_flight_][SceneGpuLayout::SetId::vertex_buffers].GetHandle();
     }
     [[nodiscard]] vk::DescriptorSet GetFrameIndirectionSet(std::uint32_t frame_index) const {
-        return frames_[frame_index % frames_in_flight_].indirection_raw_set.GetHandle();
+        return frames_[frame_index % frames_in_flight_][SceneGpuLayout::SetId::indirection].GetHandle();
     }
 
-    // ── Lighting system (descriptor set 4) — binding 0 = SceneHeader, binding 1 = Light[] BlockArray ──
+    // ── Lighting system (the engine-side scene_uniform set) — binding 0 = SceneHeader, binding 1 = Light[] BlockArray ──
     [[nodiscard]] vk::DescriptorSetLayout GetSceneUniformLayout() const {
         return GetSetLayout(SceneGpuLayout::SetId::scene_uniform);
     }
     [[nodiscard]] vk::DescriptorSet GetSceneUniformSet() const {
-        return owned_sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::scene_uniform)].GetHandle();
+        return owned_sets_[SceneGpuLayout::SetId::scene_uniform].GetHandle();
     }
     void UploadLighting(const SceneHeader& header,
                         std::span<const Light> lights,
@@ -654,121 +632,43 @@ private:
     static_assert(sizeof(TechniqueResult) == SceneGpuLayout::kTechniqueResultFloor,
                   "the technique-results buffer floor must equal one TechniqueResult");
     struct FrameResources {
-        // Block-based per-submesh buffers
-        VulkanEngine::GpuResources::BlockArray dynamic_entries{};
-        VulkanEngine::GpuResources::BlockArray static_entries{};
-        VulkanEngine::GpuResources::BlockArray bounding_spheres{};
-        VulkanEngine::GpuResources::BlockArray obb_entries{};
-        VulkanEngine::GpuResources::BlockArray submesh_vertex_entries{};
-        VulkanEngine::GpuResources::BlockArray cull_entries{};
-        // Per-submesh deform addressing (expand set binding 7, deform set binding
-        // 3). Written by gather; expand fills its `deform_base`.
-        VulkanEngine::GpuResources::BlockArray skin_entries{};
+        // ── Storage, shaped by the slot enums ──
+        // The row a slot refers to is the only place its meaning lives, so a row added to SceneGpuLayout grows this storage without an edit here:
+        // there is no member to add and no switch to extend, and the accessors below are total.
+        SceneGpuLayout::SlotArray<VulkanEngine::GpuResources::BlockArray,
+                                  SceneGpuLayout::BlockSlot> block_arrays{};
+        SceneGpuLayout::SlotArray<VulkanEngine::GpuResources::GpuBuffer,
+                                  SceneGpuLayout::BufferSlot> buffers{};
+        SceneGpuLayout::SlotArray<VulkanEngine::GpuResources::GpuDescriptorSet,
+                                  SceneGpuLayout::SetId> sets{};
 
-        // Descriptor-write cursors for the block arrays above. They grow in
-        // lockstep and only ever grow, so the descriptors for blocks that
-        // already exist do not need rewriting every frame. `epoch` matches
-        // SceneRenderer::binding_epoch_; when it differs the whole array is
-        // rewritten (capacity growth recreated the underlying buffers).
+        // Descriptor-write cursors: one per frame-written binding row, indexed by SceneGpuLayout::WrittenBindingIndex().
+        // A cursor holds the binding epoch its row was last written in, and how many blocks of a block array are already published.
+        // Buffers and block arrays only ever grow, so within one epoch a row is written once and its existing blocks never again.
+        // Anything that re-creates the objects a row points at bumps the epoch and forces one full rewrite: CreateFrameBuffers for the ring's buffers, CreateHiZResources for the image views the occlusion set samples.
         //
-        // One cursor per block-array binding, indexed by SceneGpuLayout::BlockBindingIndex().
-        // Each block array is bound into its own (set, binding), and every pair has to write its own blocks: a single shared cursor lets the first pair write its blocks and then mark the frame's whole block budget written, so every later binding keeps a descriptor that was never written (or, after a capacity change, a stale one).
-        // That is a GPU hang, not a wrong pixel.
-        // The cursor count comes from the table, so a binding cannot be added without a cursor.
-        struct BlockBindingCache {
+        // One cursor per row, not one per block array: the same array is bound into several sets, and a shared cursor would let the first pair publish its blocks and then mark the frame's whole block budget written, leaving every later binding with a descriptor that was never written (a GPU hang, not a wrong pixel).
+        // The cursor count comes from the table, so a binding cannot be added without one.
+        struct WriteCursor {
+            std::uint32_t written_epoch = 0;
             std::uint32_t written_blocks = 0;
-            std::uint32_t epoch = 0;
         };
-        std::array<BlockBindingCache, SceneGpuLayout::BlockBindingCount()>
-            block_binding_cache{};
+        std::array<WriteCursor, SceneGpuLayout::WrittenBindingCount()> write_cursors{};
 
-        // ── Indexed-drawing substrate ──
-        // One VertexIndirectionEntry per slot in each submesh's tight vertex
-        // window. CID-only content: MID binds a fixed 8 B dummy and
-        // never writes or reads it (it carries the addressing in firstInstance
-        // and the index buffer).
-        VulkanEngine::GpuResources::GpuBuffer vertex_indirection{};
-        // CID: 4 B absolute slot indices into vertex_indirection, one
-        // per occurrence. MID: 4 B absolute vertex indices, one per occurrence
-        // (bound as the index buffer).
-        VulkanEngine::GpuResources::GpuBuffer draw_indices{};
-        // 2 x u32 atomic counters allocated by expand: [0]=entryBase, [1]=indexBase.
-        VulkanEngine::GpuResources::GpuBuffer expand_counter{};
-
-        // ── CID destinations (4 B compact index lists) ──
-        VulkanEngine::GpuResources::GpuBuffer main_indices{};
-        // CID: the depth pass's compact index list. MID binds a 4 B dummy
-        // because the shader path that writes it is specialized out.
-        VulkanEngine::GpuResources::GpuBuffer depth_indices{};
-        // CID: the occluder prepass's compact index list; 4 B dummy in MID.
-        VulkanEngine::GpuResources::GpuBuffer occluder_indices{};
-
-        // ── MID destinations (20 B indexed indirect commands + count) ──
-        VulkanEngine::GpuResources::GpuBuffer main_commands{};
-        // Both modes: one command per surviving submesh, grouped by draw group.
-        VulkanEngine::GpuResources::GpuBuffer depth_commands{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_commands{};
-        // CPU prefix sum of submeshes per technique (host-visible, MID main pass).
-        VulkanEngine::GpuResources::GpuBuffer technique_region_bases{};
-        // Depth and occluder prepass counters. One uint each: CID reserves the
-        // index range; MID does not need it now that commands are placed per
-        // group.
-        VulkanEngine::GpuResources::GpuBuffer depth_out_counter{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_out_counter{};
-        // One count per draw group (MID's drawIndirectCount buffers).
-        VulkanEngine::GpuResources::GpuBuffer depth_technique_counts{};
-        VulkanEngine::GpuResources::GpuBuffer occluder_technique_counts{};
-
-        VulkanEngine::GpuResources::GpuBuffer occluder_candidate_count{};
-        VulkanEngine::GpuResources::GpuBuffer technique_draw_commands{};
-        VulkanEngine::GpuResources::GpuBuffer technique_counts{};
-        VulkanEngine::GpuResources::GpuBuffer technique_results{};
-
-        // ── Deform inputs ──
-        // Flat bone-palette matrices, addressed by one global index
-        // (`SkinEntry::palette_base + joint`). Deliberately not a BlockArray: a
-        // descriptor array is one descriptor per block, so a palette that starts
-        // mid-block or spans two blocks could not be addressed as one buffer.
-        VulkanEngine::GpuResources::GpuBuffer bone_palettes{};
-        // Flat modifier-parameter blocks. Host-visible/coherent and mapped during
-        // gather; sized by SceneCapacity::modifier_param_bytes.
-        VulkanEngine::GpuResources::GpuBuffer modifier_params{};
-        // Deformed-vertex output: 2 * deform_vertex_span vertices, the A and B
-        // regions the modifier stack ping-pongs between. Device-local; written
-        // only by the deform pass and read only by the depth/main vertex
-        // shaders (set 2, binding 2).
-        VulkanEngine::GpuResources::GpuBuffer deform_vertices{};
-
-        // Descriptor sets, one per frame for every set whose pool is a ring.
-        // The empty placeholder lives here too so the slot accessor is total.
-        VulkanEngine::GpuResources::GpuDescriptorSet expand_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet occlusion_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet collect_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet collect_write_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet occluder_select_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet submesh_vertex_set{};
-        // Single shared indirection set (set 3) bound to vertex_indirection and
-        // reused by the depth, occluder and main passes.
-        VulkanEngine::GpuResources::GpuDescriptorSet indirection_raw_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet vertex_buffers_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet index_buffers_set{};
-        // Deform input set (set 1 of the deform pipeline). Allocated once at
-        // Initialize; its skin tables are rewritten as skin streams become
-        // resident, so it must outlive the capacity-dependent frame buffers.
-        VulkanEngine::GpuResources::GpuDescriptorSet deform_set{};
-        VulkanEngine::GpuResources::GpuDescriptorSet hiz_set{};
-        // Set 0 of the depth pipeline is a placeholder: the layout has no bindings and the set has no descriptors.
-        VulkanEngine::GpuResources::GpuDescriptorSet empty_set{};
-
-        VulkanEngine::GpuResources::GpuDescriptorSet& SetFor(SceneGpuLayout::SetId id);
-        [[nodiscard]] const VulkanEngine::GpuResources::GpuDescriptorSet& SetFor(
-            SceneGpuLayout::SetId id) const;
-        VulkanEngine::GpuResources::GpuBuffer& BufferFor(SceneGpuLayout::BufferSlot slot);
-        [[nodiscard]] const VulkanEngine::GpuResources::GpuBuffer& BufferFor(
-            SceneGpuLayout::BufferSlot slot) const;
-        VulkanEngine::GpuResources::BlockArray& BlockArrayFor(SceneGpuLayout::BlockSlot slot);
-        [[nodiscard]] const VulkanEngine::GpuResources::BlockArray& BlockArrayFor(
-            SceneGpuLayout::BlockSlot slot) const;
+        // Accessors keep the call sites short while the storage stays table-shaped.
+        // A set that is not ringed lives on the renderer instead (see SetFor and owned_sets_), so its slot here stays unused.
+        [[nodiscard]] VulkanEngine::GpuResources::BlockArray&
+        operator[](const SceneGpuLayout::BlockSlot slot) { return block_arrays[slot]; }
+        [[nodiscard]] const VulkanEngine::GpuResources::BlockArray&
+        operator[](const SceneGpuLayout::BlockSlot slot) const { return block_arrays[slot]; }
+        [[nodiscard]] VulkanEngine::GpuResources::GpuBuffer&
+        operator[](const SceneGpuLayout::BufferSlot slot) { return buffers[slot]; }
+        [[nodiscard]] const VulkanEngine::GpuResources::GpuBuffer&
+        operator[](const SceneGpuLayout::BufferSlot slot) const { return buffers[slot]; }
+        [[nodiscard]] VulkanEngine::GpuResources::GpuDescriptorSet&
+        operator[](const SceneGpuLayout::SetId id) { return sets[id]; }
+        [[nodiscard]] const VulkanEngine::GpuResources::GpuDescriptorSet&
+        operator[](const SceneGpuLayout::SetId id) const { return sets[id]; }
 
         vk::raii::Image hiz_image = vk::raii::Image(nullptr);
         vk::raii::DeviceMemory hiz_memory = vk::raii::DeviceMemory(nullptr);
@@ -780,14 +680,27 @@ private:
     };
 
     // ── Built-in pipeline creation (table-driven, single submission) ──
-    // Creates the Hi-Z set layout + pool, every scene pipeline layout, and
-    // compiles all seven compute pipelines plus the depth-prepass pipeline in
-    // one batched submission. Fails initialization on the first pipeline
-    // creation error instead of silently booting without a pipeline.
+    // Creates every pipeline layout from SceneGpuLayout::kPipelineLayouts, then compiles the compute table below plus the depth-prepass pipeline in one batched submission.
+    // Fails initialization on the first pipeline creation error instead of silently booting without a pipeline.
     bool CreateScenePipelines(VulkanBackend::Vulkan::IVulkanBootstrap& backend,
                               ShaderSystem::ShaderManager& shader_mgr,
                               ShaderSystem::PipelineFactory& pipeline_factory,
                               const EngineShaderIds& shader_ids);
+
+    // ── Per-pass compute pipeline rows ──
+    // One row per built-in compute pass, naming the pass, the shader it compiles, the pipeline layout it binds and the slot and stored desc it owns.
+    // Creation (CreateScenePipelines), hot-reload polling (PollShaders) and the draw-mode rebuild (RebuildCompactionPipelines) all walk this one table, so a pass cannot be added to one loop and forgotten in another.
+    struct ComputePipelineRow {
+        std::string_view name{};
+        ShaderSystem::ShaderId EngineShaderIds::* shader = nullptr;
+        SceneGpuLayout::PipelineLayoutId layout = SceneGpuLayout::PipelineLayoutId::count;
+        ShaderSystem::PipelineSlot SceneRenderer::* slot = nullptr;
+        std::optional<ShaderSystem::ComputePipelineDesc> SceneRenderer::* desc = nullptr;
+        // Re-specialized on a draw-mode switch, because the shader reads kCompactionMode; the MID variants are rows of their own and are not.
+        bool draw_mode_specialized = false;
+    };
+    // Defined next to the depth-prepass graphics row in SceneRendererPipeline.cpp.
+    [[nodiscard]] static std::span<const ComputePipelineRow> ComputePipelineRows() noexcept;
 
 
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
@@ -805,27 +718,49 @@ private:
         std::unique_ptr<vk::raii::DescriptorSetLayout> layout{};
         std::shared_ptr<VulkanEngine::GpuResources::DescriptorPool> pool{};
     };
-    std::array<SetHandles, SceneGpuLayout::kSetCount> sets_{};
+    SceneGpuLayout::SlotArray<SetHandles, SceneGpuLayout::SetId> sets_{};
     // The sets of the rows whose pool is not a frame ring (today the lighting set), indexed by SetId like sets_.
-    // A ringed row's set lives in its FrameResources instead, because it has one per frame in flight; the frame loops and Shutdown both skip the fixed rows for that reason.
-    std::array<VulkanEngine::GpuResources::GpuDescriptorSet, SceneGpuLayout::kSetCount> owned_sets_{};
+    // A ringed row's set lives in its FrameResources instead, because it has one per frame in flight.
+    SceneGpuLayout::SlotArray<VulkanEngine::GpuResources::GpuDescriptorSet,
+                              SceneGpuLayout::SetId> owned_sets_{};
+    // The singleton buffers, indexed like the ring so a slot lookup is total: only the two SceneGpuLayout::kSingletonBuffers slots are ever valid here.
+    SceneGpuLayout::SlotArray<VulkanEngine::GpuResources::GpuBuffer,
+                              SceneGpuLayout::BufferSlot> owned_buffers_{};
 
-    [[nodiscard]] SetHandles& SetSlot(SceneGpuLayout::SetId id) {
-        return sets_[static_cast<std::size_t>(id)];
-    }
+    [[nodiscard]] SetHandles& SetSlot(const SceneGpuLayout::SetId id) { return sets_[id]; }
     // The set layout as a plain handle, for the pipeline-layout tables; null before CreateDescriptorSets has run.
     [[nodiscard]] vk::DescriptorSetLayout GetSetLayout(SceneGpuLayout::SetId id) const;
 
-    std::unique_ptr<vk::raii::PipelineLayout> expand_pipeline_layout_{};
+    // The set a binding row's descriptors go into: the frame's own set, or the renderer's single set for a row that is not ringed.
+    // This is the one place the fixed/ringed difference is acted on, so a binding row can be written the same way either way.
+    [[nodiscard]] VulkanEngine::GpuResources::GpuDescriptorSet& SetFor(
+        FrameResources& fr, const SceneGpuLayout::SetId id) {
+        return SceneGpuLayout::SetOf(id).fixed_sets != 0 ? owned_sets_[id] : fr[id];
+    }
+    // A buffer by slot, including the two singletons the renderer owns itself.
+    [[nodiscard]] VulkanEngine::GpuResources::GpuBuffer& BufferRef(
+        FrameResources& fr, const SceneGpuLayout::BufferSlot slot) {
+        return SceneGpuLayout::IsSingleton(slot) ? owned_buffers_[slot] : fr[slot];
+    }
+
+    // Pipeline layouts, one slot per SceneGpuLayout::PipelineLayoutId, created in id order from kPipelineLayouts.
+    // A descriptor layout can be bound at any set index, so the index lives in the layout row, not on the set row.
+    SceneGpuLayout::SlotArray<std::unique_ptr<vk::raii::PipelineLayout>,
+                              SceneGpuLayout::PipelineLayoutId> layouts_{};
+    [[nodiscard]] std::unique_ptr<vk::raii::PipelineLayout>&
+    LayoutSlot(const SceneGpuLayout::PipelineLayoutId id) { return layouts_[id]; }
+    // The layout handle the bind sites hand to vkCmdBindDescriptorSets and vkCmdPushConstants.
+    [[nodiscard]] vk::PipelineLayout Layout(const SceneGpuLayout::PipelineLayoutId id) const {
+        return **layouts_[id];
+    }
+
     ShaderSystem::PipelineSlot expand_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> expand_desc_;
 
-    std::unique_ptr<vk::raii::PipelineLayout> occlusion_pipeline_layout_{};
     ShaderSystem::PipelineSlot occlusion_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> occlusion_desc_;
 
-    // Occluder-select: cull blocks, transforms, OBBs, flag table, indirection copy, draw command and selection counter.
-    std::unique_ptr<vk::raii::PipelineLayout> occluder_select_pipeline_layout_{};
+    // Occlude-select: cull blocks, transforms, OBBs, flag table, indirection copy, draw command and selection counter.
     ShaderSystem::PipelineSlot occluder_select_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> occluder_select_desc_;
     // MID variant: one thread per submesh, no group copy or barrier.
@@ -833,7 +768,6 @@ private:
     std::optional<ShaderSystem::ComputePipelineDesc> occluder_select_mid_desc_;
 
     // Pre-cull compute: reuses the occlusion set (extended with the survivor compaction bindings 6-11) plus its own pipeline.
-    std::unique_ptr<vk::raii::PipelineLayout> pre_cull_pipeline_layout_{};
     ShaderSystem::PipelineSlot pre_cull_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> pre_cull_desc_;
     // MID variant: one thread per submesh, no group copy or barrier.
@@ -841,14 +775,12 @@ private:
     std::optional<ShaderSystem::ComputePipelineDesc> pre_cull_mid_desc_;
 
     // Collect count + compact (cull blocks + indirections + intermediate).
-    std::unique_ptr<vk::raii::PipelineLayout> collect_pipeline_layout_{};
     ShaderSystem::PipelineSlot collect_count_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> collect_count_desc_;
     // MID variant: one thread per submesh, no group copy or barrier.
     ShaderSystem::PipelineSlot collect_count_mid_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> collect_count_mid_desc_;
     // Collect write shaders (use the separate collect-write layout).
-    std::unique_ptr<vk::raii::PipelineLayout> collect_write_pipeline_layout_{};
     ShaderSystem::PipelineSlot collect_write_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> collect_write_desc_;
 
@@ -860,18 +792,11 @@ private:
     std::uint32_t hiz_mip_count_ = 0;
     bool hiz_initialized_ = false;
 
-    std::unique_ptr<vk::raii::PipelineLayout> depth_pipeline_layout_{};
     ShaderSystem::PipelineSlot depth_slot_;
     std::optional<ShaderSystem::GraphicsPipelineDesc> depth_desc_;
 
-    std::unique_ptr<vk::raii::PipelineLayout> hiz_pipeline_layout_{};
     ShaderSystem::PipelineSlot hiz_slot_;
     std::optional<ShaderSystem::ComputePipelineDesc> hiz_desc_;
-
-    // Deform pipeline layout: [vertex-buffer table (set 0), deform inputs (set
-    // 1)] plus the 32-byte ModifierPC push constant. Every modifier pipeline
-    // shares it, so the two sets stay bound across vkCmdBindPipeline.
-    std::unique_ptr<vk::raii::PipelineLayout> deform_pipeline_layout_{};
 
     // One compute pipeline per live registry entry, keyed by ModifierId
     // (generation, value). A pipeline that is retired stays alive for
@@ -898,9 +823,10 @@ private:
     std::vector<std::vector<ModifierDispatch>> frame_modifier_dispatches_{};
     bool has_active_deform_ = false;
 
-    // Lighting system (set 4). The set itself is the owned_sets_ entry for SetId::scene_uniform.
-    VulkanEngine::GpuResources::GpuBuffer scene_header{};
+    // Lighting system (the engine-side scene_uniform set). The set itself is the owned_sets_ entry for SetId::scene_uniform; the header buffer is one of the two owned_buffers_ singletons.
     VulkanEngine::GpuResources::BlockArray scene_lights{};
+    // Blocks of scene_lights already published to the light table's descriptors. The array only ever grows, so a block is written once.
+    std::uint32_t light_blocks_written_ = 0;
 
     std::vector<VulkanEngine::SubMesh> scene_submeshes_{};
 
@@ -908,23 +834,21 @@ private:
     // so a single host-visible buffer is updated in place only when contents
     // change. Worst case on a change is one frame reading a torn word, which is
     // self-correcting next frame.
-    VulkanEngine::GpuResources::GpuBuffer technique_flags{};
     std::vector<std::uint32_t> technique_flags_cache_{};
 
     // Create the descriptor-set layouts, pools and per-frame sets from SceneGpuLayout::kSceneSets.
     // Called once by Initialize, before the pipelines (which take the layouts) and before the frame buffers (which the sets point at).
     bool CreateDescriptorSets(VulkanEngine::GpuResources::DeviceBufferHeap& vertex_heap);
     // Write one binding from its table row.
-    // Called by PrepareCompute for every row whose written_by is prepare_compute; block arrays are written incrementally through the frame's cursors.
+    // Called by PrepareCompute for every row whose writer is prepare_compute; a row is written once per binding epoch, and a block array only publishes the blocks that do not exist yet.
     void WriteBinding(FrameResources& fr, const SceneGpuLayout::SetSpec& set,
                       const SceneGpuLayout::BindingSpec& binding);
-    // A buffer by slot, including the two singletons the renderer owns itself.
-    VulkanEngine::GpuResources::GpuBuffer& BufferRef(FrameResources& fr,
-                                                     SceneGpuLayout::BufferSlot slot);
     // Size of a table row's buffer at the current scene capacity.
     [[nodiscard]] std::uint64_t BufferBytes(const SceneGpuLayout::SizeRule& rule) const;
     [[nodiscard]] std::uint64_t ComputeSize(SceneGpuLayout::SizeKind kind) const;
-    // The hiz set's three image/sampler bindings, rewritten whenever the Hi-Z ring is re-created; binding numbers come from the table.
+    // Zero a host-visible per-frame buffer for the mode being recorded.
+    void ClearBuffer(VulkanEngine::GpuResources::GpuBuffer& buffer);
+    // The hiz set's three image/sampler bindings, rewritten whenever the Hi-Z ring is re-created; binding numbers come from the rows.
     void WriteHiZBindings(FrameResources& fr);
 
     // Create/destroy the mode-dependent per-frame buffers at the current
@@ -938,8 +862,8 @@ private:
     // mip coverage matches what the cull shaders sample.
     bool CreateHiZResources();
     void DestroyHiZResources();
-    // Rebuild the draw-mode-specialized pipelines SceneRenderer owns: expand,
-    // occluder-select, pre-cull, collect count/compact, collect write, depth.
+    // Rebuild the pipelines a draw-mode switch has to re-specialize.
+    // That is every ComputePipelineRows() row with draw_mode_specialized set, plus the depth prepass; the MID variants and the mode-independent passes are rows of their own with the correct pipeline already.
     bool RebuildCompactionPipelines();
 
     // Runtime-sized per-frame resource ring (see frames_in_flight_).
@@ -957,13 +881,12 @@ private:
     // single resolved rule feeds selection, IsDrawModeSupported and Reinitialize.
     bool mid_supported_ = false;
     SceneCapacity scene_capacity_{};
-    // Chosen in Initialize from SceneGpuLayout::MaxBlocksForDevice(device limits),
-    // clamped to [1, kMaxBlocksCeiling]. Every descriptor binding array, pool
-    // size, and BlockArray limit derives from this.
+    // Chosen in Initialize from SceneGpuLayout::MaxBlocksForDevice(device limits).
+    // Every descriptor binding array, pool size and BlockArray limit derives from this.
     std::uint32_t max_blocks_ = 0;
-    // Bumped whenever the per-frame block-array descriptors are invalidated
-    // (CreateFrameBuffers). PrepareCompute compares it against each frame's
-    // BlockBindingCache to choose a full vs incremental descriptor rewrite.
+    // Bumped whenever the objects the frame-written descriptors point at are re-created:
+    // CreateFrameBuffers (the ring's buffers) and CreateHiZResources (the image views).
+    // PrepareCompute compares it against each frame's WriteCursor to choose a full vs incremental descriptor rewrite.
     std::uint32_t binding_epoch_ = 1;
     // CPU prefix sum (MID): region_base_[t] = first command slot of technique t.
     std::vector<std::uint32_t> region_base_{};

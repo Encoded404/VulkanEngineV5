@@ -110,13 +110,13 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
 
     // Update descriptor arrays if new heap block was allocated (all frames)
     if (gpu_info->vertex_allocation.buffer_index < vtx_heap.GetBufferCount()) {
-        renderer.UpdateAllFrameVertexBufferArrayElements(
+        renderer.UpdateTableElement(SceneGpuLayout::TableId::vertex, std::nullopt,
             gpu_info->vertex_allocation.buffer_index,
             vtx_heap.GetBuffer(gpu_info->vertex_allocation.buffer_index),
             vtx_heap.GetConfig().block_size);
     }
     if (gpu_info->index_allocation.buffer_index < idx_heap.GetBufferCount()) {
-        renderer.UpdateAllFrameIndexBufferArrayElements(
+        renderer.UpdateTableElement(SceneGpuLayout::TableId::index, std::nullopt,
             gpu_info->index_allocation.buffer_index,
             idx_heap.GetBuffer(gpu_info->index_allocation.buffer_index),
             idx_heap.GetConfig().block_size);
@@ -127,7 +127,7 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
     if (gpu_info->influence_sets > 0) {
         const vk::Buffer skin_buffer = mgr.GetSkinBuffer(gpu_info->skin_allocation.buffer_index);
         if (skin_buffer) {
-            renderer.UpdateAllFrameSkinBufferArrayElements(
+            renderer.UpdateTableElement(SceneGpuLayout::TableId::skin, std::nullopt,
                 gpu_info->skin_allocation.buffer_index, skin_buffer,
                 mgr.GetSkinBlockSize());
         }
@@ -136,7 +136,7 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
         const vk::Buffer extra_buffer =
             mgr.GetSkinExtraBuffer(gpu_info->skin_extra_allocation.buffer_index);
         if (extra_buffer) {
-            renderer.UpdateAllFrameSkinExtraBufferArrayElements(
+            renderer.UpdateTableElement(SceneGpuLayout::TableId::skin_extra, std::nullopt,
                 gpu_info->skin_extra_allocation.buffer_index, extra_buffer,
                 mgr.GetSkinBlockSize());
         }

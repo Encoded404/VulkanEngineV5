@@ -186,34 +186,43 @@ used to be independent now derive from one budget
 - `kMaxBlocksCeiling` — the compile-time ceiling, because descriptor binding
   array sizes are static.
 - `max_blocks_` — chosen in `SceneRenderer::Initialize` as
-  `clamp(MaxBlocksForDevice(device descriptor limits), 1, ceiling)`, so a larger
-  GPU gets a larger budget without a recompile.
+  `MaxBlocksForDevice(device descriptor limits)`, which already floors at 1 and
+  starts at the ceiling, so a larger GPU gets a larger budget without a
+  recompile.
 
 Descriptor-set binding array sizes and descriptor-pool sizes are computed from
 the same `kSceneSets` row per set (`engine/core/render/SceneGpuLayout.cppm`),
 and each `BlockArray` is given an explicit block limit equal to `max_blocks_`,
 so it can no longer grow past its binding array.
 
+The set index a pipeline binds a layout at is the `kPipelineLayouts` row's
+business, not the set's: one row per pipeline layout names the descriptor
+layouts in set order and the push-constant range, so a set can be bound at a
+different index without touching the set row.
+
 The gather pass clamps the frame's submesh total to
 `max_blocks_ × kEntriesPerBlock` and truncates at a submesh boundary, logging
 once, instead of writing past the binding array. The entity-level gather cap is
 only a safety valve; the submesh budget is the real capacity limit.
 
-Per-submesh cost is fixed at 372 B per submesh per frame (48+36+16+64+192+16);
-with 3 frames in flight that is about 1.1 KiB/submesh, so the ceiling is a
-capability bound, not a recommended working set.
+Per-submesh cost is fixed at 404 B per submesh per frame
+(48+36+16+64+192+16+32), the sum of every `kBlockArrays` row; with 3 frames in
+flight that is about 1.2 KiB/submesh, so the ceiling is a capability bound, not
+a recommended working set.
 
 ### 2.9.2 Block descriptors are written on change
 
 Each per-frame block array only ever gains blocks at the end. A descriptor
 written for a block in an earlier frame stays valid, so `PrepareCompute` writes
-only the blocks that do not exist yet, tracked by a per-frame `BlockBindingCache`
-(`written_blocks` + `epoch`). `CreateFrameBuffers` bumps a renderer-level epoch
+only the blocks that do not exist yet. Every frame-written binding row owns a
+`WriteCursor` (`written_epoch` + `written_blocks`, one per row, indexed by
+`WrittenBindingIndex`): the epoch makes a plain buffer binding a one-time write,
+and a block array publishes the blocks past its cursor as one
+`vkUpdateDescriptorSets` call. `CreateFrameBuffers` bumps a renderer-level epoch
 that forces a full rewrite after the underlying buffers are re-created. Steady
-state therefore performs no block-descriptor writes at all; the previous
-unconditional rewrite cost one call per block-array binding
-(`BlockBindingCount()`, 15 today) × used blocks `vkUpdateDescriptorSets` calls
-every frame.
+state therefore performs no descriptor writes at all for the per-frame sets; the
+previous unconditional rewrite cost one call per block-array binding
+(`BlockBindingCount()`, 15 today) × used blocks calls every frame.
 
 ### 2.10 Deformation: one extra vertex stream, no new draw path
 

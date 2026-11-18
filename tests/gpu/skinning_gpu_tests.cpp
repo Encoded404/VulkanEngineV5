@@ -150,10 +150,12 @@ protected:
         vertex_buffer_->Upload(vertices.data(), vertices.size() * sizeof(Vertex));
         skin_buffer_->Upload(influences.data(), influences.size() * sizeof(GpuBoneInfluence));
 
-        renderer_->UpdateVertexBufferArrayElement(
-            0, 0, static_cast<vk::Buffer>(*vertex_buffer_->GetBuffer()), vk::WholeSize);
-        renderer_->UpdateSkinBufferArrayElement(
-            0, 0, static_cast<vk::Buffer>(*skin_buffer_->GetBuffer()), vk::WholeSize);
+        renderer_->UpdateTableElement(
+            VulkanEngine::SceneGpuLayout::TableId::vertex, 0, 0,
+            static_cast<vk::Buffer>(*vertex_buffer_->GetBuffer()), vk::WholeSize);
+        renderer_->UpdateTableElement(
+            VulkanEngine::SceneGpuLayout::TableId::skin, 0, 0,
+            static_cast<vk::Buffer>(*skin_buffer_->GetBuffer()), vk::WholeSize);
 
         if (!extra_influences.empty()) {
             if (!skin_extra_buffer_) {
@@ -166,8 +168,9 @@ protected:
             }
             skin_extra_buffer_->Upload(extra_influences.data(),
                                        extra_influences.size() * sizeof(GpuBoneInfluence));
-            renderer_->UpdateSkinExtraBufferArrayElement(
-                0, 0, static_cast<vk::Buffer>(*skin_extra_buffer_->GetBuffer()), vk::WholeSize);
+            renderer_->UpdateTableElement(
+                VulkanEngine::SceneGpuLayout::TableId::skin_extra, 0, 0,
+                static_cast<vk::Buffer>(*skin_extra_buffer_->GetBuffer()), vk::WholeSize);
         }
 
         auto palettes = renderer_->MapFrameBonePalettes(0);

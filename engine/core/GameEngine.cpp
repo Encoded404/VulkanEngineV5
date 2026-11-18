@@ -1333,7 +1333,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         // Update SceneRenderer descriptors for new heap blocks (all frames)
         if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
             if (info->vertex_allocation.buffer_index < ctx_.vertex_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateAllFrameVertexBufferArrayElements(
+                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::vertex, std::nullopt,
                     info->vertex_allocation.buffer_index,
                     ctx_.vertex_heap.GetBuffer(info->vertex_allocation.buffer_index),
                     ctx_.vertex_heap.GetConfig().block_size);
@@ -1341,7 +1341,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         }
         if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
             if (info->index_allocation.buffer_index < ctx_.index_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateAllFrameIndexBufferArrayElements(
+                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::index, std::nullopt,
                     info->index_allocation.buffer_index,
                     ctx_.index_heap.GetBuffer(info->index_allocation.buffer_index),
                     ctx_.index_heap.GetConfig().block_size);
@@ -1350,7 +1350,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         if (info->has_uv1 &&
             uv_buffers_updated.insert(info->uv_allocation.buffer_index).second) {
             if (info->uv_allocation.buffer_index < ctx_.uv_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateAllFrameUvBufferArrayElements(
+                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::uv, std::nullopt,
                     info->uv_allocation.buffer_index,
                     ctx_.uv_heap.GetBuffer(info->uv_allocation.buffer_index),
                     ctx_.uv_heap.GetConfig().block_size);
@@ -1362,7 +1362,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         if (info->influence_sets > 0 &&
             skin_buffers_updated.insert(info->skin_allocation.buffer_index).second) {
             if (info->skin_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateAllFrameSkinBufferArrayElements(
+                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin, std::nullopt,
                     info->skin_allocation.buffer_index,
                     ctx_.skin_heap.GetBuffer(info->skin_allocation.buffer_index),
                     ctx_.skin_heap.GetConfig().block_size);
@@ -1371,7 +1371,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         if (info->has_extra_skin &&
             skin_extra_buffers_updated.insert(info->skin_extra_allocation.buffer_index).second) {
             if (info->skin_extra_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateAllFrameSkinExtraBufferArrayElements(
+                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin_extra, std::nullopt,
                     info->skin_extra_allocation.buffer_index,
                     ctx_.skin_heap.GetBuffer(info->skin_extra_allocation.buffer_index),
                     ctx_.skin_heap.GetConfig().block_size);

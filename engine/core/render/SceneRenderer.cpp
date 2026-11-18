@@ -27,17 +27,24 @@ import VulkanBackend.Vulkan.VulkanCapabilities;
 
 namespace VulkanEngine::SceneRenderer {
 
+// Short names for the slot enums. The tables own the numbering; these only keep the call sites readable.
+using SetIdx = SceneGpuLayout::SetId;
+using BufIdx = SceneGpuLayout::BufferSlot;
+using BlkIdx = SceneGpuLayout::BlockSlot;
+
 // SceneLimits is Vulkan-free, so its record sizes are plain integers; they are pinned to the types they describe here, where both are visible.
 static_assert(sizeof(vk::DrawIndexedIndirectCommand) == SceneLimits::kIndirectCommandBytes,
               "SceneLimits::kIndirectCommandBytes must equal vk::DrawIndexedIndirectCommand");
 static_assert(sizeof(SkinEntry) == SceneLimits::kSkinEntryBytes,
               "SceneLimits::kSkinEntryBytes must equal SkinEntry");
+static_assert(sizeof(ModifierPC) ==
+                  SceneGpuLayout::LayoutOf(SceneGpuLayout::PipelineLayoutId::deform)
+                      .push_constant_bytes,
+              "the deform layout's push-constant range must equal ModifierPC");
 
 namespace {
 
-// ── Table translation ──
-//
-// The rows already carry vk:: flag words, so the only translation left is the block-array memory kind, which has to produce a BlockArray::MemoryMode as well as a flag word.
+// The set rows carry vk:: flag words already, so the only translation left is the block-array memory kind, which has to produce a BlockArray::MemoryMode as well as a flag word.
 
 constexpr vk::MemoryPropertyFlags ToVkMemory(const SceneGpuLayout::BufMemory memory) {
     return memory == SceneGpuLayout::BufMemory::host_visible
@@ -45,80 +52,57 @@ constexpr vk::MemoryPropertyFlags ToVkMemory(const SceneGpuLayout::BufMemory mem
         : vk::MemoryPropertyFlags(vk::MemoryPropertyFlagBits::eDeviceLocal);
 }
 
-// ── Binding numbers for the paths that write descriptors outside PrepareCompute ──
-//
-// The shaders hard-code these numbers, so the table is the only place the CPU side may name them.
-// Looking them up by kind and position keeps a renumbering to one edit, and the static_asserts turn a missing row into a compile error instead of a write to kNoBinding.
+constexpr GpuResources::MemoryMode ToMemoryMode(const SceneGpuLayout::BufMemory memory) {
+    return memory == SceneGpuLayout::BufMemory::device_local
+        ? GpuResources::MemoryMode::DeviceLocal
+        : GpuResources::MemoryMode::HostVisible;
+}
 
-inline constexpr std::uint32_t kVertexTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::vertex_buffers, vk::DescriptorType::eStorageBuffer, 0);
-inline constexpr std::uint32_t kUvTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::vertex_buffers, vk::DescriptorType::eStorageBuffer, 1);
-inline constexpr std::uint32_t kIndexTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::index_buffers, vk::DescriptorType::eStorageBuffer, 0);
-inline constexpr std::uint32_t kSkinTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::deform, vk::DescriptorType::eStorageBuffer, 0);
-inline constexpr std::uint32_t kSkinExtraTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::deform, vk::DescriptorType::eStorageBuffer, 1);
-inline constexpr std::uint32_t kLightTableBinding = SceneGpuLayout::BindingOfKind(
-    SceneGpuLayout::SetId::scene_uniform, vk::DescriptorType::eStorageBuffer, 1);
+// Layout creation from one set row.
+// The create info borrows `bindings` and `binding_flags`, so the layout is created here, while both are alive; there is no half-built plan to keep in its final place.
 
-static_assert(kVertexTableBinding != SceneGpuLayout::kNoBinding &&
-              kUvTableBinding != SceneGpuLayout::kNoBinding &&
-              kIndexTableBinding != SceneGpuLayout::kNoBinding &&
-              kSkinTableBinding != SceneGpuLayout::kNoBinding &&
-              kSkinExtraTableBinding != SceneGpuLayout::kNoBinding &&
-              kLightTableBinding != SceneGpuLayout::kNoBinding,
-              "the upload paths write these bindings, so the tables must keep the rows");
-
-// The vk:: create info for one set, plus the storage its pNext chain points at.
-// Build() must run once the object is in its final place: `info` keeps raw pointers into `bindings` and `binding_flags`.
-struct LayoutPlan {
+vk::raii::DescriptorSetLayout CreateSetLayout(const vk::raii::Device& dev,
+                                              const SceneGpuLayout::SetSpec& set,
+                                              const std::uint32_t max_blocks) {
     std::vector<vk::DescriptorSetLayoutBinding> bindings;
     std::vector<vk::DescriptorBindingFlags> binding_flags;
-    vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{};
-    vk::DescriptorSetLayoutCreateInfo info{};
-
-    void Build(const SceneGpuLayout::SetSpec& set, const std::uint32_t max_blocks) {
-        bindings.reserve(set.bindings.size());
-        binding_flags.reserve(set.bindings.size());
-        for (const SceneGpuLayout::BindingSpec& row : set.bindings) {
-            vk::DescriptorSetLayoutBinding binding{};
-            binding.binding = row.binding;
-            binding.descriptorType = row.kind;
-            binding.descriptorCount = SceneGpuLayout::DescriptorCount(row, max_blocks);
-            binding.stageFlags = row.stages;
-            bindings.push_back(binding);
-            binding_flags.push_back(row.flags);
-        }
-        if (!bindings.empty()) {
-            // pNext carries one flag word per binding; an all-zero word means no special behaviour, so this is safe for every set.
-            flag_info.bindingCount = static_cast<std::uint32_t>(binding_flags.size());
-            flag_info.pBindingFlags = binding_flags.data();
-            info.pNext = &flag_info;
-        }
-        if (SceneGpuLayout::UpdatesAfterBind(set.id)) {
-            // Required when any binding uses eUpdateAfterBind, and required on the pool the set is allocated from.
-            // Deriving it from the rows keeps the two from disagreeing.
-            info.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
-        }
-        info.bindingCount = static_cast<std::uint32_t>(bindings.size());
-        info.pBindings = bindings.data();
+    bindings.reserve(set.bindings.size());
+    binding_flags.reserve(set.bindings.size());
+    for (const SceneGpuLayout::BindingSpec& row : set.bindings) {
+        bindings.push_back(vk::DescriptorSetLayoutBinding{
+            row.binding, row.kind, SceneGpuLayout::DescriptorCount(row, max_blocks), row.stages});
+        binding_flags.push_back(row.flags);
     }
-};
+
+    // pNext carries one flag word per binding; an all-zero word means no special behaviour, so attaching it is safe for every set.
+    const vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info(
+        static_cast<std::uint32_t>(binding_flags.size()), binding_flags.data());
+    const vk::DescriptorSetLayoutCreateInfo info{
+        // Required when any binding uses eUpdateAfterBind, and required on the pool the set is allocated from.
+        // Deriving it from the rows keeps the layout flag, the pool flag and the binding flags from disagreeing.
+        SceneGpuLayout::UpdatesAfterBind(set.id)
+            ? vk::DescriptorSetLayoutCreateFlags(
+                  vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool)
+            : vk::DescriptorSetLayoutCreateFlags{},
+        static_cast<std::uint32_t>(bindings.size()),
+        bindings.data(),
+        bindings.empty() ? nullptr : static_cast<const void*>(&flag_info)};
+    return {dev, info};
+}
 
 GpuResources::DescriptorPoolConfig ToPoolConfig(const SceneGpuLayout::SetSpec& set,
                                                 const SceneGpuLayout::PoolCounts& counts) {
-    GpuResources::DescriptorPoolConfig config{};
-    config.max_sets = counts.max_sets;
-    config.max_storage_buffers = counts.storage_buffers;
-    config.max_combined_image_samplers = counts.combined_image_samplers;
-    config.max_sampled_images = counts.sampled_images;
-    config.max_storage_images = counts.storage_images;
-    config.max_samplers = counts.samplers;
-    // A layout created with eUpdateAfterBindPool requires a pool with the same flag, and both must agree with the binding flags.
-    config.update_after_bind = SceneGpuLayout::UpdatesAfterBind(set.id);
-    return config;
+    return {
+        .max_sets = counts.max_sets,
+        .max_combined_image_samplers = counts.combined_image_samplers,
+        .max_uniform_buffers = 0,
+        .max_storage_buffers = counts.storage_buffers,
+        .max_storage_images = counts.storage_images,
+        .max_sampled_images = counts.sampled_images,
+        .max_samplers = counts.samplers,
+        // A layout created with eUpdateAfterBindPool requires a pool with the same flag, and both must agree with the binding flags.
+        .update_after_bind = SceneGpuLayout::UpdatesAfterBind(set.id),
+    };
 }
 
 } // anonymous namespace
@@ -127,111 +111,8 @@ SceneRenderer::~SceneRenderer() {
     Shutdown();
 }
 
-// ── FrameResources slot accessors ──
-//
-// One switch per slot kind keeps the tables free of member pointers (and of this private struct).
-// The cost is three small functions; the benefit is that a missing enum value fails to compile here rather than becoming a silent null handle.
-
-GpuResources::GpuDescriptorSet& SceneRenderer::FrameResources::SetFor(
-    const SceneGpuLayout::SetId id) {
-    switch (id) {
-        case SceneGpuLayout::SetId::expand: return expand_set;
-        case SceneGpuLayout::SetId::occlusion: return occlusion_set;
-        case SceneGpuLayout::SetId::collect: return collect_set;
-        case SceneGpuLayout::SetId::collect_write: return collect_write_set;
-        case SceneGpuLayout::SetId::occluder_select: return occluder_select_set;
-        case SceneGpuLayout::SetId::submesh_vertex: return submesh_vertex_set;
-        case SceneGpuLayout::SetId::indirection: return indirection_raw_set;
-        case SceneGpuLayout::SetId::vertex_buffers: return vertex_buffers_set;
-        case SceneGpuLayout::SetId::index_buffers: return index_buffers_set;
-        case SceneGpuLayout::SetId::deform: return deform_set;
-        case SceneGpuLayout::SetId::hiz: return hiz_set;
-        case SceneGpuLayout::SetId::empty: return empty_set;
-        case SceneGpuLayout::SetId::scene_uniform: break;   // owned by the renderer
-        case SceneGpuLayout::SetId::count: break;
-    }
-    // The lighting set is a single set on the renderer, not part of the ring.
-    // There is no valid handle to return: a misbind here is exactly the failure the tables exist to prevent, so it traps instead of binding the wrong set.
-    assert(id != SceneGpuLayout::SetId::scene_uniform &&
-           "SetFor(SetId::scene_uniform) is not part of the frame ring");
-    std::unreachable();
-}
-
-const GpuResources::GpuDescriptorSet& SceneRenderer::FrameResources::SetFor(
-    const SceneGpuLayout::SetId id) const {
-    return const_cast<FrameResources*>(this)->SetFor(id);
-}
-
-GpuResources::GpuBuffer& SceneRenderer::FrameResources::BufferFor(
-    const SceneGpuLayout::BufferSlot slot) {
-    switch (slot) {
-        case SceneGpuLayout::BufferSlot::vertex_indirection: return vertex_indirection;
-        case SceneGpuLayout::BufferSlot::draw_indices: return draw_indices;
-        case SceneGpuLayout::BufferSlot::expand_counter: return expand_counter;
-        case SceneGpuLayout::BufferSlot::main_indices: return main_indices;
-        case SceneGpuLayout::BufferSlot::depth_indices: return depth_indices;
-        case SceneGpuLayout::BufferSlot::occluder_indices: return occluder_indices;
-        case SceneGpuLayout::BufferSlot::main_commands: return main_commands;
-        case SceneGpuLayout::BufferSlot::depth_commands: return depth_commands;
-        case SceneGpuLayout::BufferSlot::occluder_commands: return occluder_commands;
-        case SceneGpuLayout::BufferSlot::technique_region_bases: return technique_region_bases;
-        case SceneGpuLayout::BufferSlot::depth_out_counter: return depth_out_counter;
-        case SceneGpuLayout::BufferSlot::depth_technique_counts: return depth_technique_counts;
-        case SceneGpuLayout::BufferSlot::occluder_out_counter: return occluder_out_counter;
-        case SceneGpuLayout::BufferSlot::occluder_technique_counts: return occluder_technique_counts;
-        case SceneGpuLayout::BufferSlot::technique_draw_commands: return technique_draw_commands;
-        case SceneGpuLayout::BufferSlot::occluder_candidate_count: return occluder_candidate_count;
-        case SceneGpuLayout::BufferSlot::technique_counts: return technique_counts;
-        case SceneGpuLayout::BufferSlot::technique_results: return technique_results;
-        case SceneGpuLayout::BufferSlot::bone_palettes: return bone_palettes;
-        case SceneGpuLayout::BufferSlot::modifier_params: return modifier_params;
-        case SceneGpuLayout::BufferSlot::deform_vertices: return deform_vertices;
-        case SceneGpuLayout::BufferSlot::technique_flags:
-        case SceneGpuLayout::BufferSlot::scene_header:
-            break;   // singletons: see SceneRenderer::BufferRef
-        case SceneGpuLayout::BufferSlot::count: break;
-    }
-    assert(slot != SceneGpuLayout::BufferSlot::technique_flags &&
-           slot != SceneGpuLayout::BufferSlot::scene_header &&
-           "singleton buffers are not part of the frame ring");
-    std::unreachable();
-}
-
-const GpuResources::GpuBuffer& SceneRenderer::FrameResources::BufferFor(
-    const SceneGpuLayout::BufferSlot slot) const {
-    return const_cast<FrameResources*>(this)->BufferFor(slot);
-}
-
-GpuResources::BlockArray& SceneRenderer::FrameResources::BlockArrayFor(
-    const SceneGpuLayout::BlockSlot slot) {
-    switch (slot) {
-        case SceneGpuLayout::BlockSlot::dynamic_entries: return dynamic_entries;
-        case SceneGpuLayout::BlockSlot::static_entries: return static_entries;
-        case SceneGpuLayout::BlockSlot::bounding_spheres: return bounding_spheres;
-        case SceneGpuLayout::BlockSlot::obb_entries: return obb_entries;
-        case SceneGpuLayout::BlockSlot::submesh_vertex_entries: return submesh_vertex_entries;
-        case SceneGpuLayout::BlockSlot::cull_entries: return cull_entries;
-        case SceneGpuLayout::BlockSlot::skin_entries: return skin_entries;
-        case SceneGpuLayout::BlockSlot::count: break;
-    }
-    assert(false && "unknown BlockSlot");
-    std::unreachable();
-}
-
-const GpuResources::BlockArray& SceneRenderer::FrameResources::BlockArrayFor(
-    const SceneGpuLayout::BlockSlot slot) const {
-    return const_cast<FrameResources*>(this)->BlockArrayFor(slot);
-}
-
-GpuResources::GpuBuffer& SceneRenderer::BufferRef(FrameResources& fr,
-                                                  const SceneGpuLayout::BufferSlot slot) {
-    if (slot == SceneGpuLayout::BufferSlot::technique_flags) return technique_flags;
-    if (slot == SceneGpuLayout::BufferSlot::scene_header) return scene_header;
-    return fr.BufferFor(slot);
-}
-
 vk::DescriptorSetLayout SceneRenderer::GetSetLayout(const SceneGpuLayout::SetId id) const {
-    const SetHandles& slot = sets_[static_cast<std::size_t>(id)];
+    const SetHandles& slot = sets_[id];
     return slot.layout ? static_cast<vk::DescriptorSetLayout>(**slot.layout)
                        : vk::DescriptorSetLayout{};
 }
@@ -279,6 +160,15 @@ std::uint64_t SceneRenderer::ComputeSize(const SceneGpuLayout::SizeKind kind) co
     std::unreachable();
 }
 
+void SceneRenderer::ClearBuffer(GpuResources::GpuBuffer& buffer) {
+    // A host-visible buffer is mapped directly; the rows that ask for a clear are all host-visible, so a failed map means the buffer was never created for this mode.
+    if (!buffer.IsValid()) return;
+    void* mapped = buffer.Map(0, buffer.GetSize());
+    if (mapped == nullptr) return;
+    std::memset(mapped, 0, static_cast<std::size_t>(buffer.GetSize()));
+    buffer.Unmap();
+}
+
 std::uint64_t SceneRenderer::BufferBytes(const SceneGpuLayout::SizeRule& rule) const {
     // The row owns the floor, so this only applies it: the formula is raw, and a zero-capacity scene is kept off the zero-byte allocation by the default floor of 1.
     return std::max<std::uint64_t>(ComputeSize(rule.kind), rule.min_bytes);
@@ -292,9 +182,8 @@ bool SceneRenderer::CreateDescriptorSets(
 
     for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
         SetHandles& slot = SetSlot(set.id);
-        LayoutPlan plan;
-        plan.Build(set, max_blocks_);
-        slot.layout = std::make_unique<vk::raii::DescriptorSetLayout>(dev, plan.info);
+        slot.layout = std::make_unique<vk::raii::DescriptorSetLayout>(
+            CreateSetLayout(dev, set, max_blocks_));
         VulkanBackend::Vulkan::SetVulkanObjectName(
             dev, *slot.layout, std::string(set.name) + "-layout");
         slot.pool = GpuResources::DescriptorPool::Create(
@@ -306,52 +195,44 @@ bool SceneRenderer::CreateDescriptorSets(
     // One allocation shape for both kinds of row: a variable-count set (the bindless index table) is allocated at its full binding count, so the shader's array length matches the descriptor array.
     const auto allocate = [this](const SceneGpuLayout::SetSpec& set) {
         SetHandles& slot = SetSlot(set.id);
-        const std::uint32_t variable = SceneGpuLayout::VariableBinding(set.id);
-        if (variable == SceneGpuLayout::kNoBinding) {
+        const SceneGpuLayout::BindingSpec* variable = SceneGpuLayout::VariableRow(set.id);
+        if (variable == nullptr) {
             return slot.pool->Allocate(**slot.layout);
         }
-        // VariableBinding only returns a binding number it found in this set, so the row is here.
-        for (const SceneGpuLayout::BindingSpec& row : set.bindings) {
-            if (row.binding == variable) {
-                return slot.pool->Allocate(**slot.layout,
-                                           SceneGpuLayout::DescriptorCount(row, max_blocks_));
-            }
-        }
-        std::unreachable();
+        return slot.pool->Allocate(**slot.layout,
+                                   SceneGpuLayout::DescriptorCount(*variable, max_blocks_));
     };
 
     // A fixed row owns one set, allocated here from the pool its `fixed_sets` sized.
-    // The field now has one mechanism behind it instead of a flag plus a special case in this function.
     for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
         if (set.fixed_sets == 0) continue;
-        VulkanEngine::GpuResources::GpuDescriptorSet& owned =
-            owned_sets_[static_cast<std::size_t>(set.id)];
-        owned = allocate(set);
-        owned.SetDebugName(dev, std::string(set.name) + "-set");
+        owned_sets_[set.id] = allocate(set);
+        owned_sets_[set.id].SetDebugName(dev, std::string(set.name) + "-set");
     }
 
     // Every other row gets one set per frame in flight.
     for (auto& fr : frames_) {
         for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
             if (set.fixed_sets != 0) continue;
-            fr.SetFor(set.id) = allocate(set);
-            fr.SetFor(set.id).SetDebugName(dev, std::string(set.name) + "-set");
+            fr[set.id] = allocate(set);
+            fr[set.id].SetDebugName(dev, std::string(set.name) + "-set");
         }
     }
 
-    // Publish the blocks the vertex heap already holds.
-    // Every later block is written when it is allocated (UpdateVertexBufferArrayElement), but a heap populated before the renderer existed has no such event, so the initial descriptors are written here.
-    for (auto& fr : frames_) {
+    // Publish the vertex-table elements the heap already holds.
+    // Every later block is written when it is allocated, but a heap populated before the renderer existed has no such event.
+    // The published elements are consecutive, so the whole range is one descriptor write per frame rather than one driver call per block.
+    const SceneGpuLayout::BindingSpec* vertex_table =
+        SceneGpuLayout::TableBinding(SceneGpuLayout::TableId::vertex);
+    if (vh.GetBufferCount() != 0) {
+        std::vector<vk::DescriptorBufferInfo> infos;
+        infos.reserve(vh.GetBufferCount());
         for (std::uint32_t block = 0; block < vh.GetBufferCount(); ++block) {
-            const vk::DescriptorBufferInfo info(vh.GetBuffer(block), 0, vk::WholeSize);
-            vk::WriteDescriptorSet write{};
-            write.dstSet = fr.vertex_buffers_set.GetHandle();
-            write.dstBinding = kVertexTableBinding;
-            write.dstArrayElement = block;
-            write.descriptorCount = 1;
-            write.descriptorType = vk::DescriptorType::eStorageBuffer;
-            write.pBufferInfo = &info;
-            dev.updateDescriptorSets(write, nullptr);
+            infos.emplace_back(vh.GetBuffer(block), 0, vk::WholeSize);
+        }
+        for (auto& fr : frames_) {
+            fr[SetIdx::vertex_buffers].UpdateBuffers(vertex_table->binding,
+                                                     vertex_table->kind, infos);
         }
     }
 
@@ -361,93 +242,66 @@ bool SceneRenderer::CreateDescriptorSets(
 void SceneRenderer::WriteBinding(FrameResources& fr, const SceneGpuLayout::SetSpec& set,
                                  const SceneGpuLayout::BindingSpec& binding) {
     if (!backend_) return;
-    auto& dev = backend_->GetDevice();
-    const vk::DescriptorSet dst = fr.SetFor(set.id).GetHandle();
-    if (!dst) return;
+    GpuResources::GpuDescriptorSet& dst = SetFor(fr, set.id);
+    if (!dst.IsValid()) return;
 
-    switch (binding.source) {
-        case SceneGpuLayout::SourceKind::block_array: {
-            GpuResources::BlockArray& blocks = fr.BlockArrayFor(binding.block_slot);
-            const std::uint32_t cursor =
-                SceneGpuLayout::BlockBindingIndex(set.id, binding.binding);
-            if (cursor == SceneGpuLayout::kNoBinding) return;
-            auto& cache = fr.block_binding_cache[cursor];
-            if (cache.epoch != binding_epoch_) {
-                cache.written_blocks = 0;
-                cache.epoch = binding_epoch_;
-            }
-            // Only the blocks that do not exist yet: blocks are appended and never removed, and binding_epoch_ forces a full rewrite after a capacity change re-created the buffers.
-            for (std::uint32_t block = cache.written_blocks; block < blocks.BlockCount();
-                 ++block) {
-                const vk::DescriptorBufferInfo info(blocks.GetBlockArray(block), 0,
-                                                    blocks.BlockSize());
-                vk::WriteDescriptorSet write{};
-                write.dstSet = dst;
-                write.dstBinding = binding.binding;
-                write.dstArrayElement = block;
-                write.descriptorCount = 1;
-                write.descriptorType = binding.kind;
-                write.pBufferInfo = &info;
-                dev.updateDescriptorSets(write, nullptr);
-            }
-            cache.written_blocks = blocks.BlockCount();
-            break;
+    const std::uint32_t row = SceneGpuLayout::WrittenBindingIndex(set.id, binding.binding);
+    if (row == SceneGpuLayout::kNoBinding) return;
+    FrameResources::WriteCursor& cursor = fr.write_cursors[row];
+    const bool rewritten = cursor.written_epoch != binding_epoch_;
+
+    if (const auto* blocks = std::get_if<SceneGpuLayout::BlockArraySource>(&binding.source)) {
+        GpuResources::BlockArray& array = fr[blocks->slot];
+        const std::uint32_t block_count = array.BlockCount();
+        const std::uint32_t first = rewritten ? 0u : cursor.written_blocks;
+        if (first >= block_count) {
+            cursor.written_epoch = binding_epoch_;
+            return;
         }
-        case SceneGpuLayout::SourceKind::buffer: {
-            GpuResources::GpuBuffer& buffer = BufferRef(fr, binding.buffer_slot);
-            if (!buffer.IsValid()) return;
-            const vk::DescriptorBufferInfo info(*buffer.GetBuffer(), 0, vk::WholeSize);
-            vk::WriteDescriptorSet write{};
-            write.dstSet = dst;
-            write.dstBinding = binding.binding;
-            write.descriptorCount = 1;
-            write.descriptorType = binding.kind;
-            write.pBufferInfo = &info;
-            dev.updateDescriptorSets(write, nullptr);
-            break;
+        // Only the blocks that do not exist yet: blocks are appended and never removed, and a new binding epoch (the buffers were re-created) rewrites the whole array.
+        // Consecutive array elements take one write, so a fresh array costs one driver call rather than one per block.
+        std::vector<vk::DescriptorBufferInfo> infos;
+        infos.reserve(block_count - first);
+        for (std::uint32_t block = first; block < block_count; ++block) {
+            infos.emplace_back(array.GetBlockArray(block), 0, array.BlockSize());
         }
-        case SceneGpuLayout::SourceKind::mode_buffer: {
-            const SceneGpuLayout::BufferSlot slot = draw_mode_ == DrawMode::MID
-                ? binding.buffer_slot_mid
-                : binding.buffer_slot;
-            GpuResources::GpuBuffer& buffer = BufferRef(fr, slot);
-            if (!buffer.IsValid()) return;
-            const vk::DescriptorBufferInfo info(*buffer.GetBuffer(), 0, vk::WholeSize);
-            vk::WriteDescriptorSet write{};
-            write.dstSet = dst;
-            write.dstBinding = binding.binding;
-            write.descriptorCount = 1;
-            write.descriptorType = binding.kind;
-            write.pBufferInfo = &info;
-            dev.updateDescriptorSets(write, nullptr);
-            break;
-        }
-        case SceneGpuLayout::SourceKind::hiz_image: {
-            // The occlusion set's combined image sampler.
-            // Both handles come from the Hi-Z ring, so a headless frame (which never created it) leaves the binding alone.
-            if (!hiz_sampler_ || !*fr.hiz_full_view) return;
-            const vk::DescriptorImageInfo info(**hiz_sampler_, *fr.hiz_full_view,
-                                               vk::ImageLayout::eShaderReadOnlyOptimal);
-            vk::WriteDescriptorSet write{};
-            write.dstSet = dst;
-            write.dstBinding = binding.binding;
-            write.descriptorCount = 1;
-            write.descriptorType = binding.kind;
-            write.pImageInfo = &info;
-            dev.updateDescriptorSets(write, nullptr);
-            break;
-        }
-        case SceneGpuLayout::SourceKind::none:
-            break;
+        dst.UpdateBuffers(binding.binding, binding.kind, infos, first);
+        cursor.written_blocks = block_count;
+        cursor.written_epoch = binding_epoch_;
+        return;
+    }
+
+    if (const auto* buffers = std::get_if<SceneGpuLayout::BufferSource>(&binding.source)) {
+        // A buffer binding points at one object for the life of that object, so it is written once per epoch rather than every frame.
+        if (!rewritten) return;
+        GpuResources::GpuBuffer& buffer =
+            BufferRef(fr, draw_mode_ == DrawMode::MID ? buffers->mid : buffers->cid);
+        // A mode with no buffer for this slot leaves the descriptor unwritten; the epoch stays stale so the next frame retries, and a mode switch re-creates the buffers anyway.
+        if (!buffer.IsValid()) return;
+        const std::array<vk::DescriptorBufferInfo, 1> info{
+            vk::DescriptorBufferInfo{*buffer.GetBuffer(), 0, vk::WholeSize}};
+        dst.UpdateBuffers(binding.binding, binding.kind, info);
+        cursor.written_epoch = binding_epoch_;
+        return;
+    }
+
+    if (std::holds_alternative<SceneGpuLayout::HizImageSource>(binding.source)) {
+        // Both handles come from the Hi-Z ring, so a headless frame (which never created it) leaves the binding alone and retries once the ring exists.
+        if (!rewritten || !hiz_sampler_ || !*fr.hiz_full_view) return;
+        const std::array<vk::DescriptorImageInfo, 1> info{vk::DescriptorImageInfo{
+            **hiz_sampler_, *fr.hiz_full_view, vk::ImageLayout::eShaderReadOnlyOptimal}};
+        dst.UpdateImages(binding.binding, binding.kind, info);
+        cursor.written_epoch = binding_epoch_;
+        return;
     }
 }
 
 void SceneRenderer::WriteHiZBindings(FrameResources& fr) {
     if (!backend_ || !hiz_sampler_ || !*fr.hiz_image || hiz_mip_count_ == 0) return;
-    auto& dev = backend_->GetDevice();
-    const vk::DescriptorSet dst = fr.hiz_set.GetHandle();
-    if (!dst) return;
+    GpuResources::GpuDescriptorSet& dst = fr[SetIdx::hiz];
+    if (!dst.IsValid()) return;
 
+    // The hiz set carries one binding of each kind, so the row lookup is the only place those numbers live.
     const std::uint32_t depth_binding = SceneGpuLayout::BindingOfKind(
         SceneGpuLayout::SetId::hiz, vk::DescriptorType::eSampledImage);
     const std::uint32_t sampler_binding = SceneGpuLayout::BindingOfKind(
@@ -458,49 +312,24 @@ void SceneRenderer::WriteHiZBindings(FrameResources& fr) {
            sampler_binding != SceneGpuLayout::kNoBinding &&
            levels_binding != SceneGpuLayout::kNoBinding);
 
-    // Bind the whole storage-image array the layout declares (descriptorCount = MAX_HIZ_MIPS).
-    // Re-pointing the tail levels (beyond mip_levels) at the coarsest mip keeps every descriptor valid after a shrink; leaving them would dangle at the previous resize's views.
+    // Bind the whole storage-image array the layout declares, re-pointing the tail levels (beyond mip_levels) at the coarsest mip so every descriptor stays valid after a shrink; leaving them would dangle at the previous resize's views.
     std::vector<vk::DescriptorImageInfo> storage_infos;
-    storage_infos.reserve(MAX_HIZ_MIPS);
+    storage_infos.reserve(SceneLimits::kMaxHiZMips);
     const std::uint32_t last_level = hiz_mip_count_ - 1;
-    for (std::uint32_t mip = 0; mip < MAX_HIZ_MIPS; ++mip) {
+    for (std::uint32_t mip = 0; mip < SceneLimits::kMaxHiZMips; ++mip) {
         const std::uint32_t view = std::min(mip, last_level);
-        storage_infos.emplace_back(nullptr, *fr.hiz_mip_views[view],
-                                   vk::ImageLayout::eGeneral);
+        storage_infos.emplace_back(nullptr, *fr.hiz_mip_views[view], vk::ImageLayout::eGeneral);
     }
-    {
-        vk::WriteDescriptorSet write{};
-        write.dstSet = dst;
-        write.dstBinding = levels_binding;
-        write.dstArrayElement = 0;
-        write.descriptorCount = MAX_HIZ_MIPS;
-        write.descriptorType = vk::DescriptorType::eStorageImage;
-        write.pImageInfo = storage_infos.data();
-        dev.updateDescriptorSets(write, nullptr);
-    }
+    dst.UpdateImages(levels_binding, vk::DescriptorType::eStorageImage, storage_infos);
+
     // Bind hiz mip 0 as the placeholder depth input; eGeneral matches the storage-image binding on the same subresource.
-    {
-        const vk::DescriptorImageInfo info(nullptr, *fr.hiz_mip_views[0],
-                                           vk::ImageLayout::eGeneral);
-        vk::WriteDescriptorSet write{};
-        write.dstSet = dst;
-        write.dstBinding = depth_binding;
-        write.descriptorCount = 1;
-        write.descriptorType = vk::DescriptorType::eSampledImage;
-        write.pImageInfo = &info;
-        dev.updateDescriptorSets(write, nullptr);
-    }
-    {
-        const vk::DescriptorImageInfo info(**hiz_sampler_, nullptr,
-                                           vk::ImageLayout::eShaderReadOnlyOptimal);
-        vk::WriteDescriptorSet write{};
-        write.dstSet = dst;
-        write.dstBinding = sampler_binding;
-        write.descriptorCount = 1;
-        write.descriptorType = vk::DescriptorType::eSampler;
-        write.pImageInfo = &info;
-        dev.updateDescriptorSets(write, nullptr);
-    }
+    const std::array<vk::DescriptorImageInfo, 1> depth_info{
+        vk::DescriptorImageInfo{nullptr, *fr.hiz_mip_views[0], vk::ImageLayout::eGeneral}};
+    dst.UpdateImages(depth_binding, vk::DescriptorType::eSampledImage, depth_info);
+
+    const std::array<vk::DescriptorImageInfo, 1> sampler_info{
+        vk::DescriptorImageInfo{**hiz_sampler_, nullptr, vk::ImageLayout::eShaderReadOnlyOptimal}};
+    dst.UpdateImages(sampler_binding, vk::DescriptorType::eSampler, sampler_info);
 }
 
 bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
@@ -551,8 +380,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
             .max_per_stage_descriptor_storage_buffers =
                 limits.maxPerStageDescriptorStorageBuffers,
         };
-        max_blocks_ = std::clamp(SceneGpuLayout::MaxBlocksForDevice(device_limits),
-                                 1u, SceneLimits::kMaxBlocksCeiling);
+        // MaxBlocksForDevice already floors at 1 and starts at kMaxBlocksCeiling.
+        max_blocks_ = SceneGpuLayout::MaxBlocksForDevice(device_limits);
         LOGIFACE_LOG(info, "SceneRenderer: submesh block budget max_blocks=" +
                      std::to_string(max_blocks_) + " (" + std::to_string(MaxSubmeshes()) +
                      " submeshes; ceiling " +
@@ -584,18 +413,11 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
     frames_.resize(frames_in_flight_);
     frame_modifier_dispatches_.assign(frames_in_flight_, {});
 
-    // Size every pipeline retire ring consistently with the frame depth.
-    expand_slot_.SetFramesInFlight(frames_in_flight_);
-    occlusion_slot_.SetFramesInFlight(frames_in_flight_);
-    hiz_slot_.SetFramesInFlight(frames_in_flight_);
-    collect_count_slot_.SetFramesInFlight(frames_in_flight_);
-    collect_write_slot_.SetFramesInFlight(frames_in_flight_);
+    // Size every pipeline retire ring consistently with the frame depth, one row per built-in pass plus the depth prepass.
+    for (const ComputePipelineRow& row : ComputePipelineRows()) {
+        (this->*row.slot).SetFramesInFlight(frames_in_flight_);
+    }
     depth_slot_.SetFramesInFlight(frames_in_flight_);
-    occluder_select_slot_.SetFramesInFlight(frames_in_flight_);
-    occluder_select_mid_slot_.SetFramesInFlight(frames_in_flight_);
-    pre_cull_slot_.SetFramesInFlight(frames_in_flight_);
-    pre_cull_mid_slot_.SetFramesInFlight(frames_in_flight_);
-    collect_count_mid_slot_.SetFramesInFlight(frames_in_flight_);
 
     // Descriptor sets: layouts, pools and the per-frame sets.
     // Every binding number, descriptor count, stage mask, binding flag and pool size comes from SceneGpuLayout::kSceneSets, so a set's shape is declared exactly once.
@@ -606,13 +428,15 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
 
     // Per-frame ring resources.
     {
-        // The shared technique flag table is a singleton, not part of the ring.
-        const SceneGpuLayout::SingletonBufferSpec* flags_spec =
-            SceneGpuLayout::SingletonSpecOf(SceneGpuLayout::BufferSlot::technique_flags);
-        technique_flags = GpuResources::GpuBuffer::Create(be, BufferBytes(flags_spec->size),
-            flags_spec->flags.usage, flags_spec->flags.memory);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, technique_flags.GetBuffer(),
-                                                   vk::ObjectType::eBuffer, "technique-flags");
+        // The singleton buffers outlive the ring: the shared technique flag table and the lighting header.
+        for (const SceneGpuLayout::SingletonBufferSpec& spec : SceneGpuLayout::kSingletonBuffers) {
+            GpuResources::GpuBuffer& buffer = owned_buffers_[spec.slot];
+            buffer = GpuResources::GpuBuffer::Create(be, BufferBytes(spec.size),
+                                                    spec.flags.usage, spec.flags.memory);
+            VulkanBackend::Vulkan::SetVulkanObjectName(dev, buffer.GetBuffer(),
+                                                       vk::ObjectType::eBuffer,
+                                                       std::string(spec.name));
+        }
 
         // Per-submesh block arrays. Each row is bounded to the runtime block budget: its descriptors are a max_blocks_-sized binding array, so growing past that would write descriptors out of range.
         for (auto& fr : frames_) {
@@ -624,10 +448,8 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
                 cfg.extra_usage = spec.extra_usage;
                 cfg.memory = ToVkMemory(spec.memory);
                 // One field produces both: an array that is mapped must be host-visible, and one that is not takes the staging path in UploadEntry.
-                cfg.memory_mode = spec.memory == SceneGpuLayout::BufMemory::device_local
-                    ? GpuResources::MemoryMode::DeviceLocal
-                    : GpuResources::MemoryMode::HostVisible;
-                fr.BlockArrayFor(spec.slot).Initialize(be, cfg);
+                cfg.memory_mode = ToMemoryMode(spec.memory);
+                fr[spec.slot].Initialize(be, cfg);
             }
         }
 
@@ -650,40 +472,19 @@ bool SceneRenderer::Initialize(VulkanBackend::Vulkan::IVulkanBootstrap& be,
         if (!CreateHiZResources()) return false;
     }
 
-    // ── Lighting system (descriptor set 4) ──
+    // ── Lighting system: the engine-side scene_uniform set ──
     //
-    // The layout and pool come from the set table; only the two objects and the initial descriptor writes live here.
+    // The set layout, pool and header descriptor come from the rows; the light block array's geometry is stated here because it is sized by the Light record rather than by a SceneCapacity field.
     {
-        const SceneGpuLayout::SingletonBufferSpec* header_spec =
-            SceneGpuLayout::SingletonSpecOf(SceneGpuLayout::BufferSlot::scene_header);
-        scene_header = GpuResources::GpuBuffer::Create(be, BufferBytes(header_spec->size),
-            header_spec->flags.usage, header_spec->flags.memory, nullptr);
-        VulkanBackend::Vulkan::SetVulkanObjectName(dev, scene_header.GetBuffer(), "scene-header");
-
-        const std::uint32_t header_binding = SceneGpuLayout::BindingOfKind(
-            SceneGpuLayout::SetId::scene_uniform, vk::DescriptorType::eStorageBuffer, 0);
-        static_assert(header_binding != SceneGpuLayout::kNoBinding,
-                      "the lighting set must keep a storage-buffer header binding");
-        const auto& header_buffer = scene_header.GetBuffer();
-        const vk::DescriptorBufferInfo header_buf_info(
-            static_cast<vk::Buffer>(*header_buffer), 0, sizeof(SceneHeader));
-        vk::WriteDescriptorSet header_write{};
-        header_write.dstSet = GetSceneUniformSet();
-        header_write.dstBinding = header_binding;
-        header_write.descriptorCount = 1;
-        header_write.descriptorType = vk::DescriptorType::eStorageBuffer;
-        header_write.pBufferInfo = &header_buf_info;
-        dev.updateDescriptorSets(header_write, nullptr);
-
-        // Initialize the light block array. Its descriptor binding is a fixed kMaxLightBlocks array, so the BlockArray must not grow past it.
         GpuResources::BlockArray::Config light_cfg{};
         light_cfg.entry_size = static_cast<std::uint32_t>(sizeof(Light));
-        light_cfg.entries_per_block = LIGHTS_PER_BLOCK;
-        light_cfg.max_blocks = MAX_LIGHT_BLOCKS;
+        light_cfg.entries_per_block = SceneLimits::kLightsPerBlock;
+        light_cfg.max_blocks = SceneLimits::kMaxLightBlocks;
         light_cfg.memory_mode = GpuResources::MemoryMode::DeviceLocal;
         light_cfg.memory = vk::MemoryPropertyFlagBits::eDeviceLocal;
         light_cfg.extra_usage = vk::BufferUsageFlagBits::eTransferDst;
         scene_lights.Initialize(be, light_cfg);
+        light_blocks_written_ = 0;
     }
 
     LOGIFACE_LOG(info, "SceneRenderer initialized");
@@ -710,8 +511,7 @@ bool SceneRenderer::CreateFrameBuffers() {
     auto& be = *backend_;
     const auto& dev = be.GetDevice();
 
-    // Any descriptor written against the previous buffers is stale; force a
-    // full block-descriptor rewrite on the next PrepareCompute.
+    // Any descriptor written against the previous buffers is stale, so force a full rewrite on the next PrepareCompute.
     ++binding_epoch_;
 
     const bool mid = draw_mode_ == DrawMode::MID;
@@ -723,7 +523,7 @@ bool SceneRenderer::CreateFrameBuffers() {
             const std::uint64_t bytes = mode.fixed_bytes != 0
                 ? mode.fixed_bytes
                 : BufferBytes(spec.size);
-            GpuResources::GpuBuffer& buffer = fr.BufferFor(spec.slot);
+            GpuResources::GpuBuffer& buffer = fr[spec.slot];
             buffer = GpuResources::GpuBuffer::Create(be, bytes, mode.flags.usage,
                                                      mode.flags.memory);
             VulkanBackend::Vulkan::SetVulkanObjectName(
@@ -744,7 +544,7 @@ void SceneRenderer::DestroyFrameBuffers() {
     // Every row, not a hand-maintained list: a slot that gains a buffer cannot be forgotten here, and a mode that has no buffer for a slot just holds an already-invalid one.
     for (auto& fr : frames_) {
         for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
-            fr.BufferFor(spec.slot) = GpuResources::GpuBuffer{};
+            fr[spec.slot] = GpuResources::GpuBuffer{};
         }
     }
 }
@@ -772,7 +572,7 @@ bool SceneRenderer::CreateHiZResources() {
     std::uint32_t max_dim = std::max(hiz_w, hiz_h);
     std::uint32_t mip_levels = 1;
     while (max_dim > 1) { max_dim >>= 1; ++mip_levels; }
-    mip_levels = std::min(mip_levels, MAX_HIZ_MIPS);
+    mip_levels = std::min(mip_levels, SceneLimits::kMaxHiZMips);
     const vk::Format hiz_format = vk::Format::eR32Sfloat;
 
     vk::SamplerCreateInfo sampler_ci{};
@@ -851,6 +651,10 @@ bool SceneRenderer::CreateHiZResources() {
         // Storage images, sampler and the depth placeholder; binding numbers come from the hiz set's table rows.
         WriteHiZBindings(fr);
     }
+
+    // The ring just replaced every image view the occlusion set samples, so a descriptor written against the previous ring is as stale as one written against a previous buffer.
+    // Bumping the epoch makes the next PrepareCompute republish it, the same mechanism CreateFrameBuffers uses for buffers.
+    ++binding_epoch_;
 
 #ifndef NDEBUG
     // Invariant: DispatchHiZGen must produce every level the cull shaders can
@@ -990,54 +794,45 @@ void SceneRenderer::PollShaders(std::uint32_t frame_counter) {
                 return RebuildForDesc(*pipeline_factory_, *desc, s);
             }, frame_counter);
     };
-    poll(expand_slot_, shader_ids_.expand_comp, expand_desc_);
-    poll(occlusion_slot_, shader_ids_.occlusion_cull_comp, occlusion_desc_);
-    poll(occluder_select_slot_, shader_ids_.occluder_select_comp, occluder_select_desc_);
-    poll(occluder_select_mid_slot_, shader_ids_.occluder_select_comp_mid,
-         occluder_select_mid_desc_);
-    poll(pre_cull_slot_, shader_ids_.pre_cull_comp, pre_cull_desc_);
-    poll(pre_cull_mid_slot_, shader_ids_.pre_cull_comp_mid, pre_cull_mid_desc_);
-    poll(hiz_slot_, shader_ids_.hiz_gen_comp, hiz_desc_);
-    poll(collect_count_slot_, shader_ids_.collect_count_compact_comp, collect_count_desc_);
-    poll(collect_count_mid_slot_, shader_ids_.collect_count_compact_comp_mid,
-         collect_count_mid_desc_);
-    poll(collect_write_slot_, shader_ids_.collect_write_comp, collect_write_desc_);
+    // One row per built-in compute pass, the same table CreateScenePipelines builds from.
+    for (const ComputePipelineRow& row : ComputePipelineRows()) {
+        poll(this->*row.slot, shader_ids_.*row.shader, this->*row.desc);
+    }
+    // The depth prepass is the one graphics pipeline the renderer owns, so it has no compute row.
     poll_graphics(depth_slot_, shader_ids_.depth_indir_vert, shader_ids_.depth_prepass_frag, depth_desc_);
 }
 
 void SceneRenderer::Shutdown() {
     for (auto& fr : frames_) {
         for (const SceneGpuLayout::BlockArraySpec& spec : SceneGpuLayout::kBlockArrays) {
-            fr.BlockArrayFor(spec.slot).Shutdown();
+            fr[spec.slot].Shutdown();
         }
         for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
-            fr.BufferFor(spec.slot) = GpuResources::GpuBuffer{};
+            fr[spec.slot] = GpuResources::GpuBuffer{};
         }
         for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
             if (set.fixed_sets != 0) continue;   // the lighting set is not ringed
-            fr.SetFor(set.id) = GpuResources::GpuDescriptorSet{};
+            fr[set.id] = GpuResources::GpuDescriptorSet{};
         }
+        fr.write_cursors.fill(FrameResources::WriteCursor{});
     }
     frame_modifier_dispatches_.clear();
     has_active_deform_ = false;
-    // Pipelines reference the set layouts, so drop them before the sets.
+    // Pipelines reference the layouts, so drop them before the sets.
     modifier_pipelines_.clear();
     modifier_registry_version_ = 0;
-    deform_pipeline_layout_.reset();
+    layouts_ = {};
     modifier_mgr_ = nullptr;
-    expand_pipeline_layout_.reset();
-    occlusion_pipeline_layout_.reset();
-    occluder_select_pipeline_layout_.reset();
-    pre_cull_pipeline_layout_.reset();
-    collect_pipeline_layout_.reset();
-    collect_write_pipeline_layout_.reset();
-    depth_pipeline_layout_.reset();
-    hiz_pipeline_layout_.reset();
     scene_lights.Shutdown();
-    scene_header = GpuResources::GpuBuffer{};
-    technique_flags = GpuResources::GpuBuffer{};
+    light_blocks_written_ = 0;
+    for (const SceneGpuLayout::SingletonBufferSpec& spec : SceneGpuLayout::kSingletonBuffers) {
+        owned_buffers_[spec.slot] = GpuResources::GpuBuffer{};
+    }
     technique_flags_cache_.clear();
-    for (auto& owned : owned_sets_) owned = GpuResources::GpuDescriptorSet{};
+    for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+        if (set.fixed_sets == 0) continue;
+        owned_sets_[set.id] = GpuResources::GpuDescriptorSet{};
+    }
     // Drops every set layout and pool. The sets above already released theirs.
     sets_ = {};
     backend_ = nullptr;
@@ -1053,194 +848,68 @@ vk::DescriptorSetLayout* LayoutPointer(
 } // anonymous namespace
 
 vk::DescriptorSetLayout* SceneRenderer::GetSubmeshVertexEntriesLayout() const {
-    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::submesh_vertex)].layout);
+    return LayoutPointer(sets_[SceneGpuLayout::SetId::submesh_vertex].layout);
 }
 
 vk::DescriptorSetLayout* SceneRenderer::GetVertexBuffersLayout() const {
-    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::vertex_buffers)].layout);
+    return LayoutPointer(sets_[SceneGpuLayout::SetId::vertex_buffers].layout);
 }
 
 vk::DescriptorSetLayout* SceneRenderer::GetIndirectionLayout() const {
-    return LayoutPointer(sets_[static_cast<std::size_t>(SceneGpuLayout::SetId::indirection)].layout);
+    return LayoutPointer(sets_[SceneGpuLayout::SetId::indirection].layout);
 }
 
-void SceneRenderer::UpdateVertexBufferArrayElement(std::uint32_t frame_index,
-                                                     std::uint32_t buffer_index,
-                                                     vk::Buffer buffer,
-                                                     std::uint64_t size) {
-    const auto& fr = frames_[frame_index % frames_in_flight_];
-    if (!buffer) {
-        LOGIFACE_LOG(warn, "UpdateVertexBufferArrayElement: null buffer for slot " +
-                     std::to_string(buffer_index));
-        return;
-    }
-    const vk::DescriptorBufferInfo bii(buffer, 0, size);
-    vk::WriteDescriptorSet w{};
-    w.dstSet = fr.vertex_buffers_set.GetHandle();
-    w.dstBinding = kVertexTableBinding;
-    w.dstArrayElement = buffer_index;
-    w.descriptorCount = 1;
-    w.descriptorType = vk::DescriptorType::eStorageBuffer;
-    w.pBufferInfo = &bii;
-    backend_->GetDevice().updateDescriptorSets(w, nullptr);
-}
+void SceneRenderer::UpdateTableElement(const SceneGpuLayout::TableId table,
+                                       const std::optional<std::uint32_t> frame,
+                                       const std::uint32_t index,
+                                       const vk::Buffer buffer,
+                                       const std::uint64_t size) {
+    if (!backend_ || frames_.empty()) return;
 
-void SceneRenderer::UpdateIndexBufferArrayElement(std::uint32_t frame_index,
-                                                    std::uint32_t buffer_index,
-                                                    vk::Buffer buffer,
-                                                    std::uint64_t size) {
-    const auto& fr = frames_[frame_index % frames_in_flight_];
-    if (!buffer) {
-        LOGIFACE_LOG(warn, "UpdateIndexBufferArrayElement: null buffer for slot " +
-                     std::to_string(buffer_index));
-        return;
-    }
-    const vk::DescriptorBufferInfo bii(buffer, 0, size);
-    vk::WriteDescriptorSet w{};
-    w.dstSet = fr.index_buffers_set.GetHandle();
-    w.dstBinding = kIndexTableBinding;
-    w.dstArrayElement = buffer_index;
-    w.descriptorCount = 1;
-    w.descriptorType = vk::DescriptorType::eStorageBuffer;
-    w.pBufferInfo = &bii;
-    backend_->GetDevice().updateDescriptorSets(w, nullptr);
-}
-
-void SceneRenderer::UpdateUvBufferArrayElement(std::uint32_t frame_index,
-                                                std::uint32_t buffer_index,
-                                                vk::Buffer buffer,
-                                                std::uint64_t size) {
-    const auto& fr = frames_[frame_index % frames_in_flight_];
-    if (!buffer) {
-        LOGIFACE_LOG(warn, "UpdateUvBufferArrayElement: null buffer for slot " +
-                     std::to_string(buffer_index));
-        return;
-    }
-    const vk::DescriptorBufferInfo bii(buffer, 0, size);
-    vk::WriteDescriptorSet w{};
-    w.dstSet = fr.vertex_buffers_set.GetHandle();
-    w.dstBinding = kUvTableBinding;
-    w.dstArrayElement = buffer_index;
-    w.descriptorCount = 1;
-    w.descriptorType = vk::DescriptorType::eStorageBuffer;
-    w.pBufferInfo = &bii;
-    backend_->GetDevice().updateDescriptorSets(w, nullptr);
-}
-
-void SceneRenderer::UpdateAllFrameUvBufferArrayElements(std::uint32_t buffer_index,
-                                                         vk::Buffer buffer,
-                                                         std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
-        UpdateUvBufferArrayElement(fi, buffer_index, buffer, size);
-    }
-}
-
-void SceneRenderer::UpdateAllFrameVertexBufferArrayElements(std::uint32_t buffer_index,
-                                                              vk::Buffer buffer,
-                                                              std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
-        UpdateVertexBufferArrayElement(fi, buffer_index, buffer, size);
-    }
-}
-
-void SceneRenderer::UpdateAllFrameIndexBufferArrayElements(std::uint32_t buffer_index,
-                                                             vk::Buffer buffer,
-                                                             std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
-        UpdateIndexBufferArrayElement(fi, buffer_index, buffer, size);
-    }
-}
-
-namespace {
-
-// Writes one element of a fixed-size skin-influence descriptor array. The table
-// lives in the deform set, which is allocated once and outlives capacity growth,
-// so a descriptor written here stays valid for the life of the set.
-void WriteSkinTableElement(const vk::raii::Device& dev,
-                           const vk::DescriptorSet set,
-                           const std::uint32_t binding,
-                           const std::uint32_t buffer_index,
-                           const vk::Buffer buffer,
-                           const std::uint64_t size,
-                           const char* const what) {
-    if (!set || !buffer) {
-        LOGIFACE_LOG(warn, std::string(what) + ": null set or buffer for skin slot " +
-                     std::to_string(buffer_index));
-        return;
-    }
-    // The table is a fixed MAX_SKIN_BUFFERS-element descriptor array. Writing past it
-    // is invalid descriptor usage, so the bound is enforced here as well as at the
-    // allocation site: this is the one choke point every skin-table write goes
-    // through.
-    if (buffer_index >= SceneRenderer::MAX_SKIN_BUFFERS) {
+    // The bound is the row's own descriptor count, so a table can never be written past its array.
+    const SceneGpuLayout::BindingSpec& row = *SceneGpuLayout::TableBinding(table);
+    const std::uint32_t capacity = SceneGpuLayout::DescriptorCount(row, max_blocks_);
+    if (index >= capacity) {
         static bool reported = false;
         if (!reported) {
             reported = true;
-            LOGIFACE_LOG(error, std::string(what) + ": skin buffer slot " +
-                         std::to_string(buffer_index) + " is past the " +
-                         std::to_string(SceneRenderer::MAX_SKIN_BUFFERS) +
-                         "-slot deform table; the descriptor is not written");
+            LOGIFACE_LOG(error, "UpdateTableElement: element " + std::to_string(index) +
+                " is past the " + std::to_string(capacity) + "-element table of set '" +
+                std::string(SceneGpuLayout::SetOf(SceneGpuLayout::TableOf(table).set).name) +
+                "' binding " + std::to_string(row.binding) +
+                "; the descriptor is not written");
         }
         return;
     }
-    const vk::DescriptorBufferInfo bii(buffer, 0, size);
-    vk::WriteDescriptorSet w{};
-    w.dstSet = set;
-    w.dstBinding = binding;
-    w.dstArrayElement = buffer_index;
-    w.descriptorCount = 1;
-    w.descriptorType = vk::DescriptorType::eStorageBuffer;
-    w.pBufferInfo = &bii;
-    dev.updateDescriptorSets(w, nullptr);
-}
-
-} // anonymous namespace
-
-void SceneRenderer::UpdateSkinBufferArrayElement(std::uint32_t frame_index,
-                                                 std::uint32_t buffer_index,
-                                                 vk::Buffer buffer,
-                                                 std::uint64_t size) {
-    if (!backend_ || frames_.empty()) return;
-    WriteSkinTableElement(backend_->GetDevice(),
-                          frames_[frame_index % frames_in_flight_].deform_set.GetHandle(),
-                          kSkinTableBinding, buffer_index, buffer, size,
-                          "UpdateSkinBufferArrayElement");
-}
-
-void SceneRenderer::UpdateSkinExtraBufferArrayElement(std::uint32_t frame_index,
-                                                      std::uint32_t buffer_index,
-                                                      vk::Buffer buffer,
-                                                      std::uint64_t size) {
-    if (!backend_ || frames_.empty()) return;
-    WriteSkinTableElement(backend_->GetDevice(),
-                          frames_[frame_index % frames_in_flight_].deform_set.GetHandle(),
-                          kSkinExtraTableBinding, buffer_index, buffer, size,
-                          "UpdateSkinExtraBufferArrayElement");
-}
-
-void SceneRenderer::UpdateAllFrameSkinBufferArrayElements(std::uint32_t buffer_index,
-                                                           vk::Buffer buffer,
-                                                           std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
-        UpdateSkinBufferArrayElement(fi, buffer_index, buffer, size);
+    if (!buffer) {
+        LOGIFACE_LOG(warn, "UpdateTableElement: null buffer for element " + std::to_string(index));
+        return;
     }
-}
 
-void SceneRenderer::UpdateAllFrameSkinExtraBufferArrayElements(std::uint32_t buffer_index,
-                                                                vk::Buffer buffer,
-                                                                std::uint64_t size) {
-    for (std::uint32_t fi = 0; fi < frames_in_flight_; ++fi) {
-        UpdateSkinExtraBufferArrayElement(fi, buffer_index, buffer, size);
+    const std::array<vk::DescriptorBufferInfo, 1> info{vk::DescriptorBufferInfo{buffer, 0, size}};
+    const auto write_one = [&](GpuResources::GpuDescriptorSet& dst) {
+        dst.UpdateBuffers(row.binding, row.kind, info, index);
+    };
+    const SceneGpuLayout::SetId set = SceneGpuLayout::TableOf(table).set;
+    // A set that is not ringed owns one set, so "every frame" and "this frame" are the same write.
+    if (SceneGpuLayout::SetOf(set).fixed_sets != 0) {
+        write_one(owned_sets_[set]);
+        return;
     }
+    if (frame.has_value()) {
+        write_one(frames_[*frame % frames_in_flight_][set]);
+        return;
+    }
+    for (auto& fr : frames_) write_one(fr[set]);
 }
 
 GpuResources::BlockArray& SceneRenderer::GetFrameSkinEntries(std::uint32_t frame_index) {
-    return frames_[frame_index % frames_in_flight_].skin_entries;
+    return frames_[frame_index % frames_in_flight_][BlkIdx::skin_entries];
 }
 
 std::span<std::array<float, 16>> SceneRenderer::MapFrameBonePalettes(std::uint32_t frame_index) {
     if (!backend_ || frames_.empty()) return {};
-    auto& buffer = frames_[frame_index % frames_in_flight_].bone_palettes;
+    auto& buffer = frames_[frame_index % frames_in_flight_][BufIdx::bone_palettes];
     if (!buffer.IsValid()) return {};
     const std::uint64_t bytes = buffer.GetSize();
     auto* mapped = static_cast<std::array<float, 16>*>(buffer.Map(0, bytes));
@@ -1250,13 +919,13 @@ std::span<std::array<float, 16>> SceneRenderer::MapFrameBonePalettes(std::uint32
 
 void SceneRenderer::UnmapFrameBonePalettes(std::uint32_t frame_index) {
     if (!backend_ || frames_.empty()) return;
-    auto& buffer = frames_[frame_index % frames_in_flight_].bone_palettes;
+    auto& buffer = frames_[frame_index % frames_in_flight_][BufIdx::bone_palettes];
     if (buffer.IsValid()) buffer.Unmap();
 }
 
 std::span<std::byte> SceneRenderer::MapFrameModifierParams(std::uint32_t frame_index) {
     if (!backend_ || frames_.empty()) return {};
-    auto& buffer = frames_[frame_index % frames_in_flight_].modifier_params;
+    auto& buffer = frames_[frame_index % frames_in_flight_][BufIdx::modifier_params];
     if (!buffer.IsValid()) return {};
     const std::uint64_t bytes = buffer.GetSize();
     auto* mapped = static_cast<std::byte*>(buffer.Map(0, bytes));
@@ -1266,7 +935,7 @@ std::span<std::byte> SceneRenderer::MapFrameModifierParams(std::uint32_t frame_i
 
 void SceneRenderer::UnmapFrameModifierParams(std::uint32_t frame_index) {
     if (!backend_ || frames_.empty()) return;
-    auto& buffer = frames_[frame_index % frames_in_flight_].modifier_params;
+    auto& buffer = frames_[frame_index % frames_in_flight_][BufIdx::modifier_params];
     if (buffer.IsValid()) buffer.Unmap();
 }
 
@@ -1292,7 +961,7 @@ bool SceneRenderer::IsModifierReady(const Modifiers::ModifierId id) const {
 
 void SceneRenderer::SyncModifierPipelines(const std::uint32_t frame_counter) {
     if (!backend_ || !modifier_mgr_ || !shader_mgr_ || !pipeline_factory_ ||
-        !deform_pipeline_layout_) {
+        !layouts_[SceneGpuLayout::PipelineLayoutId::deform]) {
         // Without the deform layout no modifier can be built. Gather then sees
         // IsModifierReady == false and every skinned submesh renders its bind
         // pose.
@@ -1339,7 +1008,7 @@ void SceneRenderer::SyncModifierPipelines(const std::uint32_t frame_counter) {
             pipeline.slot.SetFramesInFlight(fif);
             ShaderSystem::ComputePipelineDesc pipeline_desc{};
             pipeline_desc.shader = desc->compute_shader;
-            pipeline_desc.layout = **deform_pipeline_layout_;
+            pipeline_desc.layout = Layout(SceneGpuLayout::PipelineLayoutId::deform);
             pipeline_desc.entry_point = desc->entry_point;
             pipeline.desc = std::move(pipeline_desc);
             modifier_pipelines_.emplace(key, std::move(pipeline));
@@ -1397,45 +1066,38 @@ Modifiers::ModifierId SceneRenderer::SkinningModifier() const {
 
 vk::Buffer SceneRenderer::GetFrameDeformVertices(const std::uint32_t frame_index) const {
     if (frames_.empty()) return {};
-    const auto& buffer = frames_[frame_index % frames_in_flight_].deform_vertices;
+    const auto& buffer = frames_[frame_index % frames_in_flight_][BufIdx::deform_vertices];
     return buffer.IsValid() ? *buffer.GetBuffer() : vk::Buffer{};
 }
 
 VulkanEngine::GpuResources::BlockArray& SceneRenderer::GetFrameVertexEntries(
     const std::uint32_t frame_index) {
-    return frames_[frame_index % frames_in_flight_].submesh_vertex_entries;
+    return frames_[frame_index % frames_in_flight_][BlkIdx::submesh_vertex_entries];
 }
 
 VulkanEngine::GpuResources::BlockArray& SceneRenderer::GetFrameCullEntries(
     const std::uint32_t frame_index) {
-    return frames_[frame_index % frames_in_flight_].cull_entries;
+    return frames_[frame_index % frames_in_flight_][BlkIdx::cull_entries];
 }
 
 void SceneRenderer::UpdateHizDepthBinding(std::uint32_t frame_index, vk::ImageView depth_view) {
-    auto& fr = frames_[frame_index % frames_in_flight_];
-    if (!backend_) return;
-    auto& dev = backend_->GetDevice();
+    if (!backend_ || frames_.empty()) return;
     const std::uint32_t binding = SceneGpuLayout::BindingOfKind(
         SceneGpuLayout::SetId::hiz, vk::DescriptorType::eSampledImage);
-    if (binding == SceneGpuLayout::kNoBinding) return;
-    const vk::DescriptorImageInfo depth_info(
-        nullptr, depth_view, vk::ImageLayout::eShaderReadOnlyOptimal);
-    vk::WriteDescriptorSet w{};
-    w.dstSet = fr.hiz_set.GetHandle();
-    w.dstBinding = binding;
-    w.descriptorCount = 1;
-    w.descriptorType = vk::DescriptorType::eSampledImage;
-    w.pImageInfo = &depth_info;
-    dev.updateDescriptorSets(w, nullptr);
+    if (binding == SceneGpuLayout::kNoBinding || !depth_view) return;
+    const std::array<vk::DescriptorImageInfo, 1> info{vk::DescriptorImageInfo{
+        nullptr, depth_view, vk::ImageLayout::eShaderReadOnlyOptimal}};
+    frames_[frame_index % frames_in_flight_][SetIdx::hiz].UpdateImages(
+        binding, vk::DescriptorType::eSampledImage, info);
 }
 
 SceneRenderer::FrameBlockArrays SceneRenderer::GetFrameBlockArrays(std::uint32_t frame_index) {
     auto& fr = frames_[frame_index % frames_in_flight_];
     return {
-        &fr.dynamic_entries,
-        &fr.static_entries,
-        &fr.bounding_spheres,
-        &fr.obb_entries
+        &fr[BlkIdx::dynamic_entries],
+        &fr[BlkIdx::static_entries],
+        &fr[BlkIdx::bounding_spheres],
+        &fr[BlkIdx::obb_entries]
     };
 }
 
@@ -1444,10 +1106,10 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
                                     GpuResources::StagingPool& staging) {
     if (!backend_) return;
 
-    // Grow BlockArray to fit all lights. The descriptor binding is a fixed
-    // MAX_LIGHT_BLOCKS array, so the upload is clamped to what actually fits.
+    // Grow the block array to fit all lights.
+    // The descriptor binding is a fixed kMaxLightBlocks array, so the upload is clamped to what actually fits.
     constexpr std::size_t kLightCapacity =
-        static_cast<std::size_t>(MAX_LIGHT_BLOCKS) * LIGHTS_PER_BLOCK;
+        static_cast<std::size_t>(SceneLimits::kMaxLightBlocks) * SceneLimits::kLightsPerBlock;
     if (lights.size() > kLightCapacity) {
         static bool reported_overflow = false;
         if (!reported_overflow) {
@@ -1466,36 +1128,30 @@ void SceneRenderer::UploadLighting(const SceneHeader& header,
     const std::size_t uploadable = std::min<std::size_t>(light_count,
         static_cast<std::size_t>(scene_lights.BlockCount()) * scene_lights.EntriesPerBlock());
 
-    // Stage the header buffer
+    // Stage the header buffer.
     {
         auto header_slice = staging.Allocate(sizeof(SceneHeader));
         if (header_slice.has_value()) {
             std::memcpy(header_slice->mapped_ptr, &header, sizeof(SceneHeader));
             staging.RecordBufferCopy(*header_slice,
-                                     static_cast<vk::Buffer>(*scene_header.GetBuffer()), 0);
+                                     static_cast<vk::Buffer>(
+                                         *owned_buffers_[BufIdx::scene_header].GetBuffer()),
+                                     0);
         }
     }
 
-    // Stage each light via BlockArray::UploadEntry (uses staging internally)
+    // Stage each light through BlockArray::UploadEntry (which uses the staging pool internally).
     for (std::size_t i = 0; i < uploadable; ++i) {
         scene_lights.UploadEntry(static_cast<std::uint32_t>(i), &lights[i],
-                                         sizeof(Light), staging);
+                                 sizeof(Light), staging);
     }
 
-    // Write BlockArray buffers to descriptor set binding 1
-    const auto& dev = backend_->GetDevice();
-    for (std::uint32_t bi = 0; bi < scene_lights.BlockCount(); ++bi) {
-        const vk::DescriptorBufferInfo buf_info(scene_lights.GetBlockArray(bi),
-                                                 0, scene_lights.BlockSize());
-        vk::WriteDescriptorSet w{};
-        w.dstSet = GetSceneUniformSet();
-        w.dstBinding = kLightTableBinding;
-        w.dstArrayElement = bi;
-        w.descriptorCount = 1;
-        w.descriptorType = vk::DescriptorType::eStorageBuffer;
-        w.pBufferInfo = &buf_info;
-        dev.updateDescriptorSets(w, nullptr);
+    // Publish only the blocks that do not exist yet: the array only ever grows, so a published block never changes its buffer.
+    for (std::uint32_t bi = light_blocks_written_; bi < scene_lights.BlockCount(); ++bi) {
+        UpdateTableElement(SceneGpuLayout::TableId::light, std::nullopt, bi,
+                           scene_lights.GetBlockArray(bi), scene_lights.BlockSize());
     }
+    light_blocks_written_ = scene_lights.BlockCount();
 
     staging.FlushImmediate();
 }

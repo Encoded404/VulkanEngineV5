@@ -206,10 +206,12 @@ protected:
             skin_buffer_->Upload(zero.data(), sizeof(zero));
         }
 
-        renderer_->UpdateVertexBufferArrayElement(
-            0, 0, static_cast<vk::Buffer>(*vertex_buffer_->GetBuffer()), vk::WholeSize);
-        renderer_->UpdateSkinBufferArrayElement(
-            0, 0, static_cast<vk::Buffer>(*skin_buffer_->GetBuffer()), vk::WholeSize);
+        renderer_->UpdateTableElement(
+            VulkanEngine::SceneGpuLayout::TableId::vertex, 0, 0,
+            static_cast<vk::Buffer>(*vertex_buffer_->GetBuffer()), vk::WholeSize);
+        renderer_->UpdateTableElement(
+            VulkanEngine::SceneGpuLayout::TableId::skin, 0, 0,
+            static_cast<vk::Buffer>(*skin_buffer_->GetBuffer()), vk::WholeSize);
 
         const auto palette_span = renderer_->MapFrameBonePalettes(0);
         ASSERT_FALSE(palette_span.empty());

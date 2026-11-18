@@ -27,6 +27,12 @@ import VulkanEngine.PipelinePass;
 import VulkanEngine.SceneGpuLayout;
 
 namespace VulkanEngine::SceneRenderer {
+
+// Short names for the slot enums. The tables own the numbering; these only keep the call sites readable.
+using SetIdx = SceneGpuLayout::SetId;
+using BufIdx = SceneGpuLayout::BufferSlot;
+using BlkIdx = SceneGpuLayout::BlockSlot;
+
     namespace {
         struct ExpandPC {
             glm::mat4 vp;
@@ -77,101 +83,60 @@ void SceneRenderer::PrepareCompute(vk::CommandBuffer /*cmd*/,
         LOGIFACE_LOG(trace, "PrepareCompute: current_entity_count_ is 0, no work to do");
     }
 
-    // Grow the per-submesh block arrays. Each is bounded by Config::max_blocks
-    // (the descriptor binding array size), so a failure here means the scene
-    // exceeded the capacity budget; report once and let the caller clamp.
+    // Grow the per-submesh block arrays the frame loop owns.
+    // Each is bounded by Config::max_blocks (the descriptor binding array size), so a failure here means the scene exceeded the capacity budget; report once and let the caller clamp.
+    // The rows say which pass grows which array: gather owns the SkinEntry table and grows it itself.
     const auto grow_blocks = [](GpuResources::BlockArray& buf, const std::uint32_t count,
-                                const char* name) {
+                                const std::string_view name) {
         if (!buf.EnsureCapacity(count)) {
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                LOGIFACE_LOG(error, std::string("PrepareCompute: BlockArray '") + name +
+                LOGIFACE_LOG(error, std::string("PrepareCompute: BlockArray '") + std::string(name) +
                     "' could not grow to hold " + std::to_string(count) +
                     " entries; it is capped at " + std::to_string(buf.BlockLimit()) +
                     " blocks");
             }
         }
     };
-    grow_blocks(fr.dynamic_entries, total, "dynamic_entries");
-    grow_blocks(fr.static_entries, total, "static_entries");
-    grow_blocks(fr.bounding_spheres, total, "bounding_spheres");
-    grow_blocks(fr.obb_entries, total, "obb_entries");
-    grow_blocks(fr.submesh_vertex_entries, total, "submesh_vertex_entries");
-    grow_blocks(fr.cull_entries, total, "cull_entries");
+    for (const SceneGpuLayout::BlockArraySpec& spec : SceneGpuLayout::kBlockArrays) {
+        if (spec.grown_by != SceneGpuLayout::GrownBy::frame_loop) continue;
+        grow_blocks(fr[spec.slot], total, spec.name);
+    }
 
-    // The six arrays are grown with the same `total` and the same
-    // entries-per-block, so they always have the same block count. The
-    // per-binding descriptor-write cursors below each track their own array,
-    // and this lockstep is the invariant the block lookups in the shaders use.
+    // The arrays grown here take the same `total` and the same entries-per-block, so they always share a block count, and this lockstep is the invariant the shaders' block lookups rely on.
+    // The assertion walks the same rows as the growth loop, so it cannot fall behind it.
 #ifndef NDEBUG
-    const std::uint32_t block_count = fr.dynamic_entries.BlockCount();
+    const std::uint32_t block_count = fr[BlkIdx::dynamic_entries].BlockCount();
+    for (const SceneGpuLayout::BlockArraySpec& spec : SceneGpuLayout::kBlockArrays) {
+        if (spec.grown_by != SceneGpuLayout::GrownBy::frame_loop) continue;
+        assert(fr[spec.slot].BlockCount() == block_count &&
+               "the submesh block arrays must grow in lockstep");
+    }
 #endif
-    assert(fr.static_entries.BlockCount() == block_count &&
-           fr.bounding_spheres.BlockCount() == block_count &&
-           fr.obb_entries.BlockCount() == block_count &&
-           fr.submesh_vertex_entries.BlockCount() == block_count &&
-           fr.cull_entries.BlockCount() == block_count &&
-           "the six submesh block arrays must grow in lockstep");
 
     const bool mid = draw_mode_ == DrawMode::MID;
 
-    // Per-frame counters/commands.
-    {
-        // [0] entry base, [1] index base, [2] deform-region base. All three are
-        // reset here; expand owns the third as its deform allocator.
-        const std::uint32_t zero3[3] = {0u, 0u, 0u};
-        fr.expand_counter.Upload(zero3, sizeof(zero3));
-        const std::uint32_t zero = 0u;
-        fr.occluder_candidate_count.Upload(&zero, sizeof(zero));
-        // Depth and occluder prepass: the counters are shared by both modes;
-        // the per-group count tables only feed MID's drawIndirectCount but are
-        // written by the shaders in both, so they are reset here for every mode.
-        fr.depth_out_counter.Upload(&zero, sizeof(zero));
-        fr.occluder_out_counter.Upload(&zero, sizeof(zero));
-    }
-
-    // Zero CPU-consumed buffers. technique_draw_commands only exists in
-    // CID mode; technique_counts is written by the MID compact pass.
-    for (auto* buf : {&fr.technique_results, &fr.technique_counts,
-                      &fr.depth_technique_counts, &fr.occluder_technique_counts}) {
-        auto* p = buf->Map(0, buf->GetSize());
-        if (p) {
-            std::memset(p, 0, buf->GetSize());
-            buf->Unmap();
-        }
-    }
-    if (!mid) {
-        auto* p = fr.technique_draw_commands.Map(0, fr.technique_draw_commands.GetSize());
-        if (p) {
-            std::memset(p, 0, fr.technique_draw_commands.GetSize());
-            fr.technique_draw_commands.Unmap();
-        }
-        // CID writes one command per surviving submesh; unused slots must stay
-        // zero (indexCount = 0) because the prepass walks the whole region.
-        auto* d = fr.depth_commands.Map(0, fr.depth_commands.GetSize());
-        if (d) {
-            std::memset(d, 0, fr.depth_commands.GetSize());
-            fr.depth_commands.Unmap();
-        }
-        auto* o = fr.occluder_commands.Map(0, fr.occluder_commands.GetSize());
-        if (o) {
-            std::memset(o, 0, fr.occluder_commands.GetSize());
-            fr.occluder_commands.Unmap();
-        }
+    // Zero every buffer whose row asks for it.
+    // The shaders append into these with atomics, so last frame's contents would be read as this frame's counts.
+    for (const SceneGpuLayout::BufferSpec& spec : SceneGpuLayout::kFrameBuffers) {
+        if (spec.clear == SceneGpuLayout::ClearMode::none) continue;
+        if (spec.clear == SceneGpuLayout::ClearMode::cid_only && mid) continue;
+        ClearBuffer(fr[spec.slot]);
     }
 
     LOGIFACE_LOG(trace, "PrepareCompute: binding dynamic_entries blocks=" +
-                 std::to_string(fr.dynamic_entries.BlockCount()) +
-                 " static_entries blocks=" + std::to_string(fr.static_entries.BlockCount()) +
+                 std::to_string(fr[BlkIdx::dynamic_entries].BlockCount()) +
+                 " static_entries blocks=" + std::to_string(fr[BlkIdx::static_entries].BlockCount()) +
                  " total=" + std::to_string(total));
 
     // Descriptor writes: one pass over the set table.
-    // Every row marked prepare_compute is re-pointed at its buffer; block arrays only write the descriptors that do not exist yet (see WriteBinding).
+    // A row is written once per binding epoch; a block array publishes only the blocks that do not exist yet (see WriteBinding).
     for (const SceneGpuLayout::SetSpec& set : SceneGpuLayout::kSceneSets) {
+        // The collect-write set is CID only: its buffers do not exist in MID, so the set is never bound or written there.
+        if (set.cid_only && mid) continue;
         for (const SceneGpuLayout::BindingSpec& binding : set.bindings) {
             if (binding.writer != SceneGpuLayout::Writer::prepare_compute) continue;
-            if (binding.mode == SceneGpuLayout::BindingMode::cid_only && mid) continue;
             WriteBinding(fr, set, binding);
         }
     }
@@ -198,8 +163,8 @@ void SceneRenderer::SetTechniqueCommandRegions(
 
     if (!backend_) return;
     for (auto& fr : frames_) {
-        if (fr.technique_region_bases.GetSize() >= region_base_.size() * sizeof(std::uint32_t)) {
-            fr.technique_region_bases.Upload(region_base_.data(),
+        if (fr[BufIdx::technique_region_bases].GetSize() >= region_base_.size() * sizeof(std::uint32_t)) {
+            fr[BufIdx::technique_region_bases].Upload(region_base_.data(),
                 region_base_.size() * sizeof(std::uint32_t));
         }
     }
@@ -256,8 +221,9 @@ void SceneRenderer::SetTechniqueFlags(std::span<const std::uint32_t> flags) {
     // Upload only when contents change (flags are static in practice).
     if (technique_flags_cache_ != padded) {
         technique_flags_cache_ = std::move(padded);
-        technique_flags.Upload(technique_flags_cache_.data(),
-                               sizeof(std::uint32_t) * technique_flags_cache_.size());
+        owned_buffers_[BufIdx::technique_flags].Upload(
+            technique_flags_cache_.data(),
+            sizeof(std::uint32_t) * technique_flags_cache_.size());
     }
 }
 
@@ -273,9 +239,9 @@ bool SceneRenderer::BindGroupDepthPipeline(
     if (!GroupUsesCustomDepthPipeline(coverage)) {
         // EngineDepthOnly: the global pipeline ignores the technique's custom
         // sets, so bind sets 0-3 only.
-        if (!depth_slot_.Get() || !depth_pipeline_layout_) return false;
+        if (!depth_slot_.Get() || !layouts_[SceneGpuLayout::PipelineLayoutId::depth]) return false;
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, depth_slot_.Get());
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *depth_pipeline_layout_,
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, Layout(SceneGpuLayout::PipelineLayoutId::depth),
                                0, engine_sets, {});
         return true;
     }
@@ -328,18 +294,18 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
 
     const bool mid = draw_mode_ == DrawMode::MID;
     if (mid) {
-        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.bindIndexBuffer(*fr[BufIdx::draw_indices].GetBuffer(), 0, vk::IndexType::eUint32);
     } else {
-        cmd.bindIndexBuffer(*fr.depth_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.bindIndexBuffer(*fr[BufIdx::depth_indices].GetBuffer(), 0, vk::IndexType::eUint32);
     }
 
     // Engine descriptor sets, shared by the global depth pipeline and every
     // technique depth pipeline (the layouts agree on sets 0-4).
     const std::array<vk::DescriptorSet, 4> engine_sets{
-        fr.empty_set.GetHandle(),
-        fr.submesh_vertex_set.GetHandle(),
-        fr.vertex_buffers_set.GetHandle(),
-        fr.indirection_raw_set.GetHandle()
+        fr[SetIdx::empty].GetHandle(),
+        fr[SetIdx::submesh_vertex].GetHandle(),
+        fr[SetIdx::vertex_buffers].GetHandle(),
+        fr[SetIdx::indirection].GetHandle()
     };
     const vk::DescriptorSet bindless_set = bm.GetDescriptorSet();
     const vk::DescriptorSet scene_uniform_set = GetSceneUniformSet();
@@ -378,9 +344,9 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
 
         if (mid) {
             cmd.drawIndexedIndirectCount(
-                *fr.depth_commands.GetBuffer(),
+                *fr[BufIdx::depth_commands].GetBuffer(),
                 static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
-                *fr.depth_technique_counts.GetBuffer(),
+                *fr[BufIdx::depth_technique_counts].GetBuffer(),
                 static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
                 count, sizeof(vk::DrawIndexedIndirectCommand));
         } else {
@@ -388,7 +354,7 @@ void SceneRenderer::DepthPrepass(vk::CommandBuffer cmd, std::uint32_t w, std::ui
             // region were zeroed by PrepareCompute (indexCount 0).
             for (std::uint32_t i = 0; i < count; ++i) {
                 cmd.drawIndexedIndirect(
-                    *fr.depth_commands.GetBuffer(),
+                    *fr[BufIdx::depth_commands].GetBuffer(),
                     static_cast<vk::DeviceSize>(base + i) *
                         sizeof(vk::DrawIndexedIndirectCommand),
                     1, sizeof(vk::DrawIndexedIndirectCommand));
@@ -418,16 +384,16 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
 
     const bool mid = draw_mode_ == DrawMode::MID;
     if (mid) {
-        cmd.bindIndexBuffer(*fr.draw_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.bindIndexBuffer(*fr[BufIdx::draw_indices].GetBuffer(), 0, vk::IndexType::eUint32);
     } else {
-        cmd.bindIndexBuffer(*fr.occluder_indices.GetBuffer(), 0, vk::IndexType::eUint32);
+        cmd.bindIndexBuffer(*fr[BufIdx::occluder_indices].GetBuffer(), 0, vk::IndexType::eUint32);
     }
 
     const std::array<vk::DescriptorSet, 4> engine_sets{
-        fr.empty_set.GetHandle(),
-        fr.submesh_vertex_set.GetHandle(),
-        fr.vertex_buffers_set.GetHandle(),
-        fr.indirection_raw_set.GetHandle()
+        fr[SetIdx::empty].GetHandle(),
+        fr[SetIdx::submesh_vertex].GetHandle(),
+        fr[SetIdx::vertex_buffers].GetHandle(),
+        fr[SetIdx::indirection].GetHandle()
     };
     const vk::DescriptorSet bindless_set = bm.GetDescriptorSet();
     const vk::DescriptorSet scene_uniform_set = GetSceneUniformSet();
@@ -463,15 +429,15 @@ void SceneRenderer::OccluderPrepass(vk::CommandBuffer cmd, std::uint32_t w, std:
 
         if (mid) {
             cmd.drawIndexedIndirectCount(
-                *fr.occluder_commands.GetBuffer(),
+                *fr[BufIdx::occluder_commands].GetBuffer(),
                 static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
-                *fr.occluder_technique_counts.GetBuffer(),
+                *fr[BufIdx::occluder_technique_counts].GetBuffer(),
                 static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
                 count, sizeof(vk::DrawIndexedIndirectCommand));
         } else {
             for (std::uint32_t i = 0; i < count; ++i) {
                 cmd.drawIndexedIndirect(
-                    *fr.occluder_commands.GetBuffer(),
+                    *fr[BufIdx::occluder_commands].GetBuffer(),
                     static_cast<vk::DeviceSize>(base + i) *
                         sizeof(vk::DrawIndexedIndirectCommand),
                     1, sizeof(vk::DrawIndexedIndirectCommand));
@@ -498,9 +464,9 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
     // Engine descriptor set handles (used by both legacy and BaseTechnique paths)
     const vk::DescriptorSet engine_set0 = bm.GetDescriptorSet();
-    const vk::DescriptorSet engine_set1 = fr.submesh_vertex_set.GetHandle();
-    const vk::DescriptorSet engine_set2 = fr.vertex_buffers_set.GetHandle();
-    const vk::DescriptorSet engine_set3 = fr.indirection_raw_set.GetHandle();
+    const vk::DescriptorSet engine_set1 = fr[SetIdx::submesh_vertex].GetHandle();
+    const vk::DescriptorSet engine_set2 = fr[SetIdx::vertex_buffers].GetHandle();
+    const vk::DescriptorSet engine_set3 = fr[SetIdx::indirection].GetHandle();
 
     LOGIFACE_LOG(trace, "RenderMain: submesh_count=" + std::to_string(current_entity_count_) +
                  " techniques=" + std::to_string(tm.GetTechniqueCount()));
@@ -514,7 +480,7 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
 
     const bool mid = draw_mode_ == DrawMode::MID;
     cmd.bindIndexBuffer(
-        mid ? *fr.draw_indices.GetBuffer() : *fr.main_indices.GetBuffer(),
+        mid ? *fr[BufIdx::draw_indices].GetBuffer() : *fr[BufIdx::main_indices].GetBuffer(),
         0, vk::IndexType::eUint32);
 
     // The collect arrays and command regions are indexed by draw group. A group
@@ -581,15 +547,15 @@ void SceneRenderer::Render(vk::CommandBuffer cmd,
             const std::uint32_t cnt = (g < region_count_.size()) ? region_count_[g] : 0u;
             if (cnt == 0) continue;
             cmd.drawIndexedIndirectCount(
-                *fr.main_commands.GetBuffer(),
+                *fr[BufIdx::main_commands].GetBuffer(),
                 static_cast<vk::DeviceSize>(base) * sizeof(vk::DrawIndexedIndirectCommand),
-                *fr.technique_counts.GetBuffer(),
+                *fr[BufIdx::technique_counts].GetBuffer(),
                 static_cast<vk::DeviceSize>(g) * sizeof(std::uint32_t),
                 cnt, sizeof(vk::DrawIndexedIndirectCommand));
         } else {
             const vk::DeviceSize draw_cmd_offset =
                 static_cast<vk::DeviceSize>(g) * sizeof(vk::DrawIndexedIndirectCommand);
-            cmd.drawIndexedIndirect(*fr.technique_draw_commands.GetBuffer(),
+            cmd.drawIndexedIndirect(*fr[BufIdx::technique_draw_commands].GetBuffer(),
                                     draw_cmd_offset, 1,
                                     sizeof(vk::DrawIndexedIndirectCommand));
         }
@@ -606,15 +572,15 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
     LOGIFACE_LOG(trace, "DispatchExpand: submeshes=" + std::to_string(cnt));
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, expand_slot_.Get());
     const std::array<vk::DescriptorSet, 2> ds{
-        fr.expand_set.GetHandle(),
-        fr.index_buffers_set.GetHandle()
+        fr[SetIdx::expand].GetHandle(),
+        fr[SetIdx::index_buffers].GetHandle()
     };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *expand_pipeline_layout_,
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::expand),
                              0, ds, {});
     ExpandPC pc{ vp, cnt, 0, 0,
                  has_active_deform_ ? 1u : 0u,
                  scene_capacity_.deform_vertex_span };
-    cmd.pushConstants(*expand_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+    cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::expand), vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(ExpandPC), &pc);
     // One workgroup per submesh: the whole group cooperates on the index copy.
     cmd.dispatch(cnt, 1, 1);
@@ -623,7 +589,7 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
 void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi) {
     auto& fr = frames_[fi % frames_in_flight_];
     const std::span<const ModifierDispatch> dispatches = GetModifierDispatches(fi);
-    if (dispatches.empty() || !deform_pipeline_layout_) {
+    if (dispatches.empty() || !layouts_[SceneGpuLayout::PipelineLayoutId::deform]) {
         return;
     }
     LOGIFACE_LOG(trace, "DispatchDeform: stages=" + std::to_string(dispatches.size()));
@@ -632,10 +598,10 @@ void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi
     // compute); set 1 is the deform input set. Every modifier pipeline shares
     // this layout, so the sets stay bound across vkCmdBindPipeline.
     const std::array<vk::DescriptorSet, 2> sets{
-        fr.vertex_buffers_set.GetHandle(),
-        fr.deform_set.GetHandle(),
+        fr[SetIdx::vertex_buffers].GetHandle(),
+        fr[SetIdx::deform].GetHandle(),
     };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *deform_pipeline_layout_,
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::deform),
                            0, sets, {});
 
     for (std::size_t i = 0; i < dispatches.size(); ++i) {
@@ -659,7 +625,7 @@ void SceneRenderer::DispatchDeform(vk::CommandBuffer cmd, const std::uint32_t fi
             .param_size = dispatch.param_size,
             .region_span = scene_capacity_.deform_vertex_span,
         };
-        cmd.pushConstants(*deform_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::deform), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(ModifierPC), &pc);
         const std::uint32_t group = std::max(dispatch.workgroup_size, 1u);
         cmd.dispatch((dispatch.vertex_count + group - 1) / group, 1, 1);
@@ -686,7 +652,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
         LOGIFACE_LOG(trace, "DispatchHiZGen: current_entity_count_ is 0, skipping");
         return;
     }
-    if (!fr.hiz_set.IsValid()) {
+    if (!fr[SetIdx::hiz].IsValid()) {
         LOGIFACE_LOG(trace, "DispatchHiZGen: hiz_set invalid, skipping");
         return;
     }
@@ -699,8 +665,8 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
     LOGIFACE_LOG(trace, "DispatchHiZGen: " + std::to_string(w) + "x" + std::to_string(h) +
                  " mips=" + std::to_string(hiz_mip_count_));
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, hiz_slot_.Get());
-    const std::array<vk::DescriptorSet, 1> ds{ fr.hiz_set.GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *hiz_pipeline_layout_,
+    const std::array<vk::DescriptorSet, 1> ds{ fr[SetIdx::hiz].GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::hiz),
                              0, ds, {});
     // Mirrors hiz_gen.slang's numthreads(16, 16, 1).
     constexpr std::uint32_t kHiZGroupThreads = 16;
@@ -713,7 +679,7 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t w, std::
         const std::uint32_t sw = w >> bl;
         const std::uint32_t sh = h >> bl;
         HiZPC pc{ bl, sw, sh, bc };
-        cmd.pushConstants(*hiz_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::hiz), vk::ShaderStageFlagBits::eCompute,
                            0, sizeof(HiZPC), &pc);
         // Each thread reduces one HIZ_TILE_STRIDE x HIZ_TILE_STRIDE tile of the source level, so the dispatch covers the tile grid, not the source extent.
         // Dispatching the source extent instead launches 16x the groups at level 0, and 15/16 of those threads exit on the shader's read guard.
@@ -737,20 +703,20 @@ void SceneRenderer::DispatchOcclusion(vk::CommandBuffer cmd, std::uint32_t fi) {
         LOGIFACE_LOG(trace, "DispatchOcclusion: current_entity_count_ is 0, skipping");
         return;
     }
-    if (!fr.occlusion_set.IsValid()) {
+    if (!fr[SetIdx::occlusion].IsValid()) {
         LOGIFACE_LOG(trace, "DispatchOcclusion: occlusion_set invalid, skipping");
         return;
     }
     LOGIFACE_LOG(trace, "DispatchOcclusion: submeshes=" + std::to_string(current_entity_count_));
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, occlusion_slot_.Get());
-    const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occlusion_pipeline_layout_,
+    const std::array<vk::DescriptorSet, 1> ds{ fr[SetIdx::occlusion].GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::occlusion),
                              0, ds, {});
     const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
     const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
     OccPC pc{ current_entity_count_, 1, hiz_w, hiz_h, fr.proj_info };
-    cmd.pushConstants(*occlusion_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+    cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::occlusion), vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccPC), &pc);
     cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
 }
@@ -782,31 +748,31 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
             {}, mb, {}, {});
     };
 
-    const std::array<vk::DescriptorSet, 1> ds1{ fr.collect_set.GetHandle() };
+    const std::array<vk::DescriptorSet, 1> ds1{ fr[SetIdx::collect].GetHandle() };
 
     const std::uint32_t groups = (current_entity_count_ + 255) / 256;
     if (!mid) {
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_slot_.Get());
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::collect_count),
                                 0, ds1, {});
 
         // CID: count -> global prefix -> compact -> command emission.
         CollectPC pc0{ current_entity_count_, 0, key_count, 0 };
-        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::collect_count), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc0);
         cmd.dispatch(groups, 1, 1);
 
         barrier();
 
         CollectPC pc1{ current_entity_count_, 0, key_count, 1 };
-        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::collect_count), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc1);
         cmd.dispatch(1, 1, 1);
 
         barrier();
 
         CollectPC pc2{ current_entity_count_, 0, key_count, 2 };
-        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::collect_count), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pc2);
         // One workgroup per submesh so the index copy is parallel.
         cmd.dispatch(current_entity_count_, 1, 1);
@@ -814,22 +780,22 @@ void SceneRenderer::DispatchCollect(vk::CommandBuffer cmd, std::uint32_t fi) {
         barrier();
 
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_write_slot_.Get());
-        const std::array<vk::DescriptorSet, 1> ds2{ fr.collect_write_set.GetHandle() };
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_write_pipeline_layout_,
+        const std::array<vk::DescriptorSet, 1> ds2{ fr[SetIdx::collect_write].GetHandle() };
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::collect_write),
                                 0, ds2, {});
         WritePC pcw{ current_entity_count_, 0, key_count, 0 };
-        cmd.pushConstants(*collect_write_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::collect_write), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(WritePC), &pcw);
         cmd.dispatch(1, 1, 1);
     } else {
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, collect_count_mid_slot_.Get());
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *collect_pipeline_layout_,
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::collect_count),
                                 0, ds1, {});
 
         // MID: one flat compact pass appends commands into CPU-prefixed regions
         // and publishes the per-technique alive count. No epilogue dispatch.
         CollectPC pcMid{ current_entity_count_, 0, key_count, 2 };
-        cmd.pushConstants(*collect_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+        cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::collect_count), vk::ShaderStageFlagBits::eCompute,
                           0, sizeof(CollectPC), &pcMid);
         cmd.dispatch((current_entity_count_ + 63) / 64, 1, 1);
     }
@@ -856,15 +822,15 @@ void SceneRenderer::DispatchOccluderSelect(vk::CommandBuffer cmd,
     LOGIFACE_LOG(trace, "DispatchOccluderSelect: submeshes=" + std::to_string(current_entity_count_));
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, slot.Get());
-    const std::array<vk::DescriptorSet, 1> ds{ fr.occluder_select_set.GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *occluder_select_pipeline_layout_,
+    const std::array<vk::DescriptorSet, 1> ds{ fr[SetIdx::occluder_select].GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::occluder_select),
                              0, ds, {});
     const float screenArea = static_cast<float>(w) * static_cast<float>(h);
     OccluderSelectPC pc{
         current_entity_count_,
         static_cast<std::uint32_t>(screenArea * kOccluderMinAreaFraction),
         w, h };
-    cmd.pushConstants(*occluder_select_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+    cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::occluder_select), vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(OccluderSelectPC), &pc);
     // MID: one thread per submesh. CID: one workgroup per submesh for the copy.
     cmd.dispatch(mid ? (current_entity_count_ + 63) / 64 : current_entity_count_, 1, 1);
@@ -885,13 +851,13 @@ void SceneRenderer::DispatchPreCull(vk::CommandBuffer cmd, std::uint32_t fi) {
     LOGIFACE_LOG(trace, "DispatchPreCull: submeshes=" + std::to_string(current_entity_count_));
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, slot.Get());
-    const std::array<vk::DescriptorSet, 1> ds{ fr.occlusion_set.GetHandle() };
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pre_cull_pipeline_layout_,
+    const std::array<vk::DescriptorSet, 1> ds{ fr[SetIdx::occlusion].GetHandle() };
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::pre_cull),
                              0, ds, {});
     const std::uint32_t hiz_w = (depth_width_ + 1) / 2;
     const std::uint32_t hiz_h = (depth_height_ + 1) / 2;
     PreCullPC pc{ current_entity_count_, hiz_w, hiz_h, 0, fr.proj_info };
-    cmd.pushConstants(*pre_cull_pipeline_layout_, vk::ShaderStageFlagBits::eCompute,
+    cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::pre_cull), vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(PreCullPC), &pc);
     // MID: one thread per submesh. CID: one workgroup per submesh for the copy.
     cmd.dispatch(mid ? (current_entity_count_ + 63) / 64 : current_entity_count_, 1, 1);

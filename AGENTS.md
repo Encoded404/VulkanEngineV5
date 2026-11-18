@@ -16,6 +16,18 @@ Start a new paragraph (blank comment line) when the topic changes. Copy-edit the
 
 The same applies to `///` doc comments and `#` CMake comments.
 
+## Commits
+
+The comment rules apply to commit messages: one thought per line, break at a sentence boundary instead of at 80 columns, and a blank line between topics.
+
+The subject is one imperative line with no prefix and no trailing period, and it names the change as a whole. "Let the scene tables own the storage and the writes" is a subject; "Update SceneRenderer" is a file list.
+
+A trivial edit can stand on its subject alone. Anything a reader would have to reconstruct from the diff gets a body that says what changed and why, and the body covers the whole change: a message that describes the rename but not the comment rewrite, or that stops at the first file, misrepresents its own commit.
+
+State what the code does now and the invariant it keeps, and give the measured effect where there is one, such as barriers per frame or a test count.
+
+Optionally end with a `Verified:` paragraph when you built or ran something, naming the presets or commands and their result, for example `Verified: cmake --build --preset debug; ctest --preset debug (1060 tests, all pass)`. If nothing was built or run, leave it out rather than claim a check that did not happen.
+
 ## Build & test preflight
 
 The `default` configure preset reads `VCPKG_ROOT`; CMake silently falls back to a

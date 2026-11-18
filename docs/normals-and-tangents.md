@@ -194,6 +194,23 @@ perpendicularity). The normal map is sampled with the glTF convention
 (`n_ts = tex.rgb * 2 − 1`, green up) and applied only where a normal texture
 exists.
 
+### 6.1 Declared encoding and the glTF default
+
+`TextureNormalEncoding` is declared content, not something derived from the
+resolved GPU format. glTF normal maps are unit tangent-space normals by
+convention, so the importer declares `Standard`: the shader reconstructs
+`z = sqrt(1 - x² - y²)` from RG, and BC5 — a two-channel format — can carry it.
+A two-channel source declared `Full` or `Bent` is contradictory, because those
+decodes use the authored blue channel. The upload resolver rejects a native
+BC5 source in that state rather than silently reinterpreting it.
+
+Content that genuinely stores non-unit normals or `z < 0` must opt into
+`Full`/`Bent` at import time (`GltfImportOptions::normal_encoding`) and will
+resolve to a three-channel target (BC7/BC3/BC1/RGBA8), never BC5. Normal
+reservations are pre-bound to a flat-normal fallback, so a failed upload
+degrades to the geometric normal instead of sampling the missing-texture
+checkerboard through the normal decode path.
+
 ## 7. Alternative encodings considered (and why not)
 
 | Encoding | Size | Verdict |

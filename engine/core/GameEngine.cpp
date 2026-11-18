@@ -1021,6 +1021,16 @@ bool GameEngine::InitializeRendererCore(VulkanEngine::Application::ApplicationCo
                 backend, ctx_.image_heap, ctx_.missing_texture->GetData(),
                 vk::Format::eR8G8B8A8Unorm, SamplerDesc{}, &ctx_.sampler_cache),
             ctx_.missing_texture->GetId());
+        // Normal reservations get their own fallback: a 1x1 flat tangent-space
+        // normal. Sampling the missing-texture checkerboard through the normal
+        // decode path produces bogus lighting, whereas a flat normal leaves the
+        // geometric normal untouched until (or if) the real upload publishes.
+        static constexpr std::array<std::uint8_t, 4> kFlatNormal{128, 128, 255, 255};
+        ctx_.bindless_mgr->SetNormalFallback(
+            GpuResources::GpuTexture::CreateFromPixels(
+                backend, ctx_.image_heap, kFlatNormal.data(), 1, 1,
+                vk::Format::eR8G8B8A8Unorm, &ctx_.sampler_cache),
+            ResourceId{"normal_fallback"});
         const std::uint32_t fallback_slot = BindlessManager::kFallbackSlot;
         [[maybe_unused]] auto fallback_handle =
             ctx_.material_mgr.Register<TechniqueManager::DefaultMeshTechnique>(

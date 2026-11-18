@@ -114,6 +114,7 @@ void TextureUploader::Shutdown() {
     bindless_ = nullptr;
     capabilities_ = nullptr;
     sampler_cache_ = nullptr;
+    on_failed_ = nullptr;
 }
 
 std::optional<TextureReservation> TextureUploader::Reserve(TextureSemantic semantic,
@@ -123,7 +124,7 @@ std::optional<TextureReservation> TextureUploader::Reserve(TextureSemantic seman
     if (bindless_ == nullptr) {
         return std::nullopt;
     }
-    auto handle = bindless_->ReserveSlot(id);
+    auto handle = bindless_->ReserveSlot(id, semantic);
     if (!handle.has_value()) {
         return std::nullopt;
     }
@@ -178,8 +179,16 @@ void TextureUploader::ProcessItem(WorkerItem item) {
         ready.data.is_hdr_source, query);
     if (resolved.format == vk::Format::eUndefined) {
         ready.ok = false;
-        ready.error = "no legal upload format";
         ready.format = vk::Format::eUndefined;
+        if (item.reservation.semantic == TextureSemantic::Normal &&
+            item.reservation.normal_encoding != TextureNormalEncoding::Standard &&
+            ready.data.source_format == vk::Format::eBc5UnormBlock) {
+            ready.error = "no legal upload format: native BC5 carries only RG, so it "
+                          "cannot honor Full/Bent; declare Standard or use a "
+                          "three-channel source (BC7/BC3/BC1/RGBA8)";
+        } else {
+            ready.error = "no legal upload format";
+        }
     } else {
         ready.format = resolved.format;
         ready.ok = true;
@@ -232,7 +241,7 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
     }
     for (auto& item : finished) {
         if (!item.ok) {
-            CompleteItem(item, UploadStatus::Failed, std::move(item.error));
+            FailItem(item, std::move(item.error), frame_index);
             continue;
         }
         const std::uint64_t total = std::ranges::fold_left(
@@ -252,7 +261,7 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
             sampler_cache_);
         if (!texture.IsValid()) {
             staging_pool_->Retire(*staging, frame_index);
-            CompleteItem(item, UploadStatus::Failed, "image allocation failed");
+            FailItem(item, "image allocation failed", frame_index);
             continue;
         }
         // The staging slice is sized from the subresource table; a table whose
@@ -267,7 +276,8 @@ void TextureUploader::BeginFrame(std::uint32_t frame_index,
         }
         if (table_overflow || required_bytes > total || staging->size < required_bytes ||
             required_bytes > item.data.blob.size()) {
-            CompleteItem(item, UploadStatus::Failed, "texture subresource table is out of bounds");
+            staging_pool_->Retire(*staging, frame_index);
+            FailItem(item, "texture subresource table is out of bounds", frame_index);
             continue;
         }
 
@@ -294,6 +304,14 @@ void TextureUploader::CompleteItem(const ReadyItem& item, UploadStatus status, s
         item.promise->set_value(UploadResult{
             .handle = item.reservation.handle, .status = status, .error = std::move(error)});
     }
+}
+
+void TextureUploader::FailItem(const ReadyItem& item, std::string error,
+                               const std::uint32_t frame_index) {
+    if (on_failed_) {
+        on_failed_(item.reservation, error, frame_index);
+    }
+    CompleteItem(item, UploadStatus::Failed, std::move(error));
 }
 
 bool TextureUploader::HasPendingWork() const {

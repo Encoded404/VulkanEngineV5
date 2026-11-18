@@ -168,6 +168,22 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     }
 #endif
 
+    // The uploader collects failures on the main thread, after the caller has
+    // long discarded Submit()'s future. Log them here, and let hot reload drop
+    // the pending swap for a reload that never published.
+    ctx.texture_uploader->SetOnFailed(
+        [&ctx](const Textures::TextureReservation& reservation, const std::string& error,
+               const std::uint32_t frame_index) {
+            LOGIFACE_LOG(warn, "Texture upload failed for '" + reservation.id.value +
+                                   "' (slot " + std::to_string(reservation.handle.slot) +
+                                   "): " + error);
+#ifdef VKENGINE_HOT_RELOAD
+            if (ctx.texture_reloader) {
+                ctx.texture_reloader->OnUploadFailed(reservation.handle, frame_index);
+            }
+#endif
+        });
+
     {
         auto s = DebugSection("engineinit.dynamic_heaps");
         GpuResources::HeapConfig dynamic_heap_config{};

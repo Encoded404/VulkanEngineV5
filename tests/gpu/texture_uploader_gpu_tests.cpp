@@ -108,6 +108,24 @@ protected:
         }
         return data;
     }
+
+    static std::shared_ptr<const TextureData> MakeBc5NormalData() {
+        auto data = std::make_shared<TextureData>();
+        data->width = 4;
+        data->height = 4;
+        data->source_format = vk::Format::eBc5UnormBlock;
+        data->source_channels = 2;
+        data->source_alpha = 0;
+        data->semantic = TextureSemantic::Normal;
+        // One 4x4 BC5 block; the resolver rejects the encoding before the
+        // transcode/copy path ever reads these bytes.
+        data->subresources.push_back(TextureSubresource{
+            .mip = 0, .array_layer = 0, .offset = 0, .size = 16,
+            .width = 4, .height = 4, .depth = 1,
+        });
+        data->blob.assign(16, std::byte{0});
+        return data;
+    }
 };
 
 // Reserve returns a slot pre-bound to the fallback and never waits.
@@ -119,6 +137,47 @@ TEST_F(TextureUploaderGpuTest, ReserveIsImmediateAndFallbackBound) {
     // The reservation is sampleable but not yet committed: lookups resolve to
     // the fallback until the upload is published.
     EXPECT_FALSE(bindless->IsCommitted(reservation->handle.slot));
+}
+
+TEST_F(TextureUploaderGpuTest, FailedNormalUploadKeepsFlatNormalFallback) {
+    // Normal reservations use the flat-normal fallback, not the checkerboard:
+    // a failed Full/Bent BC5 upload would otherwise be sampled as a bogus
+    // normal map.
+    const auto checkerboard_view =
+        bindless->GetTexture(VulkanEngine::BindlessManager::kFallbackSlot)->GetImageView();
+    static constexpr std::array<std::uint8_t, 4> kFlatNormal{128, 128, 255, 255};
+    bindless->SetNormalFallback(
+        GpuTexture::CreateFromPixels(backend, heap, kFlatNormal.data(), 1, 1,
+                                     vk::Format::eR8G8B8A8Unorm),
+        VulkanEngine::ResourceId{"normal_fallback"});
+    std::string failure;
+    uploader->SetOnFailed(
+        [&failure](const TextureReservation&, const std::string& error, std::uint32_t) {
+            failure = error;
+        });
+
+    auto reservation = uploader->Reserve(TextureSemantic::Normal,
+                                          TextureNormalEncoding::Full, {},
+                                          VulkanEngine::ResourceId{"bc5-full"});
+    ASSERT_TRUE(reservation.has_value());
+    (void)uploader->Submit(*reservation, MakeBc5NormalData());
+    for (int attempt = 0; attempt < 200 && failure.empty(); ++attempt) {
+        uploader->BeginFrame(0, [](std::uint32_t) { return true; });
+        if (failure.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    EXPECT_NE(failure.find("native BC5"), std::string::npos);
+    // The effective texture must be the 1x1 flat normal, not the 4x4
+    // checkerboard the fixture installs at slot 0.
+    const auto* effective = bindless->GetTexture(reservation->handle);
+    ASSERT_NE(effective, nullptr);
+    EXPECT_EQ(effective->GetWidth(), 1u);
+    EXPECT_TRUE(effective->GetImageView() != checkerboard_view);
+    const auto* info = bindless->GetTextureInfo(reservation->handle.slot);
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->width, 1u);
+    EXPECT_EQ(info->format, static_cast<std::uint32_t>(vk::Format::eR8G8B8A8Unorm));
 }
 
 // A submitted texture is decoded, copied on a recorded frame, and published one

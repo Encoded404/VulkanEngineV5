@@ -121,6 +121,16 @@ public:
         std::function<void(BindlessManager::TextureHandle, const ResourceId&)> cb) {
         on_reserve_ = std::move(cb);
     }
+    // Optional observer invoked on the main thread when an upload fails, with
+    // the reservation, the error string, and the frame the failure was
+    // collected in. Production callers discard Submit()'s future, so this is
+    // the only place a resolution/transcode failure becomes observable. The
+    // reserved slot stays pre-bound to its semantic fallback (flat normal for
+    // Normal); the callback may log or clean up a pending hot-reload swap.
+    void SetOnFailed(
+        std::function<void(const TextureReservation&, const std::string&, std::uint32_t)> cb) {
+        on_failed_ = std::move(cb);
+    }
 
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
     [[nodiscard]] std::uint32_t PendingCount() const;
@@ -165,6 +175,8 @@ private:
     // used to buy by running two private threads outside the pool entirely.
     void ProcessItem(WorkerItem item);
     void CompleteItem(const ReadyItem& item, UploadStatus status, std::string error);
+    // Reports a main-thread failure through on_failed_ and resolves the promise.
+    void FailItem(const ReadyItem& item, std::string error, std::uint32_t frame_index);
 
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     GpuResources::GpuImageHeap* image_heap_ = nullptr;
@@ -183,6 +195,7 @@ private:
 
     // Main-thread-only state.
     std::function<void(BindlessManager::TextureHandle, std::uint64_t, std::uint32_t)> on_resident_{};
+    std::function<void(const TextureReservation&, const std::string&, std::uint32_t)> on_failed_{};
     std::function<void(BindlessManager::TextureHandle, const ResourceId&)> on_reserve_{};
     std::vector<StagedItem> staged_{};
     UploadScheduler scheduler_{};

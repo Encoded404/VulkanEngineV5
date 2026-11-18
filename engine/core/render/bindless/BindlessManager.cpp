@@ -185,6 +185,7 @@ void BindlessManager::Shutdown() {
     capacity_ = 0;
     next_generation_ = 1;
     fallback_ready_ = false;
+    normal_fallback_ = VulkanEngine::GpuResources::GpuTexture{};
 }
 
 void BindlessManager::SetFallback(VulkanEngine::GpuResources::GpuTexture texture,
@@ -205,7 +206,25 @@ void BindlessManager::SetFallback(VulkanEngine::GpuResources::GpuTexture texture
                             std::to_string(kFallbackSlot) + " ('" + id.value + "')");
 }
 
-std::optional<TextureHandle> BindlessManager::ReserveSlot(const VulkanEngine::ResourceId& id) {
+void BindlessManager::SetNormalFallback(VulkanEngine::GpuResources::GpuTexture texture,
+                                        const VulkanEngine::ResourceId& id) {
+    if (!backend_) {
+        return;
+    }
+    normal_fallback_ = std::move(texture);
+    LOGIFACE_LOG(debug, "BindlessManager: normal fallback bound ('" + id.value + "')");
+    // Refresh slots that reserved before the normal fallback existed. A real
+    // binding wins; only still-reserved Normal slots are rewritten.
+    for (std::uint32_t slot = kFallbackSlot + 1U; slot < slots_.size(); ++slot) {
+        if (slots_[slot].fallback_is_normal && !slots_[slot].committed) {
+            WriteFallback(slot);
+        }
+    }
+}
+
+std::optional<TextureHandle> BindlessManager::ReserveSlot(
+    const VulkanEngine::ResourceId& id,
+    const VulkanEngine::Textures::TextureSemantic semantic) {
     if (!fallback_ready_ || free_slots_.empty()) {
         return std::nullopt;
     }
@@ -216,10 +235,11 @@ std::optional<TextureHandle> BindlessManager::ReserveSlot(const VulkanEngine::Re
     slot.users = 0;
     slot.released = false;
     slot.committed = false;
+    slot.fallback_is_normal = semantic == VulkanEngine::Textures::TextureSemantic::Normal;
     slot.id = id;
     slot.binding = VulkanEngine::GpuResources::GpuTexture{};
     // Pre-bind the fallback so a material can sample immediately; never leave
-    // the descriptor undefined.
+    // the descriptor undefined. Normal slots use the flat-normal fallback.
     WriteFallback(slot_index);
     return TextureHandle{.slot = slot_index, .generation = slot.generation};
 }
@@ -284,6 +304,7 @@ std::optional<TextureHandle> BindlessManager::AllocateTextureSlot(
     slot.users = 1;
     slot.released = false;
     slot.committed = true;
+    slot.fallback_is_normal = false;
     slot.id = id;
     slot.binding = std::move(texture);
     UpdateSlot(slot_index, slot.binding);
@@ -409,11 +430,14 @@ const VulkanEngine::GpuResources::GpuTexture* BindlessManager::GetTexture(Textur
     if (handle.slot >= slots_.size() || slots_[handle.slot].generation != handle.generation) {
         return nullptr;
     }
-    // A reserved-but-uncommitted slot's descriptor points at the fallback; the
+    // A reserved-but-uncommitted slot's descriptor points at its fallback; the
     // slot record holds no own binding until the publish applies, so report the
     // fallback as the effective texture (this is what a pending material samples).
     const auto& slot = slots_[handle.slot];
     if (!slot.committed || !slot.binding.IsValid()) {
+        if (slot.fallback_is_normal && normal_fallback_.IsValid()) {
+            return &normal_fallback_;
+        }
         return &slots_[kFallbackSlot].binding;
     }
     return &slot.binding;
@@ -438,9 +462,13 @@ void BindlessManager::WriteFallback(std::uint32_t slot) {
     if (!fallback_ready_ && slot != kFallbackSlot) {
         return;
     }
-    // Point the slot at slot 0's live fallback view/sampler.
+    // Point the slot at slot 0's live fallback view/sampler, except for a
+    // Normal reservation that has a flat-normal fallback: sampling the
+    // checkerboard as a normal map is worse than no perturbation at all.
     if (slots_.empty()) return;
-    const auto& fallback = slots_[kFallbackSlot].binding;
+    const bool use_normal = slot != kFallbackSlot && slots_[slot].fallback_is_normal &&
+                            normal_fallback_.IsValid() && normal_fallback_.GetImageView() != nullptr;
+    const auto& fallback = use_normal ? normal_fallback_ : slots_[kFallbackSlot].binding;
     if (!fallback.IsValid() || fallback.GetImageView() == nullptr) {
         return;
     }
@@ -462,7 +490,7 @@ void BindlessManager::WriteFallback(std::uint32_t slot) {
     write.pImageInfo = &image_info;
     backend_->GetDevice().updateDescriptorSets({write}, {});
     // The descriptor points at the fallback, so the metadata must too.
-    WriteTextureInfo(slot, VulkanEngine::GpuResources::GpuTexture{});
+    WriteTextureInfo(slot, fallback);
 }
 
 void BindlessManager::WriteTextureInfo(std::uint32_t slot,
@@ -470,11 +498,14 @@ void BindlessManager::WriteTextureInfo(std::uint32_t slot,
     if (mapped_texture_info_ == nullptr || slot >= capacity_) {
         return;
     }
-    // An invalid binding means the descriptor currently points at the fallback
-    // (a reserved or released slot), so describe the fallback instead.
+    // An invalid binding means the descriptor currently points at a fallback
+    // (a reserved or released slot), so describe that fallback instead.
     const auto* source = &texture;
     if ((!texture.IsValid() || texture.GetImageView() == nullptr) && !slots_.empty()) {
-        source = &slots_[kFallbackSlot].binding;
+        const bool use_normal = slot < slots_.size() && slots_[slot].fallback_is_normal &&
+                                normal_fallback_.IsValid() &&
+                                normal_fallback_.GetImageView() != nullptr;
+        source = use_normal ? &normal_fallback_ : &slots_[kFallbackSlot].binding;
     }
     // Host-coherent memory: the mapped write is visible without a flush.
     mapped_texture_info_[slot] = source->IsValid() ? source->ToTextureInfo()

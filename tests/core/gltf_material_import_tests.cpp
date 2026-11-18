@@ -21,6 +21,7 @@ namespace {
 using VulkanEngine::FileLoaders::Mesh::ComputeGltfUvSets;
 using VulkanEngine::FileLoaders::Mesh::GltfAlphaMode;
 using VulkanEngine::FileLoaders::Mesh::GltfFilter;
+using VulkanEngine::FileLoaders::Mesh::GltfImportOptions;
 using VulkanEngine::FileLoaders::Mesh::GltfImportResult;
 using VulkanEngine::FileLoaders::Mesh::GltfMaterialHasTransform;
 using VulkanEngine::FileLoaders::Mesh::GltfMaterialInfo;
@@ -195,8 +196,20 @@ TEST_F(GltfMaterialImportTest, ParsesLitMaterialFields) {
     ASSERT_TRUE(lit.emissive_texture.present);
     EXPECT_EQ(lit.emissive_texture.tex_coord, 1u);
 
-    // A normal map is authored RGB, so the declared encoding is Full.
-    EXPECT_EQ(lit.normal_encoding, TextureNormalEncoding::Full);
+    // glTF normal maps are unit tangent-space by convention: Standard is the
+    // default, and it is the only encoding BC5 can carry.
+    EXPECT_EQ(lit.normal_encoding, TextureNormalEncoding::Standard);
+}
+
+TEST_F(GltfMaterialImportTest, OptsIntoFullNormalEncoding) {
+    const GltfImportResult result = ImportGltfMaterials(
+        path_, GltfImportOptions{.normal_encoding = TextureNormalEncoding::Full});
+    ASSERT_EQ(result.materials.size(), 2u);
+
+    // The lit material has a normal texture; the unlit one does not, so it
+    // stays Standard regardless of the import policy.
+    EXPECT_EQ(result.materials[0].normal_encoding, TextureNormalEncoding::Full);
+    EXPECT_EQ(result.materials[1].normal_encoding, TextureNormalEncoding::Standard);
 }
 
 TEST_F(GltfMaterialImportTest, ParsesTextureTransform) {
@@ -326,7 +339,7 @@ TEST_F(GltfMaterialImportTest, ParsedMaterialResolvesToADrawGroup) {
     // The converter carries the declared encoding, the MASK bit, the transform
     // gate, the per-slot UV selection, and the factors.
     EXPECT_EQ(data.flags & VulkanEngine::TechniqueManager::kNormalEncodingMask,
-              static_cast<std::uint32_t>(VulkanEngine::Textures::TextureNormalEncoding::Full));
+              static_cast<std::uint32_t>(VulkanEngine::Textures::TextureNormalEncoding::Standard));
     EXPECT_NE(data.flags & VulkanEngine::TechniqueManager::kAlphaMaskFlag, 0u);
     EXPECT_NE(data.flags & VulkanEngine::TechniqueManager::kHasTransformFlag, 0u);
     EXPECT_EQ(data.uv_sets, ComputeGltfUvSets(src));

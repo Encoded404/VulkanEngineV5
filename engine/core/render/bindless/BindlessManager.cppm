@@ -83,13 +83,25 @@ public:
     // sampleable). One-shot: a later call is ignored.
     void SetFallback(VulkanEngine::GpuResources::GpuTexture texture, const VulkanEngine::ResourceId& id);
 
+    // Supplies the neutral tangent-space normal used by Normal reservations
+    // while their real upload is pending or after it has failed. Without it a
+    // normal slot would pre-bind the checkerboard, which the shader would
+    // sample as a normal map. Calls after reservations refresh every
+    // still-reserved Normal slot.
+    void SetNormalFallback(VulkanEngine::GpuResources::GpuTexture texture,
+                           const VulkanEngine::ResourceId& id);
+
     // ── Frame-gated lifecycle (async uploader path) ───────────────────
 
     // Reserves a slot pre-bound to the fallback (always sampleable) and returns
     // its generation-checked handle. Returns nullopt when bindless capacity is
     // exhausted. The caller commits the real binding later, after recording the
-    // upload copies.
-    [[nodiscard]] std::optional<TextureHandle> ReserveSlot(const VulkanEngine::ResourceId& id = {});
+    // upload copies. A Normal reservation is pre-bound to the normal fallback,
+    // so a failed normal upload degrades to a flat normal rather than a
+    // checkerboard interpreted as a normal map.
+    [[nodiscard]] std::optional<TextureHandle> ReserveSlot(
+        const VulkanEngine::ResourceId& id = {},
+        VulkanEngine::Textures::TextureSemantic semantic = VulkanEngine::Textures::TextureSemantic::Unknown);
 
     // Records the real binding for a reserved handle. The descriptor write is
     // deferred: it applies at the begin-frame drain of `recording_frame + FIF`,
@@ -160,6 +172,7 @@ private:
         std::uint32_t users = 0;        // refcount; > 0 while referenced
         bool released = false;
         bool committed = false;         // true once a real binding is published
+        bool fallback_is_normal = false; // use the normal fallback while unbound
         VulkanEngine::ResourceId id{};
         VulkanEngine::GpuResources::GpuTexture binding{};
     };
@@ -188,6 +201,7 @@ private:
     std::uint32_t capacity_ = 0;
     std::uint32_t next_generation_ = 1;
     bool fallback_ready_ = false;
+    VulkanEngine::GpuResources::GpuTexture normal_fallback_{};
 
     VulkanEngine::GpuResources::FrameRing<SlotOp> ring_{};
 };

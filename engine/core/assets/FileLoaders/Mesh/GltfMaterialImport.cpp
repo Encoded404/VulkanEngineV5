@@ -231,7 +231,8 @@ SamplerDesc ToSamplerDesc(const GltfSamplerInfo& sampler) noexcept {
     return desc;
 }
 
-GltfImportResult ImportGltfMaterials(const std::filesystem::path& path) {
+GltfImportResult ImportGltfMaterials(const std::filesystem::path& path,
+                                     const GltfImportOptions& options) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         throw std::runtime_error("ImportGltfMaterials: failed to open " + path.string());
@@ -339,9 +340,11 @@ GltfImportResult ImportGltfMaterials(const std::filesystem::path& path) {
             info.emissive_texture = ToSlot(*material.emissiveTexture);
         }
 
-        // A glTF normal map is authored RGB, so the default declared encoding is
-        // Full; content that packs RG declares Standard itself at binding time.
-        info.normal_encoding = info.normal_texture.present ? TextureNormalEncoding::Full
+        // glTF normal maps are unit tangent-space by convention, so the default
+        // is Standard: it reconstructs Z from RG and is the only encoding BC5
+        // can carry. Full/Bent are opt-in for content that genuinely stores
+        // non-unit normals or z < 0, and need a three-channel target.
+        info.normal_encoding = info.normal_texture.present ? options.normal_encoding
                                                            : TextureNormalEncoding::Standard;
 
         result.materials.push_back(info);

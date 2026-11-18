@@ -313,7 +313,18 @@ void ApplyModelTransform(SceneContext& ctx, const AssetSession& session) {
         return false;
     }
 
-    std::unordered_map<std::uint64_t, std::uint32_t> uploaded{};
+    // The declared normal encoding is part of the upload identity: two
+    // materials can share an image yet declare different encodings, and the
+    // resolved format (and therefore the slot) differs. Keying without it
+    // silently reuses whichever encoding was uploaded first.
+    struct UploadKey {
+        std::size_t image_index{};
+        std::size_t sampler_index{};
+        Textures::TextureSemantic semantic{};
+        Textures::TextureNormalEncoding encoding{};
+        auto operator<=>(const UploadKey&) const = default;
+    };
+    std::map<UploadKey, std::uint32_t> uploaded{};
     std::size_t fallback_textures = 0;
     auto sampler_for = [&import](const FileLoaders::Mesh::GltfTextureSlot& slot) {
         if (slot.texture_index >= import.textures.size()) return Textures::SamplerDesc{};
@@ -335,9 +346,7 @@ void ApplyModelTransform(SceneContext& ctx, const AssetSession& session) {
         if (!ref.valid || ref.image_index >= import.images.size()) {
             return textures.White(ctx);
         }
-        const std::uint64_t key = (static_cast<std::uint64_t>(ref.image_index) << 32) |
-                                  (static_cast<std::uint64_t>(ref.sampler_index) << 8) |
-                                  static_cast<std::uint64_t>(semantic);
+        const UploadKey key{ref.image_index, ref.sampler_index, semantic, encoding};
         if (const auto it = uploaded.find(key); it != uploaded.end()) return it->second;
 
         std::uint32_t slot_id = ctx.engine->LoadTextureFromGltfImage(

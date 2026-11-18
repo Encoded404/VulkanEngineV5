@@ -65,6 +65,42 @@ void TextureReloader::UnwatchResource(const ResourceId& id) {
     watched_.erase(id.value);
 }
 
+void TextureReloader::OnUploadFailed(const BindlessManager::TextureHandle handle,
+                                     const std::uint32_t frame_index) {
+    const auto it = std::ranges::find_if(
+        pending_swaps_, [handle](const PendingSwap& swap) {
+            return swap.new_handle.slot == handle.slot &&
+                   swap.new_handle.generation == handle.generation;
+        });
+    if (it == pending_swaps_.end()) {
+        return;
+    }
+    const PendingSwap failed = *it;
+    pending_swaps_.erase(it);
+
+    // Reserve() registered the new handle for this resource before the upload
+    // ran. A failed upload must restore the old binding's registry entry before
+    // the new slot is released, or the next reload would treat a freed slot as
+    // the resource's current handle. Guard against a newer pending reload having
+    // replaced the entry in the meantime.
+    if (residency_ != nullptr) {
+        const auto current = residency_->HandleForResource(failed.resource_id);
+        if (current.has_value() && current->slot == failed.new_handle.slot &&
+            current->generation == failed.new_handle.generation) {
+            residency_->ForgetResource(failed.resource_id);
+            if (bindless_ != nullptr) {
+                const auto old = bindless_->GetHandle(failed.old_slot);
+                if (old.has_value()) {
+                    residency_->RegisterResourceHandle(failed.resource_id, *old, frame_index);
+                }
+            }
+        }
+    }
+    if (bindless_ != nullptr) {
+        bindless_->ReleaseSlot(failed.new_handle, frame_index);
+    }
+}
+
 std::uint32_t TextureReloader::Pump(std::uint32_t frame_index) {
     if (watcher_ == nullptr || resources_ == nullptr) {
         return 0;
@@ -138,7 +174,8 @@ std::uint32_t TextureReloader::Pump(std::uint32_t frame_index) {
         }
         auto data = std::make_shared<TextureData>(resource->GetData());
         (void)uploader_->Submit(*reservation, std::move(data));
-        pending_swaps_.push_back(PendingSwap{.old_slot = current->slot,
+        pending_swaps_.push_back(PendingSwap{.resource_id = ResourceId{matched_id},
+                                             .old_slot = current->slot,
                                              .new_handle = reservation->handle});
     }
     return swapped;

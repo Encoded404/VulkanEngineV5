@@ -54,6 +54,11 @@ public:
     // textures swapped this call.
     std::uint32_t Pump(std::uint32_t frame_index);
 
+    // Drops the pending swap for a reload whose upload failed, releasing the
+    // reserved slot so a failed reload leaks neither a slot nor a stale swap.
+    // The old binding stays in place.
+    void OnUploadFailed(BindlessManager::TextureHandle handle, std::uint32_t frame_index);
+
     [[nodiscard]] std::size_t PendingSwapCount() const { return pending_swaps_.size(); }
 
 private:
@@ -64,6 +69,7 @@ private:
         SamplerDesc sampler{};
     };
     struct PendingSwap {
+        ResourceId resource_id{};
         std::uint32_t old_slot{0};
         BindlessManager::TextureHandle new_handle{};
     };

@@ -13,9 +13,10 @@ import VulkanEngine.MaterialManager.MaterialId;
 // module without linking the parser.
 //
 // The importer reports what the asset declares; it never names a technique and
-// never touches the device. The application maps a glTF material index through
-// its `material_bindings` table to a MaterialId it registered (K15), and builds
-// the technique's per-material payload from these values.
+// never touches the device. glTF has no engine normal-encoding field, so that
+// policy comes from GltfImportOptions. The application maps a glTF material
+// index through its `material_bindings` table to a MaterialId it registered
+// (K15), and builds the technique's per-material payload from these values.
 
 export namespace VulkanEngine::FileLoaders::Mesh {
 
@@ -112,8 +113,10 @@ struct GltfMaterialInfo {
     float occlusion_strength{1.0f};
 
     // Declared content, never derived from a resolved upload format. glTF
-    // normal maps are authored RGB, so a material with a normal texture is
-    // Full unless the content pipeline packed RG (then the app overrides this).
+    // normal maps are unit tangent-space normals by convention, so the default
+    // is Standard: the shader reconstructs Z from RG and BC5 can represent it.
+    // Content that genuinely needs RGB as authored (non-unit normals or z < 0)
+    // opts into Full/Bent through GltfImportOptions.
     TextureNormalEncoding normal_encoding{TextureNormalEncoding::Standard};
 
     GltfTextureSlot base_color_texture{};
@@ -158,9 +161,19 @@ struct GltfImportResult {
 
 // ── Entry point ───────────────────────────────────────────────────────
 
+// Importer policy for values glTF itself does not declare. The normal encoding
+// is the important one: glTF normal maps are unit tangent-space by convention,
+// and Standard is the only encoding BC5 can carry. Full/Bent require three
+// channels (BC7/BC3/BC1/RGBA8) and are therefore opt-in for content that truly
+// stores non-unit normals or z < 0.
+struct GltfImportOptions {
+    TextureNormalEncoding normal_encoding{TextureNormalEncoding::Standard};
+};
+
 // Parses materials, textures, images, and samplers from a .gltf or .glb file.
 // External buffers and images are resolved relative to the file's directory
 // when present. Throws std::runtime_error on an unreadable or invalid asset.
-[[nodiscard]] GltfImportResult ImportGltfMaterials(const std::filesystem::path& path);
+[[nodiscard]] GltfImportResult ImportGltfMaterials(
+    const std::filesystem::path& path, const GltfImportOptions& options = {});
 
 } // namespace VulkanEngine::FileLoaders::Mesh

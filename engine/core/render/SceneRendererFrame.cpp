@@ -577,9 +577,9 @@ void SceneRenderer::DispatchExpand(vk::CommandBuffer cmd, std::uint32_t cnt,
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, Layout(SceneGpuLayout::PipelineLayoutId::expand),
                              0, ds, {});
-    ExpandPC pc{ vp, cnt, 0, 0,
-                 has_active_deform_ ? 1u : 0u,
-                 scene_capacity_.deform_vertex_span };
+    const ExpandPC pc{ .vp = vp, .cnt = cnt, .p0 = 0, .p1 = 0,
+                 .hasActiveDeform = has_active_deform_ ? 1u : 0u,
+                 .regionSpan = scene_capacity_.deform_vertex_span };
     cmd.pushConstants(Layout(SceneGpuLayout::PipelineLayoutId::expand), vk::ShaderStageFlagBits::eCompute,
                        0, sizeof(ExpandPC), &pc);
     // One workgroup per submesh: the whole group cooperates on the index copy.

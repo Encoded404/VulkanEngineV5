@@ -689,14 +689,18 @@ void SceneRenderer::DispatchHiZGen(vk::CommandBuffer cmd, std::uint32_t width, s
         cmd.dispatch((tiles_x + kHiZGroupThreads - 1) / kHiZGroupThreads,
                      (tiles_y + kHiZGroupThreads - 1) / kHiZGroupThreads, 1);
 
-        vk::MemoryBarrier hiz_mb{};
+        // The next iteration reads level bl + 1, which this dispatch just wrote, so order the two.
+        // The last dispatch needs no barrier: the render graph orders its write against the pass that samples the pyramid next.
+        if (bl + bc < hiz_mip_count_) {
+            vk::MemoryBarrier hiz_mb{};
 
-        hiz_mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
-        hiz_mb.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+            hiz_mb.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+            hiz_mb.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-        cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                            vk::PipelineStageFlagBits::eComputeShader,
-                            {}, hiz_mb, {}, {});
+            cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                vk::PipelineStageFlagBits::eComputeShader,
+                                {}, hiz_mb, {}, {});
+        }
     }
 }
 

@@ -168,20 +168,23 @@ bool EngineBootstrap::Initialize(EngineContext& ctx,
     }
 #endif
 
-    // The uploader collects failures on the main thread, after the caller has
-    // long discarded Submit()'s future. Log them here, and let hot reload drop
-    // the pending swap for a reload that never published.
+    // The uploader collects failures on the main thread, after the caller has long discarded Submit()'s future.
+    // Log them here, and let hot reload drop the pending swap for a reload that never published.
+    //
+    // The reloader is null unless hot reload is compiled in, so the handler carries it directly and the missing hook is a null check rather than a second copy of the handler.
+    Textures::TextureReloader* texture_reloader = nullptr;
+#ifdef VKENGINE_HOT_RELOAD
+    texture_reloader = ctx.texture_reloader.get();
+#endif
     ctx.texture_uploader->SetOnFailed(
-        [&ctx](const Textures::TextureReservation& reservation, const std::string& error,
-               const std::uint32_t frame_index) {
+        [texture_reloader](const Textures::TextureReservation& reservation, const std::string& error,
+                           const std::uint32_t frame_index) {
             LOGIFACE_LOG(warn, "Texture upload failed for '" + reservation.id.value +
                                    "' (slot " + std::to_string(reservation.handle.slot) +
                                    "): " + error);
-#ifdef VKENGINE_HOT_RELOAD
-            if (ctx.texture_reloader) {
-                ctx.texture_reloader->OnUploadFailed(reservation.handle, frame_index);
+            if (texture_reloader != nullptr) {
+                texture_reloader->OnUploadFailed(reservation.handle, frame_index);
             }
-#endif
         });
 
     {

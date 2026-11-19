@@ -12,6 +12,7 @@ export import VulkanBackend.Vulkan.VulkanBootstrap;
 export import VulkanEngine.PipelinePass;
 
 import VulkanEngine.GpuResources.TransientAllocator;
+import VulkanEngine.PassPipelineResources;
 import VulkanEngine.PipelineFactory;
 import VulkanEngine.ShaderManager;
 import VulkanBackend.Vulkan.GpuPassTimer;
@@ -104,9 +105,6 @@ public:
     // a frame boundary (top of Renderer::RenderFrame).
     void ApplyChanges();
     void SetRenderExtent(std::uint32_t width, std::uint32_t height);
-    // Number of frames-in-flight slots app-pass descriptor sets are allocated
-    // for. Must be set before the first ApplyChanges/Compile.
-    void SetFramesInFlight(std::uint32_t frames_in_flight);
     // Queue families transient resources are shared with; more than one enables
     // concurrent sharing so passes on multiple queues can access them.
     void SetQueueFamilies(std::span<const std::uint32_t> families);
@@ -129,7 +127,6 @@ public:
     bool AddDependency(VulkanEngine::RenderGraph::PassHandle before,
                        VulkanEngine::RenderGraph::PassHandle after);
 
-    bool SetInitialState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state);
     bool SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state);
 
     void Compile();
@@ -153,8 +150,6 @@ public:
     // Engine-owned pipeline declaration for a pass (nullptr when none declared).
     [[nodiscard]] const VulkanEngine::PipelinePass::PassPipelineRequest* GetPassPipelineRequest(
         VulkanEngine::RenderGraph::PassHandle handle) const;
-    [[nodiscard]] const VulkanEngine::PipelinePass::PassPipelineRequest* GetPassPipelineRequestByName(
-        std::string_view name) const;
     [[nodiscard]] vk::PipelineLayout GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle handle) const;
     [[nodiscard]] vk::PipelineLayout GetPassPipelineLayoutByName(std::string_view name) const;
 
@@ -193,7 +188,6 @@ private:
     void RebuildFromModel();
     void ResolveResources(VulkanEngine::RenderGraph::CompiledRenderGraph& graph,
                           std::uint32_t image_index, std::uint32_t fif_slot);
-    [[nodiscard]] bool ValidateModel(std::vector<PassError>& errors) const;
     void CollectRemovedPasses(std::uint32_t fif_slot);
     [[nodiscard]] ModelPass* FindModelPass(VulkanEngine::RenderGraph::PassHandle handle);
     [[nodiscard]] bool IsValidModelHandle(VulkanEngine::RenderGraph::PassHandle handle) const;
@@ -230,7 +224,6 @@ private:
     std::uint32_t revision_ = 0;
     std::uint32_t render_width_ = 0;
     std::uint32_t render_height_ = 0;
-    std::uint32_t frames_in_flight_ = 3;
     bool async_compute_available_ = false;
     std::uint32_t last_fif_slot_ = 0;
     // A render-extent change queues a one-shot OnRenderResize notification for
@@ -262,12 +255,7 @@ private:
     std::unordered_map<std::uint32_t, VulkanEngine::RenderGraph::ResourceKind> imported_resource_kinds_{};
     std::vector<PassError> validation_errors_{};
 
-    VulkanEngine::RenderGraph::ResourceHandle backbuffer_handle_{};
-    VulkanEngine::RenderGraph::ResourceHandle depth_buffer_handle_{};
     VulkanEngine::RenderGraph::ResourceHandle scene_color_handle_{};
-
-    std::uint32_t backbuffer_resource_index_ = 0;
-    std::uint32_t depth_buffer_resource_index_ = 0;
 
     // Per swapchain image (outer index) and per resource index (inner), the
     // actual end-of-frame layout recorded last time that image was used. Seeded
@@ -284,40 +272,19 @@ private:
     // pipeline request. The engine builds the VkPipeline from the request (and
     // hot-reloads it); the pass never owns a pipeline.
     struct PassPipelineState {
-        std::string name{};
-        VulkanEngine::PipelinePass::PassPipelineRequest request{};
-        std::vector<VulkanEngine::Render::DescriptorDecl> bindings{};
-        std::vector<VulkanEngine::PipelinePass::BindingAssignment> assignments{};
-        std::optional<VulkanEngine::RenderGraph::PassAttachmentSetup> attachments{};
         ShaderSystem::PipelineSlot slot{};
         bool built = false;
-        // Descriptor set layouts must outlive the pipeline layout that references
-        // them, so the state owns both.
-        std::vector<vk::raii::DescriptorSetLayout> app_set_layouts{};
-        std::unique_ptr<vk::raii::PipelineLayout> layout{};
-        // One descriptor set per declared app set per frame-in-flight slot. The
-        // engine rewrites the slot's set from the resolved resources before that
-        // frame is recorded, so no update-after-bind binding (and its device
-        // descriptor limits) is required.
-        std::unique_ptr<vk::raii::DescriptorPool> app_pool{};
-        std::vector<std::vector<vk::raii::DescriptorSet>> app_sets{};
-        std::vector<std::vector<vk::DescriptorSet>> app_set_handles{};
-        std::vector<std::uint32_t> app_set_numbers{};
-        struct DescriptorBindingState {
-            vk::ImageView view = nullptr;
-            vk::Buffer buffer = nullptr;
-            vk::Sampler sampler = nullptr;
-            vk::DeviceSize offset = 0;
-            vk::DeviceSize size = 0;
-            vk::ImageLayout layout = vk::ImageLayout::eUndefined;
-            bool valid = false;
-        };
-        std::vector<std::vector<DescriptorBindingState>> last_written{};
         // The desc owns its color-blend attachments (PipelineFactory rebinds
         // pAttachments at each entry), so hot reload reuses it safely.
         ShaderSystem::GraphicsPipelineDesc graphics_desc{};
         ShaderSystem::ComputePipelineDesc compute_desc{};
+        // Every Vulkan object the declaration produces, plus its write cache.
+        // The declaration itself stays in the model pass, which is its only copy.
+        PassPipelineResources resources{};
     };
+    [[nodiscard]] const PassPipelineState* FindPassPipeline(std::uint32_t slot) const;
+    [[nodiscard]] PassPipelineState* FindPassPipeline(std::uint32_t slot);
+    [[nodiscard]] const PassPipelineState* FindPassPipeline(std::string_view name) const;
     std::unordered_map<std::uint32_t, PassPipelineState> pass_pipelines_{};
     std::unordered_map<std::string, std::uint32_t> pass_pipeline_by_name_{};
 

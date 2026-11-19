@@ -83,6 +83,77 @@ TEST(DescriptorLayoutTest, RejectsDuplicateBinding) {
     EXPECT_EQ(duplicate.error(), LayoutError::DuplicateBinding);
 }
 
+TEST(DescriptorLayoutTest, RejectsZeroDescriptorCount) {
+    PipelineLayoutComposer composer;
+    DescriptorDecl empty = Decl(5, 0);
+    empty.count = 0;
+    const auto added = composer.AddAppBindings({empty});
+    ASSERT_FALSE(added.has_value());
+    EXPECT_EQ(added.error(), LayoutError::EmptyBinding);
+}
+
+TEST(DescriptorLayoutTest, SetLayoutSpecsPassDeclaredBindingThrough) {
+    DescriptorDecl decl = Decl(6, 3);
+    decl.descriptor_type = vk::DescriptorType::eCombinedImageSampler;
+    decl.count = 4;
+    decl.stage_flags = vk::ShaderStageFlagBits::eFragment;
+    decl.binding_flags = vk::DescriptorBindingFlagBits::ePartiallyBound;
+
+    // The per-material array length belongs to the packing policy, so the declared policy ignores it.
+    const auto specs = BuildSetLayoutSpecs({decl}, BindingCountPolicy::Declared, 64);
+    ASSERT_EQ(specs.size(), 1u);
+    EXPECT_EQ(specs[0].set, 6u);
+    ASSERT_EQ(specs[0].bindings.size(), 1u);
+    EXPECT_EQ(specs[0].bindings[0].binding, 3u);
+    EXPECT_EQ(specs[0].bindings[0].descriptorType, vk::DescriptorType::eCombinedImageSampler);
+    EXPECT_EQ(specs[0].bindings[0].descriptorCount, 4u);
+    EXPECT_EQ(specs[0].bindings[0].stageFlags, vk::ShaderStageFlagBits::eFragment);
+    ASSERT_EQ(specs[0].flags.size(), 1u);
+    EXPECT_EQ(specs[0].flags[0], vk::DescriptorBindingFlagBits::ePartiallyBound);
+}
+
+TEST(DescriptorLayoutTest, SetLayoutSpecsPackPerMaterialBindings) {
+    DescriptorDecl per_material = Decl(5, 0);
+    per_material.kind = DescriptorKind::PerMaterial;
+    DescriptorDecl shared = Decl(5, 1);
+    shared.kind = DescriptorKind::Shared;
+    // Packing decides the type and count for both kinds, so the declaration's own are ignored.
+    shared.descriptor_type = vk::DescriptorType::eUniformBuffer;
+    shared.count = 3;
+
+    const auto specs = BuildSetLayoutSpecs({per_material, shared},
+                                           BindingCountPolicy::TechniquePacking, 256);
+    ASSERT_EQ(specs.size(), 1u);
+    ASSERT_EQ(specs[0].bindings.size(), 2u);
+    EXPECT_EQ(specs[0].bindings[0].descriptorType, vk::DescriptorType::eStorageBuffer);
+    EXPECT_EQ(specs[0].bindings[0].descriptorCount, 256u);
+    EXPECT_EQ(specs[0].bindings[0].stageFlags,
+              vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment);
+    EXPECT_EQ(specs[0].bindings[1].descriptorType, vk::DescriptorType::eStorageBuffer);
+    EXPECT_EQ(specs[0].bindings[1].descriptorCount, 1u);
+
+    ASSERT_EQ(specs[0].flags.size(), 2u);
+    EXPECT_EQ(specs[0].flags[0], vk::DescriptorBindingFlagBits::ePartiallyBound |
+                                    vk::DescriptorBindingFlagBits::eUpdateAfterBind);
+    EXPECT_EQ(specs[0].flags[1], vk::DescriptorBindingFlags{});
+}
+
+TEST(DescriptorLayoutTest, SetLayoutSpecsOrderGappedSetsAscending) {
+    const auto specs = BuildSetLayoutSpecs({Decl(9, 2), Decl(7, 1), Decl(9, 0), Decl(7, 0)},
+                                           BindingCountPolicy::Declared);
+    ASSERT_EQ(specs.size(), 2u);
+    EXPECT_EQ(specs[0].set, 7u);
+    EXPECT_EQ(specs[1].set, 9u);
+    ASSERT_EQ(specs[0].bindings.size(), 2u);
+    EXPECT_EQ(specs[0].bindings[0].binding, 0u);
+    EXPECT_EQ(specs[0].bindings[1].binding, 1u);
+    ASSERT_EQ(specs[1].bindings.size(), 2u);
+    EXPECT_EQ(specs[1].bindings[0].binding, 0u);
+    EXPECT_EQ(specs[1].bindings[1].binding, 2u);
+
+    EXPECT_TRUE(BuildSetLayoutSpecs({}, BindingCountPolicy::Declared).empty());
+}
+
 TEST(DescriptorLayoutTest, RejectsSetGap) {
     PipelineLayoutComposer composer;
     std::vector<DescriptorDecl> engine;

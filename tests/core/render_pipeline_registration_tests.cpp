@@ -319,4 +319,18 @@ TEST(RenderPipelineRegistrationTest, ShaderReadOnlyInitialAndFinalLayoutsSurvive
     EXPECT_EQ(*final_layout, vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
+TEST(RenderPipelineRegistrationTest, SelfDependencyIsRejected) {
+    RenderPipeline pipeline;
+    pipeline.SetRenderExtent(256, 256);
+    const auto pass = pipeline.RegisterPass(std::make_unique<NamedPass>("self-dep"));
+    ASSERT_TRUE(pass.has_value());
+
+    // A self-edge is meaningless: refuse it here, rather than letting it reach the builder, whose rejection is discarded and the edge silently vanishes.
+    EXPECT_FALSE(pipeline.AddDependency(*pass, *pass));
+
+    pipeline.ApplyChanges();
+    EXPECT_TRUE(pipeline.IsCompiled());
+    EXPECT_TRUE(GraphHasPass(pipeline, "self-dep"));
+}
+
 }  // namespace

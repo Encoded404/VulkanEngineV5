@@ -102,6 +102,29 @@ struct ComposedLayout {
     return groups;
 }
 
+// ── Declaration -> Vulkan binding ──
+//
+// How a declaration becomes a Vulkan binding.
+// A pass states its own type, count and stages, while a technique packs PerMaterial bindings into the fixed-size storage-buffer array its material table indexes.
+
+enum class BindingCountPolicy : std::uint8_t { Declared, TechniquePacking };
+
+struct SetLayoutSpec {
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
+    std::uint32_t set = 0;
+    std::vector<vk::DescriptorSetLayoutBinding> bindings{};
+    // Parallel to bindings; it must outlive the create-info whose pNext chain points at it.
+    std::vector<vk::DescriptorBindingFlags> flags{};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
+};
+
+// Deterministic, one spec per set, ordered by ascending set and ascending binding.
+// `per_material_count` is the descriptor-array length used for a PerMaterial declaration under TechniquePacking.
+// It is a parameter rather than a constant from this module, because the owning constant lives in BaseTechnique, which already imports this one.
+[[nodiscard]] std::vector<SetLayoutSpec> BuildSetLayoutSpecs(
+    const std::vector<DescriptorDecl>& decls, BindingCountPolicy policy,
+    std::uint32_t per_material_count = 1);
+
 // Composes a full pipeline layout description with reserved engine sets.
 //
 // The composer is pure: it validates and orders declarations, and returns a
@@ -213,5 +236,44 @@ private:
     std::vector<DescriptorDecl> app_decls_{};
     std::vector<PushConstantRangeDecl> push_ranges_{};
 };
+
+std::vector<SetLayoutSpec> BuildSetLayoutSpecs(const std::vector<DescriptorDecl>& decls,
+                                               BindingCountPolicy policy,
+                                               std::uint32_t per_material_count) {
+    std::vector<SetLayoutSpec> specs;
+    for (const auto& group : GroupBindingsBySet(decls)) {
+        SetLayoutSpec spec{};
+        spec.set = group.set;
+        spec.bindings.reserve(group.bindings.size());
+        spec.flags.reserve(group.bindings.size());
+        for (const auto& decl : group.bindings) {
+            const bool per_material = decl.kind == DescriptorKind::PerMaterial;
+
+            vk::DescriptorSetLayoutBinding binding{};
+            binding.binding = decl.binding;
+            if (policy == BindingCountPolicy::TechniquePacking) {
+                // Under TechniquePacking both kinds are a StorageBuffer (StructuredBuffer in HLSL).
+                // A PerMaterial binding is a BlockArray the shader indexes by material_id / MATERIAL_BLOCK_SIZE, so it must expose the whole descriptor array the material packing can name.
+                // A Shared binding is a single buffer.
+                binding.descriptorType = vk::DescriptorType::eStorageBuffer;
+                binding.descriptorCount = per_material ? per_material_count : 1u;
+                binding.stageFlags = vk::ShaderStageFlagBits::eVertex |
+                                     vk::ShaderStageFlagBits::eFragment;
+                // Per-material arrays are partially bound (blocks appear as materials are registered) and updated after bind (registration can happen while frames are in flight).
+                spec.flags.push_back(per_material ? (vk::DescriptorBindingFlagBits::ePartiallyBound |
+                                                     vk::DescriptorBindingFlagBits::eUpdateAfterBind)
+                                                  : vk::DescriptorBindingFlags{});
+            } else {
+                binding.descriptorType = decl.descriptor_type;
+                binding.descriptorCount = decl.count;
+                binding.stageFlags = decl.stage_flags;
+                spec.flags.push_back(decl.binding_flags);
+            }
+            spec.bindings.push_back(binding);
+        }
+        specs.push_back(std::move(spec));
+    }
+    return specs;
+}
 
 } // namespace VulkanEngine::Render

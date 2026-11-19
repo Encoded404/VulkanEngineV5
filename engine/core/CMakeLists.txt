@@ -265,6 +265,7 @@ target_sources(${ENGINE_TARGET} PRIVATE
     assets/FontResource.cpp
     ui/ImGuiSystem.cpp
     render/Pipeline.cpp
+    render/PassPipelineResources.cpp
     render/PipelinePass.cpp
     render/techniques/BaseTechnique.cpp
     gpu/Buffer.cpp
@@ -474,6 +475,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         text/FontReloader.cppm
         text/TextSystem.cppm
         render/Pipeline.cppm
+        render/PassPipelineResources.cppm
         render/PipelinePass.cppm
         render/DescriptorDecl.cppm
         gpu/GpuResources.cppm

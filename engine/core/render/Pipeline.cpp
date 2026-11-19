@@ -17,22 +17,26 @@ import VulkanBackend.Vulkan.VulkanBootstrap;
 import VulkanBackend.Vulkan.VulkanDebugUtils;
 import VulkanEngine.PipelineCompiler;
 import VulkanEngine.PipelineFactory;
+import VulkanEngine.PipelineTemplates;
 
 namespace VulkanEngine::RenderPipeline {
 
 namespace {
 
-vk::ImageAspectFlags FormatToAspectFlags(vk::Format format) {
-    switch (format) {
-        case vk::Format::eD16Unorm:
-        case vk::Format::eD32Sfloat:
-        case vk::Format::eD16UnormS8Uint:
-        case vk::Format::eD24UnormS8Uint:
-        case vk::Format::eD32SfloatS8Uint:
-            return vk::ImageAspectFlagBits::eDepth;
-        default:
-            return vk::ImageAspectFlagBits::eColor;
-    }
+// Blend comes from the pass's declaration; an undeclared blend keeps the opaque write every other pass gets.
+vk::PipelineColorBlendAttachmentState BlendAttachment(
+    const VulkanEngine::PipelinePass::PassBlendState& blend) {
+    vk::PipelineColorBlendAttachmentState attachment{};
+    attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    attachment.blendEnable = blend.enable ? vk::True : vk::False;
+    attachment.srcColorBlendFactor = blend.src_color_blend_factor;
+    attachment.dstColorBlendFactor = blend.dst_color_blend_factor;
+    attachment.colorBlendOp = blend.color_blend_op;
+    attachment.srcAlphaBlendFactor = blend.src_alpha_blend_factor;
+    attachment.dstAlphaBlendFactor = blend.dst_alpha_blend_factor;
+    attachment.alphaBlendOp = blend.alpha_blend_op;
+    return attachment;
 }
 
 } // namespace
@@ -91,15 +95,11 @@ void RenderPipeline::Shutdown() {
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportBackbuffer() {
-    backbuffer_handle_ = graph_builder_.ImportResource("swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    TrackImportedResource(backbuffer_handle_, "swapchain-backbuffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    return backbuffer_handle_;
+    return ImportImage("swapchain-backbuffer");
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportDepthBuffer() {
-    depth_buffer_handle_ = graph_builder_.ImportResource("depth-buffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    TrackImportedResource(depth_buffer_handle_, "depth-buffer", VulkanEngine::RenderGraph::ResourceKind::Image);
-    return depth_buffer_handle_;
+    return ImportImage("depth-buffer");
 }
 
 VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::ImportSceneColor() {
@@ -147,38 +147,34 @@ VulkanEngine::RenderGraph::ResourceHandle RenderPipeline::CreateTransientImage(c
 
     graph_builder_.SetTransientImageInfo(handle, info);
 
-    // ContentsUndefined contract: an aliasable image must start Undefined, so a
-    // requested non-Undefined initial layout is dropped rather than aliased.
-    if (!desc.aliasable && desc.initial_layout != vk::ImageLayout::eUndefined) {
-        // Both layout paths share one mapping (ToImageLayoutIntent), so the
-        // initial and final chains cannot drift apart. An unrepresentable layout
-        // is reported rather than silently becoming Undefined.
-        const auto initial_layout = VulkanEngine::RenderGraph::ToImageLayoutIntent(desc.initial_layout);
-        if (initial_layout == VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined) {
-            LOGIFACE_LOG(warn, "RenderPipeline: transient image '" + desc.name +
-                                   "' requested an initial layout with no graph intent; using Undefined");
+    // ContentsUndefined contract: an aliasable image must start Undefined, so a requested non-Undefined initial layout is dropped rather than aliased.
+    // Both layout paths share one mapping (ToImageLayoutIntent), so the initial and final chains cannot drift apart.
+    // An unrepresentable layout is reported rather than silently becoming Undefined.
+    const auto apply_layout = [&](vk::ImageLayout layout, bool is_final) {
+        if (layout == vk::ImageLayout::eUndefined) {
+            return;
         }
-        auto initial_state = VulkanEngine::RenderGraph::ResourceState::ImageState(
-            VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
-            VulkanEngine::RenderGraph::AccessIntent::None,
-            VulkanEngine::RenderGraph::QueueType::Graphics,
-            initial_layout);
-        graph_builder_.SetInitialState(handle, initial_state);
-    }
-
-    if (desc.final_layout != vk::ImageLayout::eUndefined) {
-        const auto final_layout = VulkanEngine::RenderGraph::ToImageLayoutIntent(desc.final_layout);
-        if (final_layout == VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined) {
+        const auto intent = VulkanEngine::RenderGraph::ToImageLayoutIntent(layout);
+        if (intent == VulkanEngine::RenderGraph::ImageLayoutIntent::Undefined) {
             LOGIFACE_LOG(warn, "RenderPipeline: transient image '" + desc.name +
-                                   "' requested a final layout with no graph intent; using Undefined");
+                                   "' requested a " + (is_final ? "final" : "initial") +
+                                   " layout with no graph intent; using Undefined");
         }
-        auto final_state = VulkanEngine::RenderGraph::ResourceState::ImageState(
-            VulkanEngine::RenderGraph::PipelineStageIntent::BottomOfPipe,
+        auto state = VulkanEngine::RenderGraph::ResourceState::ImageState(
+            is_final ? VulkanEngine::RenderGraph::PipelineStageIntent::BottomOfPipe
+                     : VulkanEngine::RenderGraph::PipelineStageIntent::TopOfPipe,
             VulkanEngine::RenderGraph::AccessIntent::None,
-            VulkanEngine::RenderGraph::QueueType::Graphics,
-            final_layout);
-        graph_builder_.SetFinalState(handle, final_state);
+            VulkanEngine::RenderGraph::QueueType::Graphics, intent);
+        if (is_final) {
+            (void)graph_builder_.SetFinalState(handle, state);
+        } else {
+            (void)graph_builder_.SetInitialState(handle, state);
+        }
+    };
+    if (!desc.aliasable) {
+        apply_layout(desc.initial_layout, false);
     }
+    apply_layout(desc.final_layout, true);
 
     const std::uint32_t res_index = handle.index;
     transient_image_descs_[res_index] = desc;
@@ -229,12 +225,8 @@ VulkanEngine::RenderGraph::PassHandle RenderPipeline::AddModelPass(ModelPass mod
 
     if (model.pipeline_request.IsDeclared() || !model.declared_bindings.empty()) {
         PassPipelineState state{};
-        state.name = model.name;
-        state.request = model.pipeline_request;
-        state.bindings = model.declared_bindings;
-        state.assignments = model.binding_assignments;
-        state.attachments = model.attachments;
-        pass_pipeline_by_name_[state.name] = slot;
+        // The declaration is not copied: the model pass is its only owner, and the by-name map only needs the slot.
+        pass_pipeline_by_name_[model.name] = slot;
         pass_pipelines_[slot] = std::move(state);
     }
 
@@ -499,10 +491,6 @@ void RenderPipeline::RequestRebuild() {
     dirty_ = true;
 }
 
-void RenderPipeline::SetFramesInFlight(std::uint32_t frames_in_flight) {
-    frames_in_flight_ = std::max(1u, frames_in_flight);
-}
-
 void RenderPipeline::SetQueueFamilies(std::span<const std::uint32_t> families) {
     transient_allocator_.SetQueueFamilies(families);
 }
@@ -599,6 +587,7 @@ void RenderPipeline::RebuildFromModel() {
 
     std::vector<VulkanEngine::RenderGraph::PassHandle> builder_handles(model_passes_.size());
     std::vector<bool> present(model_passes_.size(), false);
+    // The discarded results below can only report an invalid handle, and validate_resource rejected those at registration, so there is nothing left to surface here.
     for (std::size_t i = 0; i < model_passes_.size(); ++i) {
         ModelPass& model = model_passes_[i];
         if (!model.alive || !model.enabled) {
@@ -620,6 +609,7 @@ void RenderPipeline::RebuildFromModel() {
         }
     }
 
+    // A self-edge never reaches the builder: AddDependency refuses one, so the only remaining rejection here is an unknown handle, and both endpoints are live model slots.
     for (const auto& [before_slot, after_slot] : model_dependencies_) {
         if (before_slot < present.size() && after_slot < present.size() && present[before_slot] &&
             present[after_slot]) {
@@ -686,7 +676,6 @@ void RenderPipeline::RebuildFromModel() {
     ++revision_;
 
     std::vector<PassError> errors;
-    (void)ValidateModel(errors);
 
     compiled_graph_ = graph_builder_.Compile();
     compiled_ = compiled_graph_.success;
@@ -734,51 +723,7 @@ void RenderPipeline::RebuildFromModel() {
         tracked_states_.assign(image_count,
                                std::vector<VulkanEngine::RenderGraph::ResourceState>(tracked_resource_count_));
         tracked_valid_.assign(image_count, std::vector<bool>(tracked_resource_count_, false));
-
-        for (std::size_t i = 0; i < compiled_graph_.resource_lifetimes.size(); ++i) {
-            const auto& lifetime = compiled_graph_.resource_lifetimes[i];
-            if (lifetime.name == "swapchain-backbuffer") {
-                backbuffer_resource_index_ = lifetime.handle.index;
-            } else if (lifetime.name == "depth-buffer") {
-                depth_buffer_resource_index_ = lifetime.handle.index;
-            }
-        }
     }
-}
-
-bool RenderPipeline::ValidateModel(std::vector<PassError>& errors) const {
-    std::unordered_set<std::string> names;
-    for (const auto& model : model_passes_) {
-        if (!model.alive || !model.enabled) {
-            continue;
-        }
-        if (!names.insert(model.name).second) {
-            errors.push_back(PassError{PassErrorCode::DuplicateName, "duplicate pass name", model.name});
-        }
-        // Every imported image a pass touches must have a resolver; imported
-        // buffers may be hazard-only and carry no Vulkan handle.
-        const auto check_import = [&](VulkanEngine::RenderGraph::ResourceHandle resource) {
-            if (!resource.IsValid() || resource.index >= compiled_graph_.resource_info.size()) {
-                return;
-            }
-            const auto& info = compiled_graph_.resource_info[resource.index];
-            if (!info.imported || info.kind != VulkanEngine::RenderGraph::ResourceKind::Image) {
-                return;
-            }
-            if (!image_resolver_names_.contains(info.name)) {
-                errors.push_back(PassError{PassErrorCode::MissingResolver,
-                                           "imported image '" + info.name + "' has no resolver",
-                                           model.name});
-            }
-        };
-        for (const auto& read : model.reads) {
-            check_import(read.resource);
-        }
-        for (const auto write : model.writes) {
-            check_import(write);
-        }
-    }
-    return errors.empty();
 }
 
 void RenderPipeline::CollectRemovedPasses(std::uint32_t fif_slot) {
@@ -806,225 +751,117 @@ void RenderPipeline::BuildPassPipelines() {
     }
     auto& device = bootstrap_->GetBackend().GetDevice();
 
-    // All pass pipelines compile in one batched submission at the end of this
-    // function; the per-pass sections below only build layouts and descs.
+    // All pass pipelines compile in one batched submission at the end of this function; the loop below only builds layouts and descs.
     ShaderSystem::PipelineFactoryExecutor executor{*pipeline_factory_};
     ShaderSystem::PipelineCompiler compiler{executor};
 
-    for (auto& [index, state] : pass_pipelines_) {
-        (void)index;
-        if (!state.request.IsDeclared() || state.built) {
+    // Name order rather than hash order, so a batched submission and a driver-rejection log are reproducible.
+    std::vector<std::uint32_t> pending;
+    pending.reserve(pass_pipelines_.size());
+    for (const auto& [slot, state] : pass_pipelines_) {
+        if (!state.built) {
+            pending.push_back(slot);
+        }
+    }
+    std::ranges::sort(pending, [this](std::uint32_t a, std::uint32_t b) {
+        return model_passes_[a].name < model_passes_[b].name;
+    });
+
+    for (const std::uint32_t index : pending) {
+        PassPipelineState& state = pass_pipelines_[index];
+        ModelPass& model = model_passes_[index];
+        // Mutable, because the format inference below writes the formats the pass did not know at Setup() time back into the declaration.
+        VulkanEngine::PipelinePass::PassPipelineRequest& request = model.pipeline_request;
+        if (!request.IsDeclared()) {
             continue;
         }
         if (std::ranges::any_of(engine_set_layouts_, [](vk::DescriptorSetLayout layout) {
                 return layout == nullptr;
             })) {
             // Engine set layouts were not supplied; defer until they are.
-            LOGIFACE_LOG(debug, "RenderPipeline: pass pipeline '" + state.name +
+            LOGIFACE_LOG(debug, "RenderPipeline: pass pipeline '" + model.name +
                                     "' deferred until engine set layouts are set");
             return;
         }
 
-        // App descriptor sets (>= 5) composed deterministically.
-        VulkanEngine::Render::PipelineLayoutComposer composer;
-        if (const auto added = composer.AddAppBindings(state.bindings); !added.has_value()) {
-            LOGIFACE_LOG(error, "RenderPipeline: pass '" + state.name +
-                                    "' has invalid descriptor declarations");
-            continue;
-        }
-        for (const auto& group : VulkanEngine::Render::GroupBindingsBySet(state.bindings)) {
-            std::vector<vk::DescriptorSetLayoutBinding> bindings;
-            std::vector<vk::DescriptorBindingFlags> flags;
-            bindings.reserve(group.bindings.size());
-            flags.reserve(group.bindings.size());
-            for (const auto& decl : group.bindings) {
-                vk::DescriptorSetLayoutBinding binding{};
-                binding.binding = decl.binding;
-                binding.descriptorType = decl.descriptor_type;
-                binding.descriptorCount = decl.count;
-                binding.stageFlags = decl.stage_flags;
-                bindings.push_back(binding);
-                flags.push_back(decl.binding_flags);
-            }
-            vk::DescriptorSetLayoutBindingFlagsCreateInfo flags_info{};
-            flags_info.bindingCount = static_cast<std::uint32_t>(flags.size());
-            flags_info.pBindingFlags = flags.data();
-            vk::DescriptorSetLayoutCreateInfo layout_info{};
-            layout_info.pNext = &flags_info;
-            layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
-            layout_info.pBindings = bindings.data();
-            state.app_set_layouts.emplace_back(device, layout_info);
-            state.app_set_numbers.push_back(group.set);
-        }
-
-        std::vector<vk::DescriptorSetLayout> set_layouts(engine_set_layouts_.begin(),
-                                                         engine_set_layouts_.end());
-        for (auto& layout : state.app_set_layouts) {
-            set_layouts.push_back(*layout);
-        }
-
-        std::vector<vk::PushConstantRange> push_ranges;
-        if (state.request.push_constant_size > 0 &&
-            state.request.push_constant_stages != vk::ShaderStageFlags{}) {
-            push_ranges.push_back(vk::PushConstantRange{
-                state.request.push_constant_stages, 0, state.request.push_constant_size});
-        }
-
-        vk::PipelineLayoutCreateInfo pipeline_layout_info{};
-        pipeline_layout_info.setLayoutCount = static_cast<std::uint32_t>(set_layouts.size());
-        pipeline_layout_info.pSetLayouts = set_layouts.data();
-        pipeline_layout_info.pushConstantRangeCount = static_cast<std::uint32_t>(push_ranges.size());
-        pipeline_layout_info.pPushConstantRanges = push_ranges.data();
-        state.layout = std::make_unique<vk::raii::PipelineLayout>(device, pipeline_layout_info);
-        if (static_cast<vk::PipelineLayout>(**state.layout) == nullptr) {
-            LOGIFACE_LOG(error, "RenderPipeline: failed to create layout for pass '" + state.name + "'");
+        const std::uint32_t frames_in_flight =
+            std::max<std::uint32_t>(bootstrap_->GetBackend().GetFramesInFlight(), 1);
+        if (!state.resources.Build(device, request, engine_set_layouts_, model.declared_bindings,
+                                   static_cast<std::uint32_t>(model.binding_assignments.size()),
+                                   frames_in_flight, model.name)) {
             continue;
         }
 
-        // One descriptor set per declared app set per frames-in-flight slot. A
-        // frame rewrites only its own slot's sets before recording, so a set is
-        // never updated while an in-flight frame references it.
-        if (!state.app_set_layouts.empty()) {
-            const std::uint32_t fif = frames_in_flight_;
-            const std::uint32_t group_count = static_cast<std::uint32_t>(state.app_set_layouts.size());
-
-            std::map<std::uint32_t, std::uint32_t> size_by_type;
-            for (const auto& decl : state.bindings) {
-                size_by_type[static_cast<std::uint32_t>(decl.descriptor_type)] += decl.count * fif;
-            }
-            std::vector<vk::DescriptorPoolSize> pool_sizes;
-            pool_sizes.reserve(size_by_type.size());
-            for (const auto& [type, count] : size_by_type) {
-                pool_sizes.push_back(vk::DescriptorPoolSize{
-                    static_cast<vk::DescriptorType>(type), count});
-            }
-            vk::DescriptorPoolCreateInfo pool_info{};
-            // raii descriptor sets free themselves, which requires the pool flag.
-            pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-            pool_info.maxSets = fif * group_count;
-            pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
-            pool_info.pPoolSizes = pool_sizes.data();
-            state.app_pool = std::make_unique<vk::raii::DescriptorPool>(device, pool_info);
-
-            state.app_sets.resize(fif);
-            state.app_set_handles.resize(fif);
-            state.last_written.resize(fif);
-            for (std::uint32_t slot = 0; slot < fif; ++slot) {
-                std::vector<vk::DescriptorSetLayout> app_layouts;
-                app_layouts.reserve(state.app_set_layouts.size());
-                for (const auto& app_layout : state.app_set_layouts) {
-                    app_layouts.push_back(*app_layout);
-                }
-                vk::DescriptorSetAllocateInfo allocate_info{};
-                allocate_info.descriptorPool = *state.app_pool;
-                allocate_info.descriptorSetCount = static_cast<std::uint32_t>(app_layouts.size());
-                allocate_info.pSetLayouts = app_layouts.data();
-                state.app_sets[slot] = device.allocateDescriptorSets(allocate_info);
-                state.app_set_handles[slot].clear();
-                state.app_set_handles[slot].reserve(state.app_sets[slot].size());
-                for (const auto& set : state.app_sets[slot]) {
-                    state.app_set_handles[slot].push_back(*set);
-                }
-                state.last_written[slot].assign(state.assignments.size(),
-                                                PassPipelineState::DescriptorBindingState{});
-            }
-        }
-
-        // Infer attachment formats the pass did not specify (a graphics pass
-        // rarely knows the swapchain/transient formats at Setup time).
-        if (state.attachments.has_value()) {
-            if (state.request.color_formats.empty()) {
-                for (const auto& color : state.attachments->color_attachments) {
+        // Infer attachment formats the pass did not specify (a graphics pass rarely knows the swapchain/transient formats at Setup() time).
+        // Both writes are guarded, so a rebuild that reaches them again is a no-op.
+        if (model.attachments.has_value()) {
+            if (request.color_formats.empty()) {
+                for (const auto& color : model.attachments->color_attachments) {
                     const vk::Format format = ResolveResourceFormat(color.resource);
                     if (format != vk::Format::eUndefined) {
-                        state.request.color_formats.push_back(format);
+                        request.color_formats.push_back(format);
                     }
                 }
             }
-            if (state.request.depth_format == vk::Format::eUndefined &&
-                state.attachments->depth_attachment.has_value()) {
-                state.request.depth_format =
-                    ResolveResourceFormat(state.attachments->depth_attachment->resource);
+            if (request.depth_format == vk::Format::eUndefined &&
+                model.attachments->depth_attachment.has_value()) {
+                request.depth_format =
+                    ResolveResourceFormat(model.attachments->depth_attachment->resource);
             }
         }
 
-        if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
+        if (request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
             state.compute_desc = ShaderSystem::ComputePipelineDesc{
-                .shader = static_cast<ShaderSystem::ShaderId>(state.request.compute_shader),
-                .layout = *state.layout,
+                .shader = static_cast<ShaderSystem::ShaderId>(request.compute_shader),
+                .layout = state.resources.Layout(),
             };
-            auto& st = state;
             compiler.SubmitCompute(
-                state.compute_desc, st.name,
-                [&st](ShaderSystem::PipelineOutcome&& outcome) {
+                state.compute_desc, model.name,
+                [state_ptr = &state, pass_name = model.name](ShaderSystem::PipelineOutcome&& outcome) {
                     if (!outcome.has_value()) {
                         LOGIFACE_LOG(error, "RenderPipeline: compute pipeline creation failed for pass '" +
-                                                st.name + "': " + outcome.error().message);
+                                                pass_name + "': " + outcome.error().message);
                         return;
                     }
-                    st.slot.Swap(std::move(*outcome), 0);
-                    st.built = true;
+                    state_ptr->slot.Swap(std::move(*outcome), 0);
+                    state_ptr->built = true;
                 });
-        } else if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Graphics) {
-            // Blend comes from the pass's declaration (a straight-alpha
-            // source-over is the default when it enables blending); an
-            // undeclared blend keeps the opaque write every other pass gets.
-            const auto& blend = state.request.blend;
-            vk::PipelineColorBlendAttachmentState blend_attachment{};
-            blend_attachment.colorWriteMask =
-                vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-            blend_attachment.blendEnable = blend.enable ? vk::True : vk::False;
-            blend_attachment.srcColorBlendFactor = blend.src_color_blend_factor;
-            blend_attachment.dstColorBlendFactor = blend.dst_color_blend_factor;
-            blend_attachment.colorBlendOp = blend.color_blend_op;
-            blend_attachment.srcAlphaBlendFactor = blend.src_alpha_blend_factor;
-            blend_attachment.dstAlphaBlendFactor = blend.dst_alpha_blend_factor;
-            blend_attachment.alphaBlendOp = blend.alpha_blend_op;
+        } else if (request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Graphics) {
+            // Depth state comes from the pass's declaration. The defaults leave depth disabled, which is the overlay pipeline every pass that does not declare one has always received; a depth-tested pass opts in.
+            ShaderSystem::GraphicsPipelineTemplate tmpl{
+                .debug_name = model.name,
+                .input_assembly = vk::PipelineInputAssemblyStateCreateInfo({}, vk::PrimitiveTopology::eTriangleList),
+                .rasterization = vk::PipelineRasterizationStateCreateInfo({}, false, false,
+                    vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise,
+                    false, 0, 0, 0, 1.0f),
+                .multisample = vk::PipelineMultisampleStateCreateInfo({}, vk::SampleCountFlagBits::e1),
+                .depth_stencil = vk::PipelineDepthStencilStateCreateInfo({},
+                    request.depth.test_enable ? vk::True : vk::False,
+                    request.depth.write_enable ? vk::True : vk::False,
+                    request.depth.compare_op),
+                .blend_attachments = {BlendAttachment(request.blend)},
+            };
+            state.graphics_desc = ShaderSystem::MakeGraphicsDesc(
+                tmpl, static_cast<ShaderSystem::ShaderId>(request.vertex_shader),
+                static_cast<ShaderSystem::ShaderId>(request.fragment_shader),
+                state.resources.Layout(), request.color_formats, request.depth_format);
 
-            state.graphics_desc = ShaderSystem::GraphicsPipelineDesc{};
-            state.graphics_desc.vertex_shader = static_cast<ShaderSystem::ShaderId>(state.request.vertex_shader);
-            state.graphics_desc.fragment_shader = static_cast<ShaderSystem::ShaderId>(state.request.fragment_shader);
-            state.graphics_desc.layout = *state.layout;
-            state.graphics_desc.color_formats = state.request.color_formats;
-            state.graphics_desc.depth_format = state.request.depth_format;
-            // Depth state comes from the pass's declaration. The defaults leave
-            // depth disabled, which is the overlay pipeline every pass that does
-            // not declare one has always received; a depth-tested pass opts in.
-            state.graphics_desc.depth_stencil.depthTestEnable =
-                state.request.depth.test_enable ? vk::True : vk::False;
-            state.graphics_desc.depth_stencil.depthWriteEnable =
-                state.request.depth.write_enable ? vk::True : vk::False;
-            state.graphics_desc.depth_stencil.depthCompareOp = state.request.depth.compare_op;
-            state.graphics_desc.input_assembly.topology = vk::PrimitiveTopology::eTriangleList;
-            state.graphics_desc.viewport.viewportCount = 1;
-            state.graphics_desc.viewport.scissorCount = 1;
-            state.graphics_desc.rasterization.polygonMode = vk::PolygonMode::eFill;
-            state.graphics_desc.rasterization.cullMode = vk::CullModeFlagBits::eNone;
-            state.graphics_desc.rasterization.frontFace = vk::FrontFace::eCounterClockwise;
-            state.graphics_desc.rasterization.lineWidth = 1.0f;
-            state.graphics_desc.multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
-            state.graphics_desc.color_blend_attachments = {blend_attachment};
-            state.graphics_desc.dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-
-            auto& st = state;
             compiler.SubmitGraphics(
-                state.graphics_desc, st.name,
-                [&st](ShaderSystem::PipelineOutcome&& outcome) {
+                state.graphics_desc, model.name,
+                [state_ptr = &state, pass_name = model.name](ShaderSystem::PipelineOutcome&& outcome) {
                     if (!outcome.has_value()) {
                         LOGIFACE_LOG(error, "RenderPipeline: graphics pipeline creation failed for pass '" +
-                                                st.name + "': " + outcome.error().message);
+                                                pass_name + "': " + outcome.error().message);
                         return;
                     }
-                    st.slot.Swap(std::move(*outcome), 0);
-                    st.built = true;
+                    state_ptr->slot.Swap(std::move(*outcome), 0);
+                    state_ptr->built = true;
                 });
         }
     }
 
-    // One batched driver call per kind for the whole pass set (compute and,
-    // on the monolithic path, graphics). Per-pass failures log and leave the
-    // pass unbuilt exactly as the per-pass creations did.
+    // One batched driver call per kind for the whole pass set (compute and, on the monolithic path, graphics).
+    // Per-pass failures log and leave the pass unbuilt exactly as the per-pass creations did.
     compiler.Flush(*shader_manager_);
 }
 
@@ -1047,128 +884,34 @@ vk::Format RenderPipeline::ResolveResourceFormat(
 
 void RenderPipeline::RewirePassDescriptors(std::uint32_t slot,
                                            VulkanEngine::PipelinePass::FrameContext& frame) {
-    const auto pipeline_it = pass_pipelines_.find(slot);
-    if (pipeline_it == pass_pipelines_.end()) {
+    PassPipelineState* state = FindPassPipeline(slot);
+    if (state == nullptr) {
         return;
     }
-    auto& state = pipeline_it->second;
-    frame.pass_pipeline = state.slot.Get();
+    frame.pass_pipeline = state->slot.Get();
     frame.first_app_descriptor_set = VulkanEngine::Render::kFirstAppDescriptorSet;
-    if (state.app_sets.empty() || bootstrap_ == nullptr || frame.resource_lookup == nullptr) {
+    if (bootstrap_ == nullptr || frame.resource_lookup == nullptr) {
         return;
     }
-
-    const std::uint32_t fif = frames_in_flight_ == 0 ? 0 : frame.ring_index % frames_in_flight_;
-    if (fif >= state.app_set_handles.size()) {
-        return;
-    }
-    frame.app_descriptor_sets = state.app_set_handles[fif];
-
-    auto& device = bootstrap_->GetBackend().GetDevice();
-    std::vector<vk::WriteDescriptorSet> writes;
-    std::vector<vk::DescriptorImageInfo> image_infos(state.assignments.size());
-    std::vector<vk::DescriptorBufferInfo> buffer_infos(state.assignments.size());
-    auto& last_written = state.last_written[fif];
-
-    for (std::size_t i = 0; i < state.assignments.size(); ++i) {
-        const auto& assignment = state.assignments[i];
-        const VulkanEngine::Render::DescriptorDecl* decl = nullptr;
-        for (const auto& candidate : state.bindings) {
-            if (candidate.set == assignment.set && candidate.binding == assignment.binding) {
-                decl = &candidate;
-                break;
-            }
-        }
-        if (decl == nullptr) {
-            continue;
-        }
-        const auto set_it = std::ranges::find(state.app_set_numbers, assignment.set);
-        if (set_it == state.app_set_numbers.end()) {
-            continue;
-        }
-        const auto set_index = static_cast<std::size_t>(
-            std::distance(state.app_set_numbers.begin(), set_it));
-        if (set_index >= state.app_set_handles[fif].size()) {
-            continue;
-        }
-        const auto name_it = resource_names_.find(assignment.resource.index);
-        if (name_it == resource_names_.end()) {
-            continue;
-        }
-        const auto resolved = frame.resource_lookup->Find(name_it->second);
-        if (!resolved.has_value()) {
-            continue;
-        }
-        const auto& resource = *resolved;
-
-        PassPipelineState::DescriptorBindingState key{};
-        vk::WriteDescriptorSet write{};
-        write.dstSet = state.app_set_handles[fif][set_index];
-        write.dstBinding = assignment.binding;
-        write.descriptorCount = 1;
-        write.descriptorType = decl->descriptor_type;
-
-        using vk::DescriptorType;
-        switch (decl->descriptor_type) {
-            case DescriptorType::eCombinedImageSampler:
-            case DescriptorType::eSampledImage: {
-                key.view = resource.AsImageView();
-                key.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-                key.sampler = decl->descriptor_type == DescriptorType::eCombinedImageSampler
-                                  ? frame.default_sampler
-                                  : nullptr;
-                image_infos[i] = vk::DescriptorImageInfo{key.sampler, key.view, key.layout};
-                write.pImageInfo = &image_infos[i];
-                break;
-            }
-            case DescriptorType::eStorageImage: {
-                key.view = resource.AsImageView();
-                key.layout = vk::ImageLayout::eGeneral;
-                image_infos[i] = vk::DescriptorImageInfo{nullptr, key.view, key.layout};
-                write.pImageInfo = &image_infos[i];
-                break;
-            }
-            case DescriptorType::eStorageBuffer:
-            case DescriptorType::eUniformBuffer: {
-                key.buffer = resource.AsBuffer();
-                key.offset = resource.GetOffset();
-                key.size = resource.GetSize();
-                buffer_infos[i] = vk::DescriptorBufferInfo{key.buffer, key.offset, key.size};
-                write.pBufferInfo = &buffer_infos[i];
-                break;
-            }
-            default:
-                continue;
-        }
-
-        key.valid = true;
-        auto& last = last_written[i];
-        const bool changed =
-            !last.valid || last.view != key.view || last.buffer != key.buffer ||
-            last.sampler != key.sampler || last.offset != key.offset ||
-            last.size != key.size || last.layout != key.layout;
-        if (changed) {
-            writes.push_back(write);
-            last = key;
-        }
-    }
-
-    if (!writes.empty()) {
-        device.updateDescriptorSets(writes, {});
-    }
+    const ModelPass& model = model_passes_[slot];
+    frame.app_descriptor_sets = state->resources.UpdateForFrame(
+        bootstrap_->GetBackend().GetDevice(), frame.ring_index, compiled_graph_,
+        *frame.resource_lookup, model.binding_assignments, model.declared_bindings,
+        frame.default_sampler);
 }
 
 void RenderPipeline::PollPassPipelines(std::uint32_t fif_slot) {
     for (auto& [index, state] : pass_pipelines_) {
-        (void)index;
         state.slot.RetireFrame(fif_slot);
         if (!state.built || shader_manager_ == nullptr || pipeline_factory_ == nullptr) {
             continue;
         }
+        const VulkanEngine::PipelinePass::PassPipelineRequest& request =
+            model_passes_[index].pipeline_request;
 
-        const auto rebuild = [this, &state](ShaderSystem::ShaderManager& shaders)
+        const auto rebuild = [this, &state, &request](ShaderSystem::ShaderManager& shaders)
             -> std::optional<ShaderSystem::PipelineProduct> {
-            if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
+            if (request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
                 auto product = pipeline_factory_->CreateCompute(state.compute_desc, shaders);
                 return product.has_value() ? std::optional<ShaderSystem::PipelineProduct>(std::move(*product))
                                            : std::nullopt;
@@ -1178,52 +921,49 @@ void RenderPipeline::PollPassPipelines(std::uint32_t fif_slot) {
                                        : std::nullopt;
         };
 
-        if (state.request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
-            (void)state.slot.PollAndRebuild(*shader_manager_, static_cast<ShaderSystem::ShaderId>(state.request.compute_shader), rebuild, fif_slot);
+        if (request.kind == VulkanEngine::PipelinePass::PassPipelineKind::Compute) {
+            (void)state.slot.PollAndRebuild(*shader_manager_, static_cast<ShaderSystem::ShaderId>(request.compute_shader), rebuild, fif_slot);
         } else {
-            (void)state.slot.PollAndRebuild(*shader_manager_, static_cast<ShaderSystem::ShaderId>(state.request.vertex_shader),
-                                            static_cast<ShaderSystem::ShaderId>(state.request.fragment_shader), rebuild, fif_slot);
+            (void)state.slot.PollAndRebuild(*shader_manager_, static_cast<ShaderSystem::ShaderId>(request.vertex_shader),
+                                            static_cast<ShaderSystem::ShaderId>(request.fragment_shader), rebuild, fif_slot);
         }
     }
 }
 
-const VulkanEngine::PipelinePass::PassPipelineRequest* RenderPipeline::GetPassPipelineRequest(
-    VulkanEngine::RenderGraph::PassHandle handle) const {
-    const auto it = pass_pipelines_.find(handle.index);
-    if (it == pass_pipelines_.end() || !it->second.request.IsDeclared()) {
-        return nullptr;
-    }
-    return &it->second.request;
+const RenderPipeline::PassPipelineState* RenderPipeline::FindPassPipeline(std::uint32_t slot) const {
+    const auto it = pass_pipelines_.find(slot);
+    return it == pass_pipelines_.end() ? nullptr : &it->second;
 }
 
-const VulkanEngine::PipelinePass::PassPipelineRequest* RenderPipeline::GetPassPipelineRequestByName(
-    std::string_view name) const {
+RenderPipeline::PassPipelineState* RenderPipeline::FindPassPipeline(std::uint32_t slot) {
+    const auto it = pass_pipelines_.find(slot);
+    return it == pass_pipelines_.end() ? nullptr : &it->second;
+}
+
+const RenderPipeline::PassPipelineState* RenderPipeline::FindPassPipeline(std::string_view name) const {
     const auto name_it = pass_pipeline_by_name_.find(std::string(name));
-    if (name_it == pass_pipeline_by_name_.end()) {
+    return name_it == pass_pipeline_by_name_.end() ? nullptr : FindPassPipeline(name_it->second);
+}
+
+const VulkanEngine::PipelinePass::PassPipelineRequest* RenderPipeline::GetPassPipelineRequest(
+    VulkanEngine::RenderGraph::PassHandle handle) const {
+    const PassPipelineState* state = FindPassPipeline(handle.index);
+    if (state == nullptr) {
         return nullptr;
     }
-    const auto it = pass_pipelines_.find(name_it->second);
-    if (it == pass_pipelines_.end() || !it->second.request.IsDeclared()) {
-        return nullptr;
-    }
-    return &it->second.request;
+    const VulkanEngine::PipelinePass::PassPipelineRequest& request =
+        model_passes_[handle.index].pipeline_request;
+    return request.IsDeclared() ? &request : nullptr;
 }
 
 vk::PipelineLayout RenderPipeline::GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle handle) const {
-    const auto it = pass_pipelines_.find(handle.index);
-    if (it == pass_pipelines_.end() || it->second.layout == nullptr) {
-        return nullptr;
-    }
-    return **it->second.layout;
+    const PassPipelineState* state = FindPassPipeline(handle.index);
+    return state == nullptr ? nullptr : state->resources.Layout();
 }
 
 vk::PipelineLayout RenderPipeline::GetPassPipelineLayoutByName(std::string_view name) const {
-    const auto name_it = pass_pipeline_by_name_.find(std::string(name));
-    if (name_it == pass_pipeline_by_name_.end()) {
-        return nullptr;
-    }
-    return GetPassPipelineLayout(VulkanEngine::RenderGraph::PassHandle{
-        .index = name_it->second, .generation = 1});
+    const PassPipelineState* state = FindPassPipeline(name);
+    return state == nullptr ? nullptr : state->resources.Layout();
 }
 
 void RenderPipeline::SetBuiltinHandles(
@@ -1243,13 +983,13 @@ bool RenderPipeline::AddDependency(VulkanEngine::RenderGraph::PassHandle before,
     if (!IsValidModelHandle(before) || !IsValidModelHandle(after)) {
         return false;
     }
+    // A pass cannot depend on itself: the builder rejects that edge, and the rejection is discarded here, so the caller would be told the dependency was recorded and then see it vanish.
+    if (before.index == after.index) {
+        return false;
+    }
     model_dependencies_.emplace_back(before.index, after.index);
     dirty_ = true;
     return true;
-}
-
-bool RenderPipeline::SetInitialState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state) {
-    return graph_builder_.SetInitialState(resource, state).has_value();
 }
 
 bool RenderPipeline::SetFinalState(VulkanEngine::RenderGraph::ResourceHandle resource, VulkanEngine::RenderGraph::ResourceState state) {
@@ -1481,7 +1221,7 @@ void RenderPipeline::SyncTransients() {
             desc.image.height = image_height;
             desc.image.usage = it->second.usage;
             desc.image.samples = vk::SampleCountFlagBits::e1;
-            desc.image.aspect = FormatToAspectFlags(it->second.format);
+            desc.image.aspect = VulkanEngine::RenderGraph::FormatToAspectFlags(it->second.format);
         }
 
         desc.requirements.active = true;

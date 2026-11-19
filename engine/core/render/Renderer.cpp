@@ -163,7 +163,6 @@ bool Renderer::Initialize(VulkanBackend::Vulkan::VulkanBootstrap& bootstrap,
     std::uint32_t init_height = 0;
     (void)bootstrap.GetBackend().GetSwapchainExtent(init_width, init_height);
     pipeline_->SetRenderExtent(init_width, init_height);
-    pipeline_->SetFramesInFlight(bootstrap.GetSnapshot().frames_in_flight);
     pipeline_->SetQueueFamilies(bootstrap.GetBackend().GetQueueFamilies());
     pipeline_->SetAsyncComputeAvailable(bootstrap.GetBackend().HasAsyncCompute());
     LOGIFACE_LOG(info, "Renderer: async compute " +

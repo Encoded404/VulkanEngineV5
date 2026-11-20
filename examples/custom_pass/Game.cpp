@@ -12,6 +12,7 @@ import logiface;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.ShaderManager;
 import Examples.CustomPass.Passes;
 
@@ -103,7 +104,7 @@ bool CustomPassGame::OnSetup(VulkanEngine::Application::ApplicationContext& ctx)
 bool CustomPassGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
     // A trivial scene (engine fallback quad) so the capture pass has content.
     auto quad = VulkanEngine::SceneLoader::ToMeshData(VulkanEngine::SceneLoader::CreateFallbackQuad());
-    const std::uint32_t quad_id = engine_game_.GetMeshRegistry().Register(quad);
+    const VulkanEngine::MeshHandle quad_id = engine_game_.GetMeshRegistry().Register(quad);
 
     auto& component_registry = mctx.Registry();
     engine_game_.CreateCamera(component_registry);

@@ -14,6 +14,7 @@ import logiface;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.ECS.Prefabs;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.GpuResources.MeshData;
 import Shaders.Engine.StandardMeshFrag;
 import Shaders.PhysicsVehicle.CheckerFrag;
@@ -554,15 +555,15 @@ bool Game::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
         return mesh_registry.Register(
             VulkanEngine::SceneLoader::ToMeshData(BuildBoxMesh(extents)));
     };
-    const std::uint32_t ground_mesh_id = register_box({ground_extend_.first, 1.0f, ground_extend_.second});
-    const std::uint32_t crate_mesh_id = register_box({1.0f, 1.0f, 1.0f});
-    const std::uint32_t block_mesh_id = register_box({2.0f, 2.0f, 2.0f});
-    const std::uint32_t ramp_mesh_id = register_box({4.0f, 0.4f, 10.0f});
-    const std::uint32_t chassis_mesh_id = register_box({1.6f, 0.5f, 3.6f});
+    const VulkanEngine::MeshHandle ground_mesh_id = register_box({ground_extend_.first, 1.0f, ground_extend_.second});
+    const VulkanEngine::MeshHandle crate_mesh_id = register_box({1.0f, 1.0f, 1.0f});
+    const VulkanEngine::MeshHandle block_mesh_id = register_box({2.0f, 2.0f, 2.0f});
+    const VulkanEngine::MeshHandle ramp_mesh_id = register_box({4.0f, 0.4f, 10.0f});
+    const VulkanEngine::MeshHandle chassis_mesh_id = register_box({1.6f, 0.5f, 3.6f});
     // The wheel disc is authored at unit radius and unit width; each wheel
     // entity scales it by `wheel_radius_`/`wheel_width_` (see
     // `UpdateWheelEntity`), so the radius tunable moves the render live.
-    const std::uint32_t wheel_mesh_id = mesh_registry.Register(
+    const VulkanEngine::MeshHandle wheel_mesh_id = mesh_registry.Register(
         VulkanEngine::SceneLoader::ToMeshData(BuildWheelDisc(1.0f, 1.0f)));
 
     // 2. Camera (moved by the chase camera frame system every frame)
@@ -606,7 +607,7 @@ bool Game::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
 
         const auto spawn_static_with_mesh = [&](const glm::vec3 position, const glm::quat rotation,
                                                 const glm::vec3 box_extent,
-                                                const std::uint32_t mesh_id) {
+                                                const VulkanEngine::MeshHandle mesh_id) {
             auto* spawned = spawn_body(position, rotation, box_extent,
                                        VulkanEngine::Physics::BodyMotionType::Static, 0.0f, 0.9f);
             auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(*spawned);

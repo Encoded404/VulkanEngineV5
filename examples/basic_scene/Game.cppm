@@ -7,6 +7,7 @@ import std;
 export import VulkanEngine.GameEngine;
 import VulkanShared.CallbackList;
 import VulkanEngine.GplPolicy;
+import VulkanEngine.MeshHandle;
 export import Examples.BasicScene.Components.SimpleControllerComponent;
 export import Examples.BasicScene.Components.TransformControlComponent;
 
@@ -82,7 +83,7 @@ private:
     VulkanEngine::PhysicalCamera::PhysicalCameraBindingHandle cam_binding_{};
     std::uint32_t cam_target_slot_ = 0;
     std::uint32_t cam_native_slot_ = 0;
-    std::uint32_t webcam_mesh_id_ = 0;
+    VulkanEngine::MeshHandle webcam_mesh_id_{};
 #endif
 
     // Declared last: its module lambdas capture `this`, so the engine must be

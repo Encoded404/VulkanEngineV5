@@ -442,6 +442,7 @@ target_sources(${ENGINE_TARGET} PUBLIC
         modules/EngineModules.cppm
         components/Transform.cppm
         components/Camera.cppm
+        assets/MeshHandle.cppm
         components/MeshReference.cppm
         components/Text.cppm
         components/DynamicMesh.cppm

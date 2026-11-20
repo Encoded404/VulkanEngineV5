@@ -9,6 +9,7 @@ export import VulkanEngine.MeshManager;
 export import VulkanEngine.SceneRenderer;
 export import VulkanEngine.GpuResources.DeviceBufferHeap;
 export import VulkanEngine.Mesh.MeshTypes;
+export import VulkanEngine.MeshHandle;
 
 export namespace VulkanEngine {
 
@@ -28,8 +29,12 @@ private:
 struct LoadedMeshInfo {
     GpuResources::MeshData cpu_data;
     MeshManager::Handle gpu_handle;
+    // Counts the registrations this slot has held, and the handle carries it back, so a stale handle finds nothing.
+    std::uint32_t generation = 0;
     std::uint32_t first_submesh_in_renderer = 0;
     std::uint32_t submesh_count = 0;
+    // Set by Register, cleared by Release; a free slot keeps its generation for the next registration to step past.
+    bool alive = false;
     bool pending_upload = false;
     bool gpu_resident = false;
     std::uint32_t frames_since_last_reference = 0;
@@ -43,23 +48,24 @@ public:
     MeshRegistry(const MeshRegistry&) = delete;
     MeshRegistry& operator=(const MeshRegistry&) = delete;
 
-    // Register CPU-generated mesh data, return a mesh ID
-    std::uint32_t Register(const GpuResources::MeshData& data);
+    // Register CPU-generated mesh data and return the handle that names it.
+    [[nodiscard]] MeshHandle Register(const GpuResources::MeshData& data);
 
     // Mark a mesh as needed this frame. If not GPU-resident, queue for upload.
-    void RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
+    void RequestGpuResidency(MeshHandle mesh_id, MeshManager& mgr,
                              SceneRenderer::SceneRenderer& renderer,
                              GpuResources::DeviceBufferHeap& vtx_heap,
                              GpuResources::DeviceBufferHeap& idx_heap,
                              GpuResources::DeviceBufferHeap& uv_heap);
 
-    // Release a mesh reference. Decrements usage tracking.
-    void Release(std::uint32_t mesh_id, MeshManager& mgr);
+    // Release a mesh: drop its GPU residency and its CPU payload, then free the slot for reuse.
+    // A handle whose slot has already been reused releases nothing.
+    void Release(MeshHandle mesh_id, MeshManager& mgr);
 
     // Called each frame. Decrements stale counters. Evicts unreferenced meshes.
     void EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_frames);
 
-    [[nodiscard]] const LoadedMeshInfo* Get(std::uint32_t mesh_id) const;
+    [[nodiscard]] const LoadedMeshInfo* Get(MeshHandle mesh_id) const;
     [[nodiscard]] bool IsValid() const { return true; }
 
     // Whether this frame has already published this table element.
@@ -71,8 +77,12 @@ public:
     void Shutdown();
 
 private:
+    // The entry a live handle names, or nullptr when the slot is out of range, free, or now holds a later registration.
+    [[nodiscard]] LoadedMeshInfo* Find(MeshHandle handle);
+    [[nodiscard]] const LoadedMeshInfo* Find(MeshHandle handle) const;
+
     std::vector<LoadedMeshInfo> entries_;
-    std::vector<std::uint32_t> free_ids_;
+    std::vector<std::uint32_t> free_slots_;
     std::unordered_set<std::uint32_t> referenced_this_frame_;
     TablePublishRecord published_this_frame_;
 };

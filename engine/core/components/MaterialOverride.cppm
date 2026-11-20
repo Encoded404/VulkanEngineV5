@@ -5,6 +5,7 @@ export module VulkanEngine.Components.MaterialOverride;
 import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.MaterialManager.MaterialId;
 
 export namespace VulkanEngine::Components {
@@ -33,12 +34,11 @@ struct MaterialOverride {
     // static member does not affect the object/data split, which is
     // is_base_of_v<Component, T>.
     static constexpr std::string_view kName = "MaterialOverride";
-    static constexpr std::uint32_t kUnboundMesh =
-        std::numeric_limits<std::uint32_t>::max();
+    static constexpr MeshHandle kUnboundMesh{};
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     // Mesh this override was authored against, or kUnboundMesh to adopt lazily.
-    std::uint32_t mesh_id = kUnboundMesh;
+    MeshHandle mesh_id = kUnboundMesh;
 
     // Per object-local submesh index; unset entries are MaterialRef::Unset().
     std::vector<MaterialManager::MaterialRef> submeshes;
@@ -56,7 +56,7 @@ struct MaterialOverride {
 
     // Pin this override to a specific mesh. Any outstanding diagnostic state is
     // reset so a fresh mismatch is reported.
-    void Bind(const std::uint32_t bound_mesh_id) {
+    void Bind(const MeshHandle bound_mesh_id) {
         mesh_id = bound_mesh_id;
         reported_signatures.clear();
     }

@@ -13,6 +13,7 @@ export module Examples.Explorer.Scene;
 import std;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.MeshHandle;
 
 import Examples.Explorer.Math;
 import Examples.Explorer.Options;
@@ -39,7 +40,7 @@ struct SceneContext {
     // Creates a Transform + MeshReference entity at `position` and returns its
     // id. Entities created this way must be reported in SceneBuildResult so the
     // explorer can destroy them when switching away.
-    [[nodiscard]] VulkanEngine::EntityId CreateMeshEntity(std::uint32_t mesh_id,
+    [[nodiscard]] VulkanEngine::EntityId CreateMeshEntity(VulkanEngine::MeshHandle mesh_id,
                                                           const glm::vec3& position =
                                                               glm::vec3{0.0f}) const;
 

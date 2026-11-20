@@ -9,6 +9,7 @@ import VulkanEngine.GpuResources.StagingPool;
 import VulkanEngine.GpuResources.DeviceBufferHeap;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.MeshManager;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.MeshRegistry;
 import VulkanEngine.MeshRenderSystem;
 import VulkanEngine.SceneRenderer;
@@ -20,6 +21,7 @@ import VulkanEngine.Mesh.MeshTypes;
 namespace {
 
 using VulkanEngine::GpuBoneInfluence;
+using VulkanEngine::MeshHandle;
 using VulkanEngine::MeshManager;
 using VulkanEngine::MeshRegistry;
 using VulkanEngine::MeshVertexVec2;
@@ -316,7 +318,7 @@ TEST_F(MeshUploadBatchGpuTest, CapacityCloseReleasesPendingFrees) {
 // A mesh that becomes resident on demand has to put its UV1 block on the frame's publish list, not just its geometry.
 // The record is what the renderer keys its per-frame descriptor write on; this fixture leaves the renderer uninitialized, so the write itself is out of scope.
 TEST_F(MeshUploadBatchGpuTest, ResidencyNotesTheUvTable) {
-    const std::uint32_t id = registry.Register(MakeQuad(/*with_uv1=*/true));
+    const MeshHandle id = registry.Register(MakeQuad(/*with_uv1=*/true));
     registry.RequestGpuResidency(id, mesh_mgr, renderer, vertex_heap, index_heap, uv_heap);
 
     const auto* info = registry.Get(id);
@@ -333,7 +335,7 @@ TEST_F(MeshUploadBatchGpuTest, ResidencyNotesTheUvTable) {
 
 // A skinned mesh notes its deform table block too, since the deform set binds a different table than the geometry.
 TEST_F(MeshUploadBatchGpuTest, ResidencyNotesTheSkinTable) {
-    const std::uint32_t id = registry.Register(MakeSkinnedMesh());
+    const MeshHandle id = registry.Register(MakeSkinnedMesh());
     registry.RequestGpuResidency(id, mesh_mgr, renderer, vertex_heap, index_heap, uv_heap);
 
     const auto* info = registry.Get(id);
@@ -348,7 +350,7 @@ TEST_F(MeshUploadBatchGpuTest, ResidencyNotesTheSkinTable) {
 
 // A mesh without UV1 owns no uv block, so it cannot publish one for that table.
 TEST_F(MeshUploadBatchGpuTest, ResidencyWithoutUv1TakesNoUvBlock) {
-    const std::uint32_t id = registry.Register(MakeQuad());
+    const MeshHandle id = registry.Register(MakeQuad());
     registry.RequestGpuResidency(id, mesh_mgr, renderer, vertex_heap, index_heap, uv_heap);
 
     const auto* info = registry.Get(id);
@@ -362,7 +364,7 @@ TEST_F(MeshUploadBatchGpuTest, ResidencyWithoutUv1TakesNoUvBlock) {
 
 // The publish record is per frame, so the next frame may write the same block again.
 TEST_F(MeshUploadBatchGpuTest, EndFrameClearsThePublishRecord) {
-    const std::uint32_t id = registry.Register(MakeQuad(/*with_uv1=*/true));
+    const MeshHandle id = registry.Register(MakeQuad(/*with_uv1=*/true));
     registry.RequestGpuResidency(id, mesh_mgr, renderer, vertex_heap, index_heap, uv_heap);
 
     const auto* info = registry.Get(id);

@@ -23,6 +23,7 @@ export module VulkanEngine.ECS.Prefabs;
 import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshReference;
 
@@ -33,9 +34,9 @@ import VulkanEngine.Physics.Character;
 
 export namespace VulkanEngine::Prefabs {
 
-/// "No mesh" marker for Prefab::mesh_id: the same value MeshReference's unset
+/// "No mesh" marker for Prefab::mesh_id: the same handle MeshReference's unset
 /// state carries.
-inline constexpr std::uint32_t kNoMesh = std::numeric_limits<std::uint32_t>::max();
+inline constexpr MeshHandle kNoMesh{};
 
 /// A composed entity bundle. Everything is optional; a Prefab that names
 /// nothing but a pose is a plain Transform entity.
@@ -45,10 +46,10 @@ struct Prefab {
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f, 1.0f, 1.0f};
 
-    /// Renderable bundle: a MeshRegistry id (the entity draws that mesh; the
-    /// material state lives in the mesh's submeshes, and the gather pass reads
-    /// the entity's own Transform).
-    std::uint32_t mesh_id = kNoMesh;
+    /// Renderable bundle: a MeshRegistry handle (the entity draws that mesh;
+    /// the material state lives in the mesh's submeshes, and the gather pass
+    /// reads the entity's own Transform).
+    MeshHandle mesh_id = kNoMesh;
 #ifdef VKENGINE_PHYSICS
     std::optional<Physics::RigidBody> rigid_body;
     std::optional<Physics::Collider> collider;
@@ -87,7 +88,7 @@ struct Prefab {
     }
 #endif
 
-    if (prefab.mesh_id != kNoMesh) {
+    if (prefab.mesh_id.IsValid()) {
         registry.AddComponent<Components::MeshReference>(entity).loaded_mesh_id = prefab.mesh_id;
     }
     return entity;

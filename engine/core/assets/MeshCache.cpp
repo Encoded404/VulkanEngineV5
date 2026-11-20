@@ -44,38 +44,62 @@ MeshRegistry::~MeshRegistry() {
     Shutdown();
 }
 
-uint32_t MeshRegistry::Register(const GpuResources::MeshData& data) {
-    std::uint32_t id;
-    if (!free_ids_.empty()) {
-        id = free_ids_.back();
-        free_ids_.pop_back();
-        entries_[id] = {};
+MeshHandle MeshRegistry::Register(const GpuResources::MeshData& data) {
+    std::uint32_t slot;
+    if (!free_slots_.empty()) {
+        slot = free_slots_.back();
+        free_slots_.pop_back();
     } else {
-        id = static_cast<std::uint32_t>(entries_.size());
+        slot = static_cast<std::uint32_t>(entries_.size());
         entries_.emplace_back();
     }
 
-    auto& info = entries_[id];
     auto normalized = data;
     VulkanEngine::GpuResources::EnsureSubmeshBounds(normalized);
-    info.submesh_count = static_cast<std::uint32_t>(
-        normalized.sub_meshes.empty() ? 1 : normalized.sub_meshes.size());
-    info.cpu_data = std::move(normalized);
 
-    return id;
+    auto& info = entries_[slot];
+    // A reused slot keeps its generation and only its payload is reset, because clearing the whole entry would resurrect every stale handle for this slot.
+    info.cpu_data = std::move(normalized);
+    info.gpu_handle = {};
+    info.first_submesh_in_renderer = 0;
+    info.submesh_count = static_cast<std::uint32_t>(
+        info.cpu_data.sub_meshes.empty() ? 1 : info.cpu_data.sub_meshes.size());
+    info.alive = true;
+    info.pending_upload = false;
+    info.gpu_resident = false;
+    info.frames_since_last_reference = 0;
+    // The counter is 32 bits, so one slot wraps only after four billion registrations, which a frame cannot reach.
+    info.generation += 1;
+
+    return MeshHandle{slot, info.generation};
 }
 
-void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
+LoadedMeshInfo* MeshRegistry::Find(const MeshHandle handle) {
+    if (handle.slot >= entries_.size()) return nullptr;
+    LoadedMeshInfo& info = entries_[handle.slot];
+    if (!info.alive || info.generation != handle.generation) return nullptr;
+    return &info;
+}
+
+const LoadedMeshInfo* MeshRegistry::Find(const MeshHandle handle) const {
+    if (handle.slot >= entries_.size()) return nullptr;
+    const LoadedMeshInfo& info = entries_[handle.slot];
+    if (!info.alive || info.generation != handle.generation) return nullptr;
+    return &info;
+}
+
+void MeshRegistry::RequestGpuResidency(const MeshHandle mesh_id, MeshManager& mgr,
                                         SceneRenderer::SceneRenderer& renderer,
                                         GpuResources::DeviceBufferHeap& vtx_heap,
                                         GpuResources::DeviceBufferHeap& idx_heap,
                                         GpuResources::DeviceBufferHeap& uv_heap) {
-    if (mesh_id >= entries_.size()) return;
+    LoadedMeshInfo* const found = Find(mesh_id);
+    if (found == nullptr) return;
 
-    auto& info = entries_[mesh_id];
+    auto& info = *found;
 
     // Mark as referenced this frame
-    referenced_this_frame_.insert(mesh_id);
+    referenced_this_frame_.insert(mesh_id.slot);
 
     if (info.gpu_resident) {
         info.frames_since_last_reference = 0;
@@ -91,7 +115,7 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
     auto handle = mgr.UploadPersistent(info.cpu_data);
     if (!handle.IsValid()) {
         info.pending_upload = false;
-        LOGIFACE_LOG(error, "MeshRegistry: upload failed for mesh " + std::to_string(mesh_id));
+        LOGIFACE_LOG(error, "MeshRegistry: upload failed for mesh " + std::to_string(mesh_id.slot));
         return;
     }
 
@@ -156,16 +180,24 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
     info.frames_since_last_reference = 0;
 }
 
-void MeshRegistry::Release(std::uint32_t mesh_id, MeshManager& mgr) {
-    if (mesh_id >= entries_.size()) return;
+void MeshRegistry::Release(const MeshHandle mesh_id, MeshManager& mgr) {
+    LoadedMeshInfo* const found = Find(mesh_id);
+    if (found == nullptr) return;
 
-    auto& info = entries_[mesh_id];
+    auto& info = *found;
     if (info.gpu_resident) {
         mgr.Remove(info.gpu_handle);
         info.gpu_resident = false;
         info.gpu_handle = {};
     }
-    referenced_this_frame_.erase(mesh_id);
+
+    // The slot goes back on the free list only after its payload is gone.
+    // It keeps its generation, which is what stops this handle from releasing the mesh that reuses the slot.
+    info.alive = false;
+    info.cpu_data = {};
+    info.submesh_count = 0;
+    free_slots_.push_back(mesh_id.slot);
+    referenced_this_frame_.erase(mesh_id.slot);
 }
 
 void MeshRegistry::EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_frames) {
@@ -173,7 +205,7 @@ void MeshRegistry::EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_fra
         auto& info = entries_[id];
 
         // Skip free slots
-        if (info.cpu_data.vertices.empty() && info.submesh_count == 0) continue;
+        if (!info.alive) continue;
 
         if (referenced_this_frame_.count(id) == 0) {
             info.frames_since_last_reference++;
@@ -191,14 +223,13 @@ void MeshRegistry::EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_fra
     published_this_frame_.Clear();
 }
 
-const LoadedMeshInfo* MeshRegistry::Get(std::uint32_t mesh_id) const {
-    if (mesh_id >= entries_.size()) return nullptr;
-    return &entries_[mesh_id];
+const LoadedMeshInfo* MeshRegistry::Get(const MeshHandle mesh_id) const {
+    return Find(mesh_id);
 }
 
 void MeshRegistry::Shutdown() {
     entries_.clear();
-    free_ids_.clear();
+    free_slots_.clear();
     referenced_this_frame_.clear();
     published_this_frame_.Clear();
 }

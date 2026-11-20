@@ -18,6 +18,7 @@ import logiface;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.TechniqueManager;
 import VulkanEngine.Components.MaterialOverride;
 import VulkanEngine.MaterialManager;
@@ -51,8 +52,6 @@ using VulkanEngine::MaterialManager::MaterialHandle;
 using VulkanEngine::MaterialManager::MaterialId;
 using VulkanEngine::TechniqueManager::DefaultMeshPerMaterialData;
 using VulkanEngine::TechniqueManager::DefaultMeshTechnique;
-
-constexpr std::uint32_t kInvalidMesh = 0xFFFFFFFFu;
 
 // ── shared helpers ──────────────────────────────────────────────────────
 
@@ -163,7 +162,7 @@ struct TextureCache {
 // ── glTF asset scene ────────────────────────────────────────────────────
 
 struct GltfAsset {
-    std::uint32_t mesh_id = kInvalidMesh;
+    VulkanEngine::MeshHandle mesh_id{};
     std::vector<MaterialId> materials{};
     std::vector<MaterialHandle<DefaultMeshTechnique>> handles{};
     std::vector<DefaultMeshPerMaterialData> base_data{};
@@ -447,7 +446,7 @@ void ApplyModelTransform(SceneContext& ctx, const AssetSession& session) {
     }
 
     LOGIFACE_LOG(info, "SceneExplorer: loaded '" + path.filename().string() + "' -> mesh " +
-                           std::to_string(asset.mesh_id) + ", " +
+                           std::to_string(asset.mesh_id.slot) + ", " +
                            std::to_string(asset.materials.size()) + " materials, " +
                            std::to_string(import.images.size()) + " images, " +
                            std::to_string(import.textures.size()) + " textures" +
@@ -547,9 +546,9 @@ void ReleaseGltfAsset(SceneContext& ctx, GltfAsset& asset) {
     }
     asset.texture_slots.clear();
 
-    if (asset.mesh_id != kInvalidMesh) {
+    if (asset.mesh_id.IsValid()) {
         engine.GetMeshRegistry().Release(asset.mesh_id, engine.GetMeshManager());
-        asset.mesh_id = kInvalidMesh;
+        asset.mesh_id = {};
     }
     asset.bounds = {};
 }
@@ -569,7 +568,7 @@ void ReleaseGltfAsset(SceneContext& ctx, GltfAsset& asset) {
         std::string error{};
         GltfAsset loaded{};
         if (!LoadGltfAsset(ctx, path, session.textures, loaded, error) ||
-            loaded.mesh_id == kInvalidMesh) {
+            !loaded.mesh_id.IsValid()) {
             result.ok = false;
             result.error = error.empty() ? "The asset produced no mesh." : error;
             session.active_asset = nullptr;
@@ -1216,7 +1215,7 @@ struct LabState {
     float applied_emissive = -1.0f;
 
     EntityId root_entity{};
-    std::uint32_t mesh_id = kInvalidMesh;
+    VulkanEngine::MeshHandle mesh_id{};
     std::vector<MaterialHandle<DefaultMeshTechnique>> handles{};
     std::vector<DefaultMeshPerMaterialData> base_data{};
     TextureCache textures{};
@@ -1382,7 +1381,7 @@ void UploadLabLighting(SceneContext& ctx, const LabState& state) {
         }
         state->handles.clear();
         state->base_data.clear();
-        const std::uint32_t mesh_id =
+        const VulkanEngine::MeshHandle mesh_id =
             ctx.engine->GetMeshRegistry().Register(VulkanEngine::SceneLoader::ToMeshData(loaded));
         state->mesh_id = mesh_id;
         state->root_entity = ctx.CreateMeshEntity(mesh_id);
@@ -1404,9 +1403,9 @@ void UploadLabLighting(SceneContext& ctx, const LabState& state) {
         }
         state->handles.clear();
         state->base_data.clear();
-        if (state->mesh_id != kInvalidMesh) {
+        if (state->mesh_id.IsValid()) {
             ctx.engine->GetMeshRegistry().Release(state->mesh_id, ctx.engine->GetMeshManager());
-            state->mesh_id = kInvalidMesh;
+            state->mesh_id = {};
         }
         state->applied_metallic = -1.0f;
         state->applied_roughness = -1.0f;

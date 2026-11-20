@@ -10,6 +10,7 @@ import logiface;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.GpuResources.MeshData;
+import VulkanEngine.MeshHandle;
 import Shaders.Engine.StandardMeshFrag;
 import Shaders.Minimal.CheckerFrag;
 import VulkanEngine.ShaderManager;
@@ -59,7 +60,7 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
 
     // 3. Load a mesh (engine built-in fallback quad — no assets needed)
     auto quad = VulkanEngine::SceneLoader::ToMeshData(VulkanEngine::SceneLoader::CreateFallbackQuad());
-    const std::uint32_t quad_id = engine_game_.GetMeshRegistry().Register(quad);
+    const VulkanEngine::MeshHandle quad_id = engine_game_.GetMeshRegistry().Register(quad);
 
     engine_game_.MarkSceneValid();
 

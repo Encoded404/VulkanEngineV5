@@ -72,26 +72,33 @@ SubMeshTransform ToSubMeshTransform(const Components::Transform* transform) {
     return out;
 }
 
+// Streamed meshes have no registry slot, so the manager's handle id stands in as the mesh fingerprint.
+// The generation is a constant that only has to make the handle valid.
+// The handle id is the identity these objects already keep, and a reused id is the same alias it was before the registry grew generations.
+MeshHandle DynamicMeshId(const MeshManager::Handle handle) {
+    return MeshHandle{handle.id, 1};
+}
+
 // Reports a transform-override discrepancy once per (cause, mesh, entity), the
 // same once-per-problem shape the material override diagnostics use. The
 // resolver stays pure; turning its status into a log is the gather's job.
 void ReportTransformOverrideIssue(const Components::TransformOverrideStatus status,
                                   Components::TransformOverride* override_component,
-                                  const std::uint32_t mesh_id,
+                                  const MeshHandle mesh_id,
                                   const std::uint64_t entity_id) {
     if (override_component == nullptr) return;
     switch (status) {
         case Components::TransformOverrideStatus::MeshMismatch:
-            if (override_component->ShouldReport(OverrideSignature(3, mesh_id, entity_id))) {
+            if (override_component->ShouldReport(OverrideSignature(3, mesh_id.Signature(), entity_id))) {
                 LOGIFACE_LOG(warn, "MeshRenderSystem: TransformOverride was authored for mesh " +
-                             std::to_string(override_component->mesh_id) + " but is attached to mesh " +
-                             std::to_string(mesh_id) + "; the override is ignored");
+                             std::to_string(override_component->mesh_id.slot) + " but is attached to mesh " +
+                             std::to_string(mesh_id.slot) + "; the override is ignored");
             }
             break;
         case Components::TransformOverrideStatus::RangeTooLarge:
-            if (override_component->ShouldReport(OverrideSignature(4, mesh_id, entity_id))) {
+            if (override_component->ShouldReport(OverrideSignature(4, mesh_id.Signature(), entity_id))) {
                 LOGIFACE_LOG(warn, "MeshRenderSystem: TransformOverride names more submeshes than mesh " +
-                             std::to_string(mesh_id) + " has; the override is ignored");
+                             std::to_string(mesh_id.slot) + " has; the override is ignored");
             }
             break;
         default:
@@ -147,7 +154,7 @@ EffectiveMaterial ResolveEffectiveMaterial(
     const MaterialManager::MaterialId asset_material,
     Components::MaterialOverride* const override_comp,
     const std::uint32_t submesh_index,
-    const std::uint32_t mesh_id,
+    const MeshHandle mesh_id,
     const std::uint32_t submesh_count,
     const std::uint64_t entity_id) {
     EffectiveMaterial result{asset_material, nullptr, 0u, false};
@@ -159,11 +166,11 @@ EffectiveMaterial ResolveEffectiveMaterial(
         }
 
         if (override_comp->mesh_id != mesh_id) {
-            const std::uint64_t sig = OverrideSignature(1, override_comp->mesh_id, mesh_id);
+            const std::uint64_t sig = OverrideSignature(1, override_comp->mesh_id.Signature(), mesh_id.Signature());
             if (override_comp->ShouldReport(sig)) {
                 LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
-                    " override was authored for mesh " + std::to_string(override_comp->mesh_id) +
-                    " but entity now uses mesh " + std::to_string(mesh_id) +
+                    " override was authored for mesh " + std::to_string(override_comp->mesh_id.slot) +
+                    " but entity now uses mesh " + std::to_string(mesh_id.slot) +
                     "; override ignored");
             }
         } else if (override_comp->submeshes.size() > submesh_count) {
@@ -172,7 +179,7 @@ EffectiveMaterial ResolveEffectiveMaterial(
             if (override_comp->ShouldReport(sig)) {
                 LOGIFACE_LOG(warn, "MaterialOverride: entity " + std::to_string(entity_id) +
                     " override covers " + std::to_string(override_comp->submeshes.size()) +
-                    " submeshes but mesh " + std::to_string(mesh_id) + " has " +
+                    " submeshes but mesh " + std::to_string(mesh_id.slot) + " has " +
                     std::to_string(submesh_count) + "; override ignored");
             }
         } else if (submesh_index < override_comp->submeshes.size()) {
@@ -267,7 +274,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     {
         MeshManager::UploadBatchScope upload_batch(mesh_mgr);
         for (auto& e : static_ents_) {
-            const std::uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
+            const MeshHandle mesh_id = e.mesh_ref->loaded_mesh_id;
             mesh_registry.RequestGpuResidency(mesh_id, mesh_mgr, renderer,
                                                vtx_heap, idx_heap, uv_heap);
         }
@@ -517,7 +524,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
     const auto resolve_stack = [&](SubmeshPlan& plan,
                                    Components::GeometryModifier* const gm,
                                    const std::uint32_t local_submesh,
-                                   const std::uint32_t mesh_id,
+                                   const MeshHandle mesh_id,
                                    const std::uint32_t mesh_submesh_count,
                                    const std::uint64_t entity_id) {
         plan.first_modifier = static_cast<std::uint32_t>(resolved_modifiers_.size());
@@ -552,11 +559,11 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 gm->mesh_id = mesh_id;
             }
             if (gm->mesh_id != mesh_id) {
-                const std::uint64_t sig = OverrideSignature(5, gm->mesh_id, mesh_id);
+                const std::uint64_t sig = OverrideSignature(5, gm->mesh_id.Signature(), mesh_id.Signature());
                 if (gm->ShouldReport(sig)) {
                     LOGIFACE_LOG(warn, "GeometryModifier: entity " + std::to_string(entity_id) +
-                        " stack was authored for mesh " + std::to_string(gm->mesh_id) +
-                        " but entity now uses mesh " + std::to_string(mesh_id) +
+                        " stack was authored for mesh " + std::to_string(gm->mesh_id.slot) +
+                        " but entity now uses mesh " + std::to_string(mesh_id.slot) +
                         "; the stack is ignored");
                 }
                 return;
@@ -567,7 +574,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                 if (gm->ShouldReport(sig)) {
                     LOGIFACE_LOG(warn, "GeometryModifier: entity " + std::to_string(entity_id) +
                         " names " + std::to_string(gm->submeshes.size()) +
-                        " submesh stacks but mesh " + std::to_string(mesh_id) + " has " +
+                        " submesh stacks but mesh " + std::to_string(mesh_id.slot) + " has " +
                         std::to_string(mesh_submesh_count) +
                         "; entries past the end are ignored");
                 }
@@ -819,6 +826,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         const auto scale = e.transform ? e.transform->scale : glm::vec3(1);
         const glm::quat rot = e.transform ? e.transform->rotation : glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
         const SubMeshTransform entity_transform = ToSubMeshTransform(e.transform);
+        const MeshHandle mesh_id = DynamicMeshId(e.dyn_mesh->gpu_handle);
 
         LOGIFACE_LOG(trace, "ProcessFrame: dynamic mesh transform pos=(" +
                      std::to_string(pos.x) + "," + std::to_string(pos.y) + "," + std::to_string(pos.z) +
@@ -870,7 +878,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
 
             const EffectiveMaterial effective = ResolveEffectiveMaterial(
                 material_mgr, sm.material_id, material_override, s,
-                e.dyn_mesh->gpu_handle.id, e.dyn_mesh->submesh_count, entity_id);
+                mesh_id, e.dyn_mesh->submesh_count, entity_id);
 
             // Same ORM precedence as static meshes: object override, then
             // the effective material's factors.
@@ -905,9 +913,9 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
             const Components::EffectiveSubmeshTransform resolved =
                 Components::ResolveEffectiveSubmeshTransform(
                     entity_transform, sm.transform, transform_override, s,
-                    e.dyn_mesh->gpu_handle.id, e.dyn_mesh->submesh_count);
+                    mesh_id, e.dyn_mesh->submesh_count);
             ReportTransformOverrideIssue(resolved.status, transform_override,
-                                         e.dyn_mesh->gpu_handle.id, entity_id);
+                                         mesh_id, entity_id);
             plan.placement = resolved.transform;
 
             accumulate(sm, plan.technique_material);

@@ -5,6 +5,7 @@ export module VulkanEngine.Components.GeometryModifier;
 import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 export import VulkanEngine.ModifierId;
 
 export namespace VulkanEngine::Components {
@@ -93,12 +94,11 @@ struct GeometryModifier {
     // static member does not affect the object/data split, which is
     // is_base_of_v<Component, T>.
     static constexpr std::string_view kName = "GeometryModifier";
-    static constexpr std::uint32_t kUnboundMesh =
-        std::numeric_limits<std::uint32_t>::max();
+    static constexpr MeshHandle kUnboundMesh{};
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     // Mesh this stack was authored against, or kUnboundMesh to adopt lazily.
-    std::uint32_t mesh_id = kUnboundMesh;
+    MeshHandle mesh_id = kUnboundMesh;
     // Object-wide default, applied to every submesh that does not replace it.
     std::vector<ModifierInstance> modifiers;
     // Sparse, object-local; an unset entry inherits the object stack.
@@ -113,7 +113,7 @@ struct GeometryModifier {
         return reported_signatures.insert(signature).second;
     }
 
-    void Bind(const std::uint32_t bound_mesh_id) {
+    void Bind(const MeshHandle bound_mesh_id) {
         mesh_id = bound_mesh_id;
         reported_signatures.clear();
     }

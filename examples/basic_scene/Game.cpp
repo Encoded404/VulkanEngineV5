@@ -18,6 +18,7 @@ import vulkan;
 import logiface;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.TextureTypes;
 import VulkanEngine.GpuResources.MeshData;
 import VulkanEngine.GplPolicy;
@@ -157,8 +158,8 @@ bool DemoGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
         exe_dir_ / "models" / "simple-monkey.bin", nullptr);
 
     auto& mesh_registry = engine_game_.GetMeshRegistry();
-    const std::uint32_t viking_id = mesh_registry.Register(viking_mesh);
-    const std::uint32_t monkey_id = mesh_registry.Register(monkey_mesh);
+    const VulkanEngine::MeshHandle viking_id = mesh_registry.Register(viking_mesh);
+    const VulkanEngine::MeshHandle monkey_id = mesh_registry.Register(monkey_mesh);
 
     // 5. Create camera
     auto& component_registry = mctx.Registry();
@@ -231,7 +232,7 @@ bool DemoGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
         component_registry.AddComponent<Examples::BasicScene::Components::SimpleControllerComponent>(entity);
     }
 #ifdef VKENGINE_PHYSICAL_CAMERA
-    if (webcam_mesh_id_ != 0) {
+    if (webcam_mesh_id_.IsValid()) {
         auto& entity = component_registry.CreateEntity();
         component_registry.AddComponent<VulkanEngine::Components::Transform>(entity);
         auto& mesh_ref = component_registry.AddComponent<VulkanEngine::Components::MeshReference>(entity);

@@ -18,6 +18,7 @@ import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.ECS.Prefabs;
 import VulkanEngine.Components.Transform;
 import VulkanEngine.Components.MeshReference;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.Physics.Types;
 import VulkanEngine.Physics.Components;
 import VulkanEngine.Physics.World;
@@ -40,6 +41,8 @@ using Physics::BodyMotionType;
 using Physics::ShapeType;
 using Physics::ShapeDesc;
 using Physics::World;
+
+constexpr VulkanEngine::MeshHandle kCrateMesh{7, 1};
 
 [[nodiscard]] RigidBody BoxBody(glm::vec3 extent, BodyMotionType motion, float mass = 1.0f) {
     RigidBody body{};
@@ -142,7 +145,7 @@ TEST(PrefabTest, AFullBundleComposesOnOneEntity) {
     Prefab prefab{
         .name = "crate",
         .position = {0.0f, 4.0f, 0.0f},
-        .mesh_id = 7,
+        .mesh_id = kCrateMesh,
         .rigid_body = BoxBody({1.0f, 1.0f, 1.0f}, BodyMotionType::Dynamic),
         .character = Character{.desc = character_desc},
     };
@@ -154,7 +157,7 @@ TEST(PrefabTest, AFullBundleComposesOnOneEntity) {
 
     EXPECT_TRUE(registry.HasComponent<Transform>(entity));
     EXPECT_TRUE(registry.HasComponent<MeshReference>(entity));
-    EXPECT_EQ(entity.GetComponent<MeshReference>()->loaded_mesh_id, 7u);
+    EXPECT_EQ(entity.GetComponent<MeshReference>()->loaded_mesh_id, kCrateMesh);
     EXPECT_TRUE(registry.HasComponent<RigidBody>(entity));
     EXPECT_EQ(world.BodyCount(), 1u)
         << "the body was attached through the engine's OnAdd hook, not by the factory";

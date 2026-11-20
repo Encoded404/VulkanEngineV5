@@ -3,10 +3,12 @@
 import std;
 
 import VulkanEngine.Mesh.MeshTypes;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.Components.TransformOverride;
 
 namespace {
 
+using VulkanEngine::MeshHandle;
 using VulkanEngine::MeshVertexVec3;
 using VulkanEngine::SubMeshTransform;
 using VulkanEngine::Components::EffectiveSubmeshTransform;
@@ -36,7 +38,9 @@ void ExpectScale(const SubMeshTransform& actual, const float x, const float y, c
     EXPECT_NEAR(actual.scale.z, z, kEps);
 }
 
-constexpr std::uint32_t kMeshId = 42;
+// Two registrations of the same slot, so the mismatch case differs only by generation.
+constexpr MeshHandle kMeshId{42, 1};
+constexpr MeshHandle kOtherMeshId{42, 2};
 constexpr std::uint32_t kSubmeshCount = 3;
 
 // No override at all: the asset transform still places the submesh, composed
@@ -106,7 +110,7 @@ TEST(TransformOverrideResolve, AdoptsTheMeshOnFirstResolve) {
 
 TEST(TransformOverrideResolve, MeshMismatchIgnoresTheWholeOverride) {
     TransformOverride override_component{};
-    override_component.Bind(kMeshId + 1);
+    override_component.Bind(kOtherMeshId);
     override_component.Set(0, MakeTrs(4.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f));
 
     const auto asset = MakeTrs(0.0f, 7.0f, 0.0f, 1.0f, 1.0f, 1.0f);

@@ -10,6 +10,7 @@ import std;
 
 import VulkanEngine.GameEngine;
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 
 import Examples.Explorer.Math;
 import Examples.Explorer.Options;
@@ -20,7 +21,7 @@ VulkanEngine::ComponentRegistry& SceneContext::Registry() const {
     return engine->GetContext().component_registry;
 }
 
-VulkanEngine::EntityId SceneContext::CreateMeshEntity(std::uint32_t mesh_id,
+VulkanEngine::EntityId SceneContext::CreateMeshEntity(VulkanEngine::MeshHandle mesh_id,
                                                       const glm::vec3& position) const {
     auto& registry = Registry();
     auto& entity = registry.CreateEntity();

@@ -15,6 +15,7 @@ import vulkan;
 import logiface;
 
 import VulkanEngine.GameEngine;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.ShaderManager;
 import VulkanEngine.Components.Text;
 import VulkanEngine.Components.Transform;
@@ -157,7 +158,7 @@ bool TextDemoGame::BuildScene(VulkanEngine::Modules::ModuleContext& mctx) {
     // sits at a negative z). The quad covers the right half of that text, so the
     // depth test is visible rather than inferred: the covered glyphs lose, the
     // rest of the line draws.
-    const std::uint32_t quad_id = engine_game_.GetMeshRegistry().Register(
+    const VulkanEngine::MeshHandle quad_id = engine_game_.GetMeshRegistry().Register(
         VulkanEngine::SceneLoader::ToMeshData(VulkanEngine::SceneLoader::CreateFallbackQuad()));
     {
         auto& entity = registry.CreateEntity();

@@ -11,13 +11,20 @@
 import std;
 
 import VulkanEngine.Components.GeometryModifier;
+import VulkanEngine.MeshHandle;
 
 namespace {
 
+using VulkanEngine::MeshHandle;
 using VulkanEngine::Components::BoundsPolicy;
 using VulkanEngine::Components::BoundsPolicyName;
 using VulkanEngine::Components::GeometryModifier;
 using VulkanEngine::Components::UnsupportedBoundsPolicy;
+
+// Two distinct registrations, so the adoption and mismatch cases never compare
+// a handle with itself.
+constexpr MeshHandle kMeshA{42, 1};
+constexpr MeshHandle kMeshB{43, 1};
 
 TEST(GeometryModifierTest, DefaultBoundsPolicyIsSkipCulling) {
     // A modifier moves vertices away from their rest-pose bounds, so the default
@@ -80,7 +87,7 @@ TEST(GeometryModifierTest, AnUnsupportedPolicyIsReportedOncePerPolicy) {
     EXPECT_TRUE(modifier.ShouldReport(signature(BoundsPolicy::RestPose)));
 
     // Re-binding the component (a new mesh) re-arms the diagnostics.
-    modifier.Bind(7);
+    modifier.Bind(kMeshA);
     EXPECT_TRUE(modifier.ShouldReport(signature(BoundsPolicy::RestPose)));
 }
 
@@ -89,8 +96,8 @@ TEST(GeometryModifierTest, MeshIdAdoptsOnceAndReportsAMismatchOnce) {
     EXPECT_EQ(modifier.mesh_id, GeometryModifier::kUnboundMesh);
 
     // Gather adopts the owner's mesh on first use.
-    modifier.mesh_id = 42;
-    EXPECT_EQ(modifier.mesh_id, 42u);
+    modifier.mesh_id = kMeshA;
+    EXPECT_EQ(modifier.mesh_id, kMeshA);
 
     // A diagnostic is reported once per distinct signature, not per frame.
     EXPECT_TRUE(modifier.ShouldReport(0x1234));
@@ -98,8 +105,8 @@ TEST(GeometryModifierTest, MeshIdAdoptsOnceAndReportsAMismatchOnce) {
     EXPECT_TRUE(modifier.ShouldReport(0x5678));
 
     // Re-binding clears the diagnostic state so a fresh mismatch is reported.
-    modifier.Bind(43);
-    EXPECT_EQ(modifier.mesh_id, 43u);
+    modifier.Bind(kMeshB);
+    EXPECT_EQ(modifier.mesh_id, kMeshB);
     EXPECT_TRUE(modifier.ShouldReport(0x1234));
 
     // Unbinding returns the component to "adopt on first use".

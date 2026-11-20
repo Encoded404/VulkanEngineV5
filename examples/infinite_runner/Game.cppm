@@ -5,6 +5,7 @@ export module Examples.InfiniteRunner.Game;
 import std;
 
 export import VulkanEngine.GameEngine;
+import VulkanEngine.MeshHandle;
 import VulkanShared.CallbackList;
 import VulkanShared.Storage;
 import Examples.InfiniteRunner.Balance;
@@ -99,7 +100,7 @@ private:
     BalanceConfig balance_{};
     std::uint64_t balance_hash_ = 0;
 
-    std::uint32_t cube_mesh_id_ = 0;
+    VulkanEngine::MeshHandle cube_mesh_id_{};
     VulkanEngine::MaterialManager::MaterialRef player_material_{};
     VulkanEngine::MaterialManager::MaterialRef wall_material_{};
     VulkanEngine::MaterialManager::MaterialRef floor_material_{};

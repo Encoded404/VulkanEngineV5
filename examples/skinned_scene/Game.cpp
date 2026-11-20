@@ -13,6 +13,7 @@ import VulkanEngine.GameEngine;
 import VulkanEngine.ECS.ComponentRegistry;
 import VulkanEngine.ECS.Entity;
 import VulkanEngine.GpuResources.MeshData;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.Mesh.MeshTypes;
 import VulkanEngine.Mesh.SkeletalAnimation;
 import VulkanEngine.Components.SkeletonPose;
@@ -113,7 +114,7 @@ bool Game::OnSetup(VulkanEngine::Application::ApplicationContext& ctx) {
     // The pose and (later) any animation player own a self-contained copy of the
     // asset, not a pointer into registry storage.
     const auto asset = VulkanEngine::MakeSkeletalAsset(mesh_data);
-    const std::uint32_t mesh_id = engine_game_.GetMeshRegistry().Register(mesh_data);
+    const VulkanEngine::MeshHandle mesh_id = engine_game_.GetMeshRegistry().Register(mesh_data);
 
     auto& registry = engine_game_.GetContext().GetComponentRegistry();
 

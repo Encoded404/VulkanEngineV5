@@ -5,6 +5,7 @@ export module VulkanEngine.Components.TransformOverride;
 import std;
 
 import VulkanEngine.ECS.ComponentRegistry;
+import VulkanEngine.MeshHandle;
 import VulkanEngine.Mesh.MeshTypes;
 
 export namespace VulkanEngine::Components {
@@ -35,12 +36,11 @@ struct TransformOverride {
     // static member does not affect the object/data split, which is
     // is_base_of_v<Component, T>.
     static constexpr std::string_view kName = "TransformOverride";
-    static constexpr std::uint32_t kUnboundMesh =
-        std::numeric_limits<std::uint32_t>::max();
+    static constexpr MeshHandle kUnboundMesh{};
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     // Mesh this override was authored against, or kUnboundMesh to adopt lazily.
-    std::uint32_t mesh_id = kUnboundMesh;
+    MeshHandle mesh_id = kUnboundMesh;
 
     // Per object-local submesh index; a disengaged entry is "no override".
     std::vector<std::optional<SubMeshTransform>> submeshes;
@@ -57,7 +57,7 @@ struct TransformOverride {
 
     // Pin this override to a specific mesh. Any outstanding diagnostic state is
     // reset so a fresh mismatch is reported.
-    void Bind(const std::uint32_t bound_mesh_id) {
+    void Bind(const MeshHandle bound_mesh_id) {
         mesh_id = bound_mesh_id;
         reported_signatures.clear();
     }
@@ -119,7 +119,7 @@ struct EffectiveSubmeshTransform {
     const SubMeshTransform& asset_local,
     TransformOverride* override_component,
     const std::uint32_t submesh_index,
-    const std::uint32_t mesh_id,
+    const MeshHandle mesh_id,
     const std::uint32_t submesh_count) noexcept {
     if (override_component == nullptr) {
         return {ComposeSubmeshTransform(entity, asset_local), TransformOverrideStatus::NotPresent};

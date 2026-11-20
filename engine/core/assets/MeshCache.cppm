@@ -12,6 +12,19 @@ export import VulkanEngine.Mesh.MeshTypes;
 
 export namespace VulkanEngine {
 
+// Records which table elements a frame has already published.
+// A publish writes one descriptor per in-flight frame, so the second mesh that lands in the same heap block only repeats that work.
+class TablePublishRecord {
+public:
+    // Returns true when this table and block pair is new, so the caller writes it.
+    bool Note(SceneGpuLayout::TableId table, std::uint32_t index);
+    [[nodiscard]] bool Contains(SceneGpuLayout::TableId table, std::uint32_t index) const;
+    void Clear();
+
+private:
+    std::array<std::unordered_set<std::uint32_t>, SceneGpuLayout::kTableCount> seen_{};
+};
+
 struct LoadedMeshInfo {
     GpuResources::MeshData cpu_data;
     MeshManager::Handle gpu_handle;
@@ -37,7 +50,8 @@ public:
     void RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
                              SceneRenderer::SceneRenderer& renderer,
                              GpuResources::DeviceBufferHeap& vtx_heap,
-                             GpuResources::DeviceBufferHeap& idx_heap);
+                             GpuResources::DeviceBufferHeap& idx_heap,
+                             GpuResources::DeviceBufferHeap& uv_heap);
 
     // Release a mesh reference. Decrements usage tracking.
     void Release(std::uint32_t mesh_id, MeshManager& mgr);
@@ -48,12 +62,19 @@ public:
     [[nodiscard]] const LoadedMeshInfo* Get(std::uint32_t mesh_id) const;
     [[nodiscard]] bool IsValid() const { return true; }
 
+    // Whether this frame has already published this table element.
+    // The residency tests read it: the descriptor write is a no-op without a device.
+    [[nodiscard]] bool WasPublished(SceneGpuLayout::TableId table, std::uint32_t index) const {
+        return published_this_frame_.Contains(table, index);
+    }
+
     void Shutdown();
 
 private:
     std::vector<LoadedMeshInfo> entries_;
     std::vector<std::uint32_t> free_ids_;
     std::unordered_set<std::uint32_t> referenced_this_frame_;
+    TablePublishRecord published_this_frame_;
 };
 
 }

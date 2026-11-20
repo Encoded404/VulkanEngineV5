@@ -18,6 +18,7 @@ add_executable(engine_tests
   skeletal_animation_tests.cpp
   deform_addressing_tests.cpp
   scene_submesh_table_tests.cpp
+  mesh_publish_record_tests.cpp
   modifier_stack_tests.cpp
   geometry_modifier_tests.cpp
   animation_system_tests.cpp

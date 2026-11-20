@@ -111,6 +111,7 @@ void GameEngine::RegisterFramePipeline() {
                     *ctx_.scene_renderer,
                     ctx_.vertex_heap,
                     ctx_.index_heap,
+                    ctx_.uv_heap,
                     ctx_.material_mgr,
                     frame_index);
             },
@@ -1303,75 +1304,79 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
     std::unordered_set<std::uint32_t> skin_buffers_updated;
     std::unordered_set<std::uint32_t> skin_extra_buffers_updated;
 
-    for (const auto& mesh_data : meshes) {
-        auto handle = ctx_.mesh_manager->UploadPersistent(mesh_data);
-        if (!handle.IsValid()) {
-            LOGIFACE_LOG(error, "UploadScene: failed to upload mesh");
-            continue;
-        }
-
-        const auto* info = ctx_.mesh_manager->GetMeshInfo(handle);
-        if (!info) continue;
-
-        const std::uint32_t index_offset = static_cast<std::uint32_t>(
-            info->index_allocation.offset / sizeof(std::uint32_t));
-
-        UploadedMesh uploaded{};
-        uploaded.first_submesh = AppendAdjustedSubmeshes(
-            all_submeshes, info->sub_meshes, index_offset,
-            static_cast<std::uint32_t>(info->index_allocation.size / sizeof(std::uint32_t)));
-        uploaded.submesh_count = static_cast<std::uint32_t>(
-            all_submeshes.size() - uploaded.first_submesh);
-        uploaded.vertex_buffer_index = info->vertex_allocation.buffer_index;
-        uploaded.index_buffer_index = info->index_allocation.buffer_index;
-
-        result.push_back(uploaded);
-
-        // Update SceneRenderer descriptors for new heap blocks (all frames)
-        if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
-            if (info->vertex_allocation.buffer_index < ctx_.vertex_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::vertex, std::nullopt,
-                    info->vertex_allocation.buffer_index,
-                    ctx_.vertex_heap.GetBuffer(info->vertex_allocation.buffer_index),
-                    ctx_.vertex_heap.GetConfig().block_size);
+    {
+        // One submit and one fence wait for the whole scene.
+        MeshManager::UploadBatchScope upload_batch(*ctx_.mesh_manager);
+        for (const auto& mesh_data : meshes) {
+            auto handle = ctx_.mesh_manager->UploadPersistent(mesh_data);
+            if (!handle.IsValid()) {
+                LOGIFACE_LOG(error, "UploadScene: failed to upload mesh");
+                continue;
             }
-        }
-        if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
-            if (info->index_allocation.buffer_index < ctx_.index_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::index, std::nullopt,
-                    info->index_allocation.buffer_index,
-                    ctx_.index_heap.GetBuffer(info->index_allocation.buffer_index),
-                    ctx_.index_heap.GetConfig().block_size);
+
+            const auto* info = ctx_.mesh_manager->GetMeshInfo(handle);
+            if (!info) continue;
+
+            const std::uint32_t index_offset = static_cast<std::uint32_t>(
+                info->index_allocation.offset / sizeof(std::uint32_t));
+
+            UploadedMesh uploaded{};
+            uploaded.first_submesh = AppendAdjustedSubmeshes(
+                all_submeshes, info->sub_meshes, index_offset,
+                static_cast<std::uint32_t>(info->index_allocation.size / sizeof(std::uint32_t)));
+            uploaded.submesh_count = static_cast<std::uint32_t>(
+                all_submeshes.size() - uploaded.first_submesh);
+            uploaded.vertex_buffer_index = info->vertex_allocation.buffer_index;
+            uploaded.index_buffer_index = info->index_allocation.buffer_index;
+
+            result.push_back(uploaded);
+
+            // Update SceneRenderer descriptors for new heap blocks (all frames)
+            if (vertex_buffers_updated.insert(info->vertex_allocation.buffer_index).second) {
+                if (info->vertex_allocation.buffer_index < ctx_.vertex_heap.GetBufferCount()) {
+                    ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::vertex, std::nullopt,
+                        info->vertex_allocation.buffer_index,
+                        ctx_.vertex_heap.GetBuffer(info->vertex_allocation.buffer_index),
+                        ctx_.vertex_heap.GetConfig().block_size);
+                }
             }
-        }
-        if (info->has_uv1 &&
-            uv_buffers_updated.insert(info->uv_allocation.buffer_index).second) {
-            if (info->uv_allocation.buffer_index < ctx_.uv_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::uv, std::nullopt,
-                    info->uv_allocation.buffer_index,
-                    ctx_.uv_heap.GetBuffer(info->uv_allocation.buffer_index),
-                    ctx_.uv_heap.GetConfig().block_size);
+            if (index_buffers_updated.insert(info->index_allocation.buffer_index).second) {
+                if (info->index_allocation.buffer_index < ctx_.index_heap.GetBufferCount()) {
+                    ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::index, std::nullopt,
+                        info->index_allocation.buffer_index,
+                        ctx_.index_heap.GetBuffer(info->index_allocation.buffer_index),
+                        ctx_.index_heap.GetConfig().block_size);
+                }
             }
-        }
-        // Skin-influence tables: one descriptor per heap block, published to every
-        // frame's deform set as the block becomes resident. The extra table only
-        // exists for meshes that author a second influence set.
-        if (info->influence_sets > 0 &&
-            skin_buffers_updated.insert(info->skin_allocation.buffer_index).second) {
-            if (info->skin_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin, std::nullopt,
-                    info->skin_allocation.buffer_index,
-                    ctx_.skin_heap.GetBuffer(info->skin_allocation.buffer_index),
-                    ctx_.skin_heap.GetConfig().block_size);
+            if (info->has_uv1 &&
+                uv_buffers_updated.insert(info->uv_allocation.buffer_index).second) {
+                if (info->uv_allocation.buffer_index < ctx_.uv_heap.GetBufferCount()) {
+                    ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::uv, std::nullopt,
+                        info->uv_allocation.buffer_index,
+                        ctx_.uv_heap.GetBuffer(info->uv_allocation.buffer_index),
+                        ctx_.uv_heap.GetConfig().block_size);
+                }
             }
-        }
-        if (info->has_extra_skin &&
-            skin_extra_buffers_updated.insert(info->skin_extra_allocation.buffer_index).second) {
-            if (info->skin_extra_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
-                ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin_extra, std::nullopt,
-                    info->skin_extra_allocation.buffer_index,
-                    ctx_.skin_heap.GetBuffer(info->skin_extra_allocation.buffer_index),
-                    ctx_.skin_heap.GetConfig().block_size);
+            // Skin-influence tables: one descriptor per heap block, published to every
+            // frame's deform set as the block becomes resident. The extra table only
+            // exists for meshes that author a second influence set.
+            if (info->influence_sets > 0 &&
+                skin_buffers_updated.insert(info->skin_allocation.buffer_index).second) {
+                if (info->skin_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
+                    ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin, std::nullopt,
+                        info->skin_allocation.buffer_index,
+                        ctx_.skin_heap.GetBuffer(info->skin_allocation.buffer_index),
+                        ctx_.skin_heap.GetConfig().block_size);
+                }
+            }
+            if (info->has_extra_skin &&
+                skin_extra_buffers_updated.insert(info->skin_extra_allocation.buffer_index).second) {
+                if (info->skin_extra_allocation.buffer_index < ctx_.skin_heap.GetBufferCount()) {
+                    ctx_.scene_renderer->UpdateTableElement(SceneGpuLayout::TableId::skin_extra, std::nullopt,
+                        info->skin_extra_allocation.buffer_index,
+                        ctx_.skin_heap.GetBuffer(info->skin_extra_allocation.buffer_index),
+                        ctx_.skin_heap.GetConfig().block_size);
+                }
             }
         }
     }

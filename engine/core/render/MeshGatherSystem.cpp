@@ -234,6 +234,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                                      SceneRenderer::SceneRenderer& renderer,
                                      GpuResources::DeviceBufferHeap& vtx_heap,
                                      GpuResources::DeviceBufferHeap& idx_heap,
+                                     GpuResources::DeviceBufferHeap& uv_heap,
                                      MaterialManager::MaterialManager& material_mgr,
                                      std::uint32_t frame_index) {
     // --- Phase 1: Collect static mesh entities ---
@@ -261,10 +262,15 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
                  " static and " + std::to_string(dyn_ents_.size()) + " dynamic entities");
 
     // --- Phase 3: Request GPU residency for static meshes ---
-    for (auto& e : static_ents_) {
-        const std::uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
-        mesh_registry.RequestGpuResidency(mesh_id, mesh_mgr, renderer,
-                                           vtx_heap, idx_heap);
+    // Every mesh that becomes resident this frame shares one submit and one fence wait.
+    // The group closes at the end of this block, before the frame's command buffer is recorded, so the copies are already in the queue ahead of it.
+    {
+        MeshManager::UploadBatchScope upload_batch(mesh_mgr);
+        for (auto& e : static_ents_) {
+            const std::uint32_t mesh_id = e.mesh_ref->loaded_mesh_id;
+            mesh_registry.RequestGpuResidency(mesh_id, mesh_mgr, renderer,
+                                               vtx_heap, idx_heap, uv_heap);
+        }
     }
 
     // --- Phase 4: Count total submesh entries ---

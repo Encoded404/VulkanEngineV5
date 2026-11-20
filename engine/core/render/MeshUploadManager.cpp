@@ -56,10 +56,82 @@ void MeshManager::Shutdown() {
     entries_.clear();
     free_handles_.clear();
     deferred_free_queue_.clear();
+    pending_heap_frees_.clear();
+    upload_batch_depth_ = 0;
     backend_ = nullptr;
 }
 
+void MeshManager::BeginUploadBatch() {
+    ++upload_batch_depth_;
+}
+
+void MeshManager::EndUploadBatch() {
+    if (upload_batch_depth_ == 0) {
+        LOGIFACE_LOG(error, "MeshManager::EndUploadBatch: no upload group is open");
+        return;
+    }
+    --upload_batch_depth_;
+    if (upload_batch_depth_ == 0) {
+        CloseUploadGroup();
+    }
+}
+
+void MeshManager::DeferHeapFree(VulkanEngine::GpuResources::DeviceBufferHeap* heap,
+                                const VulkanEngine::GpuResources::HeapAllocation& allocation) {
+    if (heap == nullptr || !allocation.IsValid()) {
+        return;
+    }
+    pending_heap_frees_.push_back({allocation, heap});
+}
+
+void MeshManager::CloseUploadGroup() {
+    if (staging_mgr_ != nullptr) {
+        // A copy runs only at a flush, so the fence wait has to land before the ranges go back to the allocator.
+        static_cast<void>(staging_mgr_->FlushImmediate());
+    }
+    for (const PendingHeapFree& pending : pending_heap_frees_) {
+        if (pending.heap != nullptr && pending.allocation.IsValid()) {
+            auto allocation = pending.allocation;
+            pending.heap->Free(allocation);
+        }
+    }
+    pending_heap_frees_.clear();
+}
+
+std::optional<VulkanEngine::GpuResources::StagingAlloc> MeshManager::TakeStaging(std::uint64_t bytes) {
+    if (staging_mgr_ == nullptr) {
+        return std::nullopt;
+    }
+    if (auto slice = staging_mgr_->Allocate(bytes)) {
+        return slice;
+    }
+    if (staging_mgr_->CanAllocate(bytes)) {
+        // Capacity is not the blocker, so the device refused a buffer or a mapping and a flush would not help.
+        return std::nullopt;
+    }
+    // The group's own staged ranges are what filled the pool, so closing it is what makes room.
+    // This is why a batch never fails a mesh that a standalone upload would have accepted.
+    CloseUploadGroup();
+    auto slice = staging_mgr_->Allocate(bytes);
+    if (!slice.has_value() && !staging_mgr_->CanAllocate(bytes)) {
+        LOGIFACE_LOG(error, "MeshManager::UploadPersistent: staging range of " +
+                     std::to_string(bytes) + " bytes is larger than the " +
+                     std::to_string(staging_mgr_->CapacityBytes()) + " byte staging ceiling");
+    }
+    return slice;
+}
+
 MeshManager::Handle MeshManager::UploadPersistent(
+    const VulkanEngine::GpuResources::MeshData& data) {
+    const Handle handle = UploadPersistentImpl(data);
+    // An open group owns the close, so only a standalone upload submits and waits here.
+    if (upload_batch_depth_ == 0) {
+        CloseUploadGroup();
+    }
+    return handle;
+}
+
+MeshManager::Handle MeshManager::UploadPersistentImpl(
     const VulkanEngine::GpuResources::MeshData& data) {
     Handle handle{};
 
@@ -115,21 +187,19 @@ MeshManager::Handle MeshManager::UploadPersistent(
     VulkanEngine::GpuResources::HeapAllocation skin_alloc{};
     VulkanEngine::GpuResources::HeapAllocation skin_extra_alloc{};
 
-    // Every failure path after the first recorded copy has to submit that copy
-    // before the heap ranges go back to the allocator: StagingPool executes a
-    // recorded copy only on the next flush, so freeing first lets it write into a
-    // range another mesh already owns. Flush then free, in that order.
+    // Every failure path after the first recorded copy has to submit that copy before the heap ranges go back to the allocator.
+    // StagingPool executes a recorded copy only on the next flush, so the ranges are deferred and the group close submits first.
+    // Inside a batch that is also what keeps a later mesh from being handed a range a queued copy still writes into.
     const auto abort_upload = [&] {
-        staging_mgr_->FlushImmediate();
-        vertex_heap_->Free(vertex_alloc);
-        index_heap_->Free(index_alloc);
-        if (uv_alloc.IsValid()) uv_heap_->Free(uv_alloc);
-        if (skin_alloc.IsValid()) skin_heap_->Free(skin_alloc);
-        if (skin_extra_alloc.IsValid()) skin_heap_->Free(skin_extra_alloc);
+        DeferHeapFree(vertex_heap_, vertex_alloc);
+        DeferHeapFree(index_heap_, index_alloc);
+        DeferHeapFree(uv_heap_, uv_alloc);
+        DeferHeapFree(skin_heap_, skin_alloc);
+        DeferHeapFree(skin_heap_, skin_extra_alloc);
     };
 
     {
-        auto slice = staging_mgr_->Allocate(vertex_data_size);
+        auto slice = TakeStaging(vertex_data_size);
         if (!slice.has_value()) {
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: vertex staging allocation failed");
             abort_upload();
@@ -141,7 +211,7 @@ MeshManager::Handle MeshManager::UploadPersistent(
     }
 
     {
-        auto slice = staging_mgr_->Allocate(index_data_size);
+        auto slice = TakeStaging(index_data_size);
         if (!slice.has_value()) {
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: index staging allocation failed");
             abort_upload();
@@ -154,7 +224,7 @@ MeshManager::Handle MeshManager::UploadPersistent(
 
     if (uv_alloc.IsValid()) {
         const std::uint64_t uv_bytes = data.uv_extra[0].size() * sizeof(MeshVertexVec2);
-        auto slice = staging_mgr_->Allocate(uv_bytes);
+        auto slice = TakeStaging(uv_bytes);
         if (!slice.has_value()) {
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: UV staging allocation failed");
             abort_upload();
@@ -208,7 +278,7 @@ MeshManager::Handle MeshManager::UploadPersistent(
         assert(alloc.offset % sizeof(GpuBoneInfluence) == 0 &&
                "skin allocation not element-aligned; skin_region_base would truncate");
         region_base = static_cast<std::uint32_t>(alloc.offset / sizeof(GpuBoneInfluence));
-        auto slice = staging_mgr_->Allocate(bytes);
+        auto slice = TakeStaging(bytes);
         if (!slice.has_value()) {
             LOGIFACE_LOG(error, "MeshManager::UploadPersistent: skin staging allocation failed");
             return false;
@@ -244,18 +314,16 @@ MeshManager::Handle MeshManager::UploadPersistent(
         LOGIFACE_LOG(error, "MeshManager::UploadPersistent: skin heap grew past the " +
                      std::to_string(SceneLimits::kMaxSkinBuffers) +
                      "-block deform table; the mesh renders in bind pose");
-        skin_heap_->Free(skin_alloc);
+        // The influence copies are already recorded against these ranges.
+        // Defer them so the close flushes before a later mesh in the group can be handed one.
+        DeferHeapFree(skin_heap_, skin_alloc);
         skin_alloc = {};
-        if (skin_extra_alloc.IsValid()) {
-            skin_heap_->Free(skin_extra_alloc);
-            skin_extra_alloc = {};
-        }
+        DeferHeapFree(skin_heap_, skin_extra_alloc);
+        skin_extra_alloc = {};
         skin_region_base = 0;
         skin_extra_region_base = 0;
         influence_sets = 0;
     }
-
-    staging_mgr_->FlushImmediate();
 
     std::uint32_t handle_id;
     if (!free_handles_.empty()) {

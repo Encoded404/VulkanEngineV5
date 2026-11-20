@@ -87,6 +87,29 @@ public:
 
     Handle UploadPersistent(const VulkanEngine::GpuResources::MeshData& data);
 
+    // Groups uploads so their copies are submitted once, instead of once per mesh.
+    // UploadPersistent records while a group is open and closes it otherwise, so a standalone upload still submits and waits before it returns.
+    void BeginUploadBatch();
+    // Closes the group opened by the matching BeginUploadBatch.
+    // Nested groups close only when the outermost one ends.
+    void EndUploadBatch();
+
+    // Keeps an upload group open for the lifetime of the scope.
+    // The destructor closes it, so an early return cannot leave a group open.
+    class UploadBatchScope {
+    public:
+        explicit UploadBatchScope(MeshManager& mgr) : mgr_(&mgr) { mgr_->BeginUploadBatch(); }
+        ~UploadBatchScope() { mgr_->EndUploadBatch(); }
+
+        UploadBatchScope(const UploadBatchScope&) = delete;
+        UploadBatchScope& operator=(const UploadBatchScope&) = delete;
+        UploadBatchScope(UploadBatchScope&&) = delete;
+        UploadBatchScope& operator=(UploadBatchScope&&) = delete;
+
+    private:
+        MeshManager* mgr_ = nullptr;
+    };
+
     Handle RegisterStreamed(const VulkanEngine::GpuResources::MeshData& initial_data);
 
     void UpdateStreamed(Handle handle, const VulkanEngine::GpuResources::MeshData& data,
@@ -116,6 +139,10 @@ public:
 
     [[nodiscard]] std::uint32_t GetFramesInFlight() const { return frames_in_flight_; }
 
+    // Heap ranges whose copy is still queued, waiting for the group close to flush first.
+    // Exposed so a test can see that a failed upload did not return its range to the allocator early.
+    [[nodiscard]] std::size_t GetPendingHeapFreeCount() const { return pending_heap_frees_.size(); }
+
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
 
 private:
@@ -130,6 +157,22 @@ private:
         std::int32_t frames_remaining = 0;
     };
 
+    // A range whose copy is recorded but not submitted yet.
+    // Freeing it before the flush would let the next mesh in the group take it and the queued copy overwrite the new owner.
+    struct PendingHeapFree {
+        VulkanEngine::GpuResources::HeapAllocation allocation;
+        VulkanEngine::GpuResources::DeviceBufferHeap* heap = nullptr;
+    };
+
+    // The upload without the group close, so the wrapper can own that decision.
+    [[nodiscard]] Handle UploadPersistentImpl(const VulkanEngine::GpuResources::MeshData& data);
+    // Submits the recorded copies once, then frees every deferred range.
+    void CloseUploadGroup();
+    // Asks for a staging range, closing the group first when its own staged ranges are what filled the pool.
+    [[nodiscard]] std::optional<VulkanEngine::GpuResources::StagingAlloc> TakeStaging(std::uint64_t bytes);
+    void DeferHeapFree(VulkanEngine::GpuResources::DeviceBufferHeap* heap,
+                       const VulkanEngine::GpuResources::HeapAllocation& allocation);
+
     VulkanBackend::Vulkan::IVulkanBootstrap* backend_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* vertex_heap_ = nullptr;
     VulkanEngine::GpuResources::DeviceBufferHeap* index_heap_ = nullptr;
@@ -142,6 +185,8 @@ private:
     std::vector<MeshEntry> entries_;
     std::vector<std::uint32_t> free_handles_;
     std::vector<DeferredFree> deferred_free_queue_;
+    std::vector<PendingHeapFree> pending_heap_frees_;
+    std::uint32_t upload_batch_depth_ = 0;
     std::uint32_t frames_in_flight_ = 3;
     // UpdateStreamed runs once per dynamic mesh per frame; a broken handle
     // would otherwise repeat the same diagnostic forever. Log once per handle

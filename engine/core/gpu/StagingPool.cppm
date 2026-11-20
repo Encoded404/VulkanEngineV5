@@ -72,6 +72,10 @@ public:
     [[nodiscard]] std::optional<StagingAlloc> Allocate(std::uint64_t size,
                                                        std::uint64_t alignment = 256);
 
+    // Whether a range of `size` fits under the capacity ceiling right now.
+    // Allocate refuses because of capacity exactly when this is false, so a caller that can flush first asks this instead of reading a nullopt.
+    [[nodiscard]] bool CanAllocate(std::uint64_t size) const;
+
     // ── Immediate path (boot/setup only; blocking) ─────────────────────
     void RecordBufferCopy(const StagingAlloc& alloc, vk::Buffer dst_buffer,
                           std::uint64_t dst_offset);
@@ -94,6 +98,9 @@ public:
 
     [[nodiscard]] std::uint64_t OutstandingBytes() const { return outstanding_bytes_; }
     [[nodiscard]] std::uint64_t CapacityBytes() const { return config_.capacity_bytes; }
+    // Submissions the immediate path has made.
+    // It counts fence waits, not calls: a flush with nothing recorded returns before submitting, so it does not move.
+    [[nodiscard]] std::uint64_t ImmediateFlushCount() const { return immediate_flush_count_; }
     [[nodiscard]] const StagingPoolConfig& GetConfig() const { return config_; }
     [[nodiscard]] bool IsValid() const { return backend_ != nullptr; }
     VulkanBackend::Vulkan::IVulkanBootstrap* GetBackend() { return backend_; }
@@ -118,6 +125,7 @@ private:
 
     FrameRing<StagingAlloc> ring_{};
     std::uint64_t outstanding_bytes_ = 0;
+    std::uint64_t immediate_flush_count_ = 0;
 };
 
 } // namespace VulkanEngine::GpuResources

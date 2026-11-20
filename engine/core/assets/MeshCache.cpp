@@ -18,6 +18,28 @@ import VulkanEngine.GpuResources.DeviceBufferHeap;
 
 namespace VulkanEngine {
 
+bool TablePublishRecord::Note(const SceneGpuLayout::TableId table, const std::uint32_t index) {
+    const auto slot = static_cast<std::size_t>(table);
+    if (slot >= seen_.size()) {
+        return false;
+    }
+    return seen_[slot].insert(index).second;
+}
+
+bool TablePublishRecord::Contains(const SceneGpuLayout::TableId table, const std::uint32_t index) const {
+    const auto slot = static_cast<std::size_t>(table);
+    if (slot >= seen_.size()) {
+        return false;
+    }
+    return seen_[slot].contains(index);
+}
+
+void TablePublishRecord::Clear() {
+    for (auto& seen : seen_) {
+        seen.clear();
+    }
+}
+
 MeshRegistry::~MeshRegistry() {
     Shutdown();
 }
@@ -46,7 +68,8 @@ uint32_t MeshRegistry::Register(const GpuResources::MeshData& data) {
 void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
                                         SceneRenderer::SceneRenderer& renderer,
                                         GpuResources::DeviceBufferHeap& vtx_heap,
-                                        GpuResources::DeviceBufferHeap& idx_heap) {
+                                        GpuResources::DeviceBufferHeap& idx_heap,
+                                        GpuResources::DeviceBufferHeap& uv_heap) {
     if (mesh_id >= entries_.size()) return;
 
     auto& info = entries_[mesh_id];
@@ -90,38 +113,42 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
     info.first_submesh_in_renderer = renderer.AppendSubmeshes(adjusted);
     info.submesh_count = static_cast<std::uint32_t>(adjusted.size());
 
-    // Update descriptor arrays if new heap block was allocated (all frames)
+    // One descriptor per heap block. Several meshes that land in the same block in one frame would otherwise write it once each.
+    const auto publish = [&](const SceneGpuLayout::TableId table,
+                             const std::uint32_t block_index,
+                             const vk::Buffer buffer,
+                             const std::uint64_t block_size) {
+        if (!buffer) return;
+        if (!published_this_frame_.Note(table, block_index)) return;
+        renderer.UpdateTableElement(table, std::nullopt, block_index, buffer, block_size);
+    };
+
     if (gpu_info->vertex_allocation.buffer_index < vtx_heap.GetBufferCount()) {
-        renderer.UpdateTableElement(SceneGpuLayout::TableId::vertex, std::nullopt,
-            gpu_info->vertex_allocation.buffer_index,
-            vtx_heap.GetBuffer(gpu_info->vertex_allocation.buffer_index),
-            vtx_heap.GetConfig().block_size);
+        publish(SceneGpuLayout::TableId::vertex, gpu_info->vertex_allocation.buffer_index,
+                vtx_heap.GetBuffer(gpu_info->vertex_allocation.buffer_index),
+                vtx_heap.GetConfig().block_size);
     }
     if (gpu_info->index_allocation.buffer_index < idx_heap.GetBufferCount()) {
-        renderer.UpdateTableElement(SceneGpuLayout::TableId::index, std::nullopt,
-            gpu_info->index_allocation.buffer_index,
-            idx_heap.GetBuffer(gpu_info->index_allocation.buffer_index),
-            idx_heap.GetConfig().block_size);
+        publish(SceneGpuLayout::TableId::index, gpu_info->index_allocation.buffer_index,
+                idx_heap.GetBuffer(gpu_info->index_allocation.buffer_index),
+                idx_heap.GetConfig().block_size);
+    }
+    // UV1 lives in its own heap, so its block needs the uv table just as the geometry needs the vertex and index tables.
+    if (gpu_info->has_uv1 && gpu_info->uv_allocation.buffer_index < uv_heap.GetBufferCount()) {
+        publish(SceneGpuLayout::TableId::uv, gpu_info->uv_allocation.buffer_index,
+                uv_heap.GetBuffer(gpu_info->uv_allocation.buffer_index),
+                uv_heap.GetConfig().block_size);
     }
     // Skin-influence tables. The deform set outlives capacity growth, so a block
     // that becomes resident while frames are in flight still has to be published
     // to every frame.
     if (gpu_info->influence_sets > 0) {
-        const vk::Buffer skin_buffer = mgr.GetSkinBuffer(gpu_info->skin_allocation.buffer_index);
-        if (skin_buffer) {
-            renderer.UpdateTableElement(SceneGpuLayout::TableId::skin, std::nullopt,
-                gpu_info->skin_allocation.buffer_index, skin_buffer,
-                mgr.GetSkinBlockSize());
-        }
+        publish(SceneGpuLayout::TableId::skin, gpu_info->skin_allocation.buffer_index,
+                mgr.GetSkinBuffer(gpu_info->skin_allocation.buffer_index), mgr.GetSkinBlockSize());
     }
     if (gpu_info->has_extra_skin) {
-        const vk::Buffer extra_buffer =
-            mgr.GetSkinExtraBuffer(gpu_info->skin_extra_allocation.buffer_index);
-        if (extra_buffer) {
-            renderer.UpdateTableElement(SceneGpuLayout::TableId::skin_extra, std::nullopt,
-                gpu_info->skin_extra_allocation.buffer_index, extra_buffer,
-                mgr.GetSkinBlockSize());
-        }
+        publish(SceneGpuLayout::TableId::skin_extra, gpu_info->skin_extra_allocation.buffer_index,
+                mgr.GetSkinExtraBuffer(gpu_info->skin_extra_allocation.buffer_index), mgr.GetSkinBlockSize());
     }
 
     info.gpu_resident = true;
@@ -160,6 +187,8 @@ void MeshRegistry::EndFrame(MeshManager& mgr, std::uint32_t eviction_timeout_fra
         }
     }
     referenced_this_frame_.clear();
+    // Cleared every frame, so the first publish of a block in a later frame is never suppressed.
+    published_this_frame_.Clear();
 }
 
 const LoadedMeshInfo* MeshRegistry::Get(std::uint32_t mesh_id) const {
@@ -171,6 +200,7 @@ void MeshRegistry::Shutdown() {
     entries_.clear();
     free_ids_.clear();
     referenced_this_frame_.clear();
+    published_this_frame_.Clear();
 }
 
 }

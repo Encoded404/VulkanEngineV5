@@ -9,6 +9,7 @@ add_executable(gpu_tests
   mask_variant_gpu_tests.cpp
   bindless_slot_gpu_tests.cpp
   staging_pool_gpu_tests.cpp
+  mesh_upload_batch_gpu_tests.cpp
   texture_uploader_gpu_tests.cpp
   sampler_cache_gpu_tests.cpp
   texture_info_gpu_tests.cpp

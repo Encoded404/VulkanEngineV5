@@ -107,14 +107,23 @@ void StagingPool::Shutdown() {
     heap_.Shutdown();
     backend_ = nullptr;
     outstanding_bytes_ = 0;
+    immediate_flush_count_ = 0;
+}
+
+bool StagingPool::CanAllocate(std::uint64_t size) const {
+    if (!backend_ || size == 0) {
+        return false;
+    }
+    // Back-pressure: a hard ceiling on outstanding staged bytes.
+    // The subtraction form cannot overflow, unlike adding `size` to the outstanding total.
+    if (outstanding_bytes_ >= config_.capacity_bytes) {
+        return false;
+    }
+    return size <= config_.capacity_bytes - outstanding_bytes_;
 }
 
 std::optional<StagingAlloc> StagingPool::Allocate(std::uint64_t size, std::uint64_t alignment) {
-    if (!backend_ || size == 0) {
-        return std::nullopt;
-    }
-    // Back-pressure: a hard ceiling on outstanding staged bytes.
-    if (outstanding_bytes_ + size > config_.capacity_bytes) {
+    if (!CanAllocate(size)) {
         return std::nullopt;
     }
 
@@ -246,6 +255,8 @@ bool StagingPool::FlushImmediate() {
     {
         VulkanShared::DeviceScopeGuard guard;
         backend_->GetGraphicsQueue().submit(submit, **immediate_fence_);
+        // The copies are in the queue now, so this counts as a fence wait whether or not the wait below succeeds.
+        ++immediate_flush_count_;
         const auto result =
             backend_->GetDevice().waitForFences(**immediate_fence_, vk::True, kWaitForever);
             if (result != vk::Result::eSuccess) {

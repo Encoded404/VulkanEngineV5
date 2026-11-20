@@ -42,6 +42,7 @@ public:
                       SceneRenderer::SceneRenderer& renderer,
                       GpuResources::DeviceBufferHeap& vtx_heap,
                       GpuResources::DeviceBufferHeap& idx_heap,
+                      GpuResources::DeviceBufferHeap& uv_heap,
                       MaterialManager::MaterialManager& material_mgr,
                       std::uint32_t frame_index);
 

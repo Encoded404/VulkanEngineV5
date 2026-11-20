@@ -845,7 +845,27 @@ vk::DescriptorSetLayout* LayoutPointer(
     const std::unique_ptr<vk::raii::DescriptorSetLayout>& layout) {
     return layout ? const_cast<vk::DescriptorSetLayout*>(&**layout) : nullptr;
 }
+
+// True when `range` points into `table` storage, which an insertion may move.
+[[maybe_unused]] bool AliasesStorage(const std::span<const VulkanEngine::SubMesh> range,
+                                     const std::vector<VulkanEngine::SubMesh>& table) {
+    if (range.empty()) return false;
+    const auto table_begin = reinterpret_cast<std::uintptr_t>(table.data());
+    const auto table_end = table_begin + table.size() * sizeof(VulkanEngine::SubMesh);
+    const auto range_begin = reinterpret_cast<std::uintptr_t>(range.data());
+    const auto range_end = range_begin + range.size() * sizeof(VulkanEngine::SubMesh);
+    return range_begin < table_end && table_begin < range_end;
+}
 } // anonymous namespace
+
+std::uint32_t SceneRenderer::AppendSubmeshes(
+    std::span<const VulkanEngine::SubMesh> submeshes) {
+    assert(!AliasesStorage(submeshes, scene_submeshes_) &&
+           "AppendSubmeshes range points into the table");
+    const auto first = static_cast<std::uint32_t>(scene_submeshes_.size());
+    scene_submeshes_.insert(scene_submeshes_.end(), submeshes.begin(), submeshes.end());
+    return first;
+}
 
 vk::DescriptorSetLayout* SceneRenderer::GetSubmeshVertexEntriesLayout() const {
     return LayoutPointer(sets_[SceneGpuLayout::SetId::submesh_vertex].layout);

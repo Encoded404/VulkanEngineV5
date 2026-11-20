@@ -1,10 +1,13 @@
 module;
 
+#include <logging/logging_macros.hpp>
+
 #include <glm/glm.hpp> // NOLINT(misc-include-cleaner) — exported ShapeDesc members
 
 export module VulkanEngine.Mesh.MeshTypes;
 
 import std;
+import logiface;
 
 export import VulkanEngine.MaterialManager.MaterialId;
 export import VulkanEngine.TechniqueManager.TechniqueId;
@@ -201,6 +204,48 @@ export namespace VulkanEngine
         }
         sm.vertex_window_base = min_index;
         sm.vertex_span = max_index - min_index + 1;
+    }
+
+    // Appends a mesh's local submeshes to `out`, re-based onto the index block they were uploaded to.
+    // Returns the index of the first appended entry.
+    // An empty range appends one window over the whole block, which is what a mesh with no authored submeshes draws.
+    // That fallback carries index bounds only and leaves the vertex window empty, so the caller must have normalized the mesh when it needs one.
+    [[nodiscard]] inline std::uint32_t AppendAdjustedSubmeshes(
+        std::vector<SubMesh>& out,
+        const std::span<const SubMesh> local_submeshes,
+        const std::uint32_t index_offset,
+        const std::uint32_t total_index_count) {
+        const auto first = static_cast<std::uint32_t>(out.size());
+        if (local_submeshes.empty()) {
+#ifndef NDEBUG
+            LOGIFACE_LOG(error, "AppendAdjustedSubmeshes: empty local submeshes; the fallback window has no vertex span, so the mesh must be normalized first");
+#endif
+            SubMesh sm{};
+            sm.index_start = index_offset;
+            sm.index_count = total_index_count;
+            out.push_back(sm);
+            return first;
+        }
+        out.reserve(out.size() + local_submeshes.size());
+        for (const SubMesh& sm : local_submeshes) {
+            auto copy = sm;
+            copy.index_start += index_offset;
+            out.push_back(copy);
+        }
+        return first;
+    }
+
+    // Allocating convenience wrapper for callers that do not own a destination vector.
+    // Prefer AppendAdjustedSubmeshes when one already exists.
+    [[nodiscard]] inline std::vector<SubMesh> AdjustSubmeshesForIndexBlock(
+        const std::span<const SubMesh> local_submeshes,
+        const std::uint32_t index_offset,
+        const std::uint32_t total_index_count) {
+        std::vector<SubMesh> adjusted;
+        adjusted.reserve(local_submeshes.empty() ? std::size_t{1} : local_submeshes.size());
+        static_cast<void>(AppendAdjustedSubmeshes(
+            adjusted, local_submeshes, index_offset, total_index_count));
+        return adjusted;
     }
 
     // ── skeletal animation ──────────────────────────────────────────────────

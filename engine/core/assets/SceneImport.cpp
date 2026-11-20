@@ -298,21 +298,10 @@ CombinedScene UploadCombined(
                      " indices=" + std::to_string(info.index_count) +
                      " submeshes=" + std::to_string(meshes[i].submeshes.size()));
 
-        info.first_submesh_index = static_cast<std::uint32_t>(all_submeshes.size());
-        info.submesh_count = static_cast<std::uint32_t>(meshes[i].submeshes.size());
-        if (info.submesh_count == 0) {
-            VulkanEngine::SubMesh default_sm{};
-            default_sm.index_start = index_offset;
-            default_sm.index_count = info.index_count;
-            all_submeshes.push_back(default_sm);
-            info.submesh_count = 1;
-        } else {
-            for (const auto& sm : meshes[i].submeshes) {
-                VulkanEngine::SubMesh adjusted = sm;
-                adjusted.index_start += index_offset;
-                all_submeshes.push_back(adjusted);
-            }
-        }
+        info.first_submesh_index = AppendAdjustedSubmeshes(
+            all_submeshes, meshes[i].submeshes, index_offset, info.index_count);
+        info.submesh_count = static_cast<std::uint32_t>(
+            all_submeshes.size() - info.first_submesh_index);
 
         scene.meshes.push_back(info);
 

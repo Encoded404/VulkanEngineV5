@@ -1317,26 +1317,13 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
             info->index_allocation.offset / sizeof(std::uint32_t));
 
         UploadedMesh uploaded{};
-        uploaded.first_submesh = static_cast<std::uint32_t>(all_submeshes.size());
-        uploaded.submesh_count = static_cast<std::uint32_t>(info->sub_meshes.size());
+        uploaded.first_submesh = AppendAdjustedSubmeshes(
+            all_submeshes, info->sub_meshes, index_offset,
+            static_cast<std::uint32_t>(info->index_allocation.size / sizeof(std::uint32_t)));
+        uploaded.submesh_count = static_cast<std::uint32_t>(
+            all_submeshes.size() - uploaded.first_submesh);
         uploaded.vertex_buffer_index = info->vertex_allocation.buffer_index;
         uploaded.index_buffer_index = info->index_allocation.buffer_index;
-
-        if (info->sub_meshes.empty()) {
-            const std::uint32_t total_indices = static_cast<std::uint32_t>(
-                info->index_allocation.size / sizeof(std::uint32_t));
-            SubMesh default_sm{};
-            default_sm.index_start = index_offset;
-            default_sm.index_count = total_indices;
-            all_submeshes.push_back(default_sm);
-            uploaded.submesh_count = 1;
-        } else {
-            for (const auto& sm : info->sub_meshes) {
-                auto adjusted = sm;
-                adjusted.index_start += index_offset;
-                all_submeshes.push_back(adjusted);
-            }
-        }
 
         result.push_back(uploaded);
 
@@ -1389,7 +1376,7 @@ std::vector<GameEngine::UploadedMesh> GameEngine::UploadScene(
         }
     }
 
-    ctx_.scene_renderer->SetSubmeshes(all_submeshes);
+    ctx_.scene_renderer->SetSubmeshes(std::move(all_submeshes));
     MarkSceneValid();
 
     return result;

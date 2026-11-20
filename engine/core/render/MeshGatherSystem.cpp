@@ -645,7 +645,7 @@ void MeshRenderSystem::ProcessFrame(ComponentRegistry& registry,
         if (tid < kTechniqueCount) tech_submeshes_[tid] += 1u;
     };
 
-    auto& scene_submeshes = renderer.GetSubmeshes();
+    const auto scene_submeshes = renderer.GetSubmeshes();
 
     // Write static mesh plans. The plan index is the global submesh slot; the
     // budget clamp above can stop the resolution part-way (truncation at a

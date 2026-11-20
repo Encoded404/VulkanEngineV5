@@ -574,8 +574,14 @@ public:
 
     void InitializeHizFirstFrame(vk::CommandBuffer cmd);
 
-    void SetSubmeshes(const std::vector<VulkanEngine::SubMesh>& submeshes) { scene_submeshes_ = submeshes; }
-    [[nodiscard]] const std::vector<VulkanEngine::SubMesh>& GetSubmeshes() const { return scene_submeshes_; }
+    // Appends a range and returns the index of its first entry.
+    // The range stays contiguous, so a caller addresses it as first + 0 .. first + count - 1.
+    // The range must not point into this table: the insertion can relocate it.
+    [[nodiscard]] std::uint32_t AppendSubmeshes(std::span<const VulkanEngine::SubMesh> submeshes);
+    // Replaces the whole table, invalidating every range the registry holds.
+    void SetSubmeshes(std::vector<VulkanEngine::SubMesh> submeshes) { scene_submeshes_ = std::move(submeshes); }
+    // Read-only view: a caller that wants to keep its own copy must say so.
+    [[nodiscard]] std::span<const VulkanEngine::SubMesh> GetSubmeshes() const { return scene_submeshes_; }
 
     struct FrameBlockArrays {
         VulkanEngine::GpuResources::BlockArray* dynamic_entries;

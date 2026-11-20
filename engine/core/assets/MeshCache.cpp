@@ -83,30 +83,12 @@ void MeshRegistry::RequestGpuResidency(std::uint32_t mesh_id, MeshManager& mgr,
     const std::uint32_t index_offset = static_cast<std::uint32_t>(
         gpu_info->index_allocation.offset / sizeof(std::uint32_t));
 
-    std::vector<SubMesh> adjusted;
-    if (gpu_info->sub_meshes.empty()) {
-        const std::uint32_t total_indices = static_cast<std::uint32_t>(
-            gpu_info->index_allocation.size / sizeof(std::uint32_t));
-        SubMesh sm{};
-        sm.index_start = index_offset;
-        sm.index_count = total_indices;
-        adjusted.push_back(sm);
-    } else {
-        for (const auto& sm : gpu_info->sub_meshes) {
-            auto copy = sm;
-            copy.index_start += index_offset;
-            adjusted.push_back(copy);
-        }
-    }
+    const std::vector<SubMesh> adjusted = AdjustSubmeshesForIndexBlock(
+        gpu_info->sub_meshes, index_offset,
+        static_cast<std::uint32_t>(gpu_info->index_allocation.size / sizeof(std::uint32_t)));
 
-    info.first_submesh_in_renderer = static_cast<std::uint32_t>(
-        renderer.GetSubmeshes().size());
+    info.first_submesh_in_renderer = renderer.AppendSubmeshes(adjusted);
     info.submesh_count = static_cast<std::uint32_t>(adjusted.size());
-
-    // Append to renderer's submesh list
-    auto all_submeshes = renderer.GetSubmeshes();
-    all_submeshes.insert(all_submeshes.end(), adjusted.begin(), adjusted.end());
-    renderer.SetSubmeshes(all_submeshes);
 
     // Update descriptor arrays if new heap block was allocated (all frames)
     if (gpu_info->vertex_allocation.buffer_index < vtx_heap.GetBufferCount()) {
